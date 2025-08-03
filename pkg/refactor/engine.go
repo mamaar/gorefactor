@@ -49,12 +49,14 @@ type DefaultEngine struct {
 // EngineConfig contains configuration options for the refactoring engine
 type EngineConfig struct {
 	SkipCompilation bool
+	AllowBreaking   bool
 }
 
 // DefaultConfig returns the default engine configuration
 func DefaultConfig() *EngineConfig {
 	return &EngineConfig{
 		SkipCompilation: false,
+		AllowBreaking:   false,
 	}
 }
 
@@ -495,7 +497,7 @@ func (e *DefaultEngine) AnalyzeImpact(ws *types.Workspace, op types.Operation) (
 
 // ValidateRefactoring validates a complete refactoring plan
 func (e *DefaultEngine) ValidateRefactoring(plan *types.RefactoringPlan) error {
-	return e.validator.ValidatePlan(plan)
+	return e.validator.ValidatePlanWithConfig(plan, e.config)
 }
 
 // ExecutePlan applies a refactoring plan to the workspace

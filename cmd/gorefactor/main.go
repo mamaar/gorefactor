@@ -30,6 +30,7 @@ var (
 	flagPackageOnly     = flag.Bool("package-only", false, "For rename operations, only rename within the specified package")
 	flagCreateTarget    = flag.Bool("create-target", true, "Create target package if it doesn't exist")
 	flagSkipCompilation = flag.Bool("skip-compilation", false, "Skip compilation validation after refactoring")
+	flagAllowBreaking   = flag.Bool("allow-breaking", false, "Allow potentially breaking refactorings that may require manual fixes")
 	flagMinComplexity   = flag.Int("min-complexity", 10, "Minimum complexity threshold for complexity analysis")
 )
 
@@ -151,6 +152,7 @@ Examples:
 func createEngineWithFlags() refactor.RefactorEngine {
 	config := &refactor.EngineConfig{
 		SkipCompilation: *flagSkipCompilation,
+		AllowBreaking:   *flagAllowBreaking,
 	}
 	return refactor.CreateEngineWithConfig(config)
 }

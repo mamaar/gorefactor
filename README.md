@@ -80,6 +80,7 @@ gorefactor --json analyze Config
 - `--json`: Output results in JSON format
 - `--verbose`: Enable verbose output
 - `--force`: Force operation even with warnings
+- `--allow-breaking`: Allow potentially breaking refactorings that may require manual fixes
 - `--backup`: Create backup files before changes (default: true)
 - `--package-only`: For rename operations, only rename within the specified package
 
@@ -121,6 +122,19 @@ gorefactor rename Token AuthToken pkg/auth
 gorefactor --package-only rename validate checkAuth pkg/auth
 ```
 
+### Example 4: Breaking Refactoring with Manual Fix Intent
+
+```bash
+# Allow potentially breaking changes when you plan to fix issues manually
+gorefactor --allow-breaking move LegacyHandler pkg/old pkg/new
+
+# Combine with dry-run to see what breaking changes would occur
+gorefactor --dry-run --allow-breaking rename ComplexType NewComplexType
+
+# Use with backup for safety when allowing breaking changes
+gorefactor --allow-breaking --backup move DatabaseConnection internal/db pkg/storage
+```
+
 ## Safety Features
 
 GoRefactor includes multiple safety checks:
@@ -130,6 +144,8 @@ GoRefactor includes multiple safety checks:
 3. **Visibility Rules**: Maintains Go's export rules and accessibility
 4. **Name Conflict Detection**: Prevents naming conflicts in target packages
 5. **Reference Tracking**: Updates all references to moved/renamed symbols
+
+**Note:** The `--allow-breaking` flag disables these safety checks when you need to perform potentially breaking refactorings and plan to fix issues manually afterward.
 
 ## How It Works
 

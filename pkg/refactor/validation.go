@@ -25,11 +25,21 @@ func NewValidator() *Validator {
 
 // ValidatePlan validates a complete refactoring plan
 func (v *Validator) ValidatePlan(plan *refactorTypes.RefactoringPlan) error {
+	return v.ValidatePlanWithConfig(plan, nil)
+}
+
+// ValidatePlanWithConfig validates a complete refactoring plan with configuration options
+func (v *Validator) ValidatePlanWithConfig(plan *refactorTypes.RefactoringPlan, config *EngineConfig) error {
 	if plan == nil {
 		return &refactorTypes.RefactorError{
 			Type:    refactorTypes.InvalidOperation,
 			Message: "refactoring plan is nil",
 		}
+	}
+
+	// Use default config if none provided
+	if config == nil {
+		config = DefaultConfig()
 	}
 
 	var allIssues []refactorTypes.Issue
@@ -55,9 +65,9 @@ func (v *Validator) ValidatePlan(plan *refactorTypes.RefactoringPlan) error {
 	cycleIssues := v.validateImportCycles(plan)
 	allIssues = append(allIssues, cycleIssues...)
 
-	// Return validation error if any critical issues found
+	// Return validation error if any critical issues found, unless AllowBreaking is enabled
 	criticalIssues := v.filterCriticalIssues(allIssues)
-	if len(criticalIssues) > 0 {
+	if len(criticalIssues) > 0 && !config.AllowBreaking {
 		return &refactorTypes.ValidationError{
 			Issues: criticalIssues,
 		}
