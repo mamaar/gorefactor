@@ -33,10 +33,12 @@ func main() {
 	}
 
 	var (
-		workspaceFlag = flag.String("workspace", "", "Root workspace directory (defaults to current directory)")
-		portFlag      = flag.Int("port", 0, "TCP port to listen on (0 for stdio)")
-		debugFlag     = flag.Bool("debug", false, "Enable debug logging")
-		versionFlag   = flag.Bool("version", false, "Show version information")
+		workspaceFlag      = flag.String("workspace", "", "Root workspace directory (defaults to current directory)")
+		portFlag           = flag.Int("port", 0, "TCP port to listen on (0 for stdio)")
+		debugFlag          = flag.Bool("debug", false, "Enable debug logging")
+		versionFlag        = flag.Bool("version", false, "Show version information")
+		allowBreakingFlag  = flag.Bool("allow-breaking", false, "Allow breaking changes during refactoring")
+		skipCompilationFlag = flag.Bool("skip-compilation", false, "Skip compilation checks during refactoring")
 	)
 	flag.Parse()
 
@@ -86,7 +88,11 @@ func main() {
 	)
 
 	// Initialize refactor engine and workspace
-	engine := refactor.CreateEngine()
+	config := &refactor.EngineConfig{
+		SkipCompilation: *skipCompilationFlag,
+		AllowBreaking:   *allowBreakingFlag,
+	}
+	engine := refactor.CreateEngineWithConfig(config)
 	workspaceObj, err := engine.LoadWorkspace(workspace)
 	if err != nil {
 		log.Fatalf("Failed to load workspace: %v", err)
@@ -236,6 +242,21 @@ func addRenameSymbolTool(s *server.MCPServer, engine refactor.RefactorEngine, wo
 
 		if packagePath != "" {
 			renameRequest.Scope = types.PackageScope
+		}
+
+		// Debug logging
+		log.Printf("DEBUG: Rename request - Symbol: %s, NewName: %s, Package: %s, Scope: %v", 
+			symbolName, newName, packagePath, renameRequest.Scope)
+		
+		// Log available packages for debugging
+		log.Printf("DEBUG: Available packages in workspace:")
+		for pkgPath, pkg := range workspace.Packages {
+			symbolCount := 0
+			if pkg.Symbols != nil {
+				symbolCount = len(pkg.Symbols.Functions) + len(pkg.Symbols.Types) + 
+					len(pkg.Symbols.Variables) + len(pkg.Symbols.Constants)
+			}
+			log.Printf("  - %s (name: %s, symbols: %d)", pkgPath, pkg.Name, symbolCount)
 		}
 
 		plan, err := engine.RenameSymbol(workspace, renameRequest)

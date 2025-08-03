@@ -221,12 +221,51 @@ func (op *RenameSymbolOperation) Validate(ws *types.Workspace) error {
 
 	if op.Request.Package != "" {
 		// Package-scoped rename
-		if pkg, exists := ws.Packages[op.Request.Package]; exists && pkg.Symbols != nil {
-			symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
-			if err != nil {
+		if pkg, exists := ws.Packages[op.Request.Package]; exists {
+			if pkg.Symbols == nil {
 				return &types.RefactorError{
 					Type:    types.SymbolNotFound,
-					Message: fmt.Sprintf("symbol not found: %s", op.Request.SymbolName),
+					Message: fmt.Sprintf("package %s has no symbol table built", op.Request.Package),
+				}
+			}
+			
+			symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
+			if err != nil {
+				// Build detailed debug info
+				availableSymbols := make([]string, 0)
+				if pkg.Symbols != nil {
+					for name := range pkg.Symbols.Functions {
+						availableSymbols = append(availableSymbols, fmt.Sprintf("func %s", name))
+					}
+					for name := range pkg.Symbols.Types {
+						availableSymbols = append(availableSymbols, fmt.Sprintf("type %s", name))
+					}
+					for name := range pkg.Symbols.Variables {
+						availableSymbols = append(availableSymbols, fmt.Sprintf("var %s", name))
+					}
+					for name := range pkg.Symbols.Constants {
+						availableSymbols = append(availableSymbols, fmt.Sprintf("const %s", name))
+					}
+				}
+				
+				message := fmt.Sprintf("symbol not found: %s in package %s\nAvailable symbols (%d):", 
+					op.Request.SymbolName, op.Request.Package, len(availableSymbols))
+				if len(availableSymbols) == 0 {
+					message += "\n  (no symbols found - package may not be parsed correctly)"
+				} else {
+					for i, sym := range availableSymbols {
+						if i < 20 { // Limit output
+							message += fmt.Sprintf("\n  - %s", sym)
+						} else {
+							message += fmt.Sprintf("\n  ... and %d more", len(availableSymbols)-20)
+							break
+						}
+					}
+				}
+				
+				return &types.RefactorError{
+					Type:    types.SymbolNotFound,
+					Message: message,
 					Cause:   err,
 				}
 			}
