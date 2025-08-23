@@ -14,6 +14,7 @@ const (
 	MoveOperation OperationType = iota
 	RenameOperation
 	RenamePackageOperation
+	RenameInterfaceMethodOperation
 	ExtractOperation
 	InlineOperation
 	BatchOperation
@@ -42,6 +43,15 @@ type RenamePackageRequest struct {
 	NewPackageName string
 	PackagePath    string // Path to the package directory
 	UpdateImports  bool   // Whether to update import statements in other packages
+}
+
+// RenameInterfaceMethodRequest represents renaming a method on an interface
+type RenameInterfaceMethodRequest struct {
+	InterfaceName     string  // Name of the interface
+	MethodName        string  // Current method name
+	NewMethodName     string  // New method name
+	PackagePath       string  // Path to the package containing the interface (optional, "" means workspace-wide)
+	UpdateImplementations bool // Whether to update all implementations of the interface
 }
 
 type RenameScope int

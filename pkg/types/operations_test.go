@@ -13,9 +13,10 @@ func TestOperationType(t *testing.T) {
 		{"MoveOperation", MoveOperation, 0},
 		{"RenameOperation", RenameOperation, 1},
 		{"RenamePackageOperation", RenamePackageOperation, 2},
-		{"ExtractOperation", ExtractOperation, 3},
-		{"InlineOperation", InlineOperation, 4},
-		{"BatchOperation", BatchOperation, 5},
+		{"RenameInterfaceMethodOperation", RenameInterfaceMethodOperation, 3},
+		{"ExtractOperation", ExtractOperation, 4},
+		{"InlineOperation", InlineOperation, 5},
+		{"BatchOperation", BatchOperation, 6},
 	}
 
 	for _, tc := range testCases {
@@ -104,6 +105,36 @@ func TestRenamePackageRequest(t *testing.T) {
 
 	if !req.UpdateImports {
 		t.Error("Expected UpdateImports to be true")
+	}
+}
+
+func TestRenameInterfaceMethodRequest(t *testing.T) {
+	req := RenameInterfaceMethodRequest{
+		InterfaceName:         "CommandBus",
+		MethodName:            "Execute",
+		NewMethodName:         "Process",
+		PackagePath:           "pkg/bus",
+		UpdateImplementations: true,
+	}
+
+	if req.InterfaceName != "CommandBus" {
+		t.Errorf("Expected InterfaceName to be 'CommandBus', got '%s'", req.InterfaceName)
+	}
+
+	if req.MethodName != "Execute" {
+		t.Errorf("Expected MethodName to be 'Execute', got '%s'", req.MethodName)
+	}
+
+	if req.NewMethodName != "Process" {
+		t.Errorf("Expected NewMethodName to be 'Process', got '%s'", req.NewMethodName)
+	}
+
+	if req.PackagePath != "pkg/bus" {
+		t.Errorf("Expected PackagePath to be 'pkg/bus', got '%s'", req.PackagePath)
+	}
+
+	if !req.UpdateImplementations {
+		t.Error("Expected UpdateImplementations to be true")
 	}
 }
 

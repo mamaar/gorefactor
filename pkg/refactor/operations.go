@@ -1264,3 +1264,509 @@ func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, imp
 	
 	return true, nil, nil
 }
+
+// RenameInterfaceMethodOperation implements interface method renaming
+type RenameInterfaceMethodOperation struct {
+	Request types.RenameInterfaceMethodRequest
+}
+
+func (op *RenameInterfaceMethodOperation) Type() types.OperationType {
+	return types.RenameInterfaceMethodOperation
+}
+
+func (op *RenameInterfaceMethodOperation) Validate(ws *types.Workspace) error {
+	// Find the interface in the workspace
+	interfaceSymbol, err := op.findInterface(ws)
+	if err != nil {
+		return err
+	}
+
+	// Check if the method exists on the interface
+	_, err = op.findInterfaceMethod(ws, interfaceSymbol)
+	if err != nil {
+		return err
+	}
+
+	// Check that new method name is valid
+	if !isValidGoIdentifier(op.Request.NewMethodName) {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("invalid Go identifier: %s", op.Request.NewMethodName),
+		}
+	}
+
+	// Check for method name conflicts on the interface
+	if op.Request.UpdateImplementations {
+		if err := op.checkMethodNameConflicts(ws, interfaceSymbol); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (op *RenameInterfaceMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	plan := &types.RefactoringPlan{
+		Changes:       make([]types.Change, 0),
+		AffectedFiles: make([]string, 0),
+		Reversible:    true,
+	}
+
+	// Find the interface and method
+	interfaceSymbol, err := op.findInterface(ws)
+	if err != nil {
+		return nil, err
+	}
+
+	methodSymbol, err := op.findInterfaceMethod(ws, interfaceSymbol)
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 1: Update the interface method declaration
+	interfaceChange, err := op.generateInterfaceMethodChange(ws, interfaceSymbol, methodSymbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate interface method change: %v", err)
+	}
+	
+	if interfaceChange != nil {
+		plan.Changes = append(plan.Changes, *interfaceChange)
+		if !contains(plan.AffectedFiles, interfaceChange.File) {
+			plan.AffectedFiles = append(plan.AffectedFiles, interfaceChange.File)
+		}
+	}
+
+	// Step 2: Update all implementations if requested
+	if op.Request.UpdateImplementations {
+		implChanges, implFiles, err := op.generateImplementationChanges(ws, interfaceSymbol, methodSymbol)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate implementation changes: %v", err)
+		}
+		
+		plan.Changes = append(plan.Changes, implChanges...)
+		for _, file := range implFiles {
+			if !contains(plan.AffectedFiles, file) {
+				plan.AffectedFiles = append(plan.AffectedFiles, file)
+			}
+		}
+	}
+
+	// Step 3: Update all method calls across the workspace
+	callChanges, callFiles, err := op.generateMethodCallChanges(ws, interfaceSymbol, methodSymbol)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate method call changes: %v", err)
+	}
+	
+	plan.Changes = append(plan.Changes, callChanges...)
+	for _, file := range callFiles {
+		if !contains(plan.AffectedFiles, file) {
+			plan.AffectedFiles = append(plan.AffectedFiles, file)
+		}
+	}
+
+	return plan, nil
+}
+
+func (op *RenameInterfaceMethodOperation) Description() string {
+	return fmt.Sprintf("Rename interface method %s.%s to %s", op.Request.InterfaceName, op.Request.MethodName, op.Request.NewMethodName)
+}
+
+// Helper methods for RenameInterfaceMethodOperation
+
+func (op *RenameInterfaceMethodOperation) findInterface(ws *types.Workspace) (*types.Symbol, error) {
+	// Search for the interface in the specified package or workspace-wide
+	var targetPackages []*types.Package
+	
+	if op.Request.PackagePath != "" {
+		if pkg, exists := ws.Packages[op.Request.PackagePath]; exists {
+			targetPackages = []*types.Package{pkg}
+		} else {
+			return nil, &types.RefactorError{
+				Type:    types.SymbolNotFound,
+				Message: fmt.Sprintf("package not found: %s", op.Request.PackagePath),
+			}
+		}
+	} else {
+		// Search all packages
+		for _, pkg := range ws.Packages {
+			targetPackages = append(targetPackages, pkg)
+		}
+	}
+
+	for _, pkg := range targetPackages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		
+		for _, symbol := range pkg.Symbols.Types {
+			if symbol.Name == op.Request.InterfaceName && symbol.Kind == types.InterfaceSymbol {
+				return symbol, nil
+			}
+		}
+	}
+
+	return nil, &types.RefactorError{
+		Type:    types.SymbolNotFound,
+		Message: fmt.Sprintf("interface %s not found", op.Request.InterfaceName),
+	}
+}
+
+func (op *RenameInterfaceMethodOperation) findInterfaceMethod(ws *types.Workspace, interfaceSymbol *types.Symbol) (*types.Symbol, error) {
+	// Parse the interface to find its methods
+	pkg := ws.Packages[interfaceSymbol.Package]
+	if pkg == nil {
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("package %s not found", interfaceSymbol.Package),
+		}
+	}
+
+	// Find the file containing the interface
+	var interfaceFile *types.File
+	for _, file := range pkg.Files {
+		if file.Path == interfaceSymbol.File {
+			interfaceFile = file
+			break
+		}
+	}
+
+	if interfaceFile == nil {
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("file %s not found", interfaceSymbol.File),
+		}
+	}
+
+	// Find the method in the interface by parsing its AST
+	methodSymbol, err := op.findMethodInInterface(interfaceFile, interfaceSymbol)
+	if err != nil {
+		return nil, err
+	}
+
+	return methodSymbol, nil
+}
+
+func (op *RenameInterfaceMethodOperation) findMethodInInterface(file *types.File, interfaceSymbol *types.Symbol) (*types.Symbol, error) {
+	var methodSymbol *types.Symbol
+	
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if typeSpec, ok := n.(*ast.TypeSpec); ok && typeSpec.Name.Name == interfaceSymbol.Name {
+			if interfaceType, ok := typeSpec.Type.(*ast.InterfaceType); ok {
+				for _, field := range interfaceType.Methods.List {
+					if len(field.Names) > 0 && field.Names[0].Name == op.Request.MethodName {
+						methodSymbol = &types.Symbol{
+							Name:     field.Names[0].Name,
+							Kind:     types.MethodSymbol,
+							Package:  interfaceSymbol.Package,
+							File:     file.Path,
+							Position: field.Names[0].Pos(),
+							Exported: op.isExported(field.Names[0].Name),
+						}
+						return false
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	if methodSymbol == nil {
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("method %s not found on interface %s", op.Request.MethodName, interfaceSymbol.Name),
+		}
+	}
+
+	return methodSymbol, nil
+}
+
+func (op *RenameInterfaceMethodOperation) checkMethodNameConflicts(ws *types.Workspace, interfaceSymbol *types.Symbol) error {
+	// Check if the new method name would conflict with existing methods on the interface
+	pkg := ws.Packages[interfaceSymbol.Package]
+	if pkg == nil {
+		return nil
+	}
+
+	interfaceFile := pkg.Files[interfaceSymbol.File]
+	if interfaceFile == nil {
+		return nil
+	}
+
+	var hasConflict bool
+	ast.Inspect(interfaceFile.AST, func(n ast.Node) bool {
+		if typeSpec, ok := n.(*ast.TypeSpec); ok && typeSpec.Name.Name == interfaceSymbol.Name {
+			if interfaceType, ok := typeSpec.Type.(*ast.InterfaceType); ok {
+				for _, field := range interfaceType.Methods.List {
+					if len(field.Names) > 0 && field.Names[0].Name == op.Request.NewMethodName {
+						hasConflict = true
+						return false
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	if hasConflict {
+		return &types.RefactorError{
+			Type:    types.NameConflict,
+			Message: fmt.Sprintf("method %s already exists on interface %s", op.Request.NewMethodName, interfaceSymbol.Name),
+		}
+	}
+
+	return nil
+}
+
+func (op *RenameInterfaceMethodOperation) generateInterfaceMethodChange(ws *types.Workspace, interfaceSymbol *types.Symbol, methodSymbol *types.Symbol) (*types.Change, error) {
+	pkg := ws.Packages[interfaceSymbol.Package]
+	if pkg == nil {
+		return nil, fmt.Errorf("package %s not found", interfaceSymbol.Package)
+	}
+
+	var interfaceFile *types.File
+	for _, file := range pkg.Files {
+		if file.Path == interfaceSymbol.File {
+			interfaceFile = file
+			break
+		}
+	}
+
+	if interfaceFile == nil {
+		return nil, fmt.Errorf("file %s not found", interfaceSymbol.File)
+	}
+
+	// Find the method declaration line and calculate byte positions
+	var change *types.Change
+	ast.Inspect(interfaceFile.AST, func(n ast.Node) bool {
+		if typeSpec, ok := n.(*ast.TypeSpec); ok && typeSpec.Name.Name == interfaceSymbol.Name {
+			if interfaceType, ok := typeSpec.Type.(*ast.InterfaceType); ok {
+				for _, field := range interfaceType.Methods.List {
+					if len(field.Names) > 0 && field.Names[0].Name == op.Request.MethodName {
+						// Calculate the byte position of the method name
+						pos := field.Names[0].Pos()
+						startByte := int(pos) - 1  // Convert to 0-based
+						endByte := startByte + len(op.Request.MethodName)
+
+						change = &types.Change{
+							File:        interfaceFile.Path,
+							Start:       startByte,
+							End:         endByte,
+							OldText:     op.Request.MethodName,
+							NewText:     op.Request.NewMethodName,
+							Description: fmt.Sprintf("Rename interface method %s to %s", op.Request.MethodName, op.Request.NewMethodName),
+						}
+						return false
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	return change, nil
+}
+
+func (op *RenameInterfaceMethodOperation) generateImplementationChanges(ws *types.Workspace, interfaceSymbol *types.Symbol, methodSymbol *types.Symbol) ([]types.Change, []string, error) {
+	var changes []types.Change
+	var affectedFiles []string
+
+	// Find all types that implement this interface
+	implementations, err := op.findInterfaceImplementations(ws, interfaceSymbol)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to find interface implementations: %v", err)
+	}
+
+	// For each implementation, find and rename the method
+	for _, impl := range implementations {
+		implChanges, err := op.generateImplementationMethodChanges(ws, impl, methodSymbol)
+		if err != nil {
+			continue // Skip implementations we can't process
+		}
+		
+		for _, change := range implChanges {
+			changes = append(changes, change)
+			if !contains(affectedFiles, change.File) {
+				affectedFiles = append(affectedFiles, change.File)
+			}
+		}
+	}
+
+	return changes, affectedFiles, nil
+}
+
+func (op *RenameInterfaceMethodOperation) findInterfaceImplementations(ws *types.Workspace, interfaceSymbol *types.Symbol) ([]*types.Symbol, error) {
+	var implementations []*types.Symbol
+
+	// Search through all packages for types that implement the interface
+	for _, pkg := range ws.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+
+		// Check all struct types to see if they implement the interface
+		for _, symbol := range pkg.Symbols.Types {
+			if symbol.Kind == types.TypeSymbol {
+				if op.implementsInterface(ws, symbol, interfaceSymbol) {
+					implementations = append(implementations, symbol)
+				}
+			}
+		}
+	}
+
+	return implementations, nil
+}
+
+func (op *RenameInterfaceMethodOperation) implementsInterface(ws *types.Workspace, structSymbol *types.Symbol, interfaceSymbol *types.Symbol) bool {
+	// Get methods for the struct type
+	pkg := ws.Packages[structSymbol.Package]
+	if pkg == nil || pkg.Symbols == nil {
+		return false
+	}
+
+	structMethods, exists := pkg.Symbols.Methods[structSymbol.Name]
+	if !exists {
+		return false
+	}
+
+	// Check if the struct has a method with the name we're looking for
+	for _, method := range structMethods {
+		if method.Name == op.Request.MethodName {
+			return true  // Simplified check - real implementation would verify full signature
+		}
+	}
+
+	return false
+}
+
+func (op *RenameInterfaceMethodOperation) generateImplementationMethodChanges(ws *types.Workspace, implSymbol *types.Symbol, methodSymbol *types.Symbol) ([]types.Change, error) {
+	var changes []types.Change
+
+	pkg := ws.Packages[implSymbol.Package]
+	if pkg == nil {
+		return changes, nil
+	}
+
+	// Find method implementations on this type
+	if methods, exists := pkg.Symbols.Methods[implSymbol.Name]; exists {
+		for _, method := range methods {
+			if method.Name == op.Request.MethodName {
+				// Generate change for this method implementation
+				change, err := op.generateMethodImplementationChange(ws, method)
+				if err != nil {
+					continue
+				}
+				if change != nil {
+					changes = append(changes, *change)
+				}
+			}
+		}
+	}
+
+	return changes, nil
+}
+
+func (op *RenameInterfaceMethodOperation) generateMethodImplementationChange(ws *types.Workspace, methodSymbol *types.Symbol) (*types.Change, error) {
+	pkg := ws.Packages[methodSymbol.Package]
+	if pkg == nil {
+		return nil, fmt.Errorf("package %s not found", methodSymbol.Package)
+	}
+
+	var methodFile *types.File
+	for _, file := range pkg.Files {
+		if file.Path == methodSymbol.File {
+			methodFile = file
+			break
+		}
+	}
+
+	if methodFile == nil {
+		return nil, fmt.Errorf("file %s not found", methodSymbol.File)
+	}
+
+	// Find the method declaration and create a change
+	var change *types.Change
+	ast.Inspect(methodFile.AST, func(n ast.Node) bool {
+		if funcDecl, ok := n.(*ast.FuncDecl); ok {
+			if funcDecl.Name != nil && funcDecl.Name.Name == op.Request.MethodName {
+				// Check if this is a method (has receiver)
+				if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+					pos := funcDecl.Name.Pos()
+					startByte := int(pos) - 1
+					endByte := startByte + len(op.Request.MethodName)
+
+					change = &types.Change{
+						File:        methodFile.Path,
+						Start:       startByte,
+						End:         endByte,
+						OldText:     op.Request.MethodName,
+						NewText:     op.Request.NewMethodName,
+						Description: fmt.Sprintf("Rename method implementation %s to %s", op.Request.MethodName, op.Request.NewMethodName),
+					}
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	return change, nil
+}
+
+func (op *RenameInterfaceMethodOperation) generateMethodCallChanges(ws *types.Workspace, interfaceSymbol *types.Symbol, methodSymbol *types.Symbol) ([]types.Change, []string, error) {
+	var changes []types.Change
+	var affectedFiles []string
+
+	// Search through all files in the workspace for method calls
+	for _, pkg := range ws.Packages {
+		for _, file := range pkg.Files {
+			fileChanges, err := op.generateFileMethodCallChanges(file)
+			if err != nil {
+				continue // Skip files we can't process
+			}
+			
+			if len(fileChanges) > 0 {
+				changes = append(changes, fileChanges...)
+				if !contains(affectedFiles, file.Path) {
+					affectedFiles = append(affectedFiles, file.Path)
+				}
+			}
+		}
+	}
+
+	return changes, affectedFiles, nil
+}
+
+func (op *RenameInterfaceMethodOperation) generateFileMethodCallChanges(file *types.File) ([]types.Change, error) {
+	var changes []types.Change
+
+	// Find method calls in the file
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if callExpr, ok := n.(*ast.CallExpr); ok {
+			if selectorExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+				if selectorExpr.Sel.Name == op.Request.MethodName {
+					// Create change for this method call
+					pos := selectorExpr.Sel.Pos()
+					startByte := int(pos) - 1
+					endByte := startByte + len(op.Request.MethodName)
+
+					change := types.Change{
+						File:        file.Path,
+						Start:       startByte,
+						End:         endByte,
+						OldText:     op.Request.MethodName,
+						NewText:     op.Request.NewMethodName,
+						Description: fmt.Sprintf("Rename method call %s to %s", op.Request.MethodName, op.Request.NewMethodName),
+					}
+					changes = append(changes, change)
+				}
+			}
+		}
+		return true
+	})
+
+	return changes, nil
+}
+
+func (op *RenameInterfaceMethodOperation) isExported(name string) bool {
+	return len(name) > 0 && unicode.IsUpper(rune(name[0]))
+}
