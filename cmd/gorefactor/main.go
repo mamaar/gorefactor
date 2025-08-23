@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"go/ast"
 	"go/token"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/refactor"
@@ -30,8 +32,9 @@ var (
 	flagPackageOnly     = flag.Bool("package-only", false, "For rename operations, only rename within the specified package")
 	flagCreateTarget    = flag.Bool("create-target", true, "Create target package if it doesn't exist")
 	flagSkipCompilation = flag.Bool("skip-compilation", false, "Skip compilation validation after refactoring")
-	flagAllowBreaking   = flag.Bool("allow-breaking", false, "Allow potentially breaking refactorings that may require manual fixes")
-	flagMinComplexity   = flag.Int("min-complexity", 10, "Minimum complexity threshold for complexity analysis")
+	flagAllowBreaking         = flag.Bool("allow-breaking", false, "Allow potentially breaking refactorings that may require manual fixes")
+	flagMinComplexity         = flag.Int("min-complexity", 10, "Minimum complexity threshold for complexity analysis")
+	flagRenameImplementations = flag.Bool("rename-implementations", false, "When renaming interface methods, also rename all implementations")
 )
 
 // Subcommands
@@ -118,6 +121,9 @@ Examples:
 
   # Rename a function only within a specific package
   gorefactor --package-only rename oldFunc newFunc pkg/mypackage
+
+  # Rename an interface method and all its implementations
+  gorefactor --rename-implementations rename Execute Process
 
   # Extract a method from lines 10-15 in main.go
   gorefactor extract method main.go 10 15 newMethod MyStruct
@@ -237,7 +243,14 @@ func renameCommand(args []string) {
 		os.Exit(1)
 	}
 
-	// Create rename request
+	// Check if this is an interface method rename by searching for the symbol first
+	if interfaceMethod := findInterfaceMethodSymbol(workspace, symbolName, packagePath); interfaceMethod != nil {
+		// Handle interface method rename specially
+		handleInterfaceMethodRename(engine, workspace, interfaceMethod, symbolName, newName, packagePath)
+		return
+	}
+
+	// Create rename request for regular symbols
 	request := types.RenameSymbolRequest{
 		SymbolName: symbolName,
 		NewName:    newName,
@@ -1498,4 +1511,148 @@ func complexityCommand(args []string) {
 			}
 		}
 	}
+}
+
+// findInterfaceMethodSymbol searches for an interface method symbol
+func findInterfaceMethodSymbol(workspace *types.Workspace, symbolName, packagePath string) *types.Symbol {
+	// Search for interfaces that contain this method
+	var targetPackages []*types.Package
+	
+	if packagePath != "" {
+		if pkg, exists := workspace.Packages[packagePath]; exists {
+			targetPackages = []*types.Package{pkg}
+		}
+	} else {
+		// Search all packages
+		for _, pkg := range workspace.Packages {
+			targetPackages = append(targetPackages, pkg)
+		}
+	}
+
+	for _, pkg := range targetPackages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		
+		// Look for interfaces that contain this method
+		for _, symbol := range pkg.Symbols.Types {
+			if symbol.Kind == types.InterfaceSymbol {
+				if interfaceMethod := findMethodInInterface(workspace, symbol, symbolName); interfaceMethod != nil {
+					return interfaceMethod
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// findMethodInInterface searches for a method within an interface type
+func findMethodInInterface(workspace *types.Workspace, interfaceSymbol *types.Symbol, methodName string) *types.Symbol {
+	pkg := workspace.Packages[interfaceSymbol.Package]
+	if pkg == nil {
+		return nil
+	}
+
+	// Find the file containing the interface
+	var interfaceFile *types.File
+	for _, file := range pkg.Files {
+		if file.Path == interfaceSymbol.File {
+			interfaceFile = file
+			break
+		}
+	}
+
+	if interfaceFile == nil || interfaceFile.AST == nil {
+		return nil
+	}
+
+	// Find the method in the interface by parsing its AST
+	var methodSymbol *types.Symbol
+	ast.Inspect(interfaceFile.AST, func(n ast.Node) bool {
+		if typeSpec, ok := n.(*ast.TypeSpec); ok && typeSpec.Name.Name == interfaceSymbol.Name {
+			if interfaceType, ok := typeSpec.Type.(*ast.InterfaceType); ok {
+				for _, field := range interfaceType.Methods.List {
+					if len(field.Names) > 0 && field.Names[0].Name == methodName {
+						methodSymbol = &types.Symbol{
+							Name:     field.Names[0].Name,
+							Kind:     types.MethodSymbol,
+							Package:  interfaceSymbol.Package,
+							File:     interfaceFile.Path,
+							Position: field.Names[0].Pos(),
+							Exported: isExported(field.Names[0].Name),
+						}
+						return false
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	return methodSymbol
+}
+
+// handleInterfaceMethodRename handles the special case of renaming interface methods
+func handleInterfaceMethodRename(engine refactor.RefactorEngine, workspace *types.Workspace, methodSymbol *types.Symbol, oldName, newName, packagePath string) {
+	// Find the interface that contains this method
+	interfaceSymbol := findInterfaceContainingMethod(workspace, methodSymbol)
+	if interfaceSymbol == nil {
+		fmt.Fprintf(os.Stderr, "Error: could not find interface containing method %s\n", oldName)
+		os.Exit(1)
+	}
+
+	// Create interface method rename request
+	request := types.RenameInterfaceMethodRequest{
+		InterfaceName:         interfaceSymbol.Name,
+		MethodName:            oldName,
+		NewMethodName:         newName,
+		PackagePath:           packagePath,
+		UpdateImplementations: *flagRenameImplementations,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.RenameInterfaceMethod(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating interface method refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	var description string
+	if *flagRenameImplementations {
+		description = fmt.Sprintf("Rename interface method %s.%s to %s (including implementations)", interfaceSymbol.Name, oldName, newName)
+	} else {
+		description = fmt.Sprintf("Rename interface method %s.%s to %s", interfaceSymbol.Name, oldName, newName)
+	}
+	
+	if packagePath != "" {
+		description += fmt.Sprintf(" in package %s", packagePath)
+	}
+	
+	processPlan(engine, plan, description)
+}
+
+// findInterfaceContainingMethod finds the interface symbol that contains the given method
+func findInterfaceContainingMethod(workspace *types.Workspace, methodSymbol *types.Symbol) *types.Symbol {
+	pkg := workspace.Packages[methodSymbol.Package]
+	if pkg == nil || pkg.Symbols == nil {
+		return nil
+	}
+
+	// Look for interfaces in the same package
+	for _, symbol := range pkg.Symbols.Types {
+		if symbol.Kind == types.InterfaceSymbol {
+			if findMethodInInterface(workspace, symbol, methodSymbol.Name) != nil {
+				return symbol
+			}
+		}
+	}
+	
+	return nil
+}
+
+// isExported checks if a symbol name is exported (starts with uppercase)
+func isExported(name string) bool {
+	return len(name) > 0 && unicode.IsUpper(rune(name[0]))
 }

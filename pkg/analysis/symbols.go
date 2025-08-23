@@ -147,6 +147,19 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 		symbol = sym
 	} else if sym, exists := pkg.Symbols.Constants[name]; exists {
 		symbol = sym
+	} else {
+		// Check for method symbols by searching through all methods
+		for _, methods := range pkg.Symbols.Methods {
+			for _, method := range methods {
+				if method.Name == name {
+					symbol = method
+					break
+				}
+			}
+			if symbol != nil {
+				break
+			}
+		}
 	}
 	
 	if symbol != nil {
