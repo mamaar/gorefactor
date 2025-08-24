@@ -8,18 +8,8 @@ build:
 	@echo "Building gorefactor..."
 	@go build -o bin/gorefactor ./cmd/gorefactor
 
-# Build the LSP server
-build-lsp:
-	@echo "Building gorefactor-lsp..."
-	@go build -o bin/gorefactor-lsp ./cmd/gorefactor-lsp
-
-# Build the MCP server
-build-mcp:
-	@echo "Building gorefactor-mcp..."
-	@go build -o bin/gorefactor-mcp ./cmd/gorefactor-mcp
-
 # Build all binaries
-build-all-binaries: build build-lsp build-mcp
+build-all-binaries: build
 
 # Run all tests
 test:
@@ -82,8 +72,6 @@ help:
 	@echo ""
 	@echo "Available targets:"
 	@echo "  make build         - Build the gorefactor binary"
-	@echo "  make build-lsp     - Build the LSP server"
-	@echo "  make build-mcp     - Build the MCP server"
 	@echo "  make build-all-binaries - Build all binaries"
 	@echo "  make test          - Run all tests"
 	@echo "  make test-coverage - Run tests with coverage report"
