@@ -101,6 +101,7 @@ func main() {
 	// Add tools
 	addMoveSymbolTool(mcpServer, engine, workspaceObj)
 	addRenameSymbolTool(mcpServer, engine, workspaceObj)
+	addRenamePackageTool(mcpServer, engine, workspaceObj)
 	addExtractMethodTool(mcpServer, engine, workspaceObj)
 	addExtractFunctionTool(mcpServer, engine, workspaceObj)
 	addExtractInterfaceTool(mcpServer, engine, workspaceObj)
@@ -191,8 +192,8 @@ func addMoveSymbolTool(s *server.MCPServer, engine refactor.RefactorEngine, work
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -271,8 +272,8 @@ func addRenameSymbolTool(s *server.MCPServer, engine refactor.RefactorEngine, wo
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -558,8 +559,8 @@ func addExtractMethodTool(s *server.MCPServer, engine refactor.RefactorEngine, w
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -631,8 +632,8 @@ func addExtractFunctionTool(s *server.MCPServer, engine refactor.RefactorEngine,
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -707,8 +708,8 @@ func addExtractInterfaceTool(s *server.MCPServer, engine refactor.RefactorEngine
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -790,8 +791,8 @@ func addExtractVariableTool(s *server.MCPServer, engine refactor.RefactorEngine,
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -851,8 +852,8 @@ func addInlineMethodTool(s *server.MCPServer, engine refactor.RefactorEngine, wo
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -903,8 +904,8 @@ func addInlineVariableTool(s *server.MCPServer, engine refactor.RefactorEngine, 
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -955,8 +956,8 @@ func addInlineFunctionTool(s *server.MCPServer, engine refactor.RefactorEngine, 
 
 		if plan != nil && len(plan.Changes) > 0 {
 			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
-			for filePath := range plan.Changes {
-				content += fmt.Sprintf("\n- %s", filePath)
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
 			}
 		}
 
@@ -1373,4 +1374,88 @@ func getSymbolKindName(kind types.SymbolKind) string {
 	default:
 		return "Unknown"
 	}
+}
+
+// addRenamePackageTool adds the rename_package tool to the MCP server
+func addRenamePackageTool(s *server.MCPServer, engine refactor.RefactorEngine, workspace *types.Workspace) {
+	renamePackageTool := mcp.NewTool("rename_package",
+		mcp.WithDescription("Rename a Go package and update all references"),
+		mcp.WithString("old_package_name",
+			mcp.Required(),
+			mcp.Description("Current name of the package"),
+		),
+		mcp.WithString("new_package_name",
+			mcp.Required(),
+			mcp.Description("New name for the package"),
+		),
+		mcp.WithString("package_path",
+			mcp.Required(),
+			mcp.Description("Path to the package directory (e.g., 'pkg/utils')"),
+		),
+		mcp.WithBoolean("update_imports",
+			mcp.Description("Whether to update import statements in other packages"),
+			mcp.DefaultBool(true),
+		),
+	)
+
+	s.AddTool(renamePackageTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.GetArguments()
+		
+		oldPackageName, ok := args["old_package_name"].(string)
+		if !ok {
+			return mcp.NewToolResultError("old_package_name is required"), nil
+		}
+
+		newPackageName, ok := args["new_package_name"].(string)
+		if !ok {
+			return mcp.NewToolResultError("new_package_name is required"), nil
+		}
+
+		packagePath, ok := args["package_path"].(string)
+		if !ok {
+			return mcp.NewToolResultError("package_path is required"), nil
+		}
+
+		// Default to true
+		updateImports := true
+		if val, ok := args["update_imports"].(bool); ok {
+			updateImports = val
+		}
+
+		renameRequest := types.RenamePackageRequest{
+			OldPackageName: oldPackageName,
+			NewPackageName: newPackageName,
+			PackagePath:    packagePath,
+			UpdateImports:  updateImports,
+		}
+
+		// Debug logging
+		log.Printf("DEBUG: Rename package request - Old: %s, New: %s, Path: %s, UpdateImports: %v", 
+			oldPackageName, newPackageName, packagePath, updateImports)
+		
+		// Log available packages for debugging
+		log.Printf("DEBUG: Available packages in workspace:")
+		for pkgPath, pkg := range workspace.Packages {
+			log.Printf("  - %s (name: %s)", pkgPath, pkg.Name)
+		}
+
+		plan, err := engine.RenamePackage(workspace, renameRequest)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error renaming package: %v", err)), nil
+		}
+
+		content := fmt.Sprintf("Successfully planned rename of package %s to %s in %s", oldPackageName, newPackageName, packagePath)
+		if updateImports {
+			content += " (including import updates)"
+		}
+
+		if plan != nil && len(plan.Changes) > 0 {
+			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
+			}
+		}
+
+		return mcp.NewToolResultText(content), nil
+	})
 }

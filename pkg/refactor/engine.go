@@ -18,6 +18,7 @@ type RefactorEngine interface {
 	// Refactoring operations
 	MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequest) (*types.RefactoringPlan, error)
 	RenameSymbol(ws *types.Workspace, req types.RenameSymbolRequest) (*types.RefactoringPlan, error)
+	RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error)
 	ExtractMethod(ws *types.Workspace, req types.ExtractMethodRequest) (*types.RefactoringPlan, error)
 	ExtractFunction(ws *types.Workspace, req types.ExtractFunctionRequest) (*types.RefactoringPlan, error)
 	ExtractInterface(ws *types.Workspace, req types.ExtractInterfaceRequest) (*types.RefactoringPlan, error)
@@ -164,6 +165,33 @@ func (e *DefaultEngine) RenameSymbol(ws *types.Workspace, req types.RenameSymbol
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate rename plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// RenamePackage implements package renaming
+func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error) {
+	operation := &RenamePackageOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("rename package operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate rename package plan: %w", err)
 	}
 
 	// Analyze impact

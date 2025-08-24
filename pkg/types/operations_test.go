@@ -12,9 +12,10 @@ func TestOperationType(t *testing.T) {
 	}{
 		{"MoveOperation", MoveOperation, 0},
 		{"RenameOperation", RenameOperation, 1},
-		{"ExtractOperation", ExtractOperation, 2},
-		{"InlineOperation", InlineOperation, 3},
-		{"BatchOperation", BatchOperation, 4},
+		{"RenamePackageOperation", RenamePackageOperation, 2},
+		{"ExtractOperation", ExtractOperation, 3},
+		{"InlineOperation", InlineOperation, 4},
+		{"BatchOperation", BatchOperation, 5},
 	}
 
 	for _, tc := range testCases {
@@ -78,6 +79,31 @@ func TestRenameSymbolRequest(t *testing.T) {
 
 	if req.Scope != WorkspaceScope {
 		t.Errorf("Expected Scope to be WorkspaceScope, got %v", req.Scope)
+	}
+}
+
+func TestRenamePackageRequest(t *testing.T) {
+	req := RenamePackageRequest{
+		OldPackageName: "oldpkg",
+		NewPackageName: "newpkg",
+		PackagePath:    "pkg/oldpkg",
+		UpdateImports:  true,
+	}
+
+	if req.OldPackageName != "oldpkg" {
+		t.Errorf("Expected OldPackageName to be 'oldpkg', got '%s'", req.OldPackageName)
+	}
+
+	if req.NewPackageName != "newpkg" {
+		t.Errorf("Expected NewPackageName to be 'newpkg', got '%s'", req.NewPackageName)
+	}
+
+	if req.PackagePath != "pkg/oldpkg" {
+		t.Errorf("Expected PackagePath to be 'pkg/oldpkg', got '%s'", req.PackagePath)
+	}
+
+	if !req.UpdateImports {
+		t.Error("Expected UpdateImports to be true")
 	}
 }
 

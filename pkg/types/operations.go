@@ -13,6 +13,7 @@ type OperationType int
 const (
 	MoveOperation OperationType = iota
 	RenameOperation
+	RenamePackageOperation
 	ExtractOperation
 	InlineOperation
 	BatchOperation
@@ -33,6 +34,14 @@ type RenameSymbolRequest struct {
 	NewName    string
 	Package    string  // Empty means workspace-wide
 	Scope      RenameScope
+}
+
+// RenamePackageRequest represents renaming a package
+type RenamePackageRequest struct {
+	OldPackageName string
+	NewPackageName string
+	PackagePath    string // Path to the package directory
+	UpdateImports  bool   // Whether to update import statements in other packages
 }
 
 type RenameScope int
