@@ -102,6 +102,7 @@ func main() {
 	addMoveSymbolTool(mcpServer, engine, workspaceObj)
 	addRenameSymbolTool(mcpServer, engine, workspaceObj)
 	addRenamePackageTool(mcpServer, engine, workspaceObj)
+	addRenameInterfaceMethodTool(mcpServer, engine, workspaceObj)
 	addExtractMethodTool(mcpServer, engine, workspaceObj)
 	addExtractFunctionTool(mcpServer, engine, workspaceObj)
 	addExtractInterfaceTool(mcpServer, engine, workspaceObj)
@@ -1447,6 +1448,96 @@ func addRenamePackageTool(s *server.MCPServer, engine refactor.RefactorEngine, w
 		content := fmt.Sprintf("Successfully planned rename of package %s to %s in %s", oldPackageName, newPackageName, packagePath)
 		if updateImports {
 			content += " (including import updates)"
+		}
+
+		if plan != nil && len(plan.Changes) > 0 {
+			content += fmt.Sprintf("\nPlanned changes to %d files:", len(plan.Changes))
+			for _, change := range plan.Changes {
+				content += fmt.Sprintf("\n- %s: %s", change.File, change.Description)
+			}
+		}
+
+		return mcp.NewToolResultText(content), nil
+	})
+}
+// addRenameInterfaceMethodTool adds the rename_interface_method tool to the MCP server
+func addRenameInterfaceMethodTool(s *server.MCPServer, engine refactor.RefactorEngine, workspace *types.Workspace) {
+	renameInterfaceMethodTool := mcp.NewTool("rename_interface_method",
+		mcp.WithDescription("Rename a method on an interface and update all references and implementations"),
+		mcp.WithString("interface_name",
+			mcp.Required(),
+			mcp.Description("Name of the interface containing the method"),
+		),
+		mcp.WithString("method_name",
+			mcp.Required(),
+			mcp.Description("Current name of the method to rename"),
+		),
+		mcp.WithString("new_method_name",
+			mcp.Required(),
+			mcp.Description("New name for the method"),
+		),
+		mcp.WithString("package_path",
+			mcp.Description("Package path containing the interface (optional, empty means workspace-wide search)"),
+		),
+		mcp.WithBoolean("update_implementations",
+			mcp.Description("Whether to update all implementations of the interface method"),
+			mcp.DefaultBool(true),
+		),
+	)
+
+	s.AddTool(renameInterfaceMethodTool, func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		args := request.GetArguments()
+		
+		interfaceName, ok := args["interface_name"].(string)
+		if !ok {
+			return mcp.NewToolResultError("interface_name is required"), nil
+		}
+
+		methodName, ok := args["method_name"].(string)
+		if !ok {
+			return mcp.NewToolResultError("method_name is required"), nil
+		}
+
+		newMethodName, ok := args["new_method_name"].(string)
+		if !ok {
+			return mcp.NewToolResultError("new_method_name is required"), nil
+		}
+
+		// Optional package path
+		packagePath := ""
+		if val, ok := args["package_path"].(string); ok {
+			packagePath = val
+		}
+
+		// Default to true
+		updateImplementations := true
+		if val, ok := args["update_implementations"].(bool); ok {
+			updateImplementations = val
+		}
+
+		renameRequest := types.RenameInterfaceMethodRequest{
+			InterfaceName:         interfaceName,
+			MethodName:            methodName,
+			NewMethodName:         newMethodName,
+			PackagePath:           packagePath,
+			UpdateImplementations: updateImplementations,
+		}
+
+		// Debug logging
+		log.Printf("DEBUG: Rename interface method request - Interface: %s, Method: %s -> %s, Package: %s, UpdateImplementations: %v", 
+			interfaceName, methodName, newMethodName, packagePath, updateImplementations)
+
+		plan, err := engine.RenameInterfaceMethod(workspace, renameRequest)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Error renaming interface method: %v", err)), nil
+		}
+
+		content := fmt.Sprintf("Successfully planned rename of interface method %s.%s to %s", interfaceName, methodName, newMethodName)
+		if packagePath != "" {
+			content += fmt.Sprintf(" in package %s", packagePath)
+		}
+		if updateImplementations {
+			content += " (including all implementations and method calls)"
 		}
 
 		if plan != nil && len(plan.Changes) > 0 {
