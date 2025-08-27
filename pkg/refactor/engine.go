@@ -51,6 +51,12 @@ type RefactorEngine interface {
 	OrganizeByLayers(ws *types.Workspace, req types.OrganizeByLayersRequest) (*types.RefactoringPlan, error)
 	FixCycles(ws *types.Workspace, req types.FixCyclesRequest) (*types.RefactoringPlan, error)
 	AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error)
+	
+	// Batch operations with rollback
+	BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error)
+	CreatePlan(ws *types.Workspace, req types.PlanOperationRequest) (*types.RefactoringPlan, error)
+	ExecutePlanFromFile(req types.ExecuteOperationRequest) (*types.RefactoringPlan, error)
+	RollbackOperations(req types.RollbackOperationRequest) (*types.RefactoringPlan, error)
 
 	// Analysis
 	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
@@ -1123,6 +1129,130 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate analyze dependencies plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// BatchOperations implements executing multiple operations atomically
+func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error) {
+	operation := &BatchOperationOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("batch operations validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate batch operations plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// CreatePlan implements creating a refactoring plan
+func (e *DefaultEngine) CreatePlan(ws *types.Workspace, req types.PlanOperationRequest) (*types.RefactoringPlan, error) {
+	operation := &PlanOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("plan operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// ExecutePlanFromFile implements executing a previously created plan
+func (e *DefaultEngine) ExecutePlanFromFile(req types.ExecuteOperationRequest) (*types.RefactoringPlan, error) {
+	// Note: this method signature differs from the interface ExecutePlan method
+	// to avoid confusion with executing an in-memory plan
+	operation := &ExecuteOperation{Request: req}
+
+	// Load the plan file first to get workspace info
+	// This is a simplified approach - in reality we'd need better workspace management
+	ws, err := e.LoadWorkspace(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load workspace for plan execution: %w", err)
+	}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("execute operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute plan from file: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// RollbackOperations implements rolling back operations
+func (e *DefaultEngine) RollbackOperations(req types.RollbackOperationRequest) (*types.RefactoringPlan, error) {
+	operation := &RollbackOperation{Request: req}
+
+	// For rollback, we might not need a workspace initially
+	// This is a simplified approach - in reality we'd need better state management
+	ws, err := e.LoadWorkspace(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load workspace for rollback: %w", err)
+	}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("rollback operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate rollback plan: %w", err)
 	}
 
 	// Analyze impact
