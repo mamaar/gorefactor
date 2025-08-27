@@ -3,7 +3,6 @@ package refactor
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -297,7 +296,7 @@ func (op *FixCyclesOperation) Execute(ws *types.Workspace) (*types.RefactoringPl
 			fixes := op.generateCycleFixes(cycle)
 			plan.Changes = append(plan.Changes, fixes...)
 			for _, fix := range fixes {
-				if !contains(plan.AffectedFiles, fix.File) {
+				if !containsString(plan.AffectedFiles, fix.File) {
 					plan.AffectedFiles = append(plan.AffectedFiles, fix.File)
 				}
 			}
@@ -541,7 +540,7 @@ func (op *AnalyzeDependenciesOperation) generateAnalysisReport(analysis *Depende
 }
 
 // Helper functions
-func contains(slice []string, item string) bool {
+func containsString(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {
 			return true

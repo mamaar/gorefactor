@@ -408,7 +408,6 @@ func (op *ConvertAliasesOperation) convertToFullNames(file *types.File) []types.
 			alias := importSpec.Name.Name
 			if alias != "." && alias != "_" {
 				importPath := strings.Trim(importSpec.Path.Value, `"`)
-				packageName := filepath.Base(importPath)
 
 				// Remove the alias from import
 				changes = append(changes, types.Change{
