@@ -39,15 +39,25 @@ var (
 
 // Subcommands
 var commands = map[string]func([]string){
-	"move":       moveCommand,
-	"rename":     renameCommand,
-	"extract":    extractCommand,
-	"inline":     inlineCommand,
-	"analyze":    analyzeCommand,
-	"complexity": complexityCommand,
-	"change":     changeCommand,
-	"delete":     deleteCommand,
-	"help":       helpCommand,
+	"move":               moveCommand,
+	"move-package":       movePackageCommand,
+	"move-dir":          moveDirCommand,
+	"move-packages":     movePackagesCommand,
+	"create-facade":     createFacadeCommand,
+	"generate-facades":  generateFacadesCommand,
+	"update-facades":    updateFacadesCommand,
+	"clean-aliases":     cleanAliasesCommand,
+	"standardize-imports": standardizeImportsCommand,
+	"resolve-alias-conflicts": resolveAliasConflictsCommand,
+	"convert-aliases":   convertAliasesCommand,
+	"rename":            renameCommand,
+	"extract":           extractCommand,
+	"inline":            inlineCommand,
+	"analyze":           analyzeCommand,
+	"complexity":        complexityCommand,
+	"change":            changeCommand,
+	"delete":            deleteCommand,
+	"help":              helpCommand,
 }
 
 func parseFlags() {
@@ -122,7 +132,13 @@ Examples:
   # Rename a function only within a specific package
   gorefactor --package-only rename oldFunc newFunc pkg/mypackage
 
-  # Rename an interface method and all its implementations
+  # Rename a method on a specific type
+  gorefactor rename MyStruct.Write MyStruct.WriteBytes
+
+  # Rename an interface method and all its implementations  
+  gorefactor --rename-implementations rename Writer.Write Writer.WriteBytes
+
+  # Rename an interface method (old syntax, still supported)
   gorefactor --rename-implementations rename Execute Process
 
   # Extract a method from lines 10-15 in main.go
@@ -224,6 +240,7 @@ func renameCommand(args []string) {
 	if len(args) < 2 {
 		fmt.Fprintf(os.Stderr, "Error: rename requires at least 2 arguments: <symbol> <new-name> [package]\n")
 		fmt.Fprintf(os.Stderr, "Usage: gorefactor rename OldName NewName [pkg/optional]\n")
+		fmt.Fprintf(os.Stderr, "       gorefactor rename TypeName.MethodName TypeName.NewMethodName [pkg/optional]\n")
 		os.Exit(1)
 	}
 
@@ -241,6 +258,30 @@ func renameCommand(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
 		os.Exit(1)
+	}
+
+	// Check if this is a qualified method name (TypeName.MethodName)
+	if strings.Contains(symbolName, ".") && strings.Contains(newName, ".") {
+		// Parse qualified method names
+		oldParts := strings.SplitN(symbolName, ".", 2)
+		newParts := strings.SplitN(newName, ".", 2)
+		
+		if len(oldParts) != 2 || len(newParts) != 2 {
+			fmt.Fprintf(os.Stderr, "Error: invalid qualified method name format. Use TypeName.MethodName\n")
+			os.Exit(1)
+		}
+		
+		oldTypeName, oldMethodName := oldParts[0], oldParts[1]
+		newTypeName, newMethodName := newParts[0], newParts[1]
+		
+		if oldTypeName != newTypeName {
+			fmt.Fprintf(os.Stderr, "Error: cannot rename method to different type. Type names must match: %s != %s\n", oldTypeName, newTypeName)
+			os.Exit(1)
+		}
+
+		// Handle method rename
+		handleMethodRename(engine, workspace, oldTypeName, oldMethodName, newMethodName, packagePath)
+		return
 	}
 
 	// Check if this is an interface method rename by searching for the symbol first
@@ -754,10 +795,11 @@ Examples:
 			fmt.Println(`Rename Command - Rename a symbol
 
 Usage: gorefactor rename <symbol> <new-name> [package]
+       gorefactor rename <TypeName.MethodName> <TypeName.NewMethodName> [package]
 
 Arguments:
-  symbol     The current name of the symbol
-  new-name   The new name for the symbol
+  symbol     The current name of the symbol, or TypeName.MethodName for methods
+  new-name   The new name for the symbol, or TypeName.NewMethodName for methods  
   package    Optional: limit renaming to this package only
 
 The rename command will:
@@ -766,10 +808,13 @@ The rename command will:
   - Ensure the new name is a valid Go identifier
   - Check for naming conflicts
   - Preserve type safety and interface compliance
+  - For qualified method names (TypeName.MethodName), only rename the method on that specific type
 
 Examples:
   gorefactor rename OldFunction NewFunction
   gorefactor rename User Account pkg/models
+  gorefactor rename MyStruct.Write MyStruct.WriteBytes
+  gorefactor --rename-implementations rename Writer.Write Writer.WriteBytes
   gorefactor --package-only rename helper utility pkg/internal`)
 
 		case "extract":
@@ -1652,7 +1697,475 @@ func findInterfaceContainingMethod(workspace *types.Workspace, methodSymbol *typ
 	return nil
 }
 
+// handleMethodRename handles the renaming of methods on specific types
+func handleMethodRename(engine refactor.RefactorEngine, workspace *types.Workspace, typeName, oldMethodName, newMethodName, packagePath string) {
+	// Create method rename request
+	request := types.RenameMethodRequest{
+		TypeName:              typeName,
+		MethodName:            oldMethodName,
+		NewMethodName:         newMethodName,
+		PackagePath:           packagePath,
+		UpdateImplementations: *flagRenameImplementations,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.RenameMethod(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating method refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	var description string
+	if *flagRenameImplementations {
+		description = fmt.Sprintf("Rename method %s.%s to %s (including implementations)", typeName, oldMethodName, newMethodName)
+	} else {
+		description = fmt.Sprintf("Rename method %s.%s to %s", typeName, oldMethodName, newMethodName)
+	}
+	
+	if packagePath != "" {
+		description += fmt.Sprintf(" in package %s", packagePath)
+	}
+	
+	processPlan(engine, plan, description)
+}
+
 // isExported checks if a symbol name is exported (starts with uppercase)
 func isExported(name string) bool {
 	return len(name) > 0 && unicode.IsUpper(rune(name[0]))
+}
+
+// New bulk operation commands
+
+func movePackageCommand(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Error: move-package requires 2 arguments: <source-package> <target-package>\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor move-package internal/shared/command pkg/command\n")
+		os.Exit(1)
+	}
+
+	sourcePackage := args[0]
+	targetPackage := args[1]
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create move package request
+	request := types.MovePackageRequest{
+		SourcePackage: sourcePackage,
+		TargetPackage: targetPackage,
+		CreateTarget:  *flagCreateTarget,
+		UpdateImports: true,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.MovePackage(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Move package %s to %s", sourcePackage, targetPackage))
+}
+
+func moveDirCommand(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Error: move-dir requires 2 arguments: <source-dir> <target-dir>\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor move-dir internal/shared pkg/infrastructure\n")
+		os.Exit(1)
+	}
+
+	sourceDir := args[0]
+	targetDir := args[1]
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create move dir request
+	request := types.MoveDirRequest{
+		SourceDir:         sourceDir,
+		TargetDir:         targetDir,
+		PreserveStructure: true,
+		UpdateImports:     true,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.MoveDir(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Move directory %s to %s", sourceDir, targetDir))
+}
+
+func movePackagesCommand(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Error: move-packages requires at least 2 arguments: <package1,package2,...> <target-dir>\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor move-packages internal/shared/command,internal/shared/events pkg/infrastructure/\n")
+		os.Exit(1)
+	}
+
+	packagesStr := args[0]
+	targetDir := args[1]
+
+	// Parse packages
+	packageNames := strings.Split(packagesStr, ",")
+	var packageMappings []types.PackageMapping
+	
+	for _, pkg := range packageNames {
+		pkg = strings.TrimSpace(pkg)
+		if pkg == "" {
+			continue
+		}
+		
+		// Extract package name from path for target
+		parts := strings.Split(pkg, "/")
+		packageName := parts[len(parts)-1]
+		targetPackage := filepath.Join(targetDir, packageName)
+		
+		packageMappings = append(packageMappings, types.PackageMapping{
+			SourcePackage: pkg,
+			TargetPackage: targetPackage,
+		})
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create move packages request
+	request := types.MovePackagesRequest{
+		Packages:      packageMappings,
+		TargetDir:     targetDir,
+		CreateTargets: *flagCreateTarget,
+		UpdateImports: true,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.MovePackages(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Move packages to %s", targetDir))
+}
+
+func createFacadeCommand(args []string) {
+	if len(args) < 3 {
+		fmt.Fprintf(os.Stderr, "Error: create-facade requires at least 3 arguments: <facade-package> --from <exports...>\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor create-facade pkg/commission --from modules/commission/models.Commission --from modules/commission/commands.CreateCommand\n")
+		os.Exit(1)
+	}
+
+	facadePackage := args[0]
+	
+	// Parse --from arguments
+	var exports []types.ExportSpec
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--from" && i+1 < len(args) {
+			exportStr := args[i+1]
+			parts := strings.Split(exportStr, ".")
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "Error: invalid export format '%s'. Use format: package.Symbol\n", exportStr)
+				os.Exit(1)
+			}
+			
+			exports = append(exports, types.ExportSpec{
+				SourcePackage: parts[0],
+				SymbolName:    parts[1],
+			})
+			i++ // skip the export argument
+		}
+	}
+
+	if len(exports) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no exports specified. Use --from package.Symbol format\n")
+		os.Exit(1)
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create facade request
+	request := types.CreateFacadeRequest{
+		TargetPackage: facadePackage,
+		Exports:       exports,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.CreateFacade(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Create facade package %s", facadePackage))
+}
+
+func generateFacadesCommand(args []string) {
+	if len(args) < 2 {
+		fmt.Fprintf(os.Stderr, "Error: generate-facades requires 2 arguments: <modules-dir> <target-dir>\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor generate-facades modules/ pkg/\n")
+		os.Exit(1)
+	}
+
+	modulesDir := args[0]
+	targetDir := args[1]
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create generate facades request
+	request := types.GenerateFacadesRequest{
+		ModulesDir:  modulesDir,
+		TargetDir:   targetDir,
+		ExportTypes: []string{"commands", "models", "events"}, // default export types
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.GenerateFacades(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Generate facades for modules in %s", modulesDir))
+}
+
+func updateFacadesCommand(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Error: update-facades requires 1 argument: <facade-dir>\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor update-facades pkg/\n")
+		os.Exit(1)
+	}
+
+	facadeDir := args[0]
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create update facades request
+	request := types.UpdateFacadesRequest{
+		FacadePackages: []string{facadeDir},
+		AutoDetect:     true,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.UpdateFacades(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Update facades in %s", facadeDir))
+}
+
+func cleanAliasesCommand(args []string) {
+	workspaceDir := "."
+	if len(args) > 0 {
+		workspaceDir = args[0]
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(workspaceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create clean aliases request
+	request := types.CleanAliasesRequest{
+		Workspace:         workspaceDir,
+		PreserveConflicts: true,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.CleanAliases(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, "Clean import aliases")
+}
+
+func standardizeImportsCommand(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Error: standardize-imports requires at least 1 argument: --alias pattern=alias\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor standardize-imports --alias events=myproject/pkg/events --alias command=myproject/pkg/command\n")
+		os.Exit(1)
+	}
+
+	// Parse alias rules
+	var rules []types.AliasRule
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--alias" && i+1 < len(args) {
+			ruleStr := args[i+1]
+			parts := strings.Split(ruleStr, "=")
+			if len(parts) != 2 {
+				fmt.Fprintf(os.Stderr, "Error: invalid alias rule format '%s'. Use format: alias=package\n", ruleStr)
+				os.Exit(1)
+			}
+			
+			rules = append(rules, types.AliasRule{
+				Alias:          parts[0],
+				PackagePattern: parts[1],
+			})
+			i++ // skip the rule argument
+		}
+	}
+
+	if len(rules) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no alias rules specified. Use --alias alias=package format\n")
+		os.Exit(1)
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create standardize imports request
+	request := types.StandardizeImportsRequest{
+		Workspace: *flagWorkspace,
+		Rules:     rules,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.StandardizeImports(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, "Standardize import aliases")
+}
+
+func resolveAliasConflictsCommand(args []string) {
+	workspaceDir := "."
+	if len(args) > 0 {
+		workspaceDir = args[0]
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(workspaceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create resolve alias conflicts request
+	request := types.ResolveAliasConflictsRequest{
+		Workspace: workspaceDir,
+		Strategy:  types.UseFullNames,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.ResolveAliasConflicts(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, "Resolve import alias conflicts")
+}
+
+func convertAliasesCommand(args []string) {
+	toFullNames := false
+	fromFullNames := false
+	workspaceDir := "."
+
+	// Parse arguments
+	for _, arg := range args {
+		switch arg {
+		case "--to-full-names":
+			toFullNames = true
+		case "--from-full-names":
+			fromFullNames = true
+		case "--workspace":
+			if len(args) > 1 {
+				workspaceDir = args[len(args)-1]
+			}
+		}
+	}
+
+	if !toFullNames && !fromFullNames {
+		toFullNames = true // default behavior
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(workspaceDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create convert aliases request
+	request := types.ConvertAliasesRequest{
+		Workspace:     workspaceDir,
+		ToFullNames:   toFullNames,
+		FromFullNames: fromFullNames,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.ConvertAliases(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	var description string
+	if toFullNames {
+		description = "Convert aliases to full package names"
+	} else {
+		description = "Convert full package names to aliases"
+	}
+	processPlan(engine, plan, description)
 }
