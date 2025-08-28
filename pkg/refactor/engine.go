@@ -45,6 +45,12 @@ type RefactorEngine interface {
 	StandardizeImports(ws *types.Workspace, req types.StandardizeImportsRequest) (*types.RefactoringPlan, error)
 	ResolveAliasConflicts(ws *types.Workspace, req types.ResolveAliasConflictsRequest) (*types.RefactoringPlan, error)
 	ConvertAliases(ws *types.Workspace, req types.ConvertAliasesRequest) (*types.RefactoringPlan, error)
+	
+	// Dependency graph operations
+	MoveByDependencies(ws *types.Workspace, req types.MoveByDependenciesRequest) (*types.RefactoringPlan, error)
+	OrganizeByLayers(ws *types.Workspace, req types.OrganizeByLayersRequest) (*types.RefactoringPlan, error)
+	FixCycles(ws *types.Workspace, req types.FixCyclesRequest) (*types.RefactoringPlan, error)
+	AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error)
 
 	// Analysis
 	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
@@ -1009,6 +1015,114 @@ func (e *DefaultEngine) ConvertAliases(ws *types.Workspace, req types.ConvertAli
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate convert aliases plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// MoveByDependencies implements moving symbols based on dependency analysis
+func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveByDependenciesRequest) (*types.RefactoringPlan, error) {
+	operation := &MoveByDependenciesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("move by dependencies operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate move by dependencies plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// OrganizeByLayers implements organizing packages by architectural layers
+func (e *DefaultEngine) OrganizeByLayers(ws *types.Workspace, req types.OrganizeByLayersRequest) (*types.RefactoringPlan, error) {
+	operation := &OrganizeByLayersOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("organize by layers operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate organize by layers plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// FixCycles implements detecting and fixing circular dependencies
+func (e *DefaultEngine) FixCycles(ws *types.Workspace, req types.FixCyclesRequest) (*types.RefactoringPlan, error) {
+	operation := &FixCyclesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("fix cycles operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate fix cycles plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// AnalyzeDependencies implements analyzing dependency flow
+func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error) {
+	operation := &AnalyzeDependenciesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("analyze dependencies operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate analyze dependencies plan: %w", err)
 	}
 
 	// Analyze impact

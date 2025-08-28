@@ -29,6 +29,10 @@ const (
 	StandardizeImportsOperation
 	ResolveAliasConflictsOperation
 	ConvertAliasesOperation
+	MoveByDependenciesOperation
+	OrganizeByLayersOperation
+	FixCyclesOperation
+	AnalyzeDependenciesOperation
 )
 
 // MoveSymbolRequest represents moving a symbol between packages
@@ -317,4 +321,36 @@ type ConvertAliasesRequest struct {
 	Workspace    string
 	ToFullNames  bool
 	FromFullNames bool
+}
+
+// MoveByDependenciesRequest represents moving symbols based on dependency analysis
+type MoveByDependenciesRequest struct {
+	Workspace      string
+	MoveSharedTo   string // e.g., "pkg/"
+	KeepInternal   []string // e.g., ["internal/app", "internal/handlers"]
+	AnalyzeOnly    bool // If true, only analyze and suggest moves
+}
+
+// OrganizeByLayersRequest represents organizing imports/packages by architectural layers
+type OrganizeByLayersRequest struct {
+	Workspace      string
+	DomainLayer    string // e.g., "modules/"
+	InfrastructureLayer string // e.g., "pkg/"
+	ApplicationLayer string // e.g., "internal/"
+	ReorderImports bool // Whether to reorder imports according to layers
+}
+
+// FixCyclesRequest represents detecting and fixing circular dependencies
+type FixCyclesRequest struct {
+	Workspace    string
+	AutoFix      bool // If true, attempt automatic fixes
+	OutputReport string // Optional: file to write cycle analysis report
+}
+
+// AnalyzeDependenciesRequest represents analyzing dependency flow
+type AnalyzeDependenciesRequest struct {
+	Workspace           string
+	DetectBackwardsDeps bool
+	SuggestMoves       bool
+	OutputFile         string // File to write analysis results
 }
