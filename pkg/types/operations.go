@@ -15,9 +15,20 @@ const (
 	RenameOperation
 	RenamePackageOperation
 	RenameInterfaceMethodOperation
+	RenameMethodOperation
 	ExtractOperation
 	InlineOperation
 	BatchOperation
+	MovePackageOperation
+	MoveDirOperation
+	MovePackagesOperation
+	CreateFacadeOperation
+	GenerateFacadesOperation
+	UpdateFacadesOperation
+	CleanAliasesOperation
+	StandardizeImportsOperation
+	ResolveAliasConflictsOperation
+	ConvertAliasesOperation
 )
 
 // MoveSymbolRequest represents moving a symbol between packages
@@ -52,6 +63,15 @@ type RenameInterfaceMethodRequest struct {
 	NewMethodName     string  // New method name
 	PackagePath       string  // Path to the package containing the interface (optional, "" means workspace-wide)
 	UpdateImplementations bool // Whether to update all implementations of the interface
+}
+
+// RenameMethodRequest represents renaming a method on a specific type (struct or interface)
+type RenameMethodRequest struct {
+	TypeName          string  // Name of the type (struct or interface) that owns the method
+	MethodName        string  // Current method name
+	NewMethodName     string  // New method name
+	PackagePath       string  // Path to the package containing the type (optional, "" means workspace-wide)
+	UpdateImplementations bool // For interfaces: whether to update all implementations
 }
 
 type RenameScope int
@@ -206,3 +226,95 @@ const (
 	RemoveImport
 	UpdateImport
 )
+
+// MovePackageRequest represents moving an entire package
+type MovePackageRequest struct {
+	SourcePackage string
+	TargetPackage string
+	CreateTarget  bool
+	UpdateImports bool
+}
+
+// MoveDirRequest represents moving a directory structure
+type MoveDirRequest struct {
+	SourceDir     string
+	TargetDir     string
+	PreserveStructure bool
+	UpdateImports bool
+}
+
+// MovePackagesRequest represents moving multiple packages atomically
+type MovePackagesRequest struct {
+	Packages      []PackageMapping
+	TargetDir     string
+	CreateTargets bool
+	UpdateImports bool
+}
+
+type PackageMapping struct {
+	SourcePackage string
+	TargetPackage string
+}
+
+// CreateFacadeRequest represents creating a facade package
+type CreateFacadeRequest struct {
+	TargetPackage string
+	Exports       []ExportSpec
+}
+
+type ExportSpec struct {
+	SourcePackage string
+	SymbolName    string
+	Alias         string // optional alias for the export
+}
+
+// GenerateFacadesRequest represents auto-generating facades for modules
+type GenerateFacadesRequest struct {
+	ModulesDir string
+	TargetDir  string
+	ExportTypes []string // e.g., "commands", "models", "events"
+}
+
+// UpdateFacadesRequest represents updating existing facades
+type UpdateFacadesRequest struct {
+	FacadePackages []string
+	AutoDetect     bool
+}
+
+// CleanAliasesRequest represents removing import aliases
+type CleanAliasesRequest struct {
+	Workspace      string
+	PreserveConflicts bool // keep aliases only where needed to resolve conflicts
+}
+
+// StandardizeImportsRequest represents standardizing import aliases
+type StandardizeImportsRequest struct {
+	Workspace string
+	Rules     []AliasRule
+}
+
+type AliasRule struct {
+	PackagePattern string // e.g., "github.com/user/repo/pkg/events"
+	Alias          string // e.g., "events"
+}
+
+// ResolveAliasConflictsRequest represents resolving import alias conflicts
+type ResolveAliasConflictsRequest struct {
+	Workspace string
+	Strategy  ConflictStrategy
+}
+
+type ConflictStrategy int
+
+const (
+	UseFullNames ConflictStrategy = iota
+	UseShortestUnique
+	UseCustomAlias
+)
+
+// ConvertAliasesRequest represents converting between aliased and non-aliased imports
+type ConvertAliasesRequest struct {
+	Workspace    string
+	ToFullNames  bool
+	FromFullNames bool
+}

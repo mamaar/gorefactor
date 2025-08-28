@@ -74,6 +74,9 @@ func (da *DependencyAnalyzer) AnalyzeImpact(op types.Operation) (*types.ImpactAn
 	case types.RenameInterfaceMethodOperation:
 		// For now, return a basic impact analysis for rename interface method operations
 		return impact, nil
+	case types.RenameMethodOperation:
+		// For now, return a basic impact analysis for rename method operations
+		return impact, nil
 	case types.ExtractOperation:
 		// For now, return a basic impact analysis for extract operations
 		return impact, nil

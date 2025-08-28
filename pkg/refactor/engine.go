@@ -20,6 +20,7 @@ type RefactorEngine interface {
 	RenameSymbol(ws *types.Workspace, req types.RenameSymbolRequest) (*types.RefactoringPlan, error)
 	RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error)
 	RenameInterfaceMethod(ws *types.Workspace, req types.RenameInterfaceMethodRequest) (*types.RefactoringPlan, error)
+	RenameMethod(ws *types.Workspace, req types.RenameMethodRequest) (*types.RefactoringPlan, error)
 	ExtractMethod(ws *types.Workspace, req types.ExtractMethodRequest) (*types.RefactoringPlan, error)
 	ExtractFunction(ws *types.Workspace, req types.ExtractFunctionRequest) (*types.RefactoringPlan, error)
 	ExtractInterface(ws *types.Workspace, req types.ExtractInterfaceRequest) (*types.RefactoringPlan, error)
@@ -28,6 +29,22 @@ type RefactorEngine interface {
 	InlineVariable(ws *types.Workspace, req types.InlineVariableRequest) (*types.RefactoringPlan, error)
 	InlineFunction(ws *types.Workspace, req types.InlineFunctionRequest) (*types.RefactoringPlan, error)
 	BatchRefactor(ws *types.Workspace, ops []types.Operation) (*types.RefactoringPlan, error)
+
+	// Bulk operations
+	MovePackage(ws *types.Workspace, req types.MovePackageRequest) (*types.RefactoringPlan, error)
+	MoveDir(ws *types.Workspace, req types.MoveDirRequest) (*types.RefactoringPlan, error)
+	MovePackages(ws *types.Workspace, req types.MovePackagesRequest) (*types.RefactoringPlan, error)
+	
+	// Facade operations
+	CreateFacade(ws *types.Workspace, req types.CreateFacadeRequest) (*types.RefactoringPlan, error)
+	GenerateFacades(ws *types.Workspace, req types.GenerateFacadesRequest) (*types.RefactoringPlan, error)
+	UpdateFacades(ws *types.Workspace, req types.UpdateFacadesRequest) (*types.RefactoringPlan, error)
+	
+	// Import alias operations
+	CleanAliases(ws *types.Workspace, req types.CleanAliasesRequest) (*types.RefactoringPlan, error)
+	StandardizeImports(ws *types.Workspace, req types.StandardizeImportsRequest) (*types.RefactoringPlan, error)
+	ResolveAliasConflicts(ws *types.Workspace, req types.ResolveAliasConflictsRequest) (*types.RefactoringPlan, error)
+	ConvertAliases(ws *types.Workspace, req types.ConvertAliasesRequest) (*types.RefactoringPlan, error)
 
 	// Analysis
 	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
@@ -220,6 +237,33 @@ func (e *DefaultEngine) RenameInterfaceMethod(ws *types.Workspace, req types.Ren
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate rename interface method plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// RenameMethod implements renaming methods on specific types (structs or interfaces)
+func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethodRequest) (*types.RefactoringPlan, error) {
+	operation := &RenameMethodOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("rename method operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate rename method plan: %w", err)
 	}
 
 	// Analyze impact
@@ -705,4 +749,276 @@ func (e *DefaultEngine) findOperationConflicts(changes []types.Change) []string 
 	}
 
 	return conflicts
+}
+
+// Bulk operation implementations
+
+// MovePackage implements moving entire packages
+func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRequest) (*types.RefactoringPlan, error) {
+	operation := &MovePackageOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("move package operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate move package plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// MoveDir implements moving directory structures
+func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (*types.RefactoringPlan, error) {
+	operation := &MoveDirOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("move directory operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate move directory plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// MovePackages implements moving multiple packages atomically
+func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackagesRequest) (*types.RefactoringPlan, error) {
+	operation := &MovePackagesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("move packages operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate move packages plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// CreateFacade implements creating facade packages
+func (e *DefaultEngine) CreateFacade(ws *types.Workspace, req types.CreateFacadeRequest) (*types.RefactoringPlan, error) {
+	operation := &CreateFacadeOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("create facade operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate create facade plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// GenerateFacades implements auto-generating facades
+func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateFacadesRequest) (*types.RefactoringPlan, error) {
+	operation := &GenerateFacadesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("generate facades operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate facades plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// UpdateFacades implements updating existing facades
+func (e *DefaultEngine) UpdateFacades(ws *types.Workspace, req types.UpdateFacadesRequest) (*types.RefactoringPlan, error) {
+	operation := &UpdateFacadesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("update facades operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate update facades plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// CleanAliases implements cleaning import aliases
+func (e *DefaultEngine) CleanAliases(ws *types.Workspace, req types.CleanAliasesRequest) (*types.RefactoringPlan, error) {
+	operation := &CleanAliasesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("clean aliases operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate clean aliases plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// StandardizeImports implements standardizing import aliases
+func (e *DefaultEngine) StandardizeImports(ws *types.Workspace, req types.StandardizeImportsRequest) (*types.RefactoringPlan, error) {
+	operation := &StandardizeImportsOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("standardize imports operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate standardize imports plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// ResolveAliasConflicts implements resolving import alias conflicts
+func (e *DefaultEngine) ResolveAliasConflicts(ws *types.Workspace, req types.ResolveAliasConflictsRequest) (*types.RefactoringPlan, error) {
+	operation := &ResolveAliasConflictsOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("resolve alias conflicts operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate resolve alias conflicts plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// ConvertAliases implements converting between aliased and non-aliased imports
+func (e *DefaultEngine) ConvertAliases(ws *types.Workspace, req types.ConvertAliasesRequest) (*types.RefactoringPlan, error) {
+	operation := &ConvertAliasesOperation{Request: req}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("convert aliases operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate convert aliases plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
 }
