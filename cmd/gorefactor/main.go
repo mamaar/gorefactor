@@ -54,6 +54,10 @@ var commands = map[string]func([]string){
 	"organize-by-layers": organizeByLayersCommand,
 	"fix-cycles":        fixCyclesCommand,
 	"analyze-dependencies": analyzeDependenciesCommand,
+	"batch":             batchCommand,
+	"plan":              planCommand,
+	"execute":           executeCommand,
+	"rollback":          rollbackCommand,
 	"rename":            renameCommand,
 	"extract":           extractCommand,
 	"inline":            inlineCommand,
@@ -2411,4 +2415,237 @@ func analyzeDependenciesCommand(args []string) {
 
 	// Process the plan
 	processPlan(engine, plan, "Analyze dependency flow and suggest improvements")
+}
+
+func batchCommand(args []string) {
+	operations := []string{}
+	rollbackOnFailure := false
+	dryRun := false
+
+	// Parse arguments
+	i := 0
+	for i < len(args) {
+		switch args[i] {
+		case "--operation":
+			if i+1 < len(args) {
+				operations = append(operations, args[i+1])
+				i += 2
+			} else {
+				i++
+			}
+		case "--rollback-on-failure":
+			rollbackOnFailure = true
+			i++
+		case "--dry-run":
+			dryRun = true
+			i++
+		default:
+			i++
+		}
+	}
+
+	if len(operations) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no operations specified for batch execution\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor batch --operation \"move-package src dest\" --operation \"clean-aliases\" [--rollback-on-failure] [--dry-run]\n")
+		os.Exit(1)
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create batch operation request
+	request := types.BatchOperationRequest{
+		Operations:       operations,
+		RollbackOnFailure: rollbackOnFailure,
+		DryRun:           dryRun,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.BatchOperations(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	description := fmt.Sprintf("Execute %d operations atomically", len(operations))
+	if dryRun {
+		description = "Preview batch operations"
+	}
+	processPlan(engine, plan, description)
+}
+
+func planCommand(args []string) {
+	outputFile := ""
+	dryRun := false
+	operations := []types.PlanStep{}
+
+	// Parse arguments
+	i := 0
+	for i < len(args) {
+		switch args[i] {
+		case "--output":
+			if i+1 < len(args) {
+				outputFile = args[i+1]
+				i += 2
+			} else {
+				i++
+			}
+		case "--dry-run":
+			dryRun = true
+			i++
+		case "--move-shared":
+			if i+2 < len(args) {
+				operations = append(operations, types.PlanStep{
+					Type: "move-shared",
+					Args: map[string]string{
+						"from": args[i+1],
+						"to":   args[i+2],
+					},
+				})
+				i += 3
+			} else {
+				i++
+			}
+		case "--create-facades":
+			if i+2 < len(args) {
+				operations = append(operations, types.PlanStep{
+					Type: "create-facades",
+					Args: map[string]string{
+						"modules": args[i+1],
+						"target":  args[i+2],
+					},
+				})
+				i += 3
+			} else {
+				i++
+			}
+		default:
+			i++
+		}
+	}
+
+	if outputFile == "" {
+		outputFile = "refactor-plan.json"
+	}
+
+	if len(operations) == 0 {
+		fmt.Fprintf(os.Stderr, "Error: no operations specified for plan creation\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor plan --move-shared src dest --create-facades modules target --output plan.json [--dry-run]\n")
+		os.Exit(1)
+	}
+
+	// Load workspace
+	engine := createEngineWithFlags()
+	workspace, err := engine.LoadWorkspace(*flagWorkspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading workspace: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Create plan operation request
+	request := types.PlanOperationRequest{
+		Operations: operations,
+		OutputFile: outputFile,
+		DryRun:     dryRun,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.CreatePlan(workspace, request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating refactoring plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	description := fmt.Sprintf("Create refactoring plan with %d steps", len(operations))
+	processPlan(engine, plan, description)
+}
+
+func executeCommand(args []string) {
+	if len(args) < 1 {
+		fmt.Fprintf(os.Stderr, "Error: execute requires a plan file\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor execute refactor-plan.json\n")
+		os.Exit(1)
+	}
+
+	planFile := args[0]
+
+	// Create execute operation request
+	request := types.ExecuteOperationRequest{
+		PlanFile: planFile,
+	}
+
+	// Load workspace (needed for engine operations)
+	engine := createEngineWithFlags()
+
+	// Generate refactoring plan
+	plan, err := engine.ExecutePlanFromFile(request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error executing plan from file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	processPlan(engine, plan, fmt.Sprintf("Execute refactoring plan from %s", planFile))
+}
+
+func rollbackCommand(args []string) {
+	lastBatch := false
+	toStep := 0
+
+	// Parse arguments
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--last-batch":
+			lastBatch = true
+		case "--to-step":
+			if i+1 < len(args) {
+				var err error
+				toStep, err = strconv.Atoi(args[i+1])
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error: invalid step number: %s\n", args[i+1])
+					os.Exit(1)
+				}
+				i++
+			}
+		}
+	}
+
+	if !lastBatch && toStep <= 0 {
+		fmt.Fprintf(os.Stderr, "Error: must specify either --last-batch or --to-step N\n")
+		fmt.Fprintf(os.Stderr, "Usage: gorefactor rollback --last-batch\n")
+		fmt.Fprintf(os.Stderr, "       gorefactor rollback --to-step 5\n")
+		os.Exit(1)
+	}
+
+	// Load workspace (needed for engine operations)
+	engine := createEngineWithFlags()
+
+	// Create rollback operation request
+	request := types.RollbackOperationRequest{
+		LastBatch: lastBatch,
+		ToStep:    toStep,
+	}
+
+	// Generate refactoring plan
+	plan, err := engine.RollbackOperations(request)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating rollback plan: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Process the plan
+	description := "Rollback operations"
+	if lastBatch {
+		description = "Rollback last batch operation"
+	} else {
+		description = fmt.Sprintf("Rollback to step %d", toStep)
+	}
+	processPlan(engine, plan, description)
 }

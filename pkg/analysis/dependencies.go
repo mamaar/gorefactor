@@ -89,6 +89,18 @@ func (da *DependencyAnalyzer) AnalyzeImpact(op types.Operation) (*types.ImpactAn
 	case types.AnalyzeDependenciesOperation:
 		// For now, return a basic impact analysis for analyze dependencies operations
 		return impact, nil
+	case types.BatchOperations:
+		// For now, return a basic impact analysis for batch operations
+		return impact, nil
+	case types.PlanOperation:
+		// For now, return a basic impact analysis for plan operations
+		return impact, nil
+	case types.ExecuteOperation:
+		// For now, return a basic impact analysis for execute operations
+		return impact, nil
+	case types.RollbackOperation:
+		// For now, return a basic impact analysis for rollback operations
+		return impact, nil
 	case types.ExtractOperation:
 		// For now, return a basic impact analysis for extract operations
 		return impact, nil
