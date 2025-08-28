@@ -107,6 +107,39 @@ func (da *DependencyAnalyzer) AnalyzeImpact(op types.Operation) (*types.ImpactAn
 	case types.InlineOperation:
 		// For now, return a basic impact analysis for inline operations
 		return impact, nil
+	case types.MovePackageOperation:
+		// For now, return a basic impact analysis for move package operations
+		return impact, nil
+	case types.MoveDirOperation:
+		// For now, return a basic impact analysis for move dir operations
+		return impact, nil
+	case types.MovePackagesOperation:
+		// For now, return a basic impact analysis for move packages operations
+		return impact, nil
+	case types.CreateFacadeOperation:
+		// For now, return a basic impact analysis for create facade operations
+		return impact, nil
+	case types.GenerateFacadesOperation:
+		// For now, return a basic impact analysis for generate facades operations
+		return impact, nil
+	case types.UpdateFacadesOperation:
+		// For now, return a basic impact analysis for update facades operations
+		return impact, nil
+	case types.CleanAliasesOperation:
+		// For now, return a basic impact analysis for clean aliases operations
+		return impact, nil
+	case types.StandardizeImportsOperation:
+		// For now, return a basic impact analysis for standardize imports operations
+		return impact, nil
+	case types.ResolveAliasConflictsOperation:
+		// For now, return a basic impact analysis for resolve alias conflicts operations
+		return impact, nil
+	case types.ConvertAliasesOperation:
+		// For now, return a basic impact analysis for convert aliases operations
+		return impact, nil
+	case types.BatchOperation:
+		// For now, return a basic impact analysis for batch operations
+		return impact, nil
 	default:
 		return impact, &types.RefactorError{
 			Type:    types.InvalidOperation,
