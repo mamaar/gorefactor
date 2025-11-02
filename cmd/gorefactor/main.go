@@ -39,6 +39,7 @@ func registerCommands() {
 	runner.RegisterCommand("extract", commands.ExtractCommand)
 	runner.RegisterCommand("inline", commands.InlineCommand)
 	runner.RegisterCommand("rename", commands.RenameCommand)
+	runner.RegisterCommand("rename-package", commands.RenamePackageCommand)
 	
 	// Most complex commands (symbol and package movement)
 	runner.RegisterCommand("move", commands.MoveCommand)

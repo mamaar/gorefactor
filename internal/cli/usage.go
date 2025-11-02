@@ -19,6 +19,9 @@ Basic Commands:
   rename <symbol> <new-name> [package]
     Rename a symbol (optionally limited to a specific package)
 
+  rename-package <old-name> <new-name> <package-path>
+    Rename a package and update all references
+
   extract <type> [arguments...]
     Extract method, function, interface, variable, or block
     Types: method, function, interface, variable, block
@@ -112,6 +115,9 @@ Examples:
 
   # Rename a function only within a specific package
   gorefactor --package-only rename oldFunc newFunc pkg/mypackage
+
+  # Rename a package and update all imports
+  gorefactor rename-package auth authentication internal/auth
 
   # Rename a method on a specific type
   gorefactor rename MyStruct.Write MyStruct.WriteBytes
