@@ -1,8 +1,6 @@
 package analysis
 
 import (
-	"fmt"
-
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -51,6 +49,8 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, er
 
 // AnalyzeImpact analyzes impact of a potential change
 func (da *DependencyAnalyzer) AnalyzeImpact(op types.Operation) (*types.ImpactAnalysis, error) {
+	// For now, return a basic impact analysis for all operations
+	// TODO: Implement operation-specific impact analysis
 	impact := &types.ImpactAnalysis{
 		AffectedPackages: make([]string, 0),
 		AffectedFiles:    make([]string, 0),
@@ -58,94 +58,7 @@ func (da *DependencyAnalyzer) AnalyzeImpact(op types.Operation) (*types.ImpactAn
 		PotentialIssues:  make([]types.Issue, 0),
 		ImportChanges:    make([]types.ImportChange, 0),
 	}
-
-	// Use operation type to determine which analysis to run
-	opType := op.Type()
-	switch opType {
-	case types.MoveOperation:
-		// For now, return a basic impact analysis for move operations
-		return impact, nil
-	case types.RenameOperation:
-		// For now, return a basic impact analysis for rename operations
-		return impact, nil
-	case types.RenamePackageOperation:
-		// For now, return a basic impact analysis for rename package operations
-		return impact, nil
-	case types.RenameInterfaceMethodOperation:
-		// For now, return a basic impact analysis for rename interface method operations
-		return impact, nil
-	case types.RenameMethodOperation:
-		// For now, return a basic impact analysis for rename method operations
-		return impact, nil
-	case types.MoveByDependenciesOperation:
-		// For now, return a basic impact analysis for move by dependencies operations
-		return impact, nil
-	case types.OrganizeByLayersOperation:
-		// For now, return a basic impact analysis for organize by layers operations
-		return impact, nil
-	case types.FixCyclesOperation:
-		// For now, return a basic impact analysis for fix cycles operations
-		return impact, nil
-	case types.AnalyzeDependenciesOperation:
-		// For now, return a basic impact analysis for analyze dependencies operations
-		return impact, nil
-	case types.BatchOperations:
-		// For now, return a basic impact analysis for batch operations
-		return impact, nil
-	case types.PlanOperation:
-		// For now, return a basic impact analysis for plan operations
-		return impact, nil
-	case types.ExecuteOperation:
-		// For now, return a basic impact analysis for execute operations
-		return impact, nil
-	case types.RollbackOperation:
-		// For now, return a basic impact analysis for rollback operations
-		return impact, nil
-	case types.ExtractOperation:
-		// For now, return a basic impact analysis for extract operations
-		return impact, nil
-	case types.InlineOperation:
-		// For now, return a basic impact analysis for inline operations
-		return impact, nil
-	case types.MovePackageOperation:
-		// For now, return a basic impact analysis for move package operations
-		return impact, nil
-	case types.MoveDirOperation:
-		// For now, return a basic impact analysis for move dir operations
-		return impact, nil
-	case types.MovePackagesOperation:
-		// For now, return a basic impact analysis for move packages operations
-		return impact, nil
-	case types.CreateFacadeOperation:
-		// For now, return a basic impact analysis for create facade operations
-		return impact, nil
-	case types.GenerateFacadesOperation:
-		// For now, return a basic impact analysis for generate facades operations
-		return impact, nil
-	case types.UpdateFacadesOperation:
-		// For now, return a basic impact analysis for update facades operations
-		return impact, nil
-	case types.CleanAliasesOperation:
-		// For now, return a basic impact analysis for clean aliases operations
-		return impact, nil
-	case types.StandardizeImportsOperation:
-		// For now, return a basic impact analysis for standardize imports operations
-		return impact, nil
-	case types.ResolveAliasConflictsOperation:
-		// For now, return a basic impact analysis for resolve alias conflicts operations
-		return impact, nil
-	case types.ConvertAliasesOperation:
-		// For now, return a basic impact analysis for convert aliases operations
-		return impact, nil
-	case types.BatchOperation:
-		// For now, return a basic impact analysis for batch operations
-		return impact, nil
-	default:
-		return impact, &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("unsupported operation type: %v", opType),
-		}
-	}
+	return impact, nil
 }
 
 // DetectCycles detects import cycles in package graph
