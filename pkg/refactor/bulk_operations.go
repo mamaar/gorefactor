@@ -112,25 +112,139 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 		Reversible:    true,
 	}
 
-	// Placeholder implementation - this would need to:
-	// 1. Find all packages in source directory
-	// 2. Create corresponding packages in target directory
-	// 3. Update all import paths
-	// 4. Move file contents
+	// Step 1: Find all packages in source directory
+	sourcePackages := make(map[string]*types.Package)
+	sourceDirPath := filepath.Join(ws.RootPath, op.Request.SourceDir)
+	
+	for packagePath, pkg := range ws.Packages {
+		// Check if the package's directory is within the source directory
+		if strings.HasPrefix(pkg.Dir, sourceDirPath) {
+			sourcePackages[packagePath] = pkg
+		}
+	}
 
-	plan.Changes = append(plan.Changes, types.Change{
-		File:        fmt.Sprintf("%s/moved.md", op.Request.TargetDir),
-		Start:       0,
-		End:         0,
-		OldText:     "",
-		NewText:     fmt.Sprintf("# Directory moved from %s\n", op.Request.SourceDir),
-		Description: fmt.Sprintf("Create placeholder for directory move from %s to %s", op.Request.SourceDir, op.Request.TargetDir),
-	})
+	if len(sourcePackages) == 0 {
+		return nil, fmt.Errorf("no packages found in source directory %s", op.Request.SourceDir)
+	}
 
-	plan.AffectedFiles = []string{fmt.Sprintf("%s/moved.md", op.Request.TargetDir)}
+	// Step 2: Generate file move changes for each package
+	for _, pkg := range sourcePackages {
+		// Move each file in the package
+		for _, file := range pkg.Files {
+			if len(file.OriginalContent) == 0 {
+				continue // Skip empty files
+			}
+			
+			// Calculate target file path by replacing source dir with target dir in the file path
+			sourceDirPath := filepath.Join(ws.RootPath, op.Request.SourceDir)
+			targetDirPath := filepath.Join(ws.RootPath, op.Request.TargetDir)
+			
+			if !strings.HasPrefix(file.Path, sourceDirPath) {
+				continue // Skip files not in source directory
+			}
+			
+			// Get the relative path from source directory
+			relativePath := strings.TrimPrefix(file.Path, sourceDirPath+string(filepath.Separator))
+			targetFilePath := filepath.Join(targetDirPath, relativePath)
+			
+			// Create file move changes
+			// 1. Create file in target location
+			plan.Changes = append(plan.Changes, types.Change{
+				File:        targetFilePath,
+				Start:       0,
+				End:         0,
+				OldText:     "",
+				NewText:     string(file.OriginalContent),
+				Description: fmt.Sprintf("Move file from %s to %s", file.Path, targetFilePath),
+			})
+			
+			// 2. Remove file from source location
+			plan.Changes = append(plan.Changes, types.Change{
+				File:        file.Path,
+				Start:       0,
+				End:         len(file.OriginalContent),
+				OldText:     string(file.OriginalContent),
+				NewText:     "",
+				Description: fmt.Sprintf("Remove file %s (moved to %s)", file.Path, targetFilePath),
+			})
+			
+			plan.AffectedFiles = append(plan.AffectedFiles, file.Path, targetFilePath)
+		}
+	}
+
+	// Step 3: Update import paths in all other files
+	if op.Request.UpdateImports {
+		for packagePath, pkg := range ws.Packages {
+			// Skip packages we're moving
+			if strings.HasPrefix(packagePath, op.Request.SourceDir) {
+				continue
+			}
+			
+			// Check each file for imports that need updating
+			for _, file := range pkg.Files {
+				changes := op.generateImportPathUpdates(file, ws)
+				plan.Changes = append(plan.Changes, changes...)
+				for _, change := range changes {
+					if !contains(plan.AffectedFiles, change.File) {
+						plan.AffectedFiles = append(plan.AffectedFiles, change.File)
+					}
+				}
+			}
+		}
+	}
 
 	return plan, nil
 }
+
+// generateImportPathUpdates finds and updates import statements that reference the moved directory
+func (op *MoveDirOperation) generateImportPathUpdates(file *types.File, ws *types.Workspace) []types.Change {
+	var changes []types.Change
+	
+	if len(file.OriginalContent) == 0 {
+		return changes
+	}
+	
+	content := string(file.OriginalContent)
+	lines := strings.Split(content, "\n")
+	
+	// Find import statements that need updating
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		
+		// Look for import statements containing the source directory
+		if strings.Contains(trimmed, fmt.Sprintf(`"%s/`, op.Request.SourceDir)) ||
+		   strings.Contains(trimmed, fmt.Sprintf(`"%s"`, op.Request.SourceDir)) {
+			
+			// Calculate line position in bytes
+			lineStart := 0
+			for j := 0; j < i; j++ {
+				lineStart += len(lines[j]) + 1 // +1 for newline
+			}
+			
+			// Replace the source directory with target directory in the import path
+			newLine := strings.ReplaceAll(line, 
+				fmt.Sprintf(`"%s/`, op.Request.SourceDir),
+				fmt.Sprintf(`"%s/`, op.Request.TargetDir))
+			newLine = strings.ReplaceAll(newLine,
+				fmt.Sprintf(`"%s"`, op.Request.SourceDir),
+				fmt.Sprintf(`"%s"`, op.Request.TargetDir))
+			
+			if newLine != line {
+				changes = append(changes, types.Change{
+					File:        file.Path,
+					Start:       lineStart,
+					End:         lineStart + len(line),
+					OldText:     line,
+					NewText:     newLine,
+					Description: fmt.Sprintf("Update import path from %s to %s", op.Request.SourceDir, op.Request.TargetDir),
+				})
+			}
+		}
+	}
+	
+	return changes
+}
+
 
 // MovePackagesOperation implements moving multiple packages atomically
 type MovePackagesOperation struct {

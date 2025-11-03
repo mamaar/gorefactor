@@ -59,6 +59,29 @@ Examples:
   gorefactor --rename-implementations rename Writer.Write Writer.WriteBytes
   gorefactor --package-only rename helper utility pkg/internal`)
 
+		case "rename-package":
+			fmt.Println(`Rename Package Command - Rename a package
+
+Usage: gorefactor rename-package <old-name> <new-name> <package-path>
+
+Arguments:
+  old-name      The current package name  
+  new-name      The new package name
+  package-path  The path to the package directory
+
+The rename-package command will:
+  - Update package declarations in all files within the package
+  - Update import statements in other packages that reference this package
+  - Ensure the new name is a valid Go identifier
+  - Check for naming conflicts
+  - Preserve compilation and type safety
+
+Examples:
+  gorefactor rename-package auth authentication internal/auth
+  gorefactor rename-package utils utilities pkg/utils
+  gorefactor rename-package models domain internal/models
+  gorefactor --dry-run rename-package old new pkg/path/to/package`)
+
 		case "extract":
 			fmt.Println(`Extract Command - Extract method, function, interface, or variable
 
