@@ -11,12 +11,8 @@ import (
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
-// ProcessPlan handles the common logic for processing refactoring plans
-func ProcessPlan(engine refactor.RefactorEngine, plan *types.RefactoringPlan, description string) {
-	// Check for issues
-	hasErrors := false
-	hasWarnings := false
-
+// analyzeIssues checks a plan for errors and warnings
+func analyzeIssues(plan *types.RefactoringPlan) (hasErrors, hasWarnings bool) {
 	if plan.Impact != nil && len(plan.Impact.PotentialIssues) > 0 {
 		for _, issue := range plan.Impact.PotentialIssues {
 			switch issue.Severity {
@@ -27,16 +23,43 @@ func ProcessPlan(engine refactor.RefactorEngine, plan *types.RefactoringPlan, de
 			}
 		}
 	}
+	return hasErrors, hasWarnings
+}
 
-	// Display plan information
-	if *cli.GlobalFlags.Json {
-		OutputJSON(plan)
-		if hasErrors {
-			os.Exit(1)
-		}
+// handleJSONOutput outputs the plan as JSON and exits if there are errors
+func handleJSONOutput(plan *types.RefactoringPlan, hasErrors bool) {
+	OutputJSON(plan)
+	if hasErrors {
+		os.Exit(1)
+	}
+}
+
+// displayIssues formats and displays issues with severity prefixes
+func displayIssues(issues []types.Issue) {
+	if len(issues) == 0 {
 		return
 	}
 
+	fmt.Printf("\nIssues Found:\n")
+	for _, issue := range issues {
+		prefix := "  "
+		switch issue.Severity {
+		case types.Error:
+			prefix = "  ERROR: "
+		case types.Warning:
+			prefix = "  WARN:  "
+		case types.Info:
+			prefix = "  INFO:  "
+		}
+		fmt.Printf("%s%s\n", prefix, issue.Description)
+		if issue.File != "" {
+			fmt.Printf("        at %s:%d\n", issue.File, issue.Line)
+		}
+	}
+}
+
+// displayPlanSummary shows the plan description, affected files, changes, and issues
+func displayPlanSummary(plan *types.RefactoringPlan, description string) {
 	fmt.Printf("Refactoring Plan: %s\n", description)
 	fmt.Printf("=================\n")
 
@@ -60,26 +83,13 @@ func ProcessPlan(engine refactor.RefactorEngine, plan *types.RefactoringPlan, de
 	}
 
 	// Show issues
-	if plan.Impact != nil && len(plan.Impact.PotentialIssues) > 0 {
-		fmt.Printf("\nIssues Found:\n")
-		for _, issue := range plan.Impact.PotentialIssues {
-			prefix := "  "
-			switch issue.Severity {
-			case types.Error:
-				prefix = "  ERROR: "
-			case types.Warning:
-				prefix = "  WARN:  "
-			case types.Info:
-				prefix = "  INFO:  "
-			}
-			fmt.Printf("%s%s\n", prefix, issue.Description)
-			if issue.File != "" {
-				fmt.Printf("        at %s:%d\n", issue.File, issue.Line)
-			}
-		}
+	if plan.Impact != nil {
+		displayIssues(plan.Impact.PotentialIssues)
 	}
+}
 
-	// Check if we should proceed
+// checkProceedConditions validates if we can proceed with the refactoring
+func checkProceedConditions(hasErrors, hasWarnings bool) {
 	if hasErrors {
 		fmt.Fprintf(os.Stderr, "\nCannot proceed: errors found in refactoring plan\n")
 		os.Exit(1)
@@ -89,70 +99,108 @@ func ProcessPlan(engine refactor.RefactorEngine, plan *types.RefactoringPlan, de
 		fmt.Fprintf(os.Stderr, "\nWarnings found. Use --force to proceed anyway\n")
 		os.Exit(1)
 	}
+}
+
+// handleDryRun shows a preview of the changes without executing them
+func handleDryRun(engine refactor.RefactorEngine, plan *types.RefactoringPlan) {
+	fmt.Println("\nDry run mode - no changes will be applied")
+
+	// Show preview
+	preview, err := engine.PreviewPlan(plan)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating preview: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *cli.GlobalFlags.Verbose {
+		fmt.Printf("\nDetailed Preview:\n%s\n", preview)
+	}
+}
+
+// displayValidationError formats and displays validation errors
+func displayValidationError(err error) {
+	fmt.Fprintf(os.Stderr, "Error executing plan: %v\n", err)
+
+	// If it's a validation error, show the issues
+	if valErr, ok := err.(*types.ValidationError); ok {
+		fmt.Fprintf(os.Stderr, "\nValidation Issues:\n")
+		for i, issue := range valErr.Issues {
+			fmt.Fprintf(os.Stderr, "  %d. %s: %s\n", i+1, issue.Severity.String(), issue.Description)
+			if issue.File != "" {
+				fmt.Fprintf(os.Stderr, "     File: %s", issue.File)
+				if issue.Line > 0 {
+					fmt.Fprintf(os.Stderr, ":%d", issue.Line)
+				}
+				fmt.Fprintf(os.Stderr, "\n")
+			}
+		}
+	}
+}
+
+// createBackups creates backup files for all affected files
+func createBackups(affectedFiles []string) error {
+	fmt.Println("\nCreating backup files...")
+	serializer := refactor.NewSerializer()
+	backups := make(map[string]string)
+
+	for _, file := range affectedFiles {
+		backupPath, err := serializer.BackupFile(file)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating backup for %s: %v\n", file, err)
+			// Restore any backups we've already created
+			for original, backup := range backups {
+				_ = serializer.RestoreFromBackup(original, backup)
+			}
+			return err
+		}
+		backups[file] = backupPath
+		if *cli.GlobalFlags.Verbose {
+			fmt.Printf("  Backed up %s to %s\n", file, backupPath)
+		}
+	}
+	return nil
+}
+
+// handleExecution executes the refactoring plan with optional backup
+func handleExecution(engine refactor.RefactorEngine, plan *types.RefactoringPlan) {
+	// Create backups if requested
+	if *cli.GlobalFlags.Backup {
+		if err := createBackups(plan.AffectedFiles); err != nil {
+			os.Exit(1)
+		}
+	}
+
+	// Execute the plan
+	fmt.Println("\nApplying changes...")
+	err := engine.ExecutePlan(plan)
+	if err != nil {
+		displayValidationError(err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nRefactoring completed successfully!\n")
+	fmt.Printf("Modified %d files\n", len(plan.AffectedFiles))
+}
+
+// ProcessPlan handles the common logic for processing refactoring plans
+func ProcessPlan(engine refactor.RefactorEngine, plan *types.RefactoringPlan, description string) {
+	// Check for issues
+	hasErrors, hasWarnings := analyzeIssues(plan)
+
+	// Display plan information
+	if *cli.GlobalFlags.Json {
+		handleJSONOutput(plan, hasErrors)
+		return
+	}
+
+	displayPlanSummary(plan, description)
+	checkProceedConditions(hasErrors, hasWarnings)
 
 	// Preview or execute
 	if *cli.GlobalFlags.DryRun {
-		fmt.Println("\nDry run mode - no changes will be applied")
-
-		// Show preview
-		preview, err := engine.PreviewPlan(plan)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error generating preview: %v\n", err)
-			os.Exit(1)
-		}
-
-		if *cli.GlobalFlags.Verbose {
-			fmt.Printf("\nDetailed Preview:\n%s\n", preview)
-		}
+		handleDryRun(engine, plan)
 	} else {
-		// Create backups if requested
-		if *cli.GlobalFlags.Backup {
-			fmt.Println("\nCreating backup files...")
-			serializer := refactor.NewSerializer()
-			backups := make(map[string]string)
-
-			for _, file := range plan.AffectedFiles {
-				backupPath, err := serializer.BackupFile(file)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error creating backup for %s: %v\n", file, err)
-					// Restore any backups we've already created
-					for original, backup := range backups {
-						_ = serializer.RestoreFromBackup(original, backup)
-					}
-					os.Exit(1)
-				}
-				backups[file] = backupPath
-				if *cli.GlobalFlags.Verbose {
-					fmt.Printf("  Backed up %s to %s\n", file, backupPath)
-				}
-			}
-		}
-
-		// Execute the plan
-		fmt.Println("\nApplying changes...")
-		err := engine.ExecutePlan(plan)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error executing plan: %v\n", err)
-
-			// If it's a validation error, show the issues
-			if valErr, ok := err.(*types.ValidationError); ok {
-				fmt.Fprintf(os.Stderr, "\nValidation Issues:\n")
-				for i, issue := range valErr.Issues {
-					fmt.Fprintf(os.Stderr, "  %d. %s: %s\n", i+1, issue.Severity.String(), issue.Description)
-					if issue.File != "" {
-						fmt.Fprintf(os.Stderr, "     File: %s", issue.File)
-						if issue.Line > 0 {
-							fmt.Fprintf(os.Stderr, ":%d", issue.Line)
-						}
-						fmt.Fprintf(os.Stderr, "\n")
-					}
-				}
-			}
-			os.Exit(1)
-		}
-
-		fmt.Printf("\nRefactoring completed successfully!\n")
-		fmt.Printf("Modified %d files\n", len(plan.AffectedFiles))
+		handleExecution(engine, plan)
 	}
 }
 

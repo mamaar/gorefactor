@@ -216,78 +216,10 @@ func (op *RenameSymbolOperation) Type() types.OperationType {
 
 func (op *RenameSymbolOperation) Validate(ws *types.Workspace) error {
 	// Check that symbol exists
-	var targetSymbols []*types.Symbol
 	resolver := analysis.NewSymbolResolver(ws)
-
-	if op.Request.Package != "" {
-		// Package-scoped rename
-		if pkg, exists := ws.Packages[op.Request.Package]; exists {
-			if pkg.Symbols == nil {
-				return &types.RefactorError{
-					Type:    types.SymbolNotFound,
-					Message: fmt.Sprintf("package %s has no symbol table built", op.Request.Package),
-				}
-			}
-			
-			symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
-			if err != nil {
-				// Build detailed debug info
-				availableSymbols := make([]string, 0)
-				if pkg.Symbols != nil {
-					for name := range pkg.Symbols.Functions {
-						availableSymbols = append(availableSymbols, fmt.Sprintf("func %s", name))
-					}
-					for name := range pkg.Symbols.Types {
-						availableSymbols = append(availableSymbols, fmt.Sprintf("type %s", name))
-					}
-					for name := range pkg.Symbols.Variables {
-						availableSymbols = append(availableSymbols, fmt.Sprintf("var %s", name))
-					}
-					for name := range pkg.Symbols.Constants {
-						availableSymbols = append(availableSymbols, fmt.Sprintf("const %s", name))
-					}
-				}
-				
-				message := fmt.Sprintf("symbol not found: %s in package %s\nAvailable symbols (%d):", 
-					op.Request.SymbolName, op.Request.Package, len(availableSymbols))
-				if len(availableSymbols) == 0 {
-					message += "\n  (no symbols found - package may not be parsed correctly)"
-				} else {
-					for i, sym := range availableSymbols {
-						if i < 20 { // Limit output
-							message += fmt.Sprintf("\n  - %s", sym)
-						} else {
-							message += fmt.Sprintf("\n  ... and %d more", len(availableSymbols)-20)
-							break
-						}
-					}
-				}
-				
-				return &types.RefactorError{
-					Type:    types.SymbolNotFound,
-					Message: message,
-					Cause:   err,
-				}
-			}
-			targetSymbols = append(targetSymbols, symbol)
-		}
-	} else {
-		// Workspace-wide rename
-		for _, pkg := range ws.Packages {
-			if pkg.Symbols != nil {
-				symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
-				if err == nil {
-					targetSymbols = append(targetSymbols, symbol)
-				}
-			}
-		}
-	}
-
-	if len(targetSymbols) == 0 {
-		return &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: fmt.Sprintf("no symbols found with name: %s", op.Request.SymbolName),
-		}
+	targetSymbols, err := op.findTargetSymbols(ws, resolver)
+	if err != nil {
+		return err
 	}
 
 	// Check that new name is valid Go identifier
@@ -306,6 +238,104 @@ func (op *RenameSymbolOperation) Validate(ws *types.Workspace) error {
 	}
 
 	return nil
+}
+
+// buildAvailableSymbolsList creates a list of all symbols in a package for error messages
+func (op *RenameSymbolOperation) buildAvailableSymbolsList(pkg *types.Package) []string {
+	availableSymbols := make([]string, 0)
+	if pkg.Symbols == nil {
+		return availableSymbols
+	}
+
+	for name := range pkg.Symbols.Functions {
+		availableSymbols = append(availableSymbols, fmt.Sprintf("func %s", name))
+	}
+	for name := range pkg.Symbols.Types {
+		availableSymbols = append(availableSymbols, fmt.Sprintf("type %s", name))
+	}
+	for name := range pkg.Symbols.Variables {
+		availableSymbols = append(availableSymbols, fmt.Sprintf("var %s", name))
+	}
+	for name := range pkg.Symbols.Constants {
+		availableSymbols = append(availableSymbols, fmt.Sprintf("const %s", name))
+	}
+
+	return availableSymbols
+}
+
+// formatSymbolNotFoundError creates a detailed error message with available symbols
+func (op *RenameSymbolOperation) formatSymbolNotFoundError(symbolName, packageName string, availableSymbols []string, originalErr error) error {
+	message := fmt.Sprintf("symbol not found: %s in package %s\nAvailable symbols (%d):",
+		symbolName, packageName, len(availableSymbols))
+
+	if len(availableSymbols) == 0 {
+		message += "\n  (no symbols found - package may not be parsed correctly)"
+	} else {
+		for i, sym := range availableSymbols {
+			if i < 20 { // Limit output
+				message += fmt.Sprintf("\n  - %s", sym)
+			} else {
+				message += fmt.Sprintf("\n  ... and %d more", len(availableSymbols)-20)
+				break
+			}
+		}
+	}
+
+	return &types.RefactorError{
+		Type:    types.SymbolNotFound,
+		Message: message,
+		Cause:   originalErr,
+	}
+}
+
+// findTargetSymbols locates all symbols matching the request across packages
+func (op *RenameSymbolOperation) findTargetSymbols(ws *types.Workspace, resolver *analysis.SymbolResolver) ([]*types.Symbol, error) {
+	var targetSymbols []*types.Symbol
+
+	if op.Request.Package != "" {
+		// Package-scoped rename
+		pkg, exists := ws.Packages[op.Request.Package]
+		if !exists {
+			return nil, &types.RefactorError{
+				Type:    types.SymbolNotFound,
+				Message: fmt.Sprintf("package not found: %s", op.Request.Package),
+			}
+		}
+
+		if pkg.Symbols == nil {
+			return nil, &types.RefactorError{
+				Type:    types.SymbolNotFound,
+				Message: fmt.Sprintf("package %s has no symbol table built", op.Request.Package),
+			}
+		}
+
+		symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
+		if err != nil {
+			// Build detailed error message
+			availableSymbols := op.buildAvailableSymbolsList(pkg)
+			return nil, op.formatSymbolNotFoundError(op.Request.SymbolName, op.Request.Package, availableSymbols, err)
+		}
+		targetSymbols = append(targetSymbols, symbol)
+	} else {
+		// Workspace-wide rename
+		for _, pkg := range ws.Packages {
+			if pkg.Symbols != nil {
+				symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
+				if err == nil {
+					targetSymbols = append(targetSymbols, symbol)
+				}
+			}
+		}
+	}
+
+	if len(targetSymbols) == 0 {
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("no symbols found with name: %s", op.Request.SymbolName),
+		}
+	}
+
+	return targetSymbols, nil
 }
 
 func (op *RenameSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
