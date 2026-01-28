@@ -532,15 +532,43 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 				for i, line := range lines {
 					if strings.Contains(line, "func "+symbol.Name) {
 						start := i
-						end := start + 1
-						// Find the closing brace
-						for j := start + 1; j < len(lines); j++ {
-							if strings.Contains(lines[j], "}") && !strings.Contains(lines[j], "{") {
-								end = j + 1
+
+						// Include doc comments if present - look backwards for comment lines
+						for j := i - 1; j >= 0; j-- {
+							trimmed := strings.TrimSpace(lines[j])
+							if strings.HasPrefix(trimmed, "//") {
+								start = j
+							} else if trimmed == "" {
+								// Skip empty lines between comments and func
+								continue
+							} else {
 								break
 							}
 						}
-						// Calculate byte positions  
+
+						end := i + 1
+						braceCount := 0
+						foundOpenBrace := false
+
+						// Find the matching closing brace using proper brace counting
+						for j := i; j < len(lines); j++ {
+							for _, char := range lines[j] {
+								if char == '{' {
+									foundOpenBrace = true
+									braceCount++
+								} else if char == '}' && foundOpenBrace {
+									braceCount--
+									if braceCount == 0 {
+										end = j + 1
+										break
+									}
+								}
+							}
+							if braceCount == 0 && foundOpenBrace {
+								break
+							}
+						}
+						// Calculate byte positions
 						startByte := 0
 						for k := 0; k < start; k++ {
 							startByte += len(lines[k]) + 1 // +1 for newline
@@ -549,7 +577,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 						for k := start; k < end; k++ {
 							endByte += len(lines[k]) + 1 // +1 for newline
 						}
-						
+
 						change = types.Change{
 							File:        file.Path,
 							Start:       startByte,
@@ -683,15 +711,38 @@ func (op *MoveSymbolOperation) generateReferenceUpdateChange(ref *types.Referenc
 	if strings.HasSuffix(ref.File, filepath.Join(targetPackagePath, "*.go")) {
 		return nil, nil // No change needed for references in the same package
 	}
-	
+
+	// Read the file content to detect if this is a qualified reference
+	content, err := os.ReadFile(ref.File)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file %s: %w", ref.File, err)
+	}
+
 	oldRef := ref.Symbol.Name
 	newRef := targetPackageName + "." + ref.Symbol.Name
-
-	// Calculate positions based on the reference position
-	// Use the Position field from the reference for accurate positioning
-	startPos := int(ref.Position)
+	startPos := ref.Offset
 	endPos := startPos + len(oldRef)
-	
+
+	// Check if this is a qualified reference (e.g., pkg.Symbol)
+	// Look backwards for a dot and package name
+	if startPos > 0 && content[startPos-1] == '.' {
+		// Find the start of the package name
+		pkgStart := startPos - 2 // Position before the dot
+		for pkgStart >= 0 && (isIdentChar(content[pkgStart]) || content[pkgStart] == '_') {
+			pkgStart--
+		}
+		pkgStart++ // Move to first char of package name
+
+		// Extract the old package name
+		oldPkg := string(content[pkgStart : startPos-1])
+		if oldPkg != "" {
+			// This is a qualified reference - replace the whole thing
+			oldRef = oldPkg + "." + ref.Symbol.Name
+			startPos = pkgStart
+			// newRef stays as targetPackageName + "." + ref.Symbol.Name
+		}
+	}
+
 	change := &types.Change{
 		File:        ref.File,
 		Start:       startPos,
@@ -702,6 +753,11 @@ func (op *MoveSymbolOperation) generateReferenceUpdateChange(ref *types.Referenc
 	}
 
 	return change, nil
+}
+
+// isIdentChar returns true if the byte is a valid Go identifier character
+func isIdentChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
 func (op *MoveSymbolOperation) generateImportChanges(ws *types.Workspace, references []*types.Reference, targetPackagePath, targetPackageName string) []types.Change {
@@ -985,19 +1041,43 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 				// Find the function by searching for its signature in the source
 				for i, line := range lines {
 					if strings.Contains(line, "func "+symbol.Name) {
-						// Extract the entire function - this is simplified
+						// Extract the entire function using brace depth tracking
 						start := i
-						end := start + 1
-						// Find the closing brace (simplified)
-						for j := start + 1; j < len(lines); j++ {
-							if strings.Contains(lines[j], "}") && !strings.Contains(lines[j], "{") {
-								end = j + 1
+
+						// Include doc comments if present - look backwards for comment lines
+						for j := i - 1; j >= 0; j-- {
+							trimmed := strings.TrimSpace(lines[j])
+							if strings.HasPrefix(trimmed, "//") {
+								start = j
+							} else if trimmed == "" {
+								// Skip empty lines between comments and func
+								continue
+							} else {
 								break
 							}
 						}
-						sourceCode = strings.Join(lines[start:end], "\n")
-						found = true
-						return false
+
+						end := i + 1
+						braceCount := 0
+						foundOpenBrace := false
+
+						// Find the matching closing brace starting from func line
+						for j := i; j < len(lines); j++ {
+							for _, char := range lines[j] {
+								if char == '{' {
+									foundOpenBrace = true
+									braceCount++
+								} else if char == '}' && foundOpenBrace {
+									braceCount--
+									if braceCount == 0 {
+										end = j + 1
+										sourceCode = strings.Join(lines[start:end], "\n")
+										found = true
+										return false
+									}
+								}
+							}
+						}
 					}
 				}
 			}
