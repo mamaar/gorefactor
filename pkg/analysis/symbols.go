@@ -391,7 +391,7 @@ func (sr *SymbolResolver) identifierRefersToSymbol(ident *ast.Ident, file *types
 	if ident.Pos() == symbol.Position {
 		return false
 	}
-	
+
 	// Check if this identifier is part of a function declaration for the same symbol
 	var isDefinition bool
 	ast.Inspect(file.AST, func(n ast.Node) bool {
@@ -403,13 +403,94 @@ func (sr *SymbolResolver) identifierRefersToSymbol(ident *ast.Ident, file *types
 		}
 		return true
 	})
-	
+
 	if isDefinition {
 		return false
 	}
-	
-	// Simplified check - in a real implementation, this would need proper scope analysis
-	return ident.Name == symbol.Name
+
+	// Name must match
+	if ident.Name != symbol.Name {
+		return false
+	}
+
+	// Check if this is a qualified reference (pkg.Symbol)
+	if pkgAlias := sr.getQualifyingPackage(ident, file); pkgAlias != "" {
+		return sr.importAliasRefersToPackage(pkgAlias, file, symbol.Package)
+	}
+
+	// Unqualified reference - must be in the same package
+	return sr.isSamePackage(file.Package, symbol.Package)
+}
+
+// getQualifyingPackage checks if ident is the selector in pkg.ident and returns the package alias
+func (sr *SymbolResolver) getQualifyingPackage(ident *ast.Ident, file *types.File) string {
+	var pkgAlias string
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if selector, ok := n.(*ast.SelectorExpr); ok {
+			if selector.Sel == ident {
+				// This identifier is the selected name (e.g., Symbol in pkg.Symbol)
+				if pkgIdent, ok := selector.X.(*ast.Ident); ok {
+					pkgAlias = pkgIdent.Name
+					return false
+				}
+			}
+		}
+		return true
+	})
+	return pkgAlias
+}
+
+// importAliasRefersToPackage checks if import alias refers to target package
+func (sr *SymbolResolver) importAliasRefersToPackage(alias string, file *types.File, targetPkg string) bool {
+	for _, imp := range file.AST.Imports {
+		importPath := strings.Trim(imp.Path.Value, `"`)
+
+		var importAlias string
+		if imp.Name != nil {
+			importAlias = imp.Name.Name
+		} else {
+			// Default import - use last part of path
+			parts := strings.Split(importPath, "/")
+			importAlias = parts[len(parts)-1]
+		}
+
+		if importAlias == alias {
+			// Check if this import path matches the target package
+			// Try direct match with import path
+			if importPath == targetPkg {
+				return true
+			}
+			// Try looking up the filesystem path via ImportToPath
+			if sr.workspace != nil && sr.workspace.ImportToPath != nil {
+				if fsPath, ok := sr.workspace.ImportToPath[importPath]; ok {
+					if fsPath == targetPkg {
+						return true
+					}
+				}
+			}
+			// Check if target package's import path matches
+			if pkg := sr.workspace.Packages[targetPkg]; pkg != nil && pkg.ImportPath == importPath {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSamePackage checks if the file's package matches the target package path
+func (sr *SymbolResolver) isSamePackage(filePkg *types.Package, targetPkg string) bool {
+	if filePkg == nil {
+		return false
+	}
+	// Check filesystem path
+	if filePkg.Path == targetPkg {
+		return true
+	}
+	// Check import path
+	if filePkg.ImportPath != "" && filePkg.ImportPath == targetPkg {
+		return true
+	}
+	return false
 }
 
 func (sr *SymbolResolver) extractContext(ident *ast.Ident, file *types.File) string {

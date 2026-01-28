@@ -9,14 +9,16 @@ import (
 type Workspace struct {
 	RootPath     string
 	Module       *Module
-	Packages     map[string]*Package  // package path -> Package
+	Packages     map[string]*Package // filesystem path -> Package
+	ImportToPath map[string]string   // import path -> filesystem path
 	FileSet      *token.FileSet
 	Dependencies *DependencyGraph
 }
 
 // Package represents a single Go package
 type Package struct {
-	Path         string              // Import path
+	Path         string              // Filesystem path
+	ImportPath   string              // Go import path (e.g., "github.com/foo/bar")
 	Name         string              // Package name
 	Dir          string              // Filesystem directory
 	Files        map[string]*File    // filename -> File

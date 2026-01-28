@@ -143,9 +143,10 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 	}
 
 	workspace := &types.Workspace{
-		RootPath: absRootPath,
-		Packages: make(map[string]*types.Package),
-		FileSet:  p.fileSet,
+		RootPath:     absRootPath,
+		Packages:     make(map[string]*types.Package),
+		ImportToPath: make(map[string]string),
+		FileSet:      p.fileSet,
 	}
 
 	// Try to find and parse go.mod
@@ -203,6 +204,15 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		}
 	}
 
+	// After parsing packages, build import path mapping
+	if workspace.Module != nil {
+		for fsPath, pkg := range workspace.Packages {
+			importPath := computeImportPath(workspace, fsPath)
+			pkg.ImportPath = importPath
+			workspace.ImportToPath[importPath] = fsPath
+		}
+	}
+
 	return workspace, nil
 }
 
@@ -253,13 +263,25 @@ func (p *GoParser) parseGoMod(content []byte) (*types.Module, error) {
 }
 
 func (p *GoParser) inferPackagePath(dir, packageName string) string {
-	// Simple heuristic: use relative path from some root
-	// In a real implementation, this would be more sophisticated
+	// Return the absolute filesystem path for now
+	// The proper import path will be computed after workspace parsing
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return packageName
 	}
 	return abs
+}
+
+// computeImportPath computes the Go import path for a package given its filesystem path
+func computeImportPath(ws *types.Workspace, fsPath string) string {
+	if ws.Module == nil {
+		return ""
+	}
+	relPath, err := filepath.Rel(ws.RootPath, fsPath)
+	if err != nil || relPath == "." {
+		return ws.Module.Path
+	}
+	return ws.Module.Path + "/" + filepath.ToSlash(relPath)
 }
 
 func (p *GoParser) hasGoFiles(dir string) (bool, error) {
