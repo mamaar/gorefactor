@@ -47,6 +47,14 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 		}
 	}
 
+	// Process test files
+	for _, file := range pkg.TestFiles {
+		err := sr.extractSymbolsFromFile(file, symbolTable)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	pkg.Symbols = symbolTable
 	return symbolTable, nil
 }
@@ -57,6 +65,13 @@ func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Referen
 
 	for _, pkg := range sr.workspace.Packages {
 		for _, file := range pkg.Files {
+			refs, err := sr.findReferencesInFile(file, symbol)
+			if err != nil {
+				return nil, err
+			}
+			references = append(references, refs...)
+		}
+		for _, file := range pkg.TestFiles {
 			refs, err := sr.findReferencesInFile(file, symbol)
 			if err != nil {
 				return nil, err
@@ -77,6 +92,14 @@ func (sr *SymbolResolver) FindDefinition(file string, pos token.Pos) (*types.Sym
 			if f.Path == file {
 				targetFile = f
 				break
+			}
+		}
+		if targetFile == nil {
+			for _, f := range pkg.TestFiles {
+				if f.Path == file {
+					targetFile = f
+					break
+				}
 			}
 		}
 		if targetFile != nil {
@@ -841,7 +864,10 @@ func (sr *SymbolResolver) findFileContainingSymbol(symbol *types.Symbol) *types.
 		return nil
 	}
 
-	return pkg.Files[symbol.File]
+	if file := pkg.Files[symbol.File]; file != nil {
+		return file
+	}
+	return pkg.TestFiles[symbol.File]
 }
 
 func (sr *SymbolResolver) resolveFieldType(expr ast.Expr, file *types.File) *types.Symbol {
