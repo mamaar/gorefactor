@@ -338,6 +338,10 @@ func (sr *SymbolResolver) extractTypeSymbol(typeSpec *ast.TypeSpec, file *types.
 func (sr *SymbolResolver) findReferencesInFile(file *types.File, symbol *types.Symbol) ([]*types.Reference, error) {
 	var references []*types.Reference
 
+	if file.AST == nil {
+		return references, nil
+	}
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		if ident, ok := n.(*ast.Ident); ok {
 			if ident.Name == symbol.Name {
@@ -347,6 +351,7 @@ func (sr *SymbolResolver) findReferencesInFile(file *types.File, symbol *types.S
 					ref := &types.Reference{
 						Symbol:   symbol,
 						Position: ident.Pos(),
+						Offset:   pos.Offset,
 						File:     file.Path,
 						Line:     pos.Line,
 						Column:   pos.Column,
@@ -437,7 +442,8 @@ func (sr *SymbolResolver) identifierRefersToSymbol(ident *ast.Ident, file *types
 	}
 
 	// Check if this is a qualified reference (pkg.Symbol)
-	if pkgAlias := sr.getQualifyingPackage(ident, file); pkgAlias != "" {
+	pkgAlias := sr.getQualifyingPackage(ident, file)
+	if pkgAlias != "" {
 		return sr.importAliasRefersToPackage(pkgAlias, file, symbol.Package)
 	}
 
@@ -450,7 +456,8 @@ func (sr *SymbolResolver) getQualifyingPackage(ident *ast.Ident, file *types.Fil
 	var pkgAlias string
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		if selector, ok := n.(*ast.SelectorExpr); ok {
-			if selector.Sel == ident {
+			// Compare by position since we might have different node instances
+			if selector.Sel.Pos() == ident.Pos() && selector.Sel.Name == ident.Name {
 				// This identifier is the selected name (e.g., Symbol in pkg.Symbol)
 				if pkgIdent, ok := selector.X.(*ast.Ident); ok {
 					pkgAlias = pkgIdent.Name

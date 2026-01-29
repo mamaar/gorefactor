@@ -89,6 +89,7 @@ type SymbolTable struct {
 type Reference struct {
 	Symbol   *Symbol
 	Position token.Pos
+	Offset   int       // Byte offset within the file
 	File     string
 	Line     int
 	Column   int
