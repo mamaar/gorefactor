@@ -600,18 +600,30 @@ func (sa *ScopeAnalyzer) resolveSymbolInPackage(symbolName, packagePath string) 
 	if sa.resolver == nil || sa.resolver.workspace == nil {
 		return nil
 	}
-	
-	pkg, exists := sa.resolver.workspace.Packages[packagePath]
-	if !exists {
+
+	ws := sa.resolver.workspace
+
+	// Try direct lookup by filesystem path
+	pkg := ws.Packages[packagePath]
+	if pkg == nil {
+		// Try via import path mapping
+		if ws.ImportToPath != nil {
+			if fsPath, ok := ws.ImportToPath[packagePath]; ok {
+				pkg = ws.Packages[fsPath]
+			}
+		}
+	}
+
+	if pkg == nil {
 		return nil
 	}
-	
+
 	// Try to resolve the symbol in that package
 	symbol, err := sa.resolver.ResolveSymbol(pkg, symbolName)
 	if err != nil {
 		return nil
 	}
-	
+
 	return symbol
 }
 
