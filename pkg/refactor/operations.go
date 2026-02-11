@@ -155,13 +155,14 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	// Generate changes to remove symbol from source file
+	var removeChanges []types.Change
 	sourceFile := findFileContainingSymbol(sourcePackage, symbol)
 	if sourceFile != nil {
-		removeChange, err := op.generateSymbolRemovalChange(sourceFile, symbol)
+		removeChanges, err = op.generateSymbolRemovalChanges(sourceFile, symbol)
 		if err != nil {
 			return nil, err
 		}
-		plan.Changes = append(plan.Changes, removeChange)
+		plan.Changes = append(plan.Changes, removeChanges...)
 		plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
 	}
 
@@ -181,7 +182,24 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	// Update all reference sites
+	// But skip references that are within the removal changes (since we're removing that code anyway)
 	for _, ref := range references {
+		// Check if this reference is within a removal change
+		isWithinRemoval := false
+		if ref.File == sourceFile.Path {
+			for _, change := range removeChanges {
+				if ref.Offset >= change.Start && ref.Offset < change.End {
+					isWithinRemoval = true
+					break
+				}
+			}
+		}
+
+		if isWithinRemoval {
+			// Skip this reference since it's being removed anyway
+			continue
+		}
+
 		updateChange, err := op.generateReferenceUpdateChange(ref, op.Request.ToPackage, targetPackage.Name)
 		if err != nil {
 			return nil, err
@@ -512,18 +530,18 @@ func (op *RenamePackageOperation) Description() string {
 
 // Helper methods for MoveSymbolOperation
 
-func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, symbol *types.Symbol) (types.Change, error) {
-	// Find the symbol declaration and generate a change to remove it
-	var change types.Change
+func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, symbol *types.Symbol) ([]types.Change, error) {
+	// Find the symbol declaration and generate changes to remove it (and methods if it's a type)
+	var changes []types.Change
 	found := false
-	
+
 	// Check if AST is loaded
 	if file.AST == nil {
-		return change, fmt.Errorf("AST not loaded for file %s", file.Path)
+		return changes, fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
-	
+
 	lines := strings.Split(string(file.OriginalContent), "\n")
-	
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.FuncDecl:
@@ -578,7 +596,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 							endByte += len(lines[k]) + 1 // +1 for newline
 						}
 
-						change = types.Change{
+						change := types.Change{
 							File:        file.Path,
 							Start:       startByte,
 							End:         endByte,
@@ -586,6 +604,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 							NewText:     "",
 							Description: fmt.Sprintf("Remove function %s", symbol.Name),
 						}
+						changes = append(changes, change)
 						found = true
 						return false
 					}
@@ -594,14 +613,15 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 		case *ast.GenDecl:
 			for _, spec := range node.Specs {
 				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.Name.Name == symbol.Name {
-					// Find and remove the type declaration
+					// Find and remove the type declaration (struct, interface, or other types)
 					for i, line := range lines {
-						if strings.Contains(line, "type "+symbol.Name+" struct") {
+						// Match "type SymbolName" followed by struct, interface, or any other type definition
+						if strings.Contains(line, "type "+symbol.Name) {
 							start := i
 							end := start + 1
 							braceCount := 0
 							foundOpenBrace := false
-							
+
 							// Find the matching closing brace
 							for j := start; j < len(lines); j++ {
 								for _, char := range lines[j] {
@@ -620,7 +640,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 									break
 								}
 							}
-							
+
 							// Calculate byte positions
 							startByte := 0
 							for k := 0; k < start; k++ {
@@ -630,8 +650,8 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 							for k := start; k < end; k++ {
 								endByte += len(lines[k]) + 1 // +1 for newline
 							}
-							
-							change = types.Change{
+
+							change := types.Change{
 								File:        file.Path,
 								Start:       startByte,
 								End:         endByte,
@@ -639,6 +659,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 								NewText:     "",
 								Description: fmt.Sprintf("Remove type %s", symbol.Name),
 							}
+							changes = append(changes, change)
 							found = true
 							return false
 						}
@@ -650,10 +671,177 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChange(file *types.File, sym
 	})
 
 	if !found {
-		return change, fmt.Errorf("symbol %s not found in AST of file %s", symbol.Name, file.Path)
+		return changes, fmt.Errorf("symbol %s not found in AST of file %s", symbol.Name, file.Path)
 	}
 
-	return change, nil
+	// If this is a type, also remove all methods with this type as receiver
+	if symbol.Kind == types.TypeSymbol {
+		methodChanges := op.generateMethodRemovalChanges(file, symbol.Name)
+		changes = append(changes, methodChanges...)
+
+		// Merge overlapping or adjacent changes to avoid conflicts
+		changes = mergeChanges(changes)
+	}
+
+	return changes, nil
+}
+
+// mergeChanges merges overlapping or adjacent changes in the same file
+// Changes are sorted by start position and merged if they overlap or are adjacent
+func mergeChanges(changes []types.Change) []types.Change {
+	if len(changes) <= 1 {
+		return changes
+	}
+
+	// Verify all changes are for the same file
+	firstFile := changes[0].File
+	for i := 1; i < len(changes); i++ {
+		if changes[i].File != firstFile {
+			// Cannot merge changes from different files - return as-is
+			return changes
+		}
+	}
+
+	// Sort changes by start position
+	sortedChanges := make([]types.Change, len(changes))
+	copy(sortedChanges, changes)
+
+	// Simple bubble sort by Start position
+	for i := 0; i < len(sortedChanges); i++ {
+		for j := i + 1; j < len(sortedChanges); j++ {
+			if sortedChanges[j].Start < sortedChanges[i].Start {
+				sortedChanges[i], sortedChanges[j] = sortedChanges[j], sortedChanges[i]
+			}
+		}
+	}
+
+	// Merge overlapping or adjacent changes
+	var merged []types.Change
+	current := sortedChanges[0]
+
+	for i := 1; i < len(sortedChanges); i++ {
+		next := sortedChanges[i]
+
+		// Check if changes overlap or are adjacent
+		if next.Start <= current.End {
+			// Merge: extend current to include next
+			if next.End > current.End {
+				current.End = next.End
+			}
+			// Update description to reflect merged changes
+			if !strings.Contains(current.Description, next.Description) {
+				current.Description = fmt.Sprintf("%s; %s", current.Description, next.Description)
+			}
+			// Note: OldText needs to be recalculated from file content when changes are merged
+			// The executor will handle this based on Start and End positions
+			current.OldText = "" // Clear old text - it will be recalculated
+		} else {
+			// No overlap, save current and move to next
+			merged = append(merged, current)
+			current = next
+		}
+	}
+
+	// Don't forget the last change
+	merged = append(merged, current)
+
+	return merged
+}
+
+// generateMethodRemovalChanges generates changes to remove all methods with a given type as receiver
+func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, typeName string) []types.Change {
+	var changes []types.Change
+	lines := strings.Split(string(file.OriginalContent), "\n")
+
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if funcDecl, ok := n.(*ast.FuncDecl); ok {
+			// Check if this function has a receiver (i.e., it's a method)
+			if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+				// Get the receiver type
+				var receiverType string
+				recvField := funcDecl.Recv.List[0]
+
+				switch recvType := recvField.Type.(type) {
+				case *ast.Ident:
+					receiverType = recvType.Name
+				case *ast.StarExpr:
+					if ident, ok := recvType.X.(*ast.Ident); ok {
+						receiverType = ident.Name
+					}
+				}
+
+				// If the receiver matches our type, generate a removal change
+				if receiverType == typeName {
+					methodName := funcDecl.Name.Name
+					// Find the method in the source
+					for i, line := range lines {
+						// Look for the method declaration (including receiver)
+						// Use exact match for method name to avoid matching "Update" when looking for "UpdateLocked"
+						if strings.Contains(line, "func (") && strings.Contains(line, receiverType) &&
+						   (strings.Contains(line, " "+methodName+"(") || strings.Contains(line, "*"+receiverType+") "+methodName+"(")) {
+							start := i
+
+							// Include doc comments if present
+							for j := i - 1; j >= 0; j-- {
+								trimmed := strings.TrimSpace(lines[j])
+								if strings.HasPrefix(trimmed, "//") {
+									start = j
+								} else if trimmed == "" {
+									continue
+								} else {
+									break
+								}
+							}
+
+							// Find the end of the method
+							end := i + 1
+							braceCount := 0
+							foundOpenBrace := false
+
+							for j := i; j < len(lines); j++ {
+								for _, char := range lines[j] {
+									if char == '{' {
+										foundOpenBrace = true
+										braceCount++
+									} else if char == '}' && foundOpenBrace {
+										braceCount--
+										if braceCount == 0 {
+											end = j + 1
+
+											// Calculate byte positions
+											startByte := 0
+											for k := 0; k < start; k++ {
+												startByte += len(lines[k]) + 1
+											}
+											endByte := startByte
+											for k := start; k < end; k++ {
+												endByte += len(lines[k]) + 1
+											}
+
+											change := types.Change{
+												File:        file.Path,
+												Start:       startByte,
+												End:         endByte,
+												OldText:     strings.Join(lines[start:end], "\n") + "\n",
+												NewText:     "",
+												Description: fmt.Sprintf("Remove method %s.%s", typeName, methodName),
+											}
+											changes = append(changes, change)
+											return false
+										}
+									}
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	return changes
 }
 
 func (op *MoveSymbolOperation) generateSymbolAdditionChange(targetFile *types.File, symbol *types.Symbol, sourcePackage, targetPackage *types.Package) (types.Change, error) {
@@ -775,7 +963,7 @@ func (op *MoveSymbolOperation) generateImportChanges(ws *types.Workspace, refere
 		if refPackage != nil && refPackage.Path != targetPackagePath {
 			// Convert absolute path to module-relative import path
 			importPath := packagePathToImportPath(ws, targetPackagePath)
-			
+
 			// Check if import already exists
 			hasImport := false
 			for _, imp := range refPackage.Imports {
@@ -786,19 +974,11 @@ func (op *MoveSymbolOperation) generateImportChanges(ws *types.Workspace, refere
 			}
 
 			if !hasImport {
-				// Find proper import location
-				importPos := findImportInsertPosition(ws, ref.File)
-				
-				// Add import statement
-				change := types.Change{
-					File:        ref.File,
-					Start:       importPos,
-					End:         importPos,
-					OldText:     "",
-					NewText:     fmt.Sprintf("\t\"%s\"\n", importPath),
-					Description: fmt.Sprintf("Add import for %s", importPath),
+				// Generate import change (handles both single-line and multi-line imports)
+				change := generateAddImportChange(ws, ref.File, importPath)
+				if change != nil {
+					changes = append(changes, *change)
 				}
-				changes = append(changes, change)
 			}
 		}
 	}
@@ -984,6 +1164,150 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+// generateAddImportChange generates a change to add a new import, handling both
+// single-line and multi-line import formats
+func generateAddImportChange(ws *types.Workspace, filePath string, importPath string) *types.Change {
+	// Find the file and its AST
+	for _, pkg := range ws.Packages {
+		for _, file := range pkg.Files {
+			if file.Path == filePath && file.AST != nil {
+				// Check if we have imports and if they're in single-line or multi-line format
+				if len(file.AST.Imports) > 0 {
+					// Read file content to check import format
+					content, err := os.ReadFile(filePath)
+					if err != nil {
+						return nil
+					}
+
+					// Check if imports are in grouped format (with parentheses) or single-line format
+					isSingleLine := isSingleLineImport(file.AST, content)
+
+					if isSingleLine {
+						// Convert single-line import to multi-line format
+						return convertSingleLineImportToMultiLine(file.AST, content, filePath, importPath)
+					} else {
+						// Add to existing multi-line import block
+						lastImport := file.AST.Imports[len(file.AST.Imports)-1]
+						if ws.FileSet != nil {
+							pos := ws.FileSet.Position(lastImport.End())
+							byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+
+							// Find the next newline after the import
+							for i := byteOffset; i < len(content); i++ {
+								if content[i] == '\n' {
+									return &types.Change{
+										File:        filePath,
+										Start:       i + 1,
+										End:         i + 1,
+										OldText:     "",
+										NewText:     fmt.Sprintf("\t\"%s\"\n", importPath),
+										Description: fmt.Sprintf("Add import for %s", importPath),
+									}
+								}
+							}
+						}
+					}
+				} else {
+					// No imports exist, add new import block after package declaration
+					if file.AST.Name != nil && ws.FileSet != nil {
+						pos := ws.FileSet.Position(file.AST.Name.End())
+						byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+
+						content, err := os.ReadFile(filePath)
+						if err != nil {
+							return nil
+						}
+
+						// Find the next newline after package declaration
+						for i := byteOffset; i < len(content); i++ {
+							if content[i] == '\n' {
+								return &types.Change{
+									File:        filePath,
+									Start:       i + 1,
+									End:         i + 1,
+									OldText:     "",
+									NewText:     fmt.Sprintf("\nimport \"%s\"\n", importPath),
+									Description: fmt.Sprintf("Add import for %s", importPath),
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// isSingleLineImport checks if imports are in single-line format (no parentheses)
+func isSingleLineImport(astFile *ast.File, content []byte) bool {
+	if len(astFile.Imports) == 0 {
+		return false
+	}
+
+	// Find the first import in the content
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") {
+			// Check if it has an opening parenthesis (multi-line format)
+			return !strings.Contains(trimmed, "(")
+		}
+	}
+	return false
+}
+
+// convertSingleLineImportToMultiLine converts a single-line import to multi-line format
+// and adds the new import
+func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, filePath string, newImportPath string) *types.Change {
+	lines := strings.Split(string(content), "\n")
+
+	// Find the single-line import statement
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "import ") && !strings.Contains(trimmed, "(") {
+			// Extract the import path from the line
+			// Format: import "path" or import alias "path"
+			parts := strings.Fields(trimmed)
+			if len(parts) < 2 {
+				continue
+			}
+
+			// Calculate byte position of the import line
+			startByte := 0
+			for j := 0; j < i; j++ {
+				startByte += len(lines[j]) + 1 // +1 for newline
+			}
+			endByte := startByte + len(lines[i]) + 1 // +1 for newline
+
+			// Get the import path (last part, with quotes)
+			oldImportPath := parts[len(parts)-1]
+
+			// Build new multi-line import block
+			var newImport string
+			if len(parts) == 3 {
+				// Has alias: import alias "path"
+				alias := parts[1]
+				newImport = fmt.Sprintf("import (\n\t%s %s\n\t\"%s\"\n)", alias, oldImportPath, newImportPath)
+			} else {
+				// No alias: import "path"
+				newImport = fmt.Sprintf("import (\n\t%s\n\t\"%s\"\n)", oldImportPath, newImportPath)
+			}
+
+			return &types.Change{
+				File:        filePath,
+				Start:       startByte,
+				End:         endByte,
+				OldText:     lines[i] + "\n",
+				NewText:     newImport + "\n",
+				Description: fmt.Sprintf("Convert single-line import to multi-line and add %s", newImportPath),
+			}
+		}
+	}
+
+	return nil
+}
+
 // findImportInsertPosition finds the correct position to insert a new import
 func findImportInsertPosition(ws *types.Workspace, filePath string) int {
 	// Find the file and its AST
@@ -993,18 +1317,58 @@ func findImportInsertPosition(ws *types.Workspace, filePath string) int {
 				// If there are existing imports, add after the last one
 				if len(file.AST.Imports) > 0 {
 					lastImport := file.AST.Imports[len(file.AST.Imports)-1]
+					// Convert token.Pos to file byte offset using FileSet
+					// We need to find the end of the line, not just the end of the import spec
+					if ws.FileSet != nil {
+						pos := ws.FileSet.Position(lastImport.End())
+						// Get the byte offset for the end of the import, then find the next newline
+						byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+
+						// Read file content to find the end of this line
+						content, err := os.ReadFile(filePath)
+						if err == nil {
+							// Find the next newline after the import
+							for i := byteOffset; i < len(content); i++ {
+								if content[i] == '\n' {
+									return i + 1 // Return position after the newline
+								}
+							}
+							// If no newline found, return the offset (shouldn't happen in well-formed files)
+							return byteOffset
+						}
+						return byteOffset
+					}
+					// Fallback if no FileSet
 					return int(lastImport.End())
 				}
-				
+
 				// If no imports, add after package declaration
 				if file.AST.Name != nil {
-					// Find the end of the package line by looking for the first newline after package name
+					// Convert token.Pos to file byte offset using FileSet
+					if ws.FileSet != nil {
+						pos := ws.FileSet.Position(file.AST.Name.End())
+						byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+
+						// Read file content to find the end of the package line
+						content, err := os.ReadFile(filePath)
+						if err == nil {
+							// Find the next newline after package declaration
+							for i := byteOffset; i < len(content); i++ {
+								if content[i] == '\n' {
+									return i + 1 // Return position after the newline
+								}
+							}
+							return byteOffset
+						}
+						return byteOffset
+					}
+					// Fallback: Find the end of the package line by looking for the first newline after package name
 					return int(file.AST.Name.End()) + 1 // +1 to get past the newline
 				}
 			}
 		}
 	}
-	
+
 	// Fallback: beginning of file
 	return 0
 }
@@ -1024,16 +1388,16 @@ func clampPosition(pos int, fileContent []byte) int {
 func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol) (string, error) {
 	var sourceCode string
 	found := false
-	
+
 	// Check if AST is loaded
 	if file.AST == nil {
 		return "", fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
-	
+
 	// We need access to the FileSet to convert token positions to byte offsets
 	// For now, let's use a simpler approach: find the struct in the source by line/column
 	lines := strings.Split(string(file.OriginalContent), "\n")
-	
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.FuncDecl:
@@ -1084,15 +1448,16 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 		case *ast.GenDecl:
 			for _, spec := range node.Specs {
 				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.Name.Name == symbol.Name {
-					// Find the type declaration by searching for it in the source
+					// Find the type declaration by searching for it in the source (struct, interface, or other types)
 					for i, line := range lines {
-						if strings.Contains(line, "type "+symbol.Name+" struct") {
-							// Extract the entire struct definition
+						// Match "type SymbolName" followed by struct, interface, or any other type definition
+						if strings.Contains(line, "type "+symbol.Name) {
+							// Extract the entire type definition
 							start := i
 							end := start + 1
 							braceCount := 0
 							foundOpenBrace := false
-							
+
 							// Find the matching closing brace
 							for j := start; j < len(lines); j++ {
 								for _, char := range lines[j] {
@@ -1117,12 +1482,96 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 		}
 		return true
 	})
-	
+
 	if !found {
 		return "", fmt.Errorf("symbol %s not found in file %s", symbol.Name, file.Path)
 	}
-	
+
+	// If this is a type symbol, also extract all methods with this type as receiver
+	if symbol.Kind == types.TypeSymbol {
+		methodsCode := op.extractMethodsForType(file, symbol.Name)
+		if methodsCode != "" {
+			sourceCode += "\n\n" + methodsCode
+		}
+	}
+
 	return sourceCode, nil
+}
+
+// extractMethodsForType extracts all methods that have the given type as receiver
+func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName string) string {
+	var methods []string
+	lines := strings.Split(string(file.OriginalContent), "\n")
+
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if funcDecl, ok := n.(*ast.FuncDecl); ok {
+			// Check if this function has a receiver (i.e., it's a method)
+			if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
+				// Get the receiver type
+				var receiverType string
+				recvField := funcDecl.Recv.List[0]
+
+				switch recvType := recvField.Type.(type) {
+				case *ast.Ident:
+					receiverType = recvType.Name
+				case *ast.StarExpr:
+					if ident, ok := recvType.X.(*ast.Ident); ok {
+						receiverType = ident.Name
+					}
+				}
+
+				// If the receiver matches our type, extract the method
+				if receiverType == typeName {
+					methodName := funcDecl.Name.Name
+					// Find the method in the source
+					for i, line := range lines {
+						// Look for the method declaration (including receiver)
+						if strings.Contains(line, "func (") && strings.Contains(line, receiverType) && strings.Contains(line, methodName) {
+							start := i
+
+							// Include doc comments if present
+							for j := i - 1; j >= 0; j-- {
+								trimmed := strings.TrimSpace(lines[j])
+								if strings.HasPrefix(trimmed, "//") {
+									start = j
+								} else if trimmed == "" {
+									continue
+								} else {
+									break
+								}
+							}
+
+							// Find the end of the method
+							end := i + 1
+							braceCount := 0
+							foundOpenBrace := false
+
+							for j := i; j < len(lines); j++ {
+								for _, char := range lines[j] {
+									if char == '{' {
+										foundOpenBrace = true
+										braceCount++
+									} else if char == '}' && foundOpenBrace {
+										braceCount--
+										if braceCount == 0 {
+											end = j + 1
+											methodCode := strings.Join(lines[start:end], "\n")
+											methods = append(methods, methodCode)
+											return false
+										}
+									}
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	return strings.Join(methods, "\n\n")
 }
 
 // packagePathToImportPath converts an absolute package path to a Go import path
@@ -1130,20 +1579,22 @@ func packagePathToImportPath(ws *types.Workspace, packagePath string) string {
 	// If we have module information, create module-relative import path
 	if ws.Module != nil && ws.Module.Path != "" {
 		// Remove the workspace root prefix to get relative path
-		if strings.HasPrefix(packagePath, ws.RootPath) {
-			relPath := strings.TrimPrefix(packagePath, ws.RootPath)
-			relPath = strings.TrimPrefix(relPath, "/") // Remove leading slash
-			
-			if relPath == "" {
-				// This is the root package
-				return ws.Module.Path
-			}
-			
-			// Combine module path with relative path
-			return ws.Module.Path + "/" + relPath
+		relPath, err := filepath.Rel(ws.RootPath, packagePath)
+		if err != nil {
+			// Can't compute relative path, use package path as-is
+			return packagePath
 		}
+
+		// If this is the root package, return just the module path
+		if relPath == "." {
+			return ws.Module.Path
+		}
+
+		// Combine module path with relative path (convert to forward slashes for Go imports)
+		importPath := ws.Module.Path + "/" + filepath.ToSlash(relPath)
+		return importPath
 	}
-	
+
 	// Fallback: use the package path as-is (not ideal, but works for simple cases)
 	return packagePath
 }

@@ -14,6 +14,7 @@ import (
 func UnusedCommand(args []string) {
 	var showAll bool
 	var packageFilter string
+	var kindFilter string
 
 	// Parse arguments
 	for i, arg := range args {
@@ -25,6 +26,13 @@ func UnusedCommand(args []string) {
 				packageFilter = args[i+1]
 			} else {
 				fmt.Fprintf(os.Stderr, "Error: --package requires a package path\n")
+				os.Exit(1)
+			}
+		case "--kind", "-k":
+			if i+1 < len(args) {
+				kindFilter = strings.ToLower(args[i+1])
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: --kind requires a kind value\n")
 				os.Exit(1)
 			}
 		case "--help", "-h":
@@ -43,6 +51,9 @@ func UnusedCommand(args []string) {
 
 	// Create unused analyzer
 	analyzer := analysis.NewUnusedAnalyzer(workspace)
+	if showAll {
+		analyzer.SetIncludeExported(true)
+	}
 
 	var unusedSymbols []*analysis.UnusedSymbol
 	if showAll {
@@ -63,6 +74,11 @@ func UnusedCommand(args []string) {
 		unusedSymbols = filterByPackage(unusedSymbols, packageFilter)
 	}
 
+	// Filter by kind if specified
+	if kindFilter != "" {
+		unusedSymbols = filterByKind(unusedSymbols, kindFilter)
+	}
+
 	// Sort by file and line number for consistent output
 	sort.Slice(unusedSymbols, func(i, j int) bool {
 		if unusedSymbols[i].Symbol.File == unusedSymbols[j].Symbol.File {
@@ -73,13 +89,13 @@ func UnusedCommand(args []string) {
 
 	// Output results
 	if *cli.GlobalFlags.Json {
-		outputUnusedJSON(unusedSymbols, showAll)
+		outputUnusedJSON(unusedSymbols, showAll, kindFilter)
 	} else {
-		outputUnusedText(unusedSymbols, showAll, packageFilter)
+		outputUnusedText(unusedSymbols, showAll, packageFilter, kindFilter)
 	}
 }
 
-func outputUnusedText(unusedSymbols []*analysis.UnusedSymbol, showAll bool, packageFilter string) {
+func outputUnusedText(unusedSymbols []*analysis.UnusedSymbol, showAll bool, packageFilter string, kindFilter string) {
 	if len(unusedSymbols) == 0 {
 		fmt.Println("No unused symbols found.")
 		return
@@ -92,6 +108,9 @@ func outputUnusedText(unusedSymbols []*analysis.UnusedSymbol, showAll bool, pack
 	}
 
 	header := fmt.Sprintf("Found %d unused %s", len(unusedSymbols), symbolType)
+	if kindFilter != "" {
+		header += fmt.Sprintf(" of kind %s", kindFilter)
+	}
 	if packageFilter != "" {
 		header += fmt.Sprintf(" in package %s", packageFilter)
 	}
@@ -157,11 +176,12 @@ func outputUnusedText(unusedSymbols []*analysis.UnusedSymbol, showAll bool, pack
 	}
 }
 
-func outputUnusedJSON(unusedSymbols []*analysis.UnusedSymbol, showAll bool) {
+func outputUnusedJSON(unusedSymbols []*analysis.UnusedSymbol, showAll bool, kindFilter string) {
 	data := map[string]interface{}{
 		"unused_symbols": make([]map[string]interface{}, len(unusedSymbols)),
 		"total_count":    len(unusedSymbols),
 		"show_all":       showAll,
+		"kind_filter":    kindFilter,
 	}
 
 	safeToDelete := 0
@@ -189,6 +209,16 @@ func outputUnusedJSON(unusedSymbols []*analysis.UnusedSymbol, showAll bool) {
 	OutputJSON(data)
 }
 
+func filterByKind(unusedSymbols []*analysis.UnusedSymbol, kindFilter string) []*analysis.UnusedSymbol {
+	var filtered []*analysis.UnusedSymbol
+	for _, unused := range unusedSymbols {
+		if strings.ToLower(unused.Symbol.Kind.String()) == kindFilter {
+			filtered = append(filtered, unused)
+		}
+	}
+	return filtered
+}
+
 func filterByPackage(unusedSymbols []*analysis.UnusedSymbol, packageFilter string) []*analysis.UnusedSymbol {
 	var filtered []*analysis.UnusedSymbol
 	for _, unused := range unusedSymbols {
@@ -207,6 +237,7 @@ func printUnusedHelp() {
 	fmt.Println("Options:")
 	fmt.Println("  -a, --all           Show all unused symbols (including exported ones)")
 	fmt.Println("  -p, --package PATH  Filter results to specific package")
+	fmt.Println("  -k, --kind KIND     Filter by symbol kind (function, method, type, variable, constant, interface)")
 	fmt.Println("  -h, --help          Show this help message")
 	fmt.Println()
 	fmt.Println("Global Options:")
@@ -215,10 +246,12 @@ func printUnusedHelp() {
 	fmt.Println("  --workspace DIR    Specify workspace directory (default: current directory)")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  gorefactor unused                    # Find unexported unused symbols")
-	fmt.Println("  gorefactor unused --all              # Find all unused symbols")
-	fmt.Println("  gorefactor unused -p pkg/analysis    # Find unused symbols in specific package")
-	fmt.Println("  gorefactor unused --json             # Output in JSON format")
+	fmt.Println("  gorefactor unused                         # Find unexported unused symbols")
+	fmt.Println("  gorefactor unused --all                   # Find all unused symbols")
+	fmt.Println("  gorefactor unused -p pkg/analysis         # Find unused symbols in specific package")
+	fmt.Println("  gorefactor unused --kind function         # Find only unused functions")
+	fmt.Println("  gorefactor unused --all --kind type       # Find all unused types including exported")
+	fmt.Println("  gorefactor unused --json                  # Output in JSON format")
 	fmt.Println()
 	fmt.Println("Note: By default, only unexported (private) symbols are shown as they are")
 	fmt.Println("safe to delete. Use --all to see exported symbols that might be unused")
