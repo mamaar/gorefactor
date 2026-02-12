@@ -16,8 +16,14 @@ type UnusedSymbol struct {
 
 // UnusedAnalyzer finds unused symbols in the workspace
 type UnusedAnalyzer struct {
-	workspace *types.Workspace
-	resolver  *SymbolResolver
+	workspace       *types.Workspace
+	resolver        *SymbolResolver
+	includeExported bool
+}
+
+// SetIncludeExported controls whether exported symbols are included in the analysis
+func (ua *UnusedAnalyzer) SetIncludeExported(include bool) {
+	ua.includeExported = include
 }
 
 // NewUnusedAnalyzer creates a new unused symbol analyzer
@@ -39,9 +45,15 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 		}
 	}
 
+	// Build reference index once for the entire workspace (O(F*A) single pass)
+	idx := ua.resolver.BuildReferenceIndex()
+
+	// Pre-compute set of all interface method names across workspace
+	ifaceMethodNames := ua.collectInterfaceMethodNames()
+
 	// Check each package for unused symbols
 	for _, pkg := range ua.workspace.Packages {
-		unused, err := ua.findUnusedInPackage(pkg)
+		unused, err := ua.findUnusedInPackage(pkg, idx, ifaceMethodNames)
 		if err != nil {
 			return nil, err
 		}
@@ -51,8 +63,44 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	return unusedSymbols, nil
 }
 
-// FindUnusedInPackage finds unused symbols in a specific package
-func (ua *UnusedAnalyzer) findUnusedInPackage(pkg *types.Package) ([]*UnusedSymbol, error) {
+// collectInterfaceMethodNames builds a set of all method names declared in interfaces
+// across the workspace. This is computed once and used for O(1) lookups in
+// mightImplementInterface instead of repeated AST walks.
+func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
+	names := make(map[string]bool)
+
+	// Always include well-known interface methods
+	for _, common := range []string{
+		"String", "Error", "Read", "Write", "Close", "Len", "Less", "Swap",
+		"MarshalJSON", "UnmarshalJSON", "MarshalBinary", "UnmarshalBinary",
+		"ServeHTTP", "RoundTrip",
+	} {
+		names[common] = true
+	}
+
+	for _, pkg := range ua.workspace.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		for _, symbol := range pkg.Symbols.Types {
+			if symbol.Kind != types.InterfaceSymbol {
+				continue
+			}
+			ifaceMethods, err := ua.resolver.getInterfaceMethods(symbol)
+			if err != nil {
+				continue
+			}
+			for _, m := range ifaceMethods {
+				names[m.Name] = true
+			}
+		}
+	}
+
+	return names
+}
+
+// findUnusedInPackage finds unused symbols in a specific package
+func (ua *UnusedAnalyzer) findUnusedInPackage(pkg *types.Package, idx *ReferenceIndex, ifaceMethodNames map[string]bool) ([]*UnusedSymbol, error) {
 	if pkg.Symbols == nil {
 		return nil, nil
 	}
@@ -61,28 +109,28 @@ func (ua *UnusedAnalyzer) findUnusedInPackage(pkg *types.Package) ([]*UnusedSymb
 
 	// Check functions
 	for _, symbol := range pkg.Symbols.Functions {
-		if unused := ua.checkSymbolUsage(symbol); unused != nil {
+		if unused := ua.checkSymbolUsageIndexed(symbol, idx); unused != nil {
 			unusedSymbols = append(unusedSymbols, unused)
 		}
 	}
 
 	// Check types
 	for _, symbol := range pkg.Symbols.Types {
-		if unused := ua.checkSymbolUsage(symbol); unused != nil {
+		if unused := ua.checkSymbolUsageIndexed(symbol, idx); unused != nil {
 			unusedSymbols = append(unusedSymbols, unused)
 		}
 	}
 
 	// Check variables
 	for _, symbol := range pkg.Symbols.Variables {
-		if unused := ua.checkSymbolUsage(symbol); unused != nil {
+		if unused := ua.checkSymbolUsageIndexed(symbol, idx); unused != nil {
 			unusedSymbols = append(unusedSymbols, unused)
 		}
 	}
 
 	// Check constants
 	for _, symbol := range pkg.Symbols.Constants {
-		if unused := ua.checkSymbolUsage(symbol); unused != nil {
+		if unused := ua.checkSymbolUsageIndexed(symbol, idx); unused != nil {
 			unusedSymbols = append(unusedSymbols, unused)
 		}
 	}
@@ -90,7 +138,7 @@ func (ua *UnusedAnalyzer) findUnusedInPackage(pkg *types.Package) ([]*UnusedSymb
 	// Check methods
 	for typeName, methods := range pkg.Symbols.Methods {
 		for _, method := range methods {
-			if unused := ua.checkMethodUsage(method, typeName); unused != nil {
+			if unused := ua.checkMethodUsageIndexed(method, typeName, idx, ifaceMethodNames); unused != nil {
 				unusedSymbols = append(unusedSymbols, unused)
 			}
 		}
@@ -99,10 +147,117 @@ func (ua *UnusedAnalyzer) findUnusedInPackage(pkg *types.Package) ([]*UnusedSymb
 	return unusedSymbols, nil
 }
 
-// checkSymbolUsage checks if a symbol is unused
+// checkSymbolUsageIndexed checks if a symbol is unused using the pre-built index.
+// Uses early exit: returns nil (used) as soon as one non-declaration reference is found.
+func (ua *UnusedAnalyzer) checkSymbolUsageIndexed(symbol *types.Symbol, idx *ReferenceIndex) *UnusedSymbol {
+	// Skip exported symbols unless explicitly included
+	if symbol.Exported && !ua.includeExported {
+		return nil
+	}
+
+	// Skip main functions and init functions
+	if symbol.Name == "main" || symbol.Name == "init" {
+		return nil
+	}
+
+	// Skip test functions
+	if ua.isTestFunction(symbol) {
+		return nil
+	}
+
+	// Early exit: check if there's at least one non-declaration reference (O(1) lookup + O(R) filter)
+	if ua.resolver.HasNonDeclarationReference(symbol, idx) {
+		return nil
+	}
+
+	// No non-declaration references found. Determine reason by checking if there are any refs at all.
+	entries, hasEntries := idx.nameIndex[symbol.Name]
+	if !hasEntries {
+		return &UnusedSymbol{
+			Symbol:       symbol,
+			SafeToDelete: !symbol.Exported,
+			Reason:       "No references found",
+		}
+	}
+
+	// Check if any entries match this symbol's package (even if they are declarations)
+	hasAnyRef := false
+	for i := range entries {
+		entry := &entries[i]
+		if entry.Pos == symbol.Position {
+			continue
+		}
+		if entry.IsSelector {
+			if ua.resolver.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package) {
+				hasAnyRef = true
+				break
+			}
+		} else {
+			if ua.resolver.isSamePackage(entry.File.Package, symbol.Package) {
+				hasAnyRef = true
+				break
+			}
+		}
+	}
+
+	if !hasAnyRef {
+		return &UnusedSymbol{
+			Symbol:       symbol,
+			SafeToDelete: !symbol.Exported,
+			Reason:       "No references found",
+		}
+	}
+
+	return &UnusedSymbol{
+		Symbol:       symbol,
+		SafeToDelete: !symbol.Exported,
+		Reason:       "Only referenced in declarations",
+	}
+}
+
+// checkMethodUsageIndexed checks if a method is unused with special handling for interface methods
+func (ua *UnusedAnalyzer) checkMethodUsageIndexed(method *types.Symbol, typeName string, idx *ReferenceIndex, ifaceMethodNames map[string]bool) *UnusedSymbol {
+	// Skip exported methods unless explicitly included
+	if method.Exported && !ua.includeExported {
+		return nil
+	}
+
+	// Skip methods that might implement interfaces (O(1) set lookup)
+	if ifaceMethodNames[method.Name] {
+		return nil
+	}
+
+	return ua.checkSymbolUsageIndexed(method, idx)
+}
+
+// isTestFunction checks if a function is a test function
+func (ua *UnusedAnalyzer) isTestFunction(symbol *types.Symbol) bool {
+	if symbol.Kind != types.FunctionSymbol {
+		return false
+	}
+
+	// Check if it's in a test file
+	if len(symbol.File) > 8 && symbol.File[len(symbol.File)-8:] == "_test.go" {
+		return true
+	}
+
+	// Check common test function patterns
+	testPrefixes := []string{"Test", "Benchmark", "Example", "Fuzz"}
+	for _, prefix := range testPrefixes {
+		if len(symbol.Name) >= len(prefix) && symbol.Name[:len(prefix)] == prefix {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Legacy methods kept for backward compatibility with existing callers (e.g., FindReferences users)
+
+// checkSymbolUsage checks if a symbol is unused (legacy non-indexed path)
 func (ua *UnusedAnalyzer) checkSymbolUsage(symbol *types.Symbol) *UnusedSymbol {
-	// Skip exported symbols for now (they might be used externally)
-	if symbol.Exported {
+	// Skip exported symbols unless explicitly included
+	if symbol.Exported && !ua.includeExported {
 		return nil
 	}
 
@@ -146,8 +301,8 @@ func (ua *UnusedAnalyzer) checkSymbolUsage(symbol *types.Symbol) *UnusedSymbol {
 
 // checkMethodUsage checks if a method is unused with special handling for interface methods
 func (ua *UnusedAnalyzer) checkMethodUsage(method *types.Symbol, typeName string) *UnusedSymbol {
-	// Skip exported methods
-	if method.Exported {
+	// Skip exported methods unless explicitly included
+	if method.Exported && !ua.includeExported {
 		return nil
 	}
 
@@ -157,28 +312,6 @@ func (ua *UnusedAnalyzer) checkMethodUsage(method *types.Symbol, typeName string
 	}
 
 	return ua.checkSymbolUsage(method)
-}
-
-// isTestFunction checks if a function is a test function
-func (ua *UnusedAnalyzer) isTestFunction(symbol *types.Symbol) bool {
-	if symbol.Kind != types.FunctionSymbol {
-		return false
-	}
-
-	// Check if it's in a test file
-	if len(symbol.File) > 8 && symbol.File[len(symbol.File)-8:] == "_test.go" {
-		return true
-	}
-
-	// Check common test function patterns
-	testPrefixes := []string{"Test", "Benchmark", "Example", "Fuzz"}
-	for _, prefix := range testPrefixes {
-		if len(symbol.Name) >= len(prefix) && symbol.Name[:len(prefix)] == prefix {
-			return true
-		}
-	}
-
-	return false
 }
 
 // filterActualUses filters out declaration/definition references to find actual usage
@@ -259,8 +392,6 @@ func (ua *UnusedAnalyzer) isDeclarationContext(ref *types.Reference, symbol *typ
 
 // mightImplementInterface checks if a method might be implementing an interface
 func (ua *UnusedAnalyzer) mightImplementInterface(method *types.Symbol, typeName string) bool {
-	// For now, we'll be conservative and assume any unexported method with a common name
-	// might be implementing an interface
 	commonInterfaceMethods := []string{
 		"String", "Error", "Read", "Write", "Close", "Len", "Less", "Swap",
 		"MarshalJSON", "UnmarshalJSON", "MarshalBinary", "UnmarshalBinary",
@@ -273,15 +404,12 @@ func (ua *UnusedAnalyzer) mightImplementInterface(method *types.Symbol, typeName
 		}
 	}
 
-	// Check if there are any interfaces in the workspace that this might implement
-	// This is a simplified check - a full implementation would do proper interface matching
 	for _, pkg := range ua.workspace.Packages {
 		if pkg.Symbols == nil {
 			continue
 		}
 		for _, symbol := range pkg.Symbols.Types {
 			if symbol.Kind == types.InterfaceSymbol {
-				// Check if interface has a method with the same name
 				ifaceMethods, err := ua.resolver.getInterfaceMethods(symbol)
 				if err == nil {
 					for _, ifaceMethod := range ifaceMethods {

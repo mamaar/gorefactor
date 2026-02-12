@@ -337,24 +337,34 @@ func ResolvePackagePath(workspace *types.Workspace, userPath string) string {
 		return userPath
 	}
 
-	// Strategy 2: Try to find by Go package name
-	for pkgPath, pkg := range workspace.Packages {
-		if pkg.Name == userPath {
-			return pkgPath
-		}
-	}
-
-	// Strategy 3: Try relative to workspace root
+	// Strategy 2: Try relative to workspace root
 	absPath := filepath.Join(workspace.RootPath, userPath)
 	if _, exists := workspace.Packages[absPath]; exists {
 		return absPath
 	}
 
-	// Strategy 4: Try as "." for current directory
+	// Strategy 3: Try as "." for current directory
 	if userPath == "." {
 		if _, exists := workspace.Packages[workspace.RootPath]; exists {
 			return workspace.RootPath
 		}
+	}
+
+	// Strategy 4: Try to find by Go package name (only if unique)
+	var matchedPath string
+	matchCount := 0
+	for pkgPath, pkg := range workspace.Packages {
+		if pkg.Name == userPath {
+			matchedPath = pkgPath
+			matchCount++
+			if matchCount > 1 {
+				// Multiple packages with same name - ambiguous, don't match
+				break
+			}
+		}
+	}
+	if matchCount == 1 {
+		return matchedPath
 	}
 
 	// If nothing matches, return the user input (will trigger helpful error message)

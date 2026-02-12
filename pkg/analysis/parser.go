@@ -7,7 +7,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -130,7 +132,9 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 	return pkg, nil
 }
 
-// ParseWorkspace parses an entire Go workspace/module
+// ParseWorkspace parses an entire Go workspace/module.
+// Package directories are discovered sequentially, then parsed in parallel
+// using a bounded worker pool (runtime.NumCPU goroutines).
 func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 	// Convert to absolute path for consistency
 	absRootPath, err := filepath.Abs(rootPath)
@@ -159,7 +163,8 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		workspace.Module = module
 	}
 
-	// Walk directory tree to find Go packages
+	// Phase 1: Discover package directories (sequential — filesystem walk is I/O bound and fast)
+	var pkgDirs []string
 	err = filepath.WalkDir(absRootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -173,22 +178,14 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 			}
 		}
 
-		// Look for directories containing .go files
+		// Collect directories containing .go files
 		if d.IsDir() {
 			hasGoFiles, err := p.hasGoFiles(path)
 			if err != nil {
 				return err
 			}
-
 			if hasGoFiles {
-				pkg, err := p.ParsePackage(path)
-				if err != nil {
-					// Log error but continue parsing other packages
-					fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", path, err)
-					return nil
-				}
-
-				workspace.Packages[pkg.Path] = pkg
+				pkgDirs = append(pkgDirs, path)
 			}
 		}
 
@@ -202,6 +199,51 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 			File:    rootPath,
 			Cause:   err,
 		}
+	}
+
+	// Phase 2: Parse packages in parallel with bounded concurrency.
+	// Each package parse is independent (reads its own files, creates its own AST nodes).
+	// The shared fileSet is safe for concurrent use via its internal mutex.
+	type pkgResult struct {
+		pkg *types.Package
+		err error
+	}
+
+	results := make([]pkgResult, len(pkgDirs))
+	workers := runtime.NumCPU()
+	if workers > len(pkgDirs) {
+		workers = len(pkgDirs)
+	}
+
+	var wg sync.WaitGroup
+	dirCh := make(chan int, len(pkgDirs))
+
+	for i := range pkgDirs {
+		dirCh <- i
+	}
+	close(dirCh)
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range dirCh {
+				pkg, err := p.ParsePackage(pkgDirs[idx])
+				results[idx] = pkgResult{pkg: pkg, err: err}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	// Collect results
+	for i, res := range results {
+		if res.err != nil {
+			// Log error but continue parsing other packages (same as before)
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
+			continue
+		}
+		workspace.Packages[res.pkg.Path] = res.pkg
 	}
 
 	// After parsing packages, build import path mapping

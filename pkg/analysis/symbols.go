@@ -4,11 +4,27 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"runtime"
 	"strings"
+	"sync"
 	"unicode"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
+
+// indexEntry represents a single identifier occurrence found during index building.
+type indexEntry struct {
+	File          *types.File
+	Pos           token.Pos
+	IsDeclaration bool   // true if this ident is in a declaration context (func name, type name, var/const name)
+	IsSelector    bool   // true if this ident is the Sel part of a SelectorExpr (e.g., pkg.Ident)
+	PkgAlias      string // the "pkg" part if IsSelector is true
+}
+
+// ReferenceIndex maps identifier names to all their occurrences across the workspace.
+type ReferenceIndex struct {
+	nameIndex map[string][]indexEntry
+}
 
 // SymbolResolver handles symbol resolution and reference finding
 type SymbolResolver struct {
@@ -81,6 +97,214 @@ func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Referen
 	}
 
 	return references, nil
+}
+
+// BuildReferenceIndex builds a reverse index mapping identifier names to their
+// occurrences across all files in the workspace. This performs one AST walk per file
+// and pre-computes declaration and selector information, eliminating the need for
+// repeated nested AST walks in identifierRefersToSymbol/getQualifyingPackage/isDeclarationContext.
+func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
+	// Collect all files into a flat slice
+	var files []*types.File
+	for _, pkg := range sr.workspace.Packages {
+		for _, f := range pkg.Files {
+			files = append(files, f)
+		}
+		for _, f := range pkg.TestFiles {
+			files = append(files, f)
+		}
+	}
+
+	workers := runtime.NumCPU()
+	if workers > len(files) {
+		workers = len(files)
+	}
+	if workers == 0 {
+		return &ReferenceIndex{nameIndex: make(map[string][]indexEntry)}
+	}
+
+	// Each worker builds a local index to avoid lock contention
+	localIndexes := make([]map[string][]indexEntry, workers)
+	var wg sync.WaitGroup
+	ch := make(chan int, len(files))
+	for i := range files {
+		ch <- i
+	}
+	close(ch)
+
+	for w := 0; w < workers; w++ {
+		localIndexes[w] = make(map[string][]indexEntry)
+		wg.Add(1)
+		go func(local map[string][]indexEntry) {
+			defer wg.Done()
+			for i := range ch {
+				sr.indexFileLocal(files[i], local)
+			}
+		}(localIndexes[w])
+	}
+	wg.Wait()
+
+	// Merge local indexes into the final index
+	idx := &ReferenceIndex{nameIndex: make(map[string][]indexEntry)}
+	for _, local := range localIndexes {
+		for name, entries := range local {
+			idx.nameIndex[name] = append(idx.nameIndex[name], entries...)
+		}
+	}
+	return idx
+}
+
+// indexFile performs a single AST walk over a file and populates the reference index.
+func (sr *SymbolResolver) indexFile(file *types.File, idx *ReferenceIndex) {
+	if file.AST == nil {
+		return
+	}
+	sr.indexFileLocal(file, idx.nameIndex)
+}
+
+// indexFileLocal performs a single AST walk over a file, collecting declarations,
+// selectors, and identifiers in one pass, writing results to a local map.
+// Since ast.Inspect visits parents before children, FuncDecl/GenDecl/SelectorExpr
+// nodes are visited before their child Ident nodes, so declPositions and selectorMap
+// are populated before the Ident case reads them.
+func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string][]indexEntry) {
+	if file.AST == nil {
+		return
+	}
+
+	declPositions := make(map[token.Pos]bool)
+	selectorMap := make(map[token.Pos]string)
+
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.FuncDecl:
+			if node.Name != nil {
+				declPositions[node.Name.Pos()] = true
+			}
+		case *ast.GenDecl:
+			for _, spec := range node.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					declPositions[s.Name.Pos()] = true
+				case *ast.ValueSpec:
+					for _, name := range s.Names {
+						declPositions[name.Pos()] = true
+					}
+				}
+			}
+		case *ast.SelectorExpr:
+			if pkgIdent, ok := node.X.(*ast.Ident); ok {
+				selectorMap[node.Sel.Pos()] = pkgIdent.Name
+			}
+		case *ast.Ident:
+			entry := indexEntry{
+				File:          file,
+				Pos:           node.Pos(),
+				IsDeclaration: declPositions[node.Pos()],
+			}
+			if alias, found := selectorMap[node.Pos()]; found {
+				entry.IsSelector = true
+				entry.PkgAlias = alias
+			}
+			nameIndex[node.Name] = append(nameIndex[node.Name], entry)
+		}
+		return true
+	})
+}
+
+// FindReferencesIndexed finds references to a symbol using the pre-built index.
+// This is O(1) lookup + O(R) filtering where R is the number of occurrences of the name,
+// compared to the O(P×F×A) of FindReferences.
+func (sr *SymbolResolver) FindReferencesIndexed(symbol *types.Symbol, idx *ReferenceIndex) ([]*types.Reference, error) {
+	entries, ok := idx.nameIndex[symbol.Name]
+	if !ok {
+		return nil, nil
+	}
+
+	var references []*types.Reference
+	for i := range entries {
+		entry := &entries[i]
+
+		// Skip the symbol's own definition position
+		if entry.Pos == symbol.Position {
+			continue
+		}
+
+		// Skip declarations (these are definition sites, not usages)
+		if entry.IsDeclaration {
+			continue
+		}
+
+		// Check package matching
+		if entry.IsSelector {
+			// Qualified reference (pkg.Symbol) — check if the alias refers to the symbol's package
+			if !sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package) {
+				continue
+			}
+		} else {
+			// Unqualified reference — must be in the same package
+			if !sr.isSamePackage(entry.File.Package, symbol.Package) {
+				continue
+			}
+		}
+
+		pos := sr.workspace.FileSet.Position(entry.Pos)
+		ref := &types.Reference{
+			Symbol:   symbol,
+			Position: entry.Pos,
+			Offset:   pos.Offset,
+			File:     entry.File.Path,
+			Line:     pos.Line,
+			Column:   pos.Column,
+			Context:  sr.extractContext2(entry.File, pos.Line),
+		}
+		references = append(references, ref)
+	}
+
+	return references, nil
+}
+
+// HasNonDeclarationReference checks if a symbol has at least one non-declaration reference
+// in the index. Returns true as soon as one is found (early exit for unused detection).
+func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *ReferenceIndex) bool {
+	entries, ok := idx.nameIndex[symbol.Name]
+	if !ok {
+		return false
+	}
+
+	for i := range entries {
+		entry := &entries[i]
+
+		if entry.Pos == symbol.Position {
+			continue
+		}
+		if entry.IsDeclaration {
+			continue
+		}
+
+		if entry.IsSelector {
+			if !sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package) {
+				continue
+			}
+		} else {
+			if !sr.isSamePackage(entry.File.Package, symbol.Package) {
+				continue
+			}
+		}
+
+		return true
+	}
+
+	return false
+}
+
+// extractContext2 extracts surrounding context using pre-computed line number.
+func (sr *SymbolResolver) extractContext2(file *types.File, line int) string {
+	lines := strings.Split(string(file.OriginalContent), "\n")
+	if line > 0 && line <= len(lines) {
+		return strings.TrimSpace(lines[line-1])
+	}
+	return ""
 }
 
 // FindDefinition finds the definition of symbol at given position
