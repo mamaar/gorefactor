@@ -138,7 +138,7 @@ func (ig *ImportGraph) DetectImportCycles() [][]string {
 	dfs = func(pkg string, path []string) []string {
 		visited[pkg] = true
 		recStack[pkg] = true
-		newPath := append(path, pkg)
+		newPath := append(append([]string{}, path...), pkg)
 
 		for _, edge := range ig.Edges[pkg] {
 			if edge.IsTest || edge.To.IsExternal {

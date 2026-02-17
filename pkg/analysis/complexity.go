@@ -108,7 +108,7 @@ func (ca *ComplexityAnalyzer) AnalyzeFunction(funcDecl *ast.FuncDecl, file *type
 	// Create symbol for the function
 	symbol := &types.Symbol{
 		Name:     funcDecl.Name.Name,
-		Package:  file.Package.Path,
+		Package:  getPackageIdentifier(file.Package),
 		File:     file.Path,
 		Position: funcDecl.Name.Pos(),
 		End:      funcDecl.End(),
@@ -321,16 +321,18 @@ func GetComplexityThresholds() map[string]int {
 func ClassifyComplexity(complexity int) string {
 	thresholds := GetComplexityThresholds()
 	
-	if complexity >= thresholds["extreme"] {
+	switch {
+	case complexity >= thresholds["extreme"]:
 		return "extreme"
-	} else if complexity >= thresholds["very_high"] {
+	case complexity >= thresholds["very_high"]:
 		return "very_high"
-	} else if complexity >= thresholds["high"] {
+	case complexity >= thresholds["high"]:
 		return "high"
-	} else if complexity >= thresholds["moderate"] {
+	case complexity >= thresholds["moderate"]:
 		return "moderate"
+	default:
+		return "low"
 	}
-	return "low"
 }
 
 // FormatComplexityReport formats a complexity analysis report

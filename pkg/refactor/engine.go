@@ -2,6 +2,8 @@ package refactor
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 
@@ -28,6 +30,8 @@ type RefactorEngine interface {
 	InlineMethod(ws *types.Workspace, req types.InlineMethodRequest) (*types.RefactoringPlan, error)
 	InlineVariable(ws *types.Workspace, req types.InlineVariableRequest) (*types.RefactoringPlan, error)
 	InlineFunction(ws *types.Workspace, req types.InlineFunctionRequest) (*types.RefactoringPlan, error)
+	SafeDelete(ws *types.Workspace, req types.SafeDeleteRequest) (*types.RefactoringPlan, error)
+	ChangeSignature(ws *types.Workspace, req ChangeSignatureRequest) (*types.RefactoringPlan, error)
 	BatchRefactor(ws *types.Workspace, ops []types.Operation) (*types.RefactoringPlan, error)
 
 	// Bulk operations
@@ -75,12 +79,36 @@ type DefaultEngine struct {
 	validator  *Validator
 	serializer *Serializer
 	config     *EngineConfig
+	logger     *slog.Logger
 }
 
 // EngineConfig contains configuration options for the refactoring engine
 type EngineConfig struct {
 	SkipCompilation bool
 	AllowBreaking   bool
+}
+
+// WatchContext exposes the internal components needed by the watch subsystem.
+type WatchContext struct {
+	Workspace *types.Workspace
+	Parser    *analysis.GoParser
+	Resolver  *analysis.SymbolResolver
+	Analyzer  *analysis.DependencyAnalyzer
+}
+
+// LoadWorkspaceForWatch loads a workspace and returns the internal components
+// required for incremental watch-mode updates.
+func (e *DefaultEngine) LoadWorkspaceForWatch(path string) (*WatchContext, error) {
+	ws, err := e.LoadWorkspace(path)
+	if err != nil {
+		return nil, err
+	}
+	return &WatchContext{
+		Workspace: ws,
+		Parser:    e.parser,
+		Resolver:  e.resolver,
+		Analyzer:  e.analyzer,
+	}, nil
 }
 
 // DefaultConfig returns the default engine configuration
@@ -91,43 +119,63 @@ func DefaultConfig() *EngineConfig {
 	}
 }
 
-func CreateEngine() RefactorEngine {
-	return CreateEngineWithConfig(DefaultConfig())
+func CreateEngine(logger *slog.Logger) RefactorEngine {
+	return CreateEngineWithConfig(DefaultConfig(), logger)
 }
 
-func CreateEngineWithConfig(config *EngineConfig) RefactorEngine {
+func CreateEngineWithConfig(config *EngineConfig, logger *slog.Logger) RefactorEngine {
 	return &DefaultEngine{
-		parser:     analysis.NewParser(),
-		validator:  NewValidator(),
+		parser:     analysis.NewParser(logger),
+		validator:  NewValidator(logger),
 		serializer: NewSerializer(),
 		config:     config,
+		logger:     logger,
 	}
 }
 
 // LoadWorkspace loads and parses a complete workspace
 func (e *DefaultEngine) LoadWorkspace(path string) (*types.Workspace, error) {
+	e.logger.Info("loading workspace", "path", path)
+
 	// Parse the workspace
 	workspace, err := e.parser.ParseWorkspace(path)
 	if err != nil {
+		e.logger.Error("workspace parsing failed", "path", path, "err", err)
 		return nil, fmt.Errorf("failed to parse workspace: %w", err)
 	}
 
 	// Create resolver with parsed workspace
-	e.resolver = analysis.NewSymbolResolver(workspace)
+	e.resolver = analysis.NewSymbolResolver(workspace, e.logger)
 
 	// Build symbol tables for all packages
+	e.logger.Debug("building symbol tables", "package_count", len(workspace.Packages))
 	for _, pkg := range workspace.Packages {
 		_, err := e.resolver.BuildSymbolTable(pkg)
 		if err != nil {
+			e.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
 			return nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
 		}
 	}
 
 	// Create dependency analyzer and build dependency graph
-	e.analyzer = analysis.NewDependencyAnalyzer(workspace)
+	e.analyzer = analysis.NewDependencyAnalyzer(workspace, e.logger)
 	_, err = e.analyzer.BuildDependencyGraph()
 	if err != nil {
+		e.logger.Error("dependency graph build failed", "err", err)
 		return nil, fmt.Errorf("failed to build dependency graph: %w", err)
+	}
+
+	// Configure import ordering with module info
+	if workspace.Module != nil {
+		workspaceModules, _ := discoverWorkspaceModules(workspace.RootPath)
+		// Filter out the current module from workspace modules
+		var filtered []string
+		for _, wm := range workspaceModules {
+			if wm != workspace.Module.Path {
+				filtered = append(filtered, wm)
+			}
+		}
+		e.serializer.SetModuleInfo(workspace.Module.Path, filtered)
 	}
 
 	return workspace, nil
@@ -157,6 +205,10 @@ func (e *DefaultEngine) SaveWorkspace(ws *types.Workspace) error {
 
 // MoveSymbol implements symbol moving between packages
 func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequest) (*types.RefactoringPlan, error) {
+	// Apply sensible defaults
+	req.CreateTarget = true
+	req.UpdateTests = true
+
 	operation := &MoveSymbolOperation{Request: req}
 
 	// Validate the operation
@@ -265,6 +317,9 @@ func (e *DefaultEngine) RenameInterfaceMethod(ws *types.Workspace, req types.Ren
 
 // RenameMethod implements renaming methods on specific types (structs or interfaces)
 func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethodRequest) (*types.RefactoringPlan, error) {
+	// Apply sensible defaults
+	req.UpdateImplementations = true
+
 	operation := &RenameMethodOperation{Request: req}
 
 	// Validate the operation
@@ -292,12 +347,20 @@ func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethod
 
 // ExtractMethod implements method extraction from code blocks
 func (e *DefaultEngine) ExtractMethod(ws *types.Workspace, req types.ExtractMethodRequest) (*types.RefactoringPlan, error) {
+	// Use the engine's logger or create a discard logger
+	logger := e.logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
 	operation := &ExtractMethodOperation{
 		SourceFile:    req.SourceFile,
 		StartLine:     req.StartLine,
 		EndLine:       req.EndLine,
 		NewMethodName: req.NewMethodName,
 		TargetStruct:  req.TargetStruct,
+		Logger:        logger,
+		Parser:        e.parser,
 	}
 
 	// Validate the operation
@@ -503,6 +566,75 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 	}
 
 	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// SafeDelete implements safe deletion of symbols
+func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequest) (*types.RefactoringPlan, error) {
+	operation := &SafeDeleteOperation{
+		SymbolName: req.Symbol,
+		SourceFile: req.SourceFile,
+		Scope:      types.WorkspaceScope,
+		Force:      req.Force,
+	}
+
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("safe delete operation validation failed: %w", err)
+	}
+
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate safe delete plan: %w", err)
+	}
+
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// ChangeSignature implements changing function/method signatures
+func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
+	newParamPos := -1
+	if req.DefaultValue != "" && req.NewParamPosition >= 0 {
+		newParamPos = req.NewParamPosition
+	}
+
+	operation := &ChangeSignatureOperation{
+		FunctionName:         req.FunctionName,
+		SourceFile:           req.SourceFile,
+		NewParams:            req.NewParams,
+		NewReturns:           req.NewReturns,
+		Scope:                req.Scope,
+		PropagateToInterface: req.PropagateToInterface,
+		DefaultValue:         req.DefaultValue,
+		NewParamPosition:     newParamPos,
+		CachedIndex:          req.CachedIndex,
+		Logger:               e.logger,
+	}
+
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("change signature operation validation failed: %w", err)
+	}
+
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate change signature plan: %w", err)
+	}
+
 	impact, err := e.analyzer.AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
@@ -767,6 +899,10 @@ func (e *DefaultEngine) findOperationConflicts(changes []types.Change) []string 
 
 // MovePackage implements moving entire packages
 func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRequest) (*types.RefactoringPlan, error) {
+	// Apply sensible defaults
+	req.CreateTarget = true
+	req.UpdateImports = true
+
 	operation := &MovePackageOperation{Request: req}
 
 	// Validate the operation
@@ -794,6 +930,9 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 
 // MoveDir implements moving directory structures
 func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (*types.RefactoringPlan, error) {
+	// Apply sensible defaults
+	req.UpdateImports = true
+
 	operation := &MoveDirOperation{Request: req}
 
 	// Validate the operation
@@ -821,6 +960,10 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 
 // MovePackages implements moving multiple packages atomically
 func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackagesRequest) (*types.RefactoringPlan, error) {
+	// Apply sensible defaults
+	req.CreateTargets = true
+	req.UpdateImports = true
+
 	operation := &MovePackagesOperation{Request: req}
 
 	// Validate the operation

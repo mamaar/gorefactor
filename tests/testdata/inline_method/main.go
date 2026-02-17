@@ -1,0 +1,15 @@
+package main
+
+import "fmt"
+
+type Math struct{}
+
+func (m *Math) Square(n int) int {
+	return n * n
+}
+
+func main() {
+	m := &Math{}
+	result := m.Square(4)
+	fmt.Println(result)
+}

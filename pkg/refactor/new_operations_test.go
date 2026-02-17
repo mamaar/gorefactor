@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"go/parser"
 	"go/token"
 	"testing"
 
@@ -24,7 +25,7 @@ func TestExtractConstantOperation_Validate(t *testing.T) {
 			name: "valid extract constant operation",
 			op: &ExtractConstantOperation{
 				SourceFile:   "test.go",
-				Position:     token.Pos(100),
+				Position:     token.Pos(103),
 				ConstantName: "MyConstant",
 				Scope:        types.PackageScope,
 			},
@@ -244,7 +245,6 @@ func createTestWorkspaceForNewOps() *types.Workspace {
 	testFile := &types.File{
 		Path:    "test.go",
 		Package: nil, // Will be set after package creation
-		AST:     nil,
 		OriginalContent: []byte(`package main
 
 import "fmt"
@@ -272,6 +272,10 @@ func (t *TestStruct) TestMethod() {
 }
 `),
 	}
+
+	fset := token.NewFileSet()
+	parsedAST, _ := parser.ParseFile(fset, "test.go", testFile.OriginalContent, parser.ParseComments)
+	testFile.AST = parsedAST
 
 	// Create test symbols
 	testFunctionSymbol := &types.Symbol{
@@ -350,6 +354,7 @@ func (t *TestStruct) TestMethod() {
 
 	return &types.Workspace{
 		RootPath: "/test",
+		FileSet:  fset,
 		Packages: map[string]*types.Package{
 			"main": pkg,
 		},

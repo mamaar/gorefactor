@@ -3,6 +3,8 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"io"
+	"log/slog"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
@@ -43,6 +45,17 @@ func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
 			sourcePackage = pkg
 			break
 		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				sourcePackage = pkg
+				break
+			}
+		}
+		if sourceFile != nil {
+			break
+		}
 	}
 	if sourceFile == nil {
 		return &pkgtypes.RefactorError{
@@ -52,7 +65,7 @@ func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
 	}
 
 	// Find the symbol to delete
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
 	if err != nil {
 		return &pkgtypes.RefactorError{
@@ -99,9 +112,20 @@ func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Refact
 			sourcePackage = pkg
 			break
 		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				sourcePackage = pkg
+				break
+			}
+		}
+		if sourceFile != nil {
+			break
+		}
 	}
 
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
 	if err != nil {
 		return nil, err

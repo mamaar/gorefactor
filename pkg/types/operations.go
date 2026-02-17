@@ -235,6 +235,13 @@ const (
 	UpdateImport
 )
 
+// SafeDeleteRequest represents safely deleting a symbol
+type SafeDeleteRequest struct {
+	Symbol     string
+	SourceFile string
+	Force      bool
+}
+
 // MovePackageRequest represents moving an entire package
 type MovePackageRequest struct {
 	SourcePackage string

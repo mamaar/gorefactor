@@ -1,20 +1,28 @@
 package analysis
 
 import (
+	"log/slog"
+
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // DependencyAnalyzer analyzes package and symbol dependencies
 type DependencyAnalyzer struct {
 	workspace *types.Workspace
+	logger    *slog.Logger
 }
 
-func NewDependencyAnalyzer(ws *types.Workspace) *DependencyAnalyzer {
-	return &DependencyAnalyzer{workspace: ws}
+func NewDependencyAnalyzer(ws *types.Workspace, logger *slog.Logger) *DependencyAnalyzer {
+	return &DependencyAnalyzer{
+		workspace: ws,
+		logger:    logger,
+	}
 }
 
 // BuildDependencyGraph builds complete dependency graph for workspace
 func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, error) {
+	da.logger.Info("building dependency graph", "packages", len(da.workspace.Packages))
+
 	graph := &types.DependencyGraph{
 		PackageImports: make(map[string][]string),
 		PackageDeps:    make(map[string][]string),
@@ -36,6 +44,10 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, er
 	// Detect import cycles
 	cycles := da.detectCycles(imports)
 	graph.ImportCycles = cycles
+
+	if len(cycles) > 0 {
+		da.logger.Warn("detected import cycles", "cycle_count", len(cycles))
+	}
 
 	// Build symbol dependencies (simplified)
 	err := da.buildSymbolDependencies(graph)
@@ -82,7 +94,7 @@ func (da *DependencyAnalyzer) detectCycles(imports map[string][]string) [][]stri
 	dfs = func(pkg string, path []string) []string {
 		visited[pkg] = true
 		recStack[pkg] = true
-		newPath := append(path, pkg)
+		newPath := append(append([]string{}, path...), pkg)
 
 		for _, imp := range imports[pkg] {
 			if !visited[imp] {

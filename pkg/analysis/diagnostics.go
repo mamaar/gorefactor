@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -123,7 +126,7 @@ func (de *DiagnosticEngine) AnalyzeVisibilityError(symbol *types.Symbol, accessi
 	if symbol.Package == accessingPackage {
 		suggestions = append(suggestions, "This symbol should be accessible within the same package - this might be a scoping issue")
 	} else {
-		exportedName := strings.Title(symbol.Name)
+		exportedName := cases.Title(language.English).String(symbol.Name)
 		if exportedName != symbol.Name {
 			suggestions = append(suggestions, fmt.Sprintf("To make it accessible, rename it to '%s' (capitalize first letter)", exportedName))
 		}
@@ -246,7 +249,8 @@ func (de *DiagnosticEngine) generateSuggestions(symbolName string, context *Reso
 	var suggestions []string
 
 	// Check for typos in available symbols
-	allAvailable := append(context.AvailableSymbols, context.NearbySymbols...)
+	allAvailable := append([]string{}, context.AvailableSymbols...)
+	allAvailable = append(allAvailable, context.NearbySymbols...)
 	for _, available := range allAvailable {
 		if de.isSimilarName(available, symbolName) {
 			suggestions = append(suggestions, fmt.Sprintf("Did you mean '%s'?", available))

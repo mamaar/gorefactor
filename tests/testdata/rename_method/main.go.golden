@@ -1,0 +1,15 @@
+package main
+
+type Calculator struct {
+	value int
+}
+
+func (c *Calculator) Plus(n int) {
+	c.value += n
+}
+
+func main() {
+	calc := &Calculator{}
+	calc.Plus(5)
+	calc.Plus(10)
+}

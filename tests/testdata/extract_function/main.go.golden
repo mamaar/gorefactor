@@ -1,0 +1,15 @@
+package extractfn
+
+import (
+	"fmt"
+)
+
+func computeSum(x int, y int) {
+	sum := x + y
+	fmt.Println(sum)
+}
+func Run() {
+	x := 10
+	y := 20
+	computeSum(x, y)
+}

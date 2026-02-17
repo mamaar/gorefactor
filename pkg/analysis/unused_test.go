@@ -3,6 +3,8 @@ package analysis
 import (
 	"go/parser"
 	"go/token"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -108,7 +110,7 @@ func consumer() {
 		FileSet: fileSet,
 	}
 
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
 	}
@@ -118,7 +120,7 @@ func consumer() {
 
 func TestNewUnusedAnalyzer(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if analyzer == nil {
 		t.Fatal("Expected non-nil analyzer")
@@ -133,7 +135,7 @@ func TestNewUnusedAnalyzer(t *testing.T) {
 
 func TestFindUnusedSymbols_UnexportedOnly(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	unused, err := analyzer.FindUnusedSymbols()
 	if err != nil {
@@ -167,7 +169,7 @@ func TestFindUnusedSymbols_UnexportedOnly(t *testing.T) {
 
 func TestFindUnusedSymbols_IncludeExported(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	analyzer.SetIncludeExported(true)
 
 	unused, err := analyzer.FindUnusedSymbols()
@@ -208,7 +210,7 @@ func TestFindUnusedSymbols_IncludeExported(t *testing.T) {
 
 func TestGetUnusedUnexportedSymbols(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	safeToDelete, err := analyzer.GetUnusedUnexportedSymbols()
 	if err != nil {
@@ -227,7 +229,7 @@ func TestGetUnusedUnexportedSymbols(t *testing.T) {
 
 func TestFindUnusedSymbols_SkipsSpecialFunctions(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	analyzer.SetIncludeExported(true)
 
 	unused, err := analyzer.FindUnusedSymbols()
@@ -277,12 +279,12 @@ func regularUnused() {}
 		Packages: map[string]*types.Package{"test/testpkg": pkg},
 		FileSet:  fileSet,
 	}
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
 	}
 
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	unused, err := analyzer.FindUnusedSymbols()
 	if err != nil {
 		t.Fatalf("FindUnusedSymbols failed: %v", err)
@@ -299,7 +301,7 @@ func regularUnused() {}
 
 func TestFindUnusedSymbols_Methods(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	unused, err := analyzer.FindUnusedSymbols()
 	if err != nil {
@@ -321,7 +323,7 @@ func TestFindUnusedSymbols_Methods(t *testing.T) {
 
 func TestFindUnusedSymbols_AllKinds(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	unused, err := analyzer.FindUnusedSymbols()
 	if err != nil {
@@ -349,7 +351,7 @@ func TestFindUnusedSymbols_AllKinds(t *testing.T) {
 
 func TestFormatUnusedSymbol(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws)
+	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	unused := &UnusedSymbol{
 		Symbol: &types.Symbol{

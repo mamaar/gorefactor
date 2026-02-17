@@ -1,0 +1,10 @@
+package main
+
+import (
+	"tests/move_symbol/pkg/target"
+)
+
+func main() {
+	_ = target.Multiply(2, 3)
+	_ = target.Greet()
+}

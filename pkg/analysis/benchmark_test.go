@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -13,7 +15,7 @@ import (
 
 func BenchmarkSymbolResolution(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 50) // 50 packages
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Get a sample package for testing
 	var testPkg *types.Package
@@ -59,7 +61,7 @@ func BenchmarkSymbolResolution(b *testing.B) {
 
 func BenchmarkSymbolResolutionWithCache(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 50)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Warm up cache
 	resolver.cache.WarmCache(workspace)
@@ -101,7 +103,7 @@ func BenchmarkSymbolResolutionWithCache(b *testing.B) {
 
 func BenchmarkMethodSetResolution(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 20)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Find a type symbol for testing
 	var typeSymbol *types.Symbol
@@ -135,7 +137,7 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 
 func BenchmarkScopeAnalysis(b *testing.B) {
 	workspace := createScopedWorkspaceForBenchmark(b)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	file := workspace.Packages["test/scoped"].Files["scoped.go"]
 
@@ -151,12 +153,12 @@ func BenchmarkScopeAnalysis(b *testing.B) {
 
 func BenchmarkScopeAnalysisWithCache(b *testing.B) {
 	workspace := createScopedWorkspaceForBenchmark(b)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	file := workspace.Packages["test/scoped"].Files["scoped.go"]
 
 	// First call to populate cache
-	resolver.scopeAnalyzer.BuildScopeTree(file)
+	_, _ = resolver.scopeAnalyzer.BuildScopeTree(file)
 
 	b.ResetTimer()
 	
@@ -170,7 +172,7 @@ func BenchmarkScopeAnalysisWithCache(b *testing.B) {
 
 func BenchmarkFindReferences(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 10)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Find a function symbol for testing
 	var funcSymbol *types.Symbol
@@ -212,7 +214,7 @@ func BenchmarkBuildSymbolTable(b *testing.B) {
 	b.ResetTimer()
 	
 	for i := 0; i < b.N; i++ {
-		resolver := NewSymbolResolver(workspace)
+		resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		_, err := resolver.BuildSymbolTable(testPkg)
 		if err != nil {
 			b.Fatalf("Failed to build symbol table: %v", err)
@@ -268,7 +270,7 @@ func BenchmarkLargeCodebase(b *testing.B) {
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Packages_%d", size), func(b *testing.B) {
 			workspace := createBenchmarkWorkspace(b, size)
-			resolver := NewSymbolResolver(workspace)
+			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			
 			// Warm up cache
 			resolver.cache.WarmCache(workspace)
@@ -285,7 +287,7 @@ func BenchmarkLargeCodebase(b *testing.B) {
 							if count >= 3 { // Limit to avoid excessive operations
 								break
 							}
-							resolver.ResolveSymbol(pkg, name)
+							_, _ = resolver.ResolveSymbol(pkg, name)
 							count++
 						}
 					}
@@ -297,16 +299,16 @@ func BenchmarkLargeCodebase(b *testing.B) {
 
 func BenchmarkMemoryUsage(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 100)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		// Perform operations that populate cache
 		for _, pkg := range workspace.Packages {
 			if pkg.Symbols != nil {
 				for name := range pkg.Symbols.Functions {
-					resolver.ResolveSymbol(pkg, name)
+					_, _ = resolver.ResolveSymbol(pkg, name)
 					break // Just one per package
 				}
 			}
@@ -420,7 +422,7 @@ func ComplexFunction%d() {
 	}
 
 	// Build symbol tables for all packages
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range workspace.Packages {
 		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
 			b.Fatalf("Failed to build symbol table: %v", err)
@@ -537,7 +539,7 @@ func (ct *ComplexType) ComplexMethod(methodParam bool) {
 	}
 
 	// Build symbol tables
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
 		b.Fatalf("Failed to build symbol table: %v", err)
 	}
