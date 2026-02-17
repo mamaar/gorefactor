@@ -94,9 +94,61 @@ func (op *CleanAliasesOperation) cleanFileAliases(file *types.File) []types.Chan
 }
 
 func (op *CleanAliasesOperation) wouldCauseConflict(alias, importPath string, file *types.File) bool {
-	// Placeholder implementation - would check for naming conflicts
-	// This would need to analyze the symbol usage in the file
-	return false
+	if file.AST == nil {
+		return false
+	}
+	// Compute the default package name (last path component) that would be used
+	// if the alias is removed.
+	parts := strings.Split(strings.Trim(importPath, "/"), "/")
+	defaultName := parts[len(parts)-1]
+
+	// Check 1: another import in the file uses the same default name without an alias.
+	for _, imp := range file.AST.Imports {
+		if imp.Name != nil {
+			continue // has its own alias, no collision
+		}
+		otherPath := strings.Trim(imp.Path.Value, `"`)
+		if otherPath == importPath {
+			continue // same import
+		}
+		otherParts := strings.Split(otherPath, "/")
+		if otherParts[len(otherParts)-1] == defaultName {
+			return true
+		}
+	}
+
+	// Check 2: a top-level declared identifier uses the same name.
+	conflictFound := false
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if conflictFound {
+			return false
+		}
+		switch decl := n.(type) {
+		case *ast.FuncDecl:
+			if decl.Name != nil && decl.Name.Name == defaultName {
+				conflictFound = true
+			}
+		case *ast.GenDecl:
+			for _, spec := range decl.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					if s.Name.Name == defaultName {
+						conflictFound = true
+					}
+				case *ast.ValueSpec:
+					for _, name := range s.Names {
+						if name.Name == defaultName {
+							conflictFound = true
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	_ = alias // alias is the current alias being removed; defaultName is the replacement
+	return conflictFound
 }
 
 // StandardizeImportsOperation implements standardizing import aliases
@@ -287,56 +339,67 @@ func (op *ResolveAliasConflictsOperation) detectConflicts(file *types.File) map[
 }
 
 func (op *ResolveAliasConflictsOperation) resolveConflicts(file *types.File, conflicts map[string][]string) []types.Change {
-	var changes []types.Change
+	if file.AST == nil {
+		return nil
+	}
 
+	// Build a lookup: (alias, importPath) → [start, end] byte offsets of the alias token
+	type specKey struct{ alias, importPath string }
+	specPositions := make(map[specKey][2]int)
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		importSpec, ok := n.(*ast.ImportSpec)
+		if !ok || importSpec.Name == nil {
+			return true
+		}
+		a := importSpec.Name.Name
+		importPath := strings.Trim(importSpec.Path.Value, `"`)
+		if a == "." || a == "_" {
+			return true
+		}
+		specPositions[specKey{a, importPath}] = [2]int{
+			int(importSpec.Name.Pos()),
+			int(importSpec.Name.End()),
+		}
+		return true
+	})
+
+	var changes []types.Change
 	for alias, paths := range conflicts {
 		switch op.Request.Strategy {
 		case types.UseFullNames:
-			// Remove all aliases and use full package names
 			for _, importPath := range paths {
+				pos, ok := specPositions[specKey{alias, importPath}]
+				if !ok {
+					continue
+				}
 				changes = append(changes, types.Change{
 					File:        file.Path,
-					Start:       0, // Placeholder - would need to find actual position
-					End:         0,
+					Start:       pos[0],
+					End:         pos[1],
 					OldText:     alias,
 					NewText:     "",
-					Description: fmt.Sprintf("Remove conflicting alias '%s' for %s, use full package name", alias, importPath),
+					Description: fmt.Sprintf("Remove conflicting alias '%s' for %s", alias, importPath),
 				})
 			}
-
-		case types.UseShortestUnique:
-			// Generate unique short aliases
+		case types.UseShortestUnique, types.UseCustomAlias:
 			for i, importPath := range paths {
 				parts := strings.Split(importPath, "/")
 				newAlias := fmt.Sprintf("%s%d", parts[len(parts)-1], i+1)
+				pos, ok := specPositions[specKey{alias, importPath}]
+				if !ok {
+					continue
+				}
 				changes = append(changes, types.Change{
 					File:        file.Path,
-					Start:       0, // Placeholder
-					End:         0,
+					Start:       pos[0],
+					End:         pos[1],
 					OldText:     alias,
 					NewText:     newAlias,
-					Description: fmt.Sprintf("Resolve alias conflict: change '%s' to '%s' for %s", alias, newAlias, importPath),
-				})
-			}
-
-		case types.UseCustomAlias:
-			// Would need additional logic to generate custom aliases
-			// For now, fall back to shortest unique
-			for i, importPath := range paths {
-				parts := strings.Split(importPath, "/")
-				newAlias := fmt.Sprintf("%s%d", parts[len(parts)-1], i+1)
-				changes = append(changes, types.Change{
-					File:        file.Path,
-					Start:       0, // Placeholder
-					End:         0,
-					OldText:     alias,
-					NewText:     newAlias,
-					Description: fmt.Sprintf("Resolve alias conflict: change '%s' to '%s' for %s", alias, newAlias, importPath),
+					Description: fmt.Sprintf("Rename alias '%s' → '%s' for %s", alias, newAlias, importPath),
 				})
 			}
 		}
 	}
-
 	return changes
 }
 

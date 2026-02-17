@@ -900,19 +900,121 @@ type ConstantReference struct {
 }
 
 func (op *InlineConstantOperation) findConstantValue(ws *types.Workspace) (string, error) {
-	// Find the constant declaration and extract its value
-	// This is a simplified implementation
-	return "42", nil // Placeholder
+	var sourceFile *types.File
+	for _, pkg := range ws.Packages {
+		if f, ok := pkg.Files[op.SourceFile]; ok {
+			sourceFile = f
+			break
+		}
+		for _, f := range pkg.Files {
+			if f.Path == op.SourceFile {
+				sourceFile = f
+				break
+			}
+		}
+		if sourceFile != nil {
+			break
+		}
+	}
+	if sourceFile == nil || sourceFile.AST == nil {
+		return "", fmt.Errorf("source file not found: %s", op.SourceFile)
+	}
+
+	fset := ws.FileSet
+	var value string
+	ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
+		if value != "" {
+			return false
+		}
+		genDecl, ok := n.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.CONST {
+			return true
+		}
+		for _, spec := range genDecl.Specs {
+			valueSpec, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range valueSpec.Names {
+				if name.Name == op.ConstantName && i < len(valueSpec.Values) {
+					expr := valueSpec.Values[i]
+					start := fset.Position(expr.Pos()).Offset
+					end := fset.Position(expr.End()).Offset
+					if start >= 0 && end <= len(sourceFile.OriginalContent) && start < end {
+						value = string(sourceFile.OriginalContent[start:end])
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	if value == "" {
+		return "", fmt.Errorf("constant %s not found in %s", op.ConstantName, op.SourceFile)
+	}
+	return value, nil
 }
 
 func (op *InlineConstantOperation) findConstantReferences(ws *types.Workspace) ([]ConstantReference, error) {
-	// Find all references to the constant across the specified scope
-	// This is a simplified implementation
-	return []ConstantReference{
-		{
-			File:  op.SourceFile,
-			Start: 0,
-			End:   len(op.ConstantName),
-		},
-	}, nil
+	// Find source package and constant symbol
+	var sym *types.Symbol
+	var sourcePkg *types.Package
+	for _, pkg := range ws.Packages {
+		inPkg := false
+		if _, ok := pkg.Files[op.SourceFile]; ok {
+			inPkg = true
+		} else {
+			for _, f := range pkg.Files {
+				if f.Path == op.SourceFile {
+					inPkg = true
+					break
+				}
+			}
+		}
+		if !inPkg {
+			continue
+		}
+		sourcePkg = pkg
+		if pkg.Symbols != nil {
+			sym = pkg.Symbols.Constants[op.ConstantName]
+		}
+		break
+	}
+	if sym == nil {
+		return nil, fmt.Errorf("constant %s not found", op.ConstantName)
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	resolver := analysis.NewSymbolResolver(ws, logger)
+	idx := resolver.BuildReferenceIndex()
+	refs, err := resolver.FindReferencesIndexed(sym, idx)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []ConstantReference
+	for _, ref := range refs {
+		if op.Scope == types.PackageScope {
+			inPkg := false
+			if _, ok := sourcePkg.Files[ref.File]; ok {
+				inPkg = true
+			} else {
+				for _, f := range sourcePkg.Files {
+					if f.Path == ref.File {
+						inPkg = true
+						break
+					}
+				}
+			}
+			if !inPkg {
+				continue
+			}
+		}
+		result = append(result, ConstantReference{
+			File:  ref.File,
+			Start: ref.Offset,
+			End:   ref.Offset + len(op.ConstantName),
+		})
+	}
+	return result, nil
 }
