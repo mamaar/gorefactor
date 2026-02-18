@@ -342,7 +342,7 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 			if len(stmts) == 1 {
 				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
-					result := op.replaceIdents(expr, paramToArg, fset, wrapped)
+					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
 					return result
 				}
 			}
@@ -357,9 +357,9 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 	return result
 }
 
-// replaceIdents rewrites identifier tokens in an AST expression using the
+// replaceIdentsInExpr rewrites identifier tokens in an AST expression using the
 // param→arg map and returns the resulting source text.
-func (op *InlineMethodOperation) replaceIdents(expr ast.Expr, paramToArg map[string]string, fset *token.FileSet, src string) string {
+func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *token.FileSet, src string) string {
 	// Collect identifiers that need replacing, in reverse order so offsets stay valid.
 	type replacement struct {
 		start, end int
@@ -369,7 +369,6 @@ func (op *InlineMethodOperation) replaceIdents(expr ast.Expr, paramToArg map[str
 	ast.Inspect(expr, func(n ast.Node) bool {
 		if ident, ok := n.(*ast.Ident); ok {
 			if arg, exists := paramToArg[ident.Name]; exists {
-				// Offsets are relative to src (the wrapped string)
 				start := fset.Position(ident.Pos()).Offset
 				end := fset.Position(ident.End()).Offset
 				replacements = append(replacements, replacement{start, end, arg})
@@ -632,7 +631,6 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 			sourceFile = file
 			break
 		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
 		for _, file := range pkg.Files {
 			if file.Path == op.SourceFile {
 				sourceFile = file
@@ -660,15 +658,50 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 		}
 	}
 
+	// First pass: find the declaring ident's position so we can exclude it.
+	var declPos token.Pos
+	ast.Inspect(astFile, func(n ast.Node) bool {
+		if declPos.IsValid() {
+			return false
+		}
+		switch node := n.(type) {
+		case *ast.GenDecl:
+			if node.Tok != token.VAR {
+				return true
+			}
+			for _, spec := range node.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for _, name := range vs.Names {
+						if name.Name == op.VariableName {
+							declPos = name.Pos()
+							return false
+						}
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			if node.Tok != token.DEFINE {
+				return true
+			}
+			for _, lhs := range node.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
+					declPos = ident.Pos()
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	// Second pass: collect all references, skipping the declaration ident.
 	var references []VariableReference
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		if ident, ok := n.(*ast.Ident); ok && ident.Name == op.VariableName {
-			// Check if this is a reference (not a declaration)
+			if declPos.IsValid() && ident.Pos() == declPos {
+				return true // skip declaration
+			}
 			start := fset.Position(ident.Pos()).Offset
 			end := fset.Position(ident.End()).Offset
-			
-			// Simple heuristic: if it's not in a declaration context, it's a reference
-			// A full implementation would do proper scope analysis
 			references = append(references, VariableReference{
 				Start: start,
 				End:   end,
@@ -681,12 +714,105 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 }
 
 func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) (int, int, error) {
-	// This would find the exact location of the variable declaration for removal
-	// Simplified implementation
-	return 0, 0, &types.RefactorError{
-		Type:    types.InvalidOperation,
-		Message: "variable declaration removal not implemented",
+	var sourceFile *types.File
+	for _, pkg := range ws.Packages {
+		if file, exists := pkg.Files[op.SourceFile]; exists {
+			sourceFile = file
+			break
+		}
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				break
+			}
+		}
+		if sourceFile != nil {
+			break
+		}
 	}
+
+	if sourceFile == nil {
+		return 0, 0, &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
+		}
+	}
+
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
+	if err != nil {
+		return 0, 0, &types.RefactorError{
+			Type:    types.ParseError,
+			Message: fmt.Sprintf("failed to parse source file: %v", err),
+		}
+	}
+
+	content := sourceFile.OriginalContent
+	var declStart, declEnd int
+	found := false
+
+	ast.Inspect(astFile, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch node := n.(type) {
+		case *ast.GenDecl:
+			if node.Tok != token.VAR {
+				return true
+			}
+			for _, spec := range node.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, name := range valueSpec.Names {
+					if name.Name != op.VariableName {
+						continue
+					}
+					// Single spec in the declaration: remove the entire GenDecl
+					if len(node.Specs) == 1 {
+						declStart = fset.Position(node.Pos()).Offset
+						declEnd = fset.Position(node.End()).Offset
+					} else {
+						// Multiple specs: remove just this ValueSpec
+						declStart = fset.Position(valueSpec.Pos()).Offset
+						declEnd = fset.Position(valueSpec.End()).Offset
+					}
+					// Extend to include trailing newline
+					if declEnd < len(content) && content[declEnd] == '\n' {
+						declEnd++
+					}
+					found = true
+					return false
+				}
+			}
+		case *ast.AssignStmt:
+			if node.Tok != token.DEFINE {
+				return true
+			}
+			for _, lhs := range node.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
+					declStart = fset.Position(node.Pos()).Offset
+					declEnd = fset.Position(node.End()).Offset
+					if declEnd < len(content) && content[declEnd] == '\n' {
+						declEnd++
+					}
+					found = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	if !found {
+		return 0, 0, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("variable declaration not found: %s", op.VariableName),
+		}
+	}
+
+	return declStart, declEnd, nil
 }
 
 // InlineFunctionOperation implements inlining a function
@@ -725,7 +851,7 @@ func (op *InlineFunctionOperation) Validate(ws *types.Workspace) error {
 
 func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	// Find function implementation
-	functionBody, err := op.findFunctionImplementation(ws)
+	impl, err := op.findFunctionImplementation(ws)
 	if err != nil {
 		return nil, err
 	}
@@ -748,7 +874,7 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 				Start:       call.Start,
 				End:         call.End,
 				OldText:     call.CallText,
-				NewText:     op.adaptFunctionBodyForInlining(functionBody, call.Arguments),
+				NewText:     op.adaptFunctionBodyForInlining(impl, call.Arguments),
 				Description: fmt.Sprintf("Inline function call %s", op.FunctionName),
 			})
 		}
@@ -785,19 +911,184 @@ func (op *InlineFunctionOperation) Description() string {
 		op.FunctionName, op.SourceFile, strings.Join(op.TargetFiles, " "))
 }
 
-func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (string, error) {
-	// Similar to method implementation finding but for functions
-	return "// Function body placeholder", nil
+func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (MethodImpl, error) {
+	// Find the package containing the function via SymbolTable.Functions
+	var funcSymbol *types.Symbol
+	var sourcePackage *types.Package
+
+	for _, pkg := range ws.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		if sym, exists := pkg.Symbols.Functions[op.FunctionName]; exists {
+			funcSymbol = sym
+			sourcePackage = pkg
+			break
+		}
+	}
+
+	if funcSymbol == nil {
+		return MethodImpl{}, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("function implementation not found: %s", op.FunctionName),
+		}
+	}
+
+	// Get the source file content
+	file, exists := sourcePackage.Files[filepath.Base(funcSymbol.File)]
+	if !exists {
+		return MethodImpl{}, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("source file not found for function: %s", op.FunctionName),
+		}
+	}
+
+	content := string(file.OriginalContent)
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, funcSymbol.File, content, parser.ParseComments)
+	if err != nil {
+		return MethodImpl{}, &types.RefactorError{
+			Type:    types.ParseError,
+			Message: fmt.Sprintf("failed to parse file: %v", err),
+		}
+	}
+
+	// Find the function declaration (Recv == nil means it's a function, not a method)
+	for _, decl := range astFile.Decls {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok || funcDecl.Name.Name != op.FunctionName || funcDecl.Recv != nil {
+			continue
+		}
+
+		// Extract parameter names
+		var paramNames []string
+		if funcDecl.Type.Params != nil {
+			for _, field := range funcDecl.Type.Params.List {
+				for _, name := range field.Names {
+					paramNames = append(paramNames, name.Name)
+				}
+			}
+		}
+
+		// Extract the body
+		if funcDecl.Body != nil {
+			start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+			end := fset.Position(funcDecl.Body.Rbrace).Offset
+			if start < len(content) && end <= len(content) {
+				return MethodImpl{
+					Body:       content[start:end],
+					ParamNames: paramNames,
+				}, nil
+			}
+		}
+	}
+
+	return MethodImpl{}, &types.RefactorError{
+		Type:    types.SymbolNotFound,
+		Message: fmt.Sprintf("function body not found: %s", op.FunctionName),
+	}
 }
 
 func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, targetFile string) ([]MethodCall, error) {
-	// Similar to method call finding but for functions
-	return []MethodCall{}, nil
+	// Find target file (try basename key first, then full path match)
+	var file *types.File
+	for _, pkg := range ws.Packages {
+		if f, exists := pkg.Files[filepath.Base(targetFile)]; exists {
+			file = f
+			break
+		}
+	}
+
+	if file == nil {
+		return nil, &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("target file not found: %s", targetFile),
+		}
+	}
+
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, targetFile, file.OriginalContent, parser.ParseComments)
+	if err != nil {
+		return nil, &types.RefactorError{
+			Type:    types.ParseError,
+			Message: fmt.Sprintf("failed to parse target file: %v", err),
+		}
+	}
+
+	var calls []MethodCall
+	ast.Inspect(astFile, func(n ast.Node) bool {
+		callExpr, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		// Look for bare function calls (Ident), not method calls (SelectorExpr)
+		ident, ok := callExpr.Fun.(*ast.Ident)
+		if !ok || ident.Name != op.FunctionName {
+			return true
+		}
+
+		start := fset.Position(callExpr.Pos()).Offset
+		end := fset.Position(callExpr.End()).Offset
+		if start >= len(file.OriginalContent) || end > len(file.OriginalContent) {
+			return true
+		}
+		callText := string(file.OriginalContent[start:end])
+
+		var args []string
+		for _, arg := range callExpr.Args {
+			argStart := fset.Position(arg.Pos()).Offset
+			argEnd := fset.Position(arg.End()).Offset
+			if argStart < len(file.OriginalContent) && argEnd <= len(file.OriginalContent) {
+				args = append(args, string(file.OriginalContent[argStart:argEnd]))
+			}
+		}
+
+		calls = append(calls, MethodCall{
+			Start:     start,
+			End:       end,
+			CallText:  callText,
+			Arguments: args,
+		})
+		return true
+	})
+
+	return calls, nil
 }
 
-func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(body string, arguments []string) string {
-	// Similar to method body adaptation but for functions
-	return body
+func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl, arguments []string) string {
+	body := strings.TrimSpace(impl.Body)
+
+	// Build param→arg substitution map
+	paramToArg := make(map[string]string)
+	for i, name := range impl.ParamNames {
+		if i < len(arguments) {
+			paramToArg[name] = arguments[i]
+		}
+	}
+
+	// Try to parse the body as a single return expression.
+	wrapped := "package p\nfunc _() {\n" + body + "\n}"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", wrapped, 0)
+	if err == nil {
+		if funcDecl, ok := f.Decls[0].(*ast.FuncDecl); ok && funcDecl.Body != nil {
+			stmts := funcDecl.Body.List
+			if len(stmts) == 1 {
+				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
+					expr := retStmt.Results[0]
+					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
+					return result
+				}
+			}
+		}
+	}
+
+	// Fallback: do textual param substitution on the whole body
+	result := body
+	for param, arg := range paramToArg {
+		result = replaceIdentToken(result, param, arg)
+	}
+	return result
 }
 
 // InlineConstantOperation implements inlining a constant

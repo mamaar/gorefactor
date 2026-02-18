@@ -159,6 +159,9 @@ func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes
 	}
 
 	// Write the modified content back to the file
+	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+		return fmt.Errorf("failed to create directory: %v", err)
+	}
 	if err := os.WriteFile(filePath, []byte(modifiedContent), 0644); err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
