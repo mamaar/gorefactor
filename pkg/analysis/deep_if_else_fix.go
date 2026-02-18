@@ -17,7 +17,7 @@ type guardClause struct {
 
 // DeepIfElseFixResult holds information about what was fixed per violation.
 type DeepIfElseFixResult struct {
-	Function          string
+	Function           string
 	NestingDepthBefore int
 	NestingDepthAfter  int
 	EarlyReturnsAdded  int
@@ -127,18 +127,18 @@ func (f *DeepIfElseFixer) buildFix(file *types.File, v *DeepIfElseViolation) (ty
 	newText := f.buildReplacementText(guards, happyPath, indent)
 
 	return types.Change{
-		File:        file.Path,
-		Start:       startOffset,
-		End:         endOffset,
-		OldText:     string(content[startOffset:endOffset]),
-		NewText:     newText,
-		Description: "Flatten deep if-else chain with early returns in " + v.Function,
-	}, &DeepIfElseFixResult{
-		Function:           v.Function,
-		NestingDepthBefore: v.NestingDepth,
-		NestingDepthAfter:  0,
-		EarlyReturnsAdded:  len(guards),
-	}, true
+			File:        file.Path,
+			Start:       startOffset,
+			End:         endOffset,
+			OldText:     string(content[startOffset:endOffset]),
+			NewText:     newText,
+			Description: "Flatten deep if-else chain with early returns in " + v.Function,
+		}, &DeepIfElseFixResult{
+			Function:           v.Function,
+			NestingDepthBefore: v.NestingDepth,
+			NestingDepthAfter:  0,
+			EarlyReturnsAdded:  len(guards),
+		}, true
 }
 
 // findIfStmtAt finds the if statement at the given line/column.
@@ -300,8 +300,8 @@ func (f *DeepIfElseFixer) buildReplacementText(guards []guardClause, happyPath, 
 		sb.WriteString(" {\n")
 
 		// Write each line of the body with proper indent
-		lines := strings.Split(g.body, "\n")
-		for _, line := range lines {
+		lines := strings.SplitSeq(g.body, "\n")
+		for line := range lines {
 			if strings.TrimSpace(line) == "" {
 				sb.WriteByte('\n')
 				continue

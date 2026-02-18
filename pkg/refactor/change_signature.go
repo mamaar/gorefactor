@@ -40,15 +40,15 @@ type ChangeSignatureOperation struct {
 	SourceFile           string
 	NewParams            []Parameter
 	NewReturns           []string
-	Scope                pkgtypes.RenameScope // PackageScope or WorkspaceScope
-	PropagateToInterface bool                         // When targeting a concrete method, also update interface + siblings
-	DefaultValue         string                       // Default value to use for new parameters at call sites
-	NewParamPosition     int                          // Position where the new parameter was inserted (-1 if not an add-param operation)
-	NewReturnPosition    int                          // Position where a new return type was inserted (-1 if N/A)
-	RemovedReturnIndex   int                          // Which return was removed (-1 if N/A)
-	DefaultReturnValue   string                       // Default value for new return statements (e.g., "", nil, 0)
-	CachedIndex          *analysis.ReferenceIndex     // Optional pre-built reference index for performance
-	Logger               *slog.Logger                 // Logger for progress reporting
+	Scope                pkgtypes.RenameScope     // PackageScope or WorkspaceScope
+	PropagateToInterface bool                     // When targeting a concrete method, also update interface + siblings
+	DefaultValue         string                   // Default value to use for new parameters at call sites
+	NewParamPosition     int                      // Position where the new parameter was inserted (-1 if not an add-param operation)
+	NewReturnPosition    int                      // Position where a new return type was inserted (-1 if N/A)
+	RemovedReturnIndex   int                      // Which return was removed (-1 if N/A)
+	DefaultReturnValue   string                   // Default value for new return statements (e.g., "", nil, 0)
+	CachedIndex          *analysis.ReferenceIndex // Optional pre-built reference index for performance
+	Logger               *slog.Logger             // Logger for progress reporting
 }
 
 func (op *ChangeSignatureOperation) Type() pkgtypes.OperationType {
@@ -798,7 +798,7 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 	// insert the default value at the specified position
 	if op.DefaultValue != "" && op.NewParamPosition >= 0 {
 		// Insert default value at the new parameter position
-		for i := 0; i < newArgCount; i++ {
+		for i := range newArgCount {
 			switch {
 			case i < op.NewParamPosition:
 				// Arguments before the new parameter
@@ -822,7 +822,7 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 		}
 	} else {
 		// Original behavior: map existing args positionally
-		for i := 0; i < newArgCount; i++ {
+		for i := range newArgCount {
 			if i < len(existingArgs) {
 				newArgs[i] = existingArgs[i]
 			} else {

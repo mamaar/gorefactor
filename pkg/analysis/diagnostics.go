@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"maps"
 	"sort"
 	"strings"
 
@@ -15,7 +16,7 @@ import (
 
 // DiagnosticEngine provides enhanced error reporting with suggestions
 type DiagnosticEngine struct {
-	resolver *SymbolResolver
+	resolver  *SymbolResolver
 	workspace *types.Workspace
 }
 
@@ -29,7 +30,7 @@ type ResolutionError struct {
 
 // ResolutionContext provides additional context about where resolution failed
 type ResolutionContext struct {
-	ScopeKind     ScopeKind
+	ScopeKind        ScopeKind
 	AvailableSymbols []string // Symbols available in current scope
 	NearbySymbols    []string // Symbols in nearby scopes
 	ImportedPackages []string // Available imported packages
@@ -48,7 +49,7 @@ func NewDiagnosticEngine(resolver *SymbolResolver) *DiagnosticEngine {
 // AnalyzeResolutionFailure provides detailed analysis when symbol resolution fails
 func (de *DiagnosticEngine) AnalyzeResolutionFailure(ident *ast.Ident, file *types.File, originalError error) *ResolutionError {
 	pos := de.workspace.FileSet.Position(ident.Pos())
-	
+
 	context := de.buildResolutionContext(ident, file, ident.Pos())
 	suggestions := de.generateSuggestions(ident.Name, context, file)
 	similar := de.findSimilarSymbols(ident.Name, file)
@@ -79,21 +80,13 @@ func (de *DiagnosticEngine) AnalyzeTypeError(symbol *types.Symbol, expectedKind 
 		if pkg.Symbols == nil {
 			continue
 		}
-		
+
 		// Check all symbol categories
 		allSymbols := make(map[string]*types.Symbol)
-		for name, sym := range pkg.Symbols.Functions {
-			allSymbols[name] = sym
-		}
-		for name, sym := range pkg.Symbols.Types {
-			allSymbols[name] = sym
-		}
-		for name, sym := range pkg.Symbols.Variables {
-			allSymbols[name] = sym
-		}
-		for name, sym := range pkg.Symbols.Constants {
-			allSymbols[name] = sym
-		}
+		maps.Copy(allSymbols, pkg.Symbols.Functions)
+		maps.Copy(allSymbols, pkg.Symbols.Types)
+		maps.Copy(allSymbols, pkg.Symbols.Variables)
+		maps.Copy(allSymbols, pkg.Symbols.Constants)
 
 		if altSymbol, exists := allSymbols[symbol.Name]; exists && altSymbol != symbol {
 			if altSymbol.Kind == expectedKind {
@@ -130,7 +123,7 @@ func (de *DiagnosticEngine) AnalyzeVisibilityError(symbol *types.Symbol, accessi
 		if exportedName != symbol.Name {
 			suggestions = append(suggestions, fmt.Sprintf("To make it accessible, rename it to '%s' (capitalize first letter)", exportedName))
 		}
-		
+
 		// Look for exported symbols with similar names
 		if pkg := de.workspace.Packages[symbol.Package]; pkg != nil && pkg.Symbols != nil {
 			for name, sym := range pkg.Symbols.Functions {
@@ -174,7 +167,7 @@ func (de *DiagnosticEngine) AnalyzeImportError(packagePath string, file *types.F
 		"fmt", "os", "io", "net", "http", "json", "time", "strings", "strconv",
 		"context", "sync", "errors", "log", "path", "filepath", "bufio",
 	}
-	
+
 	for _, stdPkg := range commonStdLib {
 		if de.isSimilarName(stdPkg, packagePath) {
 			suggestions = append(suggestions, fmt.Sprintf("Did you mean the standard library package '%s'?", stdPkg))
@@ -208,14 +201,14 @@ func (de *DiagnosticEngine) buildResolutionContext(ident *ast.Ident, file *types
 	// Get scope information
 	if scope, err := de.resolver.scopeAnalyzer.GetScopeAt(file, pos); err == nil {
 		context.ScopeKind = scope.Kind
-		
+
 		// Collect available symbols in current scope chain
 		for currentScope := scope; currentScope != nil; currentScope = currentScope.Parent {
 			for name := range currentScope.Symbols {
 				context.AvailableSymbols = append(context.AvailableSymbols, name)
 			}
 		}
-		
+
 		// Find parent function if in function scope
 		context.ParentFunction = de.findParentFunction(file.AST, pos)
 	}
@@ -263,13 +256,13 @@ func (de *DiagnosticEngine) generateSuggestions(symbolName string, context *Reso
 		if len(parts) == 2 {
 			pkgName, symName := parts[0], parts[1]
 			suggestions = append(suggestions, fmt.Sprintf("If '%s' is a package, make sure it's imported", pkgName))
-			
+
 			// Look for the symbol in other packages
 			for _, pkg := range de.workspace.Packages {
 				if pkg.Symbols == nil {
 					continue
 				}
-				
+
 				if _, exists := pkg.Symbols.Functions[symName]; exists {
 					suggestions = append(suggestions, fmt.Sprintf("Function '%s' exists in package '%s'", symName, pkg.Path))
 				}
@@ -342,7 +335,7 @@ func (de *DiagnosticEngine) findSimilarSymbols(symbolName string, file *types.Fi
 
 func (de *DiagnosticEngine) findParentFunction(file *ast.File, pos token.Pos) string {
 	var parentFunc string
-	
+
 	ast.Inspect(file, func(n ast.Node) bool {
 		if funcDecl, ok := n.(*ast.FuncDecl); ok {
 			if funcDecl.Pos() <= pos && pos <= funcDecl.End() {
@@ -352,7 +345,7 @@ func (de *DiagnosticEngine) findParentFunction(file *ast.File, pos token.Pos) st
 		}
 		return true
 	})
-	
+
 	return parentFunc
 }
 
@@ -412,14 +405,14 @@ func min(a, b, c int) int {
 func (de *DiagnosticEngine) removeDuplicates(suggestions []string) []string {
 	seen := make(map[string]bool)
 	var result []string
-	
+
 	for _, suggestion := range suggestions {
 		if !seen[suggestion] {
 			seen[suggestion] = true
 			result = append(result, suggestion)
 		}
 	}
-	
+
 	return result
 }
 
@@ -428,11 +421,11 @@ func (de *DiagnosticEngine) removeDuplicates(suggestions []string) []string {
 // FormatError returns a nicely formatted error message with suggestions
 func (re *ResolutionError) FormatError() string {
 	var result strings.Builder
-	
+
 	// Basic error message
 	result.WriteString(re.RefactorError.Error())
 	result.WriteString("\n")
-	
+
 	// Add context information
 	if re.Context != nil {
 		result.WriteString(fmt.Sprintf("  Scope: %v\n", re.Context.ScopeKind))
@@ -440,7 +433,7 @@ func (re *ResolutionError) FormatError() string {
 			result.WriteString(fmt.Sprintf("  In function: %s\n", re.Context.ParentFunction))
 		}
 	}
-	
+
 	// Add suggestions
 	if len(re.Suggestions) > 0 {
 		result.WriteString("  Suggestions:\n")
@@ -448,7 +441,7 @@ func (re *ResolutionError) FormatError() string {
 			result.WriteString(fmt.Sprintf("    • %s\n", suggestion))
 		}
 	}
-	
+
 	// Add similar symbols
 	if len(re.Similar) > 0 {
 		result.WriteString("  Similar symbols found:\n")
@@ -456,7 +449,7 @@ func (re *ResolutionError) FormatError() string {
 			result.WriteString(fmt.Sprintf("    • %s (%s) in %s\n", symbol.Name, symbol.Kind.String(), symbol.Package))
 		}
 	}
-	
+
 	return result.String()
 }
 

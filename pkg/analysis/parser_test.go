@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -217,13 +218,7 @@ func TestToUpper(t *testing.T) {
 	}
 
 	for _, expectedImport := range expectedImports {
-		found := false
-		for _, actualImport := range pkg.Imports {
-			if actualImport == expectedImport {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(pkg.Imports, expectedImport)
 		if !found {
 			t.Errorf("Expected import '%s' not found", expectedImport)
 		}

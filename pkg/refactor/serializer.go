@@ -66,7 +66,7 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 	}
 
 	var preview strings.Builder
-	
+
 	// Group changes by file for better organization
 	fileChanges := make(map[string][]refactorTypes.Change)
 	for _, change := range changes {
@@ -95,7 +95,7 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 		for i, change := range changesForFile {
 			preview.WriteString(fmt.Sprintf("%d. %s\n", i+1, change.Description))
 			preview.WriteString(fmt.Sprintf("   Position: %d-%d\n", change.Start, change.End))
-			
+
 			if change.OldText != "" {
 				preview.WriteString(fmt.Sprintf("   - %s\n", s.truncateText(change.OldText)))
 			}
@@ -172,19 +172,19 @@ func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes
 // applyChange applies a single change to the content
 func (s *Serializer) applyChange(content string, change refactorTypes.Change) (string, error) {
 	if change.Start < 0 || change.End > len(content) || change.Start > change.End {
-		return "", fmt.Errorf("invalid change bounds: start=%d, end=%d, content length=%d", 
+		return "", fmt.Errorf("invalid change bounds: start=%d, end=%d, content length=%d",
 			change.Start, change.End, len(content))
 	}
 
 	// Extract the parts before and after the change
 	before := content[:change.Start]
 	after := content[change.End:]
-	
+
 	// Verify that the old text matches what we expect (if provided)
 	if change.OldText != "" {
 		actualOldText := content[change.Start:change.End]
 		if actualOldText != change.OldText {
-			return "", fmt.Errorf("old text mismatch: expected '%s', found '%s'", 
+			return "", fmt.Errorf("old text mismatch: expected '%s', found '%s'",
 				change.OldText, actualOldText)
 		}
 	}
@@ -196,11 +196,11 @@ func (s *Serializer) applyChange(content string, change refactorTypes.Change) (s
 
 // validateChangePositions ensures changes don't overlap
 func (s *Serializer) validateChangePositions(changes []refactorTypes.Change) error {
-	for i := 0; i < len(changes); i++ {
+	for i := range changes {
 		for j := i + 1; j < len(changes); j++ {
 			change1 := changes[i]
 			change2 := changes[j]
-			
+
 			// Check for overlap
 			if s.changesOverlap(change1, change2) {
 				return fmt.Errorf("overlapping changes detected: [%d-%d] and [%d-%d]",
@@ -243,12 +243,12 @@ func (s *Serializer) truncateText(text string, maxLength ...int) string {
 	// Replace newlines with spaces for single-line display
 	text = strings.ReplaceAll(text, "\n", " ")
 	text = strings.ReplaceAll(text, "\t", " ")
-	
+
 	// Collapse multiple spaces
 	for strings.Contains(text, "  ") {
 		text = strings.ReplaceAll(text, "  ", " ")
 	}
-	
+
 	text = strings.TrimSpace(text)
 
 	if len(text) <= length {
@@ -261,12 +261,12 @@ func (s *Serializer) truncateText(text string, maxLength ...int) string {
 // BackupFile creates a backup of a file before modifications
 func (s *Serializer) BackupFile(filePath string) (string, error) {
 	backupPath := filePath + ".backup"
-	
+
 	// Ensure the directory exists for both file and backup
 	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
 		return "", fmt.Errorf("failed to create directory: %v", err)
 	}
-	
+
 	// Read original file
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -308,7 +308,7 @@ func (s *Serializer) RestoreFromBackup(filePath, backupPath string) error {
 // GenerateDiff generates a unified diff between original and modified content
 func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedContent string) (string, error) {
 	var diff strings.Builder
-	
+
 	diff.WriteString(fmt.Sprintf("--- %s\n", filePath))
 	diff.WriteString(fmt.Sprintf("+++ %s\n", filePath))
 
@@ -317,15 +317,12 @@ func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedCont
 	modifiedLines := strings.Split(modifiedContent, "\n")
 
 	// Simple line-by-line diff (in a production system, you'd use a proper diff algorithm)
-	maxLines := len(originalLines)
-	if len(modifiedLines) > maxLines {
-		maxLines = len(modifiedLines)
-	}
+	maxLines := max(len(modifiedLines), len(originalLines))
 
 	lineNum := 1
 	for i := 0; i < maxLines; i++ {
 		var originalLine, modifiedLine string
-		
+
 		if i < len(originalLines) {
 			originalLine = originalLines[i]
 		}
@@ -388,7 +385,7 @@ func (s *Serializer) GetFileLines(filePath string, startLine, endLine int) ([]st
 			lines = append(lines, fmt.Sprintf("%d: %s", lineNum, scanner.Text()))
 		}
 		lineNum++
-		
+
 		if lineNum > endLine {
 			break
 		}

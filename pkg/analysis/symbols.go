@@ -30,9 +30,9 @@ type indexEntry struct {
 	PkgAlias      string // the "pkg" part if IsSelector is true
 
 	// NEW: Method call detection fields
-	IsMethodCall  bool      // true if part of receiver.Method() pattern
-	ReceiverName  string    // receiver identifier name (e.g., "repo")
-	ReceiverPos   token.Pos // position of receiver identifier
+	IsMethodCall bool      // true if part of receiver.Method() pattern
+	ReceiverName string    // receiver identifier name (e.g., "repo")
+	ReceiverPos  token.Pos // position of receiver identifier
 }
 
 // ReferenceIndex maps identifier names to all their occurrences across the workspace.
@@ -844,7 +844,7 @@ func (sr *SymbolResolver) resolveIdentifier(ident *ast.Ident, file *types.File) 
 		Message: fmt.Sprintf("could not resolve identifier: %s", ident.Name),
 		File:    file.Path,
 	}
-	
+
 	return nil, sr.diagnostics.AnalyzeResolutionFailure(ident, file, basicError)
 }
 
@@ -977,11 +977,11 @@ func (sr *SymbolResolver) extractContext(ident *ast.Ident, file *types.File) str
 	// Extract surrounding context for the identifier
 	pos := sr.workspace.FileSet.Position(ident.Pos())
 	lines := strings.Split(string(file.OriginalContent), "\n")
-	
+
 	if pos.Line > 0 && pos.Line <= len(lines) {
 		return strings.TrimSpace(lines[pos.Line-1])
 	}
-	
+
 	return ""
 }
 
@@ -1021,23 +1021,24 @@ func (sr *SymbolResolver) extractReceiverType(recv *ast.FieldList) string {
 
 func (sr *SymbolResolver) extractFunctionSignature(funcDecl *ast.FuncDecl) string {
 	// Extract function signature with function name and parameter names only
-	signature := funcDecl.Name.Name + "("
-	
+	var signature strings.Builder
+	signature.WriteString(funcDecl.Name.Name + "(")
+
 	if funcDecl.Type.Params != nil {
 		for i, param := range funcDecl.Type.Params.List {
 			if i > 0 {
-				signature += ", "
+				signature.WriteString(", ")
 			}
 			// Add only parameter names (not types) to match test expectations
 			if len(param.Names) > 0 {
-				signature += param.Names[0].Name
+				signature.WriteString(param.Names[0].Name)
 			}
 		}
 	}
-	
-	signature += ")"
-	
-	return signature
+
+	signature.WriteString(")")
+
+	return signature.String()
 }
 
 func (sr *SymbolResolver) isExported(name string) bool {

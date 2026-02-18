@@ -155,8 +155,8 @@ func (op *ExtractMethodOperation) filterUsedVariables(codeWithoutStrings string,
 
 func (op *ExtractMethodOperation) analyzeDeclarations(code string, logger *slog.Logger, declaredVars, loopDeclaredVars, varDeclaredVars map[string]bool, varDeclaredTypes map[string]string, assignedVars map[string]bool) {
 	logger.Info("analyzing variable declarations")
-	lines := strings.Split(code, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(code, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
 
 		// Check for var declarations: var foo *Type
@@ -188,8 +188,8 @@ func (op *ExtractMethodOperation) analyzeDeclarations(code string, logger *slog.
 			forPart := strings.Split(line, ":=")[0]
 			forPart = strings.TrimPrefix(forPart, "for")
 			forPart = strings.TrimSpace(forPart)
-			varNames := strings.Split(forPart, ",")
-			for _, varName := range varNames {
+			varNames := strings.SplitSeq(forPart, ",")
+			for varName := range varNames {
 				varName = strings.TrimSpace(varName)
 				if varName != "" && varName != "_" {
 					declaredVars[varName] = true
@@ -204,8 +204,8 @@ func (op *ExtractMethodOperation) analyzeDeclarations(code string, logger *slog.
 			if len(parts) > 0 {
 				declPart := strings.TrimSpace(parts[0])
 				declPart = strings.TrimPrefix(declPart, "for ")
-				varNames := strings.Split(declPart, ",")
-				for _, varName := range varNames {
+				varNames := strings.SplitSeq(declPart, ",")
+				for varName := range varNames {
 					varName = strings.TrimSpace(varName)
 					varName = strings.Trim(varName, "()[]")
 					if varName != "" && varName != "_" {
@@ -221,8 +221,8 @@ func (op *ExtractMethodOperation) analyzeDeclarations(code string, logger *slog.
 				assignPart := strings.TrimSpace(parts[0])
 				assignPart = strings.TrimRight(assignPart, "+-*/%&|^<>")
 				assignPart = strings.TrimSpace(assignPart)
-				varNames := strings.Split(assignPart, ",")
-				for _, varName := range varNames {
+				varNames := strings.SplitSeq(assignPart, ",")
+				for varName := range varNames {
 					varName = strings.TrimSpace(varName)
 					isFieldOrIndex := strings.ContainsAny(varName, ".[")
 					if idx := strings.IndexAny(varName, ".["); idx > 0 {
@@ -553,10 +553,7 @@ func (op *ExtractMethodOperation) extractAfterCode(
 	if op.EndLine >= len(allLines) {
 		return ""
 	}
-	end := enclosingEnd
-	if end > len(allLines) {
-		end = len(allLines)
-	}
+	end := min(enclosingEnd, len(allLines))
 	return strings.Join(allLines[op.EndLine:end], "\n")
 }
 
@@ -845,16 +842,16 @@ func isBuiltinOrImported(name string) bool {
 func stripComments(code string) string {
 	var result strings.Builder
 	inMultiLineComment := false
-	lines := strings.Split(code, "\n")
+	lines := strings.SplitSeq(code, "\n")
 
-	for _, line := range lines {
+	for line := range lines {
 		lineWithoutComment := line
 
 		// Handle multi-line comments
 		if inMultiLineComment {
-			if endIdx := strings.Index(line, "*/"); endIdx != -1 {
+			if _, after, ok := strings.Cut(line, "*/"); ok {
 				inMultiLineComment = false
-				lineWithoutComment = line[endIdx+2:]
+				lineWithoutComment = after
 			} else {
 				// Entire line is within multi-line comment
 				result.WriteString("\n")
@@ -976,8 +973,8 @@ func detectEarlyReturns(code string) bool {
 
 	funcKeywordPattern := regexp.MustCompile(`\bfunc\b`)
 
-	lines := strings.Split(clean, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(clean, "\n")
+	for line := range lines {
 		trimmed := strings.TrimSpace(line)
 
 		// Check for return statement when we're NOT inside a func literal
@@ -1039,8 +1036,8 @@ func rewriteEarlyReturns(body string, varReturnZeroVals []string, numEnclosingRe
 		// Rewrite return statements that are NOT inside a func literal
 		if funcLitDepth == 0 {
 			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-			if strings.HasPrefix(trimmed, "return ") {
-				retVals := strings.TrimPrefix(trimmed, "return ")
+			if after, ok := strings.CutPrefix(trimmed, "return "); ok {
+				retVals := after
 				if prefix != "" {
 					lines[i] = indent + "return " + prefix + ", " + retVals
 				}
@@ -2245,7 +2242,8 @@ func (op *ExtractInterfaceOperation) Description() string {
 }
 
 func (op *ExtractInterfaceOperation) generateInterface(structSymbol *types.Symbol, sourcePackage *types.Package) string {
-	interfaceCode := fmt.Sprintf("type %s interface {\n", op.InterfaceName)
+	var interfaceCode strings.Builder
+	interfaceCode.WriteString(fmt.Sprintf("type %s interface {\n", op.InterfaceName))
 
 	for _, methodName := range op.Methods {
 		if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
@@ -2253,15 +2251,15 @@ func (op *ExtractInterfaceOperation) generateInterface(structSymbol *types.Symbo
 				if method.Name == methodName {
 					// Extract method signature without receiver
 					signature := op.extractMethodSignature(method.Signature)
-					interfaceCode += fmt.Sprintf("\t%s%s\n", methodName, signature)
+					interfaceCode.WriteString(fmt.Sprintf("\t%s%s\n", methodName, signature))
 					break
 				}
 			}
 		}
 	}
 
-	interfaceCode += "}"
-	return interfaceCode
+	interfaceCode.WriteString("}")
+	return interfaceCode.String()
 }
 
 func (op *ExtractInterfaceOperation) extractMethodSignature(fullSignature string) string {

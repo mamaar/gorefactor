@@ -3,6 +3,7 @@ package refactor
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"time"
 
@@ -186,12 +187,12 @@ func (op *PlanOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, e
 		Steps:     op.Request.Operations,
 		DryRun:    op.Request.DryRun,
 	}
-	
+
 	jsonData, err := json.MarshalIndent(planData, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal plan to JSON: %w", err)
 	}
-	
+
 	plan.Changes = append(plan.Changes, types.Change{
 		File:        op.Request.OutputFile,
 		Start:       0,
@@ -200,18 +201,18 @@ func (op *PlanOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, e
 		NewText:     string(jsonData),
 		Description: "Create refactoring plan file",
 	})
-	
+
 	plan.AffectedFiles = []string{op.Request.OutputFile}
 
 	return plan, nil
 }
 
 type RefactoringPlanFile struct {
-	Version   string                `json:"version"`
-	CreatedAt string                `json:"created_at"`
-	Workspace string                `json:"workspace"`
-	Steps     []types.PlanStep      `json:"steps"`
-	DryRun    bool                  `json:"dry_run"`
+	Version   string           `json:"version"`
+	CreatedAt string           `json:"created_at"`
+	Workspace string           `json:"workspace"`
+	Steps     []types.PlanStep `json:"steps"`
+	DryRun    bool             `json:"dry_run"`
 }
 
 // ExecuteOperation implements executing a previously created plan
@@ -231,12 +232,12 @@ func (op *ExecuteOperation) Validate(ws *types.Workspace) error {
 	if op.Request.PlanFile == "" {
 		return fmt.Errorf("plan file cannot be empty")
 	}
-	
+
 	// Check if plan file exists
 	if _, err := os.Stat(op.Request.PlanFile); os.IsNotExist(err) {
 		return fmt.Errorf("plan file does not exist: %s", op.Request.PlanFile)
 	}
-	
+
 	return nil
 }
 
@@ -264,9 +265,7 @@ func (op *ExecuteOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	for i, step := range planFile.Steps {
 		// Marshal step args back to JSON for parseOperationString
 		stepArgs := make(map[string]string)
-		for k, v := range step.Args {
-			stepArgs[k] = v
-		}
+		maps.Copy(stepArgs, step.Args)
 		stepArgs["type"] = step.Type
 		stepJSON, err := json.Marshal(stepArgs)
 		if err != nil {

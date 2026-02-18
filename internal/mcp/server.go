@@ -21,7 +21,7 @@ type MCPServer struct {
 	mu        sync.RWMutex
 	engine    *refactor.DefaultEngine
 	workspace *types.Workspace
-	resolver  interface{} // *analysis.SymbolResolver (from WatchContext)
+	resolver  any // *analysis.SymbolResolver (from WatchContext)
 	watcher   *watch.Watcher
 	updater   *watch.WorkspaceUpdater
 	cancel    context.CancelFunc // stops watcher goroutine
@@ -29,7 +29,7 @@ type MCPServer struct {
 
 	// Cached reference index for performance (invalidated on workspace changes)
 	refIndexMu    sync.RWMutex
-	refIndex      interface{} // *analysis.ReferenceIndex
+	refIndex      any // *analysis.ReferenceIndex
 	refIndexValid bool
 }
 

@@ -126,7 +126,7 @@ func TestWatcher_DebounceCoalescesEvents(t *testing.T) {
 	go func() { _ = w.Run(ctx, out) }()
 
 	// Rapid edits to same file — should coalesce into one event
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		writeGoFile(t, dir, "rapid.go", "package p\n// v"+string(rune('0'+i))+"\n")
 		time.Sleep(20 * time.Millisecond)
 	}

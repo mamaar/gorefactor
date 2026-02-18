@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"log/slog"
+	"slices"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -192,12 +193,7 @@ func (da *DependencyAnalyzer) transitiveClose(deps map[string][]string) map[stri
 
 // Helper function to check if slice contains string
 func sliceContains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }
 
 func unique(slice []string) []string {

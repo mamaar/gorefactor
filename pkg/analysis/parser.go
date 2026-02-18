@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -237,14 +238,12 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 	close(dirCh)
 
 	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for idx := range dirCh {
 				pkg, err := p.ParsePackage(pkgDirs[idx])
 				results[idx] = pkgResult{pkg: pkg, err: err}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
@@ -389,12 +388,7 @@ func (p *GoParser) applyModifications(content []byte, modifications []types.Modi
 }
 
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }
 
 // EnsureTypeChecked runs type-checking on a package if it hasn't been done yet.

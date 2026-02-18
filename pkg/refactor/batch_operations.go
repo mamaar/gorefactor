@@ -142,7 +142,7 @@ func (op *BatchOperation) detectConflicts(changes []types.Change) []string {
 
 	// Check for overlapping changes within each file
 	for file, changes := range fileChanges {
-		for i := 0; i < len(changes); i++ {
+		for i := range changes {
 			for j := i + 1; j < len(changes); j++ {
 				if op.changesOverlap(changes[i], changes[j]) {
 					conflicts = append(conflicts, fmt.Sprintf("overlapping changes in %s at positions %d-%d and %d-%d",
@@ -171,7 +171,7 @@ func (op *BatchOperation) sortChanges(changes []types.Change) []types.Change {
 	copy(sorted, changes)
 
 	// Simple bubble sort for demonstration - a real implementation would use a more efficient sort
-	for i := 0; i < len(sorted); i++ {
+	for i := range sorted {
 		for j := i + 1; j < len(sorted); j++ {
 			// Sort by file first
 			if sorted[i].File > sorted[j].File {

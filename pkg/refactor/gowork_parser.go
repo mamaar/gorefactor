@@ -87,8 +87,8 @@ func parseGoWorkFile(content []byte) []string {
 			continue
 		}
 
-		if strings.HasPrefix(trimmed, "use ") {
-			rest := strings.TrimPrefix(trimmed, "use ")
+		if after, ok := strings.CutPrefix(trimmed, "use "); ok {
+			rest := after
 			rest = strings.TrimSpace(rest)
 			if rest == "(" {
 				inUseBlock = true
@@ -108,11 +108,11 @@ func parseGoWorkFile(content []byte) []string {
 
 // parseModuleName extracts the module path from go.mod content.
 func parseModuleName(content []byte) string {
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(content), "\n")
+	for line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "module ") {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, "module "))
+		if after, ok := strings.CutPrefix(trimmed, "module "); ok {
+			return strings.TrimSpace(after)
 		}
 	}
 	return ""
