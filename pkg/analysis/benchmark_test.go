@@ -9,6 +9,7 @@ import (
 	gotypes "go/types"
 	"io"
 	"log/slog"
+	"runtime"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -597,7 +598,7 @@ var Var%d = "var"
 			Defs: make(map[*ast.Ident]gotypes.Object),
 			Uses: make(map[*ast.Ident]gotypes.Object),
 		}
-		_, err = conf.Check(fmt.Sprintf("pkg%d", pkgNum), fileSet, []*ast.File{astFile}, info)
+		typesPkg, err := conf.Check(fmt.Sprintf("pkg%d", pkgNum), fileSet, []*ast.File{astFile}, info)
 		if err != nil {
 			// Type errors are expected (no cross-package resolution), continue
 			_ = err
@@ -613,6 +614,7 @@ var Var%d = "var"
 			Path:      fmt.Sprintf("test/pkg%d", pkgNum),
 			Files:     map[string]*types.File{fileName: file},
 			TypesInfo: info,
+			TypesPkg:  typesPkg,
 		}
 		file.Package = pkg
 		workspace.Packages[pkg.Path] = pkg
@@ -734,5 +736,76 @@ func BenchmarkHasNonDeclarationReference_ObjectPath(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = resolver.HasNonDeclarationReference(symbol, idx)
+	}
+}
+
+func BenchmarkBuildReferenceIndex_TypeIndex(b *testing.B) {
+	sizes := []int{10, 50, 100}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d_pkgs", size), func(b *testing.B) {
+			workspace := createTypedBenchmarkWorkspace(b, size)
+			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_ = resolver.BuildReferenceIndex()
+			}
+		})
+	}
+}
+
+func BenchmarkFindReferencesIndexed_TypeIndexPath(b *testing.B) {
+	workspace := createTypedBenchmarkWorkspace(b, 20)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	idx := resolver.BuildReferenceIndex()
+
+	var symbol *types.Symbol
+	for _, pkg := range workspace.Packages {
+		if pkg.Symbols != nil {
+			for _, s := range pkg.Symbols.Functions {
+				symbol = s
+				break
+			}
+		}
+		if symbol != nil {
+			break
+		}
+	}
+	if symbol == nil {
+		b.Fatal("No function symbol found")
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = resolver.FindReferencesIndexed(symbol, idx)
+	}
+}
+
+func BenchmarkMemoryUsage_TypeIndex(b *testing.B) {
+	sizes := []int{10, 50, 100}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("%d_pkgs", size), func(b *testing.B) {
+			workspace := createTypedBenchmarkWorkspace(b, size)
+			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+			var memBefore, memAfter runtime.MemStats
+			b.ResetTimer()
+			b.ReportAllocs()
+
+			for i := 0; i < b.N; i++ {
+				runtime.GC()
+				runtime.ReadMemStats(&memBefore)
+
+				idx := resolver.BuildReferenceIndex()
+
+				runtime.GC()
+				runtime.ReadMemStats(&memAfter)
+
+				// Keep idx alive past the memory measurement
+				_ = idx
+				b.ReportMetric(float64(memAfter.HeapAlloc-memBefore.HeapAlloc), "heap-bytes/op")
+			}
+		})
 	}
 }
