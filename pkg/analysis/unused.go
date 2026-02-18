@@ -171,7 +171,35 @@ func (ua *UnusedAnalyzer) checkSymbolUsageIndexed(symbol *types.Symbol, idx *Ref
 	}
 
 	// No non-declaration references found. Determine reason by checking if there are any refs at all.
-	entries, hasEntries := idx.nameIndex[symbol.Name]
+
+	// Object-fast-path: when type info is available, use object index directly
+	targetObj := ua.resolver.resolveTypesObject(symbol)
+	if targetObj != nil {
+		if objEntries := idx.ObjectEntries(targetObj); len(objEntries) > 0 {
+			hasAnyRef := false
+			for i := range objEntries {
+				if objEntries[i].Pos != symbol.Position {
+					hasAnyRef = true
+					break
+				}
+			}
+			if !hasAnyRef {
+				return &UnusedSymbol{
+					Symbol:       symbol,
+					SafeToDelete: !symbol.Exported,
+					Reason:       "No references found",
+				}
+			}
+			return &UnusedSymbol{
+				Symbol:       symbol,
+				SafeToDelete: !symbol.Exported,
+				Reason:       "Only referenced in declarations",
+			}
+		}
+	}
+
+	// Fall back to name-based path
+	entries, hasEntries := idx.NameEntries(symbol.Name)
 	if !hasEntries {
 		return &UnusedSymbol{
 			Symbol:       symbol,

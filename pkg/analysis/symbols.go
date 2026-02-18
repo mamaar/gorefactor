@@ -33,9 +33,21 @@ type indexEntry struct {
 	TypesObject gotypes.Object
 }
 
+// objectEntry is a lightweight index entry keyed by types.Object pointer identity.
+// Only 3 fields are needed since the map key already identifies the symbol —
+// no selector/alias/receiver fields required.
+type objectEntry struct {
+	File          *types.File
+	Pos           token.Pos
+	IsDeclaration bool
+}
+
 // ReferenceIndex maps identifier names to all their occurrences across the workspace.
+// The objectIndex provides O(1) lookups by types.Object pointer identity when type
+// information is available, bypassing all string-based matching.
 type ReferenceIndex struct {
-	nameIndex map[string][]indexEntry
+	nameIndex   map[string][]indexEntry
+	objectIndex map[gotypes.Object][]objectEntry
 }
 
 // SymbolResolver handles symbol resolution and reference finding
@@ -161,11 +173,18 @@ func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 		workers = len(files)
 	}
 	if workers == 0 {
-		return &ReferenceIndex{nameIndex: make(map[string][]indexEntry)}
+		return &ReferenceIndex{
+			nameIndex:   make(map[string][]indexEntry),
+			objectIndex: make(map[gotypes.Object][]objectEntry),
+		}
 	}
 
-	// Each worker builds a local index to avoid lock contention
-	localIndexes := make([]map[string][]indexEntry, workers)
+	// Each worker builds local indexes to avoid lock contention
+	type localResult struct {
+		nameIdx map[string][]indexEntry
+		objIdx  map[gotypes.Object][]objectEntry
+	}
+	localResults := make([]localResult, workers)
 	var wg sync.WaitGroup
 	ch := make(chan int, len(files))
 	for i := range files {
@@ -174,31 +193,43 @@ func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 	close(ch)
 
 	for w := 0; w < workers; w++ {
-		localIndexes[w] = make(map[string][]indexEntry)
+		localResults[w] = localResult{
+			nameIdx: make(map[string][]indexEntry),
+			objIdx:  make(map[gotypes.Object][]objectEntry),
+		}
 		wg.Add(1)
-		go func(local map[string][]indexEntry) {
+		go func(local localResult) {
 			defer wg.Done()
 			for i := range ch {
 				f := files[i]
 				if f.Package != nil && f.Package.TypesInfo != nil {
-					sr.indexFileTyped(f, local, f.Package.TypesInfo)
+					sr.indexFileTyped(f, local.nameIdx, f.Package.TypesInfo)
+					sr.indexFileObject(f, local.objIdx, f.Package.TypesInfo)
 				} else {
-					sr.indexFileLocal(f, local)
+					sr.indexFileLocal(f, local.nameIdx)
 				}
 			}
-		}(localIndexes[w])
+		}(localResults[w])
 	}
 	wg.Wait()
 
 	// Merge local indexes into the final index
-	idx := &ReferenceIndex{nameIndex: make(map[string][]indexEntry)}
-	for _, local := range localIndexes {
-		for name, entries := range local {
+	idx := &ReferenceIndex{
+		nameIndex:   make(map[string][]indexEntry),
+		objectIndex: make(map[gotypes.Object][]objectEntry),
+	}
+	for _, local := range localResults {
+		for name, entries := range local.nameIdx {
 			idx.nameIndex[name] = append(idx.nameIndex[name], entries...)
+		}
+		for obj, entries := range local.objIdx {
+			idx.objectIndex[obj] = append(idx.objectIndex[obj], entries...)
 		}
 	}
 
-	sr.logger.Info("reference index built successfully", "entries", len(idx.nameIndex))
+	sr.logger.Info("reference index built successfully",
+		"name_entries", len(idx.nameIndex),
+		"object_entries", len(idx.objectIndex))
 	return idx
 }
 
@@ -336,6 +367,63 @@ func (sr *SymbolResolver) indexFileTyped(file *types.File, nameIndex map[string]
 	}
 }
 
+// indexFileObject populates the object index by iterating TypesInfo.Defs and Uses.
+// Each entry is keyed by types.Object pointer identity, enabling O(1) lookups
+// with zero false positives — no string matching needed.
+func (sr *SymbolResolver) indexFileObject(file *types.File, objIndex map[gotypes.Object][]objectEntry, info *gotypes.Info) {
+	if file.AST == nil || info == nil {
+		return
+	}
+
+	tokenFile := sr.workspace.FileSet.File(file.AST.Pos())
+	if tokenFile == nil {
+		return
+	}
+
+	for ident, obj := range info.Defs {
+		if obj == nil {
+			continue
+		}
+		if sr.workspace.FileSet.File(ident.Pos()) != tokenFile {
+			continue
+		}
+		objIndex[obj] = append(objIndex[obj], objectEntry{
+			File:          file,
+			Pos:           ident.Pos(),
+			IsDeclaration: true,
+		})
+	}
+
+	for ident, obj := range info.Uses {
+		if obj == nil {
+			continue
+		}
+		if sr.workspace.FileSet.File(ident.Pos()) != tokenFile {
+			continue
+		}
+		objIndex[obj] = append(objIndex[obj], objectEntry{
+			File:          file,
+			Pos:           ident.Pos(),
+			IsDeclaration: false,
+		})
+	}
+}
+
+// ObjectEntries returns all object index entries for a given types.Object.
+// Returns nil if the object index is not populated or the object is not found.
+func (idx *ReferenceIndex) ObjectEntries(obj gotypes.Object) []objectEntry {
+	if idx.objectIndex == nil {
+		return nil
+	}
+	return idx.objectIndex[obj]
+}
+
+// NameEntries returns all name index entries for a given identifier name.
+func (idx *ReferenceIndex) NameEntries(name string) ([]indexEntry, bool) {
+	entries, ok := idx.nameIndex[name]
+	return entries, ok
+}
+
 // FindReferencesIndexed finds references to a symbol using the pre-built index.
 // This is O(1) lookup + O(R) filtering where R is the number of occurrences of the name,
 // compared to the O(P×F×A) of FindReferences.
@@ -346,13 +434,58 @@ func (sr *SymbolResolver) FindReferencesIndexed(symbol *types.Symbol, idx *Refer
 // FindReferencesIndexedFiltered finds all references to a symbol using the index,
 // optionally filtering to only specific packages for performance.
 func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, idx *ReferenceIndex, allowedPackages map[string]*types.Package) ([]*types.Reference, error) {
+	// Resolve the target symbol's types.Object for pointer-equality matching.
+	targetObj := sr.resolveTypesObject(symbol)
+
+	// Object-fast-path: when both the target resolves and the object index is available,
+	// look up by types.Object pointer identity — O(1) with zero false positives.
+	if targetObj != nil && idx.objectIndex != nil {
+		if objEntries := idx.objectIndex[targetObj]; len(objEntries) > 0 {
+			var references []*types.Reference
+			for i := range objEntries {
+				oe := &objEntries[i]
+				if oe.Pos == symbol.Position {
+					continue
+				}
+				if oe.IsDeclaration {
+					continue
+				}
+				if allowedPackages != nil && oe.File != nil {
+					inAllowed := false
+					for _, pkg := range allowedPackages {
+						if _, exists := pkg.Files[oe.File.Path]; exists {
+							inAllowed = true
+							break
+						}
+						if oe.File.Package == pkg {
+							inAllowed = true
+							break
+						}
+					}
+					if !inAllowed {
+						continue
+					}
+				}
+				pos := sr.workspace.FileSet.Position(oe.Pos)
+				references = append(references, &types.Reference{
+					Symbol:   symbol,
+					Position: oe.Pos,
+					Offset:   pos.Offset,
+					File:     oe.File.Path,
+					Line:     pos.Line,
+					Column:   pos.Column,
+					Context:  sr.extractContext2(oe.File, pos.Line),
+				})
+			}
+			return references, nil
+		}
+	}
+
+	// Fall back to name-based path
 	entries, ok := idx.nameIndex[symbol.Name]
 	if !ok {
 		return nil, nil
 	}
-
-	// Resolve the target symbol's types.Object for pointer-equality matching.
-	targetObj := sr.resolveTypesObject(symbol)
 
 	var references []*types.Reference
 	skippedReasons := make(map[string]int) // DEBUG: track why entries are skipped
@@ -454,12 +587,30 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 // HasNonDeclarationReference checks if a symbol has at least one non-declaration reference
 // in the index. Returns true as soon as one is found (early exit for unused detection).
 func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *ReferenceIndex) bool {
+	targetObj := sr.resolveTypesObject(symbol)
+
+	// Object-fast-path: O(1) lookup by types.Object pointer identity
+	if targetObj != nil && idx.objectIndex != nil {
+		if objEntries := idx.objectIndex[targetObj]; len(objEntries) > 0 {
+			for i := range objEntries {
+				oe := &objEntries[i]
+				if oe.Pos == symbol.Position {
+					continue
+				}
+				if oe.IsDeclaration {
+					continue
+				}
+				return true
+			}
+			return false
+		}
+	}
+
+	// Fall back to name-based path
 	entries, ok := idx.nameIndex[symbol.Name]
 	if !ok {
 		return false
 	}
-
-	targetObj := sr.resolveTypesObject(symbol)
 
 	for i := range entries {
 		entry := &entries[i]

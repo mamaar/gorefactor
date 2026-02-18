@@ -2,8 +2,11 @@ package analysis
 
 import (
 	"fmt"
+	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"io"
 	"log/slog"
 	"testing"
@@ -545,4 +548,191 @@ func (ct *ComplexType) ComplexMethod(methodParam bool) {
 	}
 
 	return workspace
+}
+
+// createTypedBenchmarkWorkspace creates a workspace with full type-checking information.
+// This enables the object index path in benchmarks.
+func createTypedBenchmarkWorkspace(tb testing.TB, numPackages int) *types.Workspace {
+	tb.Helper()
+	fileSet := token.NewFileSet()
+	workspace := &types.Workspace{
+		Packages:     make(map[string]*types.Package),
+		FileSet:      fileSet,
+		ImportToPath: make(map[string]string),
+	}
+
+	for pkgNum := range numPackages {
+		src := fmt.Sprintf(`package pkg%d
+
+type MyStruct%d struct {
+	Field1 string
+	Field2 int
+}
+
+func (s *MyStruct%d) Method1() string { return s.Field1 }
+
+func Function%d() string { return "hello" }
+
+func Caller%d() {
+	s := &MyStruct%d{}
+	_ = s.Method1()
+	_ = Function%d()
+}
+
+const Const%d = %d
+var Var%d = "var"
+`, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum)
+
+		fileName := fmt.Sprintf("pkg%d.go", pkgNum)
+		astFile, err := parser.ParseFile(fileSet, fileName, src, parser.ParseComments)
+		if err != nil {
+			tb.Fatalf("Failed to parse package %d: %v", pkgNum, err)
+		}
+
+		// Type-check the package
+		conf := gotypes.Config{
+			Importer: importer.Default(),
+		}
+		info := &gotypes.Info{
+			Defs: make(map[*ast.Ident]gotypes.Object),
+			Uses: make(map[*ast.Ident]gotypes.Object),
+		}
+		_, err = conf.Check(fmt.Sprintf("pkg%d", pkgNum), fileSet, []*ast.File{astFile}, info)
+		if err != nil {
+			// Type errors are expected (no cross-package resolution), continue
+			_ = err
+		}
+
+		file := &types.File{
+			Path:            fileName,
+			AST:             astFile,
+			OriginalContent: []byte(src),
+		}
+		pkg := &types.Package{
+			Name:      fmt.Sprintf("pkg%d", pkgNum),
+			Path:      fmt.Sprintf("test/pkg%d", pkgNum),
+			Files:     map[string]*types.File{fileName: file},
+			TypesInfo: info,
+		}
+		file.Package = pkg
+		workspace.Packages[pkg.Path] = pkg
+	}
+
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, pkg := range workspace.Packages {
+		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+			tb.Fatalf("Failed to build symbol table: %v", err)
+		}
+	}
+
+	return workspace
+}
+
+func BenchmarkBuildReferenceIndex(b *testing.B) {
+	sizes := []int{10, 50, 100}
+	for _, size := range sizes {
+		b.Run(fmt.Sprintf("Typed_%d_pkgs", size), func(b *testing.B) {
+			workspace := createTypedBenchmarkWorkspace(b, size)
+			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_ = resolver.BuildReferenceIndex()
+			}
+		})
+		b.Run(fmt.Sprintf("Untyped_%d_pkgs", size), func(b *testing.B) {
+			workspace := createBenchmarkWorkspace(b, size)
+			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			b.ResetTimer()
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_ = resolver.BuildReferenceIndex()
+			}
+		})
+	}
+}
+
+func BenchmarkFindReferencesIndexed_ObjectPath(b *testing.B) {
+	workspace := createTypedBenchmarkWorkspace(b, 20)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	idx := resolver.BuildReferenceIndex()
+
+	// Find a function symbol to query
+	var symbol *types.Symbol
+	for _, pkg := range workspace.Packages {
+		if pkg.Symbols != nil {
+			for _, s := range pkg.Symbols.Functions {
+				symbol = s
+				break
+			}
+		}
+		if symbol != nil {
+			break
+		}
+	}
+	if symbol == nil {
+		b.Fatal("No function symbol found")
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = resolver.FindReferencesIndexed(symbol, idx)
+	}
+}
+
+func BenchmarkFindReferencesIndexed_NamePath(b *testing.B) {
+	workspace := createBenchmarkWorkspace(b, 20) // untyped — forces name path
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	idx := resolver.BuildReferenceIndex()
+
+	var symbol *types.Symbol
+	for _, pkg := range workspace.Packages {
+		if pkg.Symbols != nil {
+			for _, s := range pkg.Symbols.Functions {
+				symbol = s
+				break
+			}
+		}
+		if symbol != nil {
+			break
+		}
+	}
+	if symbol == nil {
+		b.Fatal("No function symbol found")
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_, _ = resolver.FindReferencesIndexed(symbol, idx)
+	}
+}
+
+func BenchmarkHasNonDeclarationReference_ObjectPath(b *testing.B) {
+	workspace := createTypedBenchmarkWorkspace(b, 20)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	idx := resolver.BuildReferenceIndex()
+
+	var symbol *types.Symbol
+	for _, pkg := range workspace.Packages {
+		if pkg.Symbols != nil {
+			for _, s := range pkg.Symbols.Functions {
+				symbol = s
+				break
+			}
+		}
+		if symbol != nil {
+			break
+		}
+	}
+	if symbol == nil {
+		b.Fatal("No function symbol found")
+	}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = resolver.HasNonDeclarationReference(symbol, idx)
+	}
 }
