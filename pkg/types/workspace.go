@@ -3,6 +3,7 @@ package types
 import (
 	"go/ast"
 	"go/token"
+	gotypes "go/types"
 )
 
 // Workspace represents a complete Go workspace (module or GOPATH)
@@ -25,6 +26,8 @@ type Package struct {
 	Symbols      *SymbolTable
 	Imports      []string            // Direct imports
 	TestFiles    map[string]*File    // Test files
+	TypesInfo    *gotypes.Info       // Semantic type info (may be nil if type-checking failed)
+	TypesPkg     *gotypes.Package    // Type-checked package (may be nil)
 }
 
 // File represents a single Go source file

@@ -1,6 +1,8 @@
 package analysis
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestNewParser(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if parser == nil {
 		t.Fatal("Expected NewParser to return a non-nil parser")
 	}
@@ -21,7 +23,7 @@ func TestNewParser(t *testing.T) {
 }
 
 func TestParser_ParseFile(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a temporary test file
 	tempDir := t.TempDir()
@@ -82,7 +84,7 @@ var testVar = "test"
 }
 
 func TestParser_ParseFile_NonExistent(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Try to parse a non-existent file
 	_, err := parser.ParseFile("/non/existent/file.go")
@@ -101,7 +103,7 @@ func TestParser_ParseFile_NonExistent(t *testing.T) {
 }
 
 func TestParser_ParseFile_InvalidSyntax(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a temporary file with invalid syntax
 	tempDir := t.TempDir()
@@ -135,7 +137,7 @@ func InvalidSyntax( {
 }
 
 func TestParser_ParsePackage(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a temporary package directory
 	tempDir := t.TempDir()
@@ -242,7 +244,7 @@ func TestToUpper(t *testing.T) {
 }
 
 func TestParser_ParsePackage_Empty(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create an empty directory
 	tempDir := t.TempDir()
@@ -264,7 +266,7 @@ func TestParser_ParsePackage_Empty(t *testing.T) {
 }
 
 func TestParser_ParseWorkspace(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a temporary workspace
 	tempDir := t.TempDir()
@@ -330,10 +332,8 @@ func Add(a, b int) int {
 
 	if ws.Module == nil {
 		t.Error("Expected Module to be non-nil")
-	} else {
-		if ws.Module.Path != "test/workspace" {
-			t.Errorf("Expected module path to be 'test/workspace', got '%s'", ws.Module.Path)
-		}
+	} else if ws.Module.Path != "test/workspace" {
+		t.Errorf("Expected module path to be 'test/workspace', got '%s'", ws.Module.Path)
 	}
 
 	if len(ws.Packages) < 2 {
@@ -356,7 +356,7 @@ func Add(a, b int) int {
 }
 
 func TestParser_UpdateFile(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a temporary test file
 	tempDir := t.TempDir()
@@ -407,7 +407,7 @@ func Original() {
 }
 
 func TestParser_UpdateFile_NoModifications(t *testing.T) {
-	parser := NewParser()
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a temporary test file
 	tempDir := t.TempDir()

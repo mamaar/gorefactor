@@ -1,0 +1,15 @@
+package main
+
+import (
+	"context"
+	"fmt"
+)
+
+func Process(ctx context.Context, name string) string {
+	return fmt.Sprintf("processing %s", name)
+}
+
+func main() {
+	fmt.Println(Process(context.TODO(), "task"))
+	fmt.Println(Process(context.TODO(), "job"))
+}

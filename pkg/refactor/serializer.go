@@ -16,13 +16,22 @@ import (
 
 // Serializer applies refactoring changes to files while preserving formatting
 type Serializer struct {
-	fileSet *token.FileSet
+	fileSet          *token.FileSet
+	modulePath       string
+	workspaceModules []string
 }
 
 func NewSerializer() *Serializer {
 	return &Serializer{
 		fileSet: token.NewFileSet(),
 	}
+}
+
+// SetModuleInfo configures the module path and workspace modules used for
+// import ordering when writing Go files.
+func (s *Serializer) SetModuleInfo(modulePath string, workspaceModules []string) {
+	s.modulePath = modulePath
+	s.workspaceModules = workspaceModules
 }
 
 // ApplyChanges applies a list of changes to the workspace files
@@ -133,8 +142,12 @@ func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes
 		}
 	}
 
-	// Format the modified content if it's Go code
+	// Organize imports and format the modified content if it's Go code
 	if strings.HasSuffix(filePath, ".go") {
+		if s.modulePath != "" {
+			modifiedContent = organizeImports(modifiedContent, s.modulePath, s.workspaceModules)
+		}
+
 		formatted, err := s.formatGoCode(modifiedContent)
 		if err != nil {
 			// If formatting fails, we still want to save the changes
@@ -361,7 +374,7 @@ func (s *Serializer) GetFileLines(filePath string, startLine, endLine int) ([]st
 	if err != nil {
 		return nil, fmt.Errorf("failed to open file: %v", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var lines []string
 	scanner := bufio.NewScanner(file)

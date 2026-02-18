@@ -85,6 +85,33 @@ type SymbolTable struct {
 	Methods   map[string][]*Symbol  // type name -> methods
 }
 
+// FindSymbol searches the symbol table for a symbol by name across all categories.
+func (st *SymbolTable) FindSymbol(name string) *Symbol {
+	if st == nil {
+		return nil
+	}
+	if s, ok := st.Functions[name]; ok {
+		return s
+	}
+	if s, ok := st.Types[name]; ok {
+		return s
+	}
+	if s, ok := st.Variables[name]; ok {
+		return s
+	}
+	if s, ok := st.Constants[name]; ok {
+		return s
+	}
+	for _, methods := range st.Methods {
+		for _, m := range methods {
+			if m.Name == name {
+				return m
+			}
+		}
+	}
+	return nil
+}
+
 // Reference represents where a symbol is used
 type Reference struct {
 	Symbol   *Symbol

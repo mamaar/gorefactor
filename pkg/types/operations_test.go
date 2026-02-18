@@ -14,9 +14,10 @@ func TestOperationType(t *testing.T) {
 		{"RenameOperation", RenameOperation, 1},
 		{"RenamePackageOperation", RenamePackageOperation, 2},
 		{"RenameInterfaceMethodOperation", RenameInterfaceMethodOperation, 3},
-		{"ExtractOperation", ExtractOperation, 4},
-		{"InlineOperation", InlineOperation, 5},
-		{"BatchOperation", BatchOperation, 6},
+		{"RenameMethodOperation", RenameMethodOperation, 4},
+		{"ExtractOperation", ExtractOperation, 5},
+		{"InlineOperation", InlineOperation, 6},
+		{"BatchOperation", BatchOperation, 7},
 	}
 
 	for _, tc := range testCases {

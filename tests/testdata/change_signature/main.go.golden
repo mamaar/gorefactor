@@ -1,0 +1,14 @@
+package main
+
+import (
+	"fmt"
+)
+
+func Greet(greeting string, name string) string {
+	return "Hello, " + name
+}
+
+func main() {
+	fmt.Println(Greet("Hello", "Alice"))
+	fmt.Println(Greet("Hello", "Bob"))
+}

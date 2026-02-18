@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -82,7 +84,7 @@ func main() {
 	}
 
 	// Create symbol resolver
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	
 	// Build symbol table
 	symbolTable, err := resolver.BuildSymbolTable(pkg)
@@ -148,9 +150,9 @@ func main() {
 	fmt.Printf("\n=== Cache Performance ===\n")
 	// Resolve same symbols multiple times
 	for i := 0; i < 10; i++ {
-		resolver.ResolveSymbol(pkg, "Person")
-		resolver.ResolveSymbol(pkg, "Employee")
-		resolver.ResolveSymbol(pkg, "CreateEmployee")
+		_, _ = resolver.ResolveSymbol(pkg, "Person")
+		_, _ = resolver.ResolveSymbol(pkg, "Employee")
+		_, _ = resolver.ResolveSymbol(pkg, "CreateEmployee")
 	}
 	
 	stats := resolver.cache.GetStats()

@@ -1,0 +1,24 @@
+package main
+
+import (
+	"fmt"
+)
+
+type Calculator struct {
+	result int
+}
+
+func (c *Calculator) computeResult(sum int) {
+	c.result = sum * 2
+	fmt.Println(c.result)
+}
+
+func (c *Calculator) Process(a, b int) {
+	sum := a + b
+	c.computeResult(sum)
+}
+
+func main() {
+	calc := &Calculator{}
+	calc.Process(3, 4)
+}

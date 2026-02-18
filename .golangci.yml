@@ -1,0 +1,20 @@
+version: "2"
+
+run:
+  timeout: 3m
+  go: "1.25"
+
+linters:
+  enable:
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - ineffassign
+    - gocritic
+    - misspell
+
+issues:
+  exclude-dirs:
+    - testdata
+    - bin

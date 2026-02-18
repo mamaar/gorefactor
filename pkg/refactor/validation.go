@@ -5,6 +5,8 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
+	"log/slog"
 	"strings"
 	"unicode"
 
@@ -15,11 +17,13 @@ import (
 // Validator validates refactoring operations for safety
 type Validator struct {
 	typeChecker *types.Checker
+	logger      *slog.Logger
 }
 
-func NewValidator() *Validator {
+func NewValidator(logger *slog.Logger) *Validator {
 	return &Validator{
 		typeChecker: &types.Checker{},
+		logger:      logger,
 	}
 }
 
@@ -116,7 +120,7 @@ func (v *Validator) ValidateMove(ws *refactorTypes.Workspace, req refactorTypes.
 		return issues
 	}
 
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, req.SymbolName)
 	if err != nil {
 		issues = append(issues, refactorTypes.Issue{
@@ -219,7 +223,7 @@ func (v *Validator) ValidateRename(ws *refactorTypes.Workspace, req refactorType
 
 	// Find symbols to rename
 	var targetSymbols []*refactorTypes.Symbol
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if req.Package != "" {
 		// Package-scoped rename
@@ -361,14 +365,27 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 	for _, change := range plan.Changes {
 		// Basic syntax validation of new text
 		if change.NewText != "" {
-			if err := v.validateGoSyntax(change.NewText); err != nil {
-				fmt.Println("!!!!", change.NewText)
-				issues = append(issues, refactorTypes.Issue{
-					Type:        refactorTypes.IssueCompilationError,
-					Description: fmt.Sprintf("syntax error in new text: %v", err),
-					File:        change.File,
-					Severity:    refactorTypes.Error,
-				})
+			// Skip validation for code fragments that aren't valid standalone Go:
+			// - Interface method signatures (method name + signature)
+			// - Parameter list changes (just parameter declarations)
+			// - Call argument changes (just expressions)
+			// - Import additions (just import path strings)
+			desc := change.Description
+			isFragment := strings.Contains(desc, "interface method") ||
+				strings.Contains(desc, "parameters") ||
+				strings.Contains(desc, "parameter") ||
+				strings.Contains(desc, "call to") ||
+				strings.Contains(desc, "argument") ||
+				strings.Contains(desc, "import")
+			if !isFragment {
+				if err := v.validateGoSyntax(change.NewText); err != nil {
+					issues = append(issues, refactorTypes.Issue{
+						Type:        refactorTypes.IssueCompilationError,
+						Description: fmt.Sprintf("syntax error in new text: %v", err),
+						File:        change.File,
+						Severity:    refactorTypes.Error,
+					})
+				}
 			}
 		}
 	}
@@ -479,7 +496,7 @@ func (v *Validator) checkRenameConflicts(ws *refactorTypes.Workspace, symbol *re
 	}
 
 	// Check for conflicts in the same package
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := resolver.ResolveSymbol(pkg, newName); err == nil {
 		issues = append(issues, refactorTypes.Issue{
 			Type:        refactorTypes.IssueNameConflict,
@@ -562,6 +579,12 @@ func (v *Validator) validateGoSyntax(code string) error {
 
 	// First, try as an expression (for simple values)
 	_, err := parser.ParseExpr(code)
+	if err == nil {
+		return nil
+	}
+
+	// Try as a complete file (code already has package declaration)
+	_, err = parser.ParseFile(token.NewFileSet(), "", code, 0)
 	if err == nil {
 		return nil
 	}

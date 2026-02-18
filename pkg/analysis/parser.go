@@ -2,9 +2,13 @@ package analysis
 
 import (
 	"fmt"
+	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -16,12 +20,15 @@ import (
 
 // Parser handles Go code parsing and AST management
 type GoParser struct {
-	fileSet *token.FileSet
+	fileSet  *token.FileSet
+	logger   *slog.Logger
+	importer *workspaceImporter
 }
 
-func NewParser() *GoParser {
+func NewParser(logger *slog.Logger) *GoParser {
 	return &GoParser{
 		fileSet: token.NewFileSet(),
+		logger:  logger,
 	}
 }
 
@@ -136,9 +143,12 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 // Package directories are discovered sequentially, then parsed in parallel
 // using a bounded worker pool (runtime.NumCPU goroutines).
 func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
+	p.logger.Info("parsing workspace", "path", rootPath)
+
 	// Convert to absolute path for consistency
 	absRootPath, err := filepath.Abs(rootPath)
 	if err != nil {
+		p.logger.Error("failed to get absolute path", "path", rootPath, "err", err)
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to get absolute path for workspace: %v", err),
@@ -193,6 +203,7 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 	})
 
 	if err != nil {
+		p.logger.Error("workspace discovery failed", "path", rootPath, "err", err)
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse workspace: %v", err),
@@ -200,6 +211,8 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 			Cause:   err,
 		}
 	}
+
+	p.logger.Debug("discovered packages", "count", len(pkgDirs))
 
 	// Phase 2: Parse packages in parallel with bounded concurrency.
 	// Each package parse is independent (reads its own files, creates its own AST nodes).
@@ -254,6 +267,12 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 			workspace.ImportToPath[importPath] = fsPath
 		}
 	}
+
+	p.logger.Info("workspace parsed successfully", "packages", len(workspace.Packages), "module", workspace.Module)
+
+	// Create a single importer instance for this workspace to ensure consistent
+	// stdlib type identities across all TypeCheckPackage calls.
+	p.importer = &workspaceImporter{ws: workspace, fset: workspace.FileSet, parser: p}
 
 	return workspace, nil
 }
@@ -314,6 +333,11 @@ func (p *GoParser) inferPackagePath(dir, packageName string) string {
 	return abs
 }
 
+// ComputeImportPath computes the Go import path for a package given its filesystem path.
+func ComputeImportPath(ws *types.Workspace, fsPath string) string {
+	return computeImportPath(ws, fsPath)
+}
+
 // computeImportPath computes the Go import path for a package given its filesystem path
 func computeImportPath(ws *types.Workspace, fsPath string) string {
 	if ws.Module == nil {
@@ -371,4 +395,79 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+// EnsureTypeChecked runs type-checking on a package if it hasn't been done yet.
+// This enables lazy/on-demand type-checking instead of eager upfront checking.
+func (p *GoParser) EnsureTypeChecked(ws *types.Workspace, pkg *types.Package) {
+	if pkg.TypesPkg != nil {
+		return
+	}
+	p.TypeCheckPackage(ws, pkg)
+}
+
+// TypeCheckPackage runs go/types type-checking on a package.
+// Results are stored in pkg.TypesInfo and pkg.TypesPkg.
+// Errors are silently ignored — packages that fail type-checking
+// will have nil TypesInfo and fall back to AST-based inference.
+func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
+	var files []*ast.File
+	for _, f := range pkg.Files {
+		if f.AST != nil {
+			files = append(files, f.AST)
+		}
+	}
+	if len(files) == 0 {
+		return
+	}
+
+	conf := gotypes.Config{
+		Importer: p.importer,
+		Error:    func(err error) {}, // silently ignore type errors
+	}
+	info := &gotypes.Info{
+		Types: make(map[ast.Expr]gotypes.TypeAndValue),
+		Defs:  make(map[*ast.Ident]gotypes.Object),
+		Uses:  make(map[*ast.Ident]gotypes.Object),
+	}
+
+	typesPkg, err := conf.Check(pkg.ImportPath, ws.FileSet, files, info)
+	if err != nil {
+		p.logger.Debug("type-checking failed (falling back to AST inference)", "package", pkg.ImportPath, "err", err)
+		// Still store partial results — go/types populates info even on errors
+		pkg.TypesInfo = info
+		return
+	}
+	pkg.TypesInfo = info
+	pkg.TypesPkg = typesPkg
+}
+
+// workspaceImporter implements go/types.Importer using workspace-local packages
+// with fallback to source-based importing for stdlib/external packages.
+type workspaceImporter struct {
+	ws     *types.Workspace
+	fset   *token.FileSet
+	parser *GoParser
+	std    gotypes.Importer
+}
+
+func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
+	// Check if this is a workspace-local package
+	if fsPath, ok := imp.ws.ImportToPath[path]; ok {
+		if pkg, ok := imp.ws.Packages[fsPath]; ok {
+			if pkg.TypesPkg != nil {
+				return pkg.TypesPkg, nil
+			}
+			// Type-check this dependency first (lazy/recursive)
+			imp.parser.TypeCheckPackage(imp.ws, pkg)
+			if pkg.TypesPkg != nil {
+				return pkg.TypesPkg, nil
+			}
+		}
+	}
+	// Fall back to stdlib/export data
+	if imp.std == nil {
+		imp.std = importer.Default()
+	}
+	return imp.std.Import(path)
 }

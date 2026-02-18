@@ -1,0 +1,22 @@
+package main
+
+import (
+	"fmt"
+	"strconv"
+)
+
+func parseValue(s string) (int, error) {
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, fmt.Errorf("parse failed: %v", err)
+	}
+	return val, nil
+}
+
+func main() {
+	v, err := parseValue("abc")
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(v)
+}

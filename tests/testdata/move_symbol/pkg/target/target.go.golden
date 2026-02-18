@@ -1,0 +1,10 @@
+package target
+
+func Greet() string {
+	return "hello"
+}
+
+// Multiply was moved from $TMPDIR
+func Multiply(a, b int) int {
+	return a * b
+}

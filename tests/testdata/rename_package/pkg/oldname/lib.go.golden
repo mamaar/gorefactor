@@ -1,0 +1,5 @@
+package newname
+
+func Hello() string {
+	return "hello"
+}

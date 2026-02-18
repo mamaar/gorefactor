@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -15,7 +17,7 @@ func TestNewSymbolResolver(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if resolver == nil {
 		t.Fatal("Expected NewSymbolResolver to return a non-nil resolver")
 	}
@@ -81,7 +83,7 @@ var TestVar = "test"
 		FileSet:  fileSet,
 	}
 
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Build symbol table
 	symbolTable, err := resolver.BuildSymbolTable(pkg)
@@ -169,9 +171,9 @@ var TestVar = "test"
 		t.Error("Expected to find TestConst in symbol table")
 	}
 
-	// Validate methods
-	if len(symbolTable.Methods) != 1 {
-		t.Errorf("Expected 1 method group, got %d", len(symbolTable.Methods))
+	// Validate methods (includes both receiver methods and interface methods)
+	if len(symbolTable.Methods) != 2 {
+		t.Errorf("Expected 2 method groups (TestType + TestInterface), got %d", len(symbolTable.Methods))
 	}
 
 	if methods, exists := symbolTable.Methods["TestType"]; exists {
@@ -186,6 +188,18 @@ var TestVar = "test"
 		}
 	} else {
 		t.Error("Expected to find methods for TestType")
+	}
+
+	// Validate interface methods are also discovered
+	if methods, exists := symbolTable.Methods["TestInterface"]; exists {
+		if len(methods) != 1 {
+			t.Errorf("Expected 1 method for TestInterface, got %d", len(methods))
+		}
+		if methods[0].Name != "Method" {
+			t.Errorf("Expected interface method name 'Method', got '%s'", methods[0].Name)
+		}
+	} else {
+		t.Error("Expected to find methods for TestInterface")
 	}
 }
 
@@ -218,7 +232,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test resolving function
 	symbol, err := resolver.ResolveSymbol(pkg, "TestFunc")
@@ -316,7 +330,7 @@ func AnotherFunc() {
 		FileSet:  fileSet,
 	}
 
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Find references
 	references, err := resolver.FindReferences(testSymbol)
@@ -356,7 +370,7 @@ func TestSymbolResolver_FindDefinition(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test basic error case
 	_, err := resolver.FindDefinition("test.go", token.Pos(100))
@@ -380,7 +394,7 @@ func TestSymbolResolver_FindDefinition_NotFound(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Try to find definition in non-existent file
 	_, err := resolver.FindDefinition("nonexistent.go", token.Pos(100))
@@ -400,7 +414,7 @@ func TestSymbolResolver_FindDefinition_NotFound(t *testing.T) {
 
 func TestSymbolResolver_isExported(t *testing.T) {
 	ws := &types.Workspace{}
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	testCases := []struct {
 		name     string
@@ -451,7 +465,7 @@ func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 	}
 
 	ws := &types.Workspace{}
-	resolver := NewSymbolResolver(ws)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {

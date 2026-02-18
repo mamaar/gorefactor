@@ -5,6 +5,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -43,7 +46,7 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Find the method to inline
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	var methodSymbol *types.Symbol
 	var sourcePackage *types.Package
 	
@@ -82,10 +85,10 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	// Check if target file exists
+	// Check if target file exists (pkg.Files is keyed by basename)
 	var targetFile *types.File
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.TargetFile]; exists {
+		if file, exists := pkg.Files[filepath.Base(op.TargetFile)]; exists {
 			targetFile = file
 			break
 		}
@@ -102,7 +105,7 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 
 func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	// Find the method implementation
-	methodBody, err := op.findMethodImplementation(ws)
+	impl, err := op.findMethodImplementation(ws)
 	if err != nil {
 		return nil, err
 	}
@@ -121,14 +124,14 @@ func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 			Start:       location.Start,
 			End:         location.End,
 			OldText:     location.CallText,
-			NewText:     op.adaptMethodBodyForInlining(methodBody, location.Arguments),
+			NewText:     op.adaptMethodBodyForInlining(impl, location.Arguments),
 			Description: fmt.Sprintf("Inline method call %s", op.MethodName),
 		})
 	}
 
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
-		if _, exists := pkg.Files[op.TargetFile]; exists {
+		if _, exists := pkg.Files[filepath.Base(op.TargetFile)]; exists {
 			sourcePackage = pkg
 			break
 		}
@@ -150,6 +153,12 @@ func (op *InlineMethodOperation) Description() string {
 	return fmt.Sprintf("Inline method '%s' from %s into %s", op.MethodName, op.SourceStruct, op.TargetFile)
 }
 
+// MethodImpl holds the extracted method body and its parameter names.
+type MethodImpl struct {
+	Body       string
+	ParamNames []string
+}
+
 type MethodCall struct {
 	Start     int
 	End       int
@@ -157,12 +166,12 @@ type MethodCall struct {
 	Arguments []string
 }
 
-func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (string, error) {
+func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (MethodImpl, error) {
 	// Find the method symbol and its implementation
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	var methodSymbol *types.Symbol
 	var sourcePackage *types.Package
-	
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil {
 			if structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
@@ -182,31 +191,31 @@ func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (
 			}
 		}
 	}
-	
+
 	if methodSymbol == nil {
-		return "", &types.RefactorError{
+		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("method implementation not found: %s", op.MethodName),
 		}
 	}
-	
-	// Get the method body from the source file
-	if file, exists := sourcePackage.Files[methodSymbol.File]; exists {
+
+	// Get the method body from the source file (pkg.Files is keyed by basename)
+	if file, exists := sourcePackage.Files[filepath.Base(methodSymbol.File)]; exists {
 		return op.extractMethodBody(string(file.OriginalContent), methodSymbol)
 	}
-	
-	return "", &types.RefactorError{
+
+	return MethodImpl{}, &types.RefactorError{
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("method implementation not found: %s", op.MethodName),
 	}
 }
 
-func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol *types.Symbol) (string, error) {
+func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol *types.Symbol) (MethodImpl, error) {
 	// Parse the file to find the method body
 	fset := token.NewFileSet()
 	astFile, err := parser.ParseFile(fset, methodSymbol.File, content, parser.ParseComments)
 	if err != nil {
-		return "", &types.RefactorError{
+		return MethodImpl{}, &types.RefactorError{
 			Type:    types.ParseError,
 			Message: fmt.Sprintf("failed to parse file: %v", err),
 		}
@@ -216,29 +225,42 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 	for _, decl := range astFile.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
 			if funcDecl.Name.Name == op.MethodName && funcDecl.Recv != nil {
+				// Extract parameter names
+				var paramNames []string
+				if funcDecl.Type.Params != nil {
+					for _, field := range funcDecl.Type.Params.List {
+						for _, name := range field.Names {
+							paramNames = append(paramNames, name.Name)
+						}
+					}
+				}
+
 				// Extract the body
 				if funcDecl.Body != nil {
 					start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
 					end := fset.Position(funcDecl.Body.Rbrace).Offset
 					if start < len(content) && end <= len(content) {
-						return string(content[start:end]), nil
+						return MethodImpl{
+							Body:       string(content[start:end]),
+							ParamNames: paramNames,
+						}, nil
 					}
 				}
 			}
 		}
 	}
 
-	return "", &types.RefactorError{
+	return MethodImpl{}, &types.RefactorError{
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("method body not found: %s", op.MethodName),
 	}
 }
 
 func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodCall, error) {
-	// Find target file
+	// Find target file (pkg.Files is keyed by basename)
 	var targetFile *types.File
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.TargetFile]; exists {
+		if file, exists := pkg.Files[filepath.Base(op.TargetFile)]; exists {
 			targetFile = file
 			break
 		}
@@ -297,19 +319,107 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 	return calls, nil
 }
 
-func (op *InlineMethodOperation) adaptMethodBodyForInlining(body string, arguments []string) string {
-	// This is a simplified adaptation - a full implementation would:
-	// 1. Replace parameter references with argument values
-	// 2. Handle return statements appropriately
-	// 3. Ensure variable scoping is correct
-	
-	// For now, just add a comment and the body
-	adapted := "{ // Inlined from " + op.MethodName + "\n"
-	adapted += strings.TrimSpace(body)
-	adapted += "\n}"
-	
-	return adapted
+func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arguments []string) string {
+	body := strings.TrimSpace(impl.Body)
+
+	// Build param→arg substitution map
+	paramToArg := make(map[string]string)
+	for i, name := range impl.ParamNames {
+		if i < len(arguments) {
+			paramToArg[name] = arguments[i]
+		}
+	}
+
+	// Try to parse the body as a single return expression.
+	// Wrap in a dummy function so it's valid Go.
+	wrapped := "package p\nfunc _() {\n" + body + "\n}"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "", wrapped, 0)
+	if err == nil {
+		if funcDecl, ok := f.Decls[0].(*ast.FuncDecl); ok && funcDecl.Body != nil {
+			stmts := funcDecl.Body.List
+			// Single return statement with one result → extract expression
+			if len(stmts) == 1 {
+				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
+					expr := retStmt.Results[0]
+					result := op.replaceIdents(expr, paramToArg, fset, wrapped)
+					return result
+				}
+			}
+		}
+	}
+
+	// Fallback: do textual param substitution on the whole body
+	result := body
+	for param, arg := range paramToArg {
+		result = replaceIdentToken(result, param, arg)
+	}
+	return result
 }
+
+// replaceIdents rewrites identifier tokens in an AST expression using the
+// param→arg map and returns the resulting source text.
+func (op *InlineMethodOperation) replaceIdents(expr ast.Expr, paramToArg map[string]string, fset *token.FileSet, src string) string {
+	// Collect identifiers that need replacing, in reverse order so offsets stay valid.
+	type replacement struct {
+		start, end int
+		text       string
+	}
+	var replacements []replacement
+	ast.Inspect(expr, func(n ast.Node) bool {
+		if ident, ok := n.(*ast.Ident); ok {
+			if arg, exists := paramToArg[ident.Name]; exists {
+				// Offsets are relative to src (the wrapped string)
+				start := fset.Position(ident.Pos()).Offset
+				end := fset.Position(ident.End()).Offset
+				replacements = append(replacements, replacement{start, end, arg})
+			}
+		}
+		return true
+	})
+
+	// Extract the expression text from src first
+	exprStart := fset.Position(expr.Pos()).Offset
+	exprEnd := fset.Position(expr.End()).Offset
+	exprText := src[exprStart:exprEnd]
+
+	// Apply replacements in reverse order (adjusted to be relative to exprText)
+	for i := len(replacements) - 1; i >= 0; i-- {
+		r := replacements[i]
+		relStart := r.start - exprStart
+		relEnd := r.end - exprStart
+		exprText = exprText[:relStart] + r.text + exprText[relEnd:]
+	}
+
+	return exprText
+}
+
+// replaceIdentToken does a token-aware replacement of identifier tokens in Go source text.
+func replaceIdentToken(src, oldIdent, newText string) string {
+	var result strings.Builder
+	remainder := src
+	for len(remainder) > 0 {
+		idx := strings.Index(remainder, oldIdent)
+		if idx < 0 {
+			result.WriteString(remainder)
+			break
+		}
+		// Check that the character before and after are not identifier characters
+		before := idx == 0 || !isIdentChar(remainder[idx-1])
+		afterIdx := idx + len(oldIdent)
+		after := afterIdx >= len(remainder) || !isIdentChar(remainder[afterIdx])
+		if before && after {
+			result.WriteString(remainder[:idx])
+			result.WriteString(newText)
+			remainder = remainder[afterIdx:]
+		} else {
+			result.WriteString(remainder[:afterIdx])
+			remainder = remainder[afterIdx:]
+		}
+	}
+	return result.String()
+}
+
 
 // InlineVariableOperation implements inlining a variable with its value
 type InlineVariableOperation struct {
@@ -392,6 +502,16 @@ func (op *InlineVariableOperation) Execute(ws *types.Workspace) (*types.Refactor
 			sourcePackage = pkg
 			break
 		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourcePackage = pkg
+				break
+			}
+		}
+		if sourcePackage != nil {
+			break
+		}
 	}
 
 	return &types.RefactoringPlan{
@@ -422,6 +542,16 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 	for _, pkg := range ws.Packages {
 		if file, exists := pkg.Files[op.SourceFile]; exists {
 			sourceFile = file
+			break
+		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				break
+			}
+		}
+		if sourceFile != nil {
 			break
 		}
 	}
@@ -500,6 +630,16 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 	for _, pkg := range ws.Packages {
 		if file, exists := pkg.Files[op.SourceFile]; exists {
 			sourceFile = file
+			break
+		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				break
+			}
+		}
+		if sourceFile != nil {
 			break
 		}
 	}

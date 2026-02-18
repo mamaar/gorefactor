@@ -3,6 +3,8 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +32,7 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 		for pkgPath := range ws.Packages {
 			availablePackages = append(availablePackages, pkgPath)
 		}
-		
+
 		message := fmt.Sprintf("source package not found: %s\nAvailable packages:\n", op.Request.FromPackage)
 		if len(availablePackages) == 0 {
 			message += "  (no packages found - ensure you're in a Go workspace with go.mod)"
@@ -43,7 +45,7 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 				}
 			}
 		}
-		
+
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: message,
@@ -58,7 +60,7 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Find the symbol to move
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.Request.SymbolName)
 	if err != nil {
 		return &types.RefactorError{
@@ -76,13 +78,13 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 			for pkgPath := range ws.Packages {
 				availablePackages = append(availablePackages, pkgPath)
 			}
-			
+
 			message := fmt.Sprintf("target package not found: %s (CreateTarget=false)\nAvailable packages:\n", op.Request.ToPackage)
 			for _, pkg := range availablePackages {
 				message += fmt.Sprintf("  - %s\n", pkg)
 			}
 			message += "\nTip: Use CreateTarget=true to create the target package automatically"
-			
+
 			return &types.RefactorError{
 				Type:    types.InvalidOperation,
 				Message: message,
@@ -142,7 +144,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 
 	// Find the symbol to move
 	sourcePackage := ws.Packages[op.Request.FromPackage]
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.Request.SymbolName)
 	if err != nil {
 		return nil, err
@@ -234,7 +236,7 @@ func (op *RenameSymbolOperation) Type() types.OperationType {
 
 func (op *RenameSymbolOperation) Validate(ws *types.Workspace) error {
 	// Check that symbol exists
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	targetSymbols, err := op.findTargetSymbols(ws, resolver)
 	if err != nil {
 		return err
@@ -365,7 +367,7 @@ func (op *RenameSymbolOperation) Execute(ws *types.Workspace) (*types.Refactorin
 
 	// Find all symbols to rename
 	var targetSymbols []*types.Symbol
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if op.Request.Package != "" {
 		// Package-scoped rename
@@ -436,7 +438,7 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 		for pkgPath := range ws.Packages {
 			availablePackages = append(availablePackages, pkgPath)
 		}
-		
+
 		message := fmt.Sprintf("package not found: %s\nAvailable packages:\n", op.Request.PackagePath)
 		if len(availablePackages) == 0 {
 			message += "  (no packages found - ensure you're in a Go workspace with go.mod)"
@@ -447,7 +449,7 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 				}
 			}
 		}
-		
+
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: message,
@@ -494,7 +496,7 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 
 	// Find the package to rename
 	targetPackage := ws.Packages[op.Request.PackagePath]
-	
+
 	// Step 1: Update package declaration in all files within the package
 	for _, file := range targetPackage.Files {
 		change, err := op.generatePackageDeclarationChange(file, op.Request.OldPackageName, op.Request.NewPackageName)
@@ -552,15 +554,16 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, sy
 						start := i
 
 						// Include doc comments if present - look backwards for comment lines
+					docSearch1:
 						for j := i - 1; j >= 0; j-- {
 							trimmed := strings.TrimSpace(lines[j])
-							if strings.HasPrefix(trimmed, "//") {
+							switch {
+							case strings.HasPrefix(trimmed, "//"):
 								start = j
-							} else if trimmed == "" {
-								// Skip empty lines between comments and func
+							case trimmed == "":
 								continue
-							} else {
-								break
+							default:
+								break docSearch1
 							}
 						}
 
@@ -778,23 +781,24 @@ func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, ty
 						// Look for the method declaration (including receiver)
 						// Use exact match for method name to avoid matching "Update" when looking for "UpdateLocked"
 						if strings.Contains(line, "func (") && strings.Contains(line, receiverType) &&
-						   (strings.Contains(line, " "+methodName+"(") || strings.Contains(line, "*"+receiverType+") "+methodName+"(")) {
+							(strings.Contains(line, " "+methodName+"(") || strings.Contains(line, "*"+receiverType+") "+methodName+"(")) {
 							start := i
 
 							// Include doc comments if present
+						docSearch2:
 							for j := i - 1; j >= 0; j-- {
 								trimmed := strings.TrimSpace(lines[j])
-								if strings.HasPrefix(trimmed, "//") {
+								switch {
+								case strings.HasPrefix(trimmed, "//"):
 									start = j
-								} else if trimmed == "" {
+								case trimmed == "":
 									continue
-								} else {
-									break
+								default:
+									break docSearch2
 								}
 							}
 
 							// Find the end of the method
-							end := i + 1
 							braceCount := 0
 							foundOpenBrace := false
 
@@ -806,7 +810,7 @@ func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, ty
 									} else if char == '}' && foundOpenBrace {
 										braceCount--
 										if braceCount == 0 {
-											end = j + 1
+											end := j + 1
 
 											// Calculate byte positions
 											startByte := 0
@@ -850,20 +854,21 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChange(targetFile *types.Fi
 	if sourceFile == nil {
 		return types.Change{}, fmt.Errorf("could not find source file for symbol %s", symbol.Name)
 	}
-	
+
 	// Make sure we have the original content
 	if len(sourceFile.OriginalContent) == 0 {
 		return types.Change{}, fmt.Errorf("source file %s has no content loaded", sourceFile.Path)
 	}
-	
+
 	// Extract the symbol's source code
 	symbolCode, err := op.extractSymbolSource(sourceFile, symbol)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to extract symbol source for %s: %v\n", symbol.Name, err)
 		// Fallback to a simple implementation for functions
-		if symbol.Kind == types.FunctionSymbol {
+		switch symbol.Kind {
+		case types.FunctionSymbol:
 			symbolCode = fmt.Sprintf("func %s(a, b int) int {\n\treturn a + b\n}", symbol.Name)
-		} else if symbol.Kind == types.TypeSymbol {
+		case types.TypeSymbol:
 			// Attempt to generate struct with actual field information
 			structCode, err := op.generateStructFromSymbol(symbol, sourceFile)
 			if err != nil {
@@ -872,11 +877,11 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChange(targetFile *types.Fi
 			} else {
 				symbolCode = structCode
 			}
-		} else {
+		default:
 			return types.Change{}, fmt.Errorf("failed to extract symbol source: %w", err)
 		}
 	}
-	
+
 	// Add a comment indicating the move
 	symbolCode = fmt.Sprintf("\n// %s was moved from %s\n%s\n", symbol.Name, sourcePackage.Path, symbolCode)
 
@@ -996,7 +1001,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 				Message: fmt.Sprintf("target package does not exist: %s", targetPackagePath),
 			}
 		}
-		
+
 		// Create new package (simplified implementation)
 		targetPackage = &types.Package{
 			Path:  targetPackagePath,
@@ -1019,7 +1024,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 		filename := targetPackage.Name + ".go"
 		fullPath := filepath.Join(targetPackagePath, filename)
 		initialContent := fmt.Sprintf("package %s\n", targetPackage.Name)
-		
+
 		// Create the directory and file on disk
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 			return nil, nil, fmt.Errorf("failed to create directory: %v", err)
@@ -1027,7 +1032,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 		if err := os.WriteFile(fullPath, []byte(initialContent), 0644); err != nil {
 			return nil, nil, fmt.Errorf("failed to create initial file: %v", err)
 		}
-		
+
 		targetFile = &types.File{
 			Path:            fullPath,
 			Package:         targetPackage,
@@ -1048,7 +1053,7 @@ func (op *RenameSymbolOperation) checkNameConflict(ws *types.Workspace, symbol *
 		return nil
 	}
 
-	resolver := analysis.NewSymbolResolver(ws)
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := resolver.ResolveSymbol(pkg, newName); err == nil {
 		return &types.RefactorError{
 			Type:    types.NameConflict,
@@ -1207,28 +1212,26 @@ func generateAddImportChange(ws *types.Workspace, filePath string, importPath st
 							}
 						}
 					}
-				} else {
+				} else if file.AST.Name != nil && ws.FileSet != nil {
 					// No imports exist, add new import block after package declaration
-					if file.AST.Name != nil && ws.FileSet != nil {
-						pos := ws.FileSet.Position(file.AST.Name.End())
-						byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+					pos := ws.FileSet.Position(file.AST.Name.End())
+					byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
 
-						content, err := os.ReadFile(filePath)
-						if err != nil {
-							return nil
-						}
+					content, err := os.ReadFile(filePath)
+					if err != nil {
+						return nil
+					}
 
-						// Find the next newline after package declaration
-						for i := byteOffset; i < len(content); i++ {
-							if content[i] == '\n' {
-								return &types.Change{
-									File:        filePath,
-									Start:       i + 1,
-									End:         i + 1,
-									OldText:     "",
-									NewText:     fmt.Sprintf("\nimport \"%s\"\n", importPath),
-									Description: fmt.Sprintf("Add import for %s", importPath),
-								}
+					// Find the next newline after package declaration
+					for i := byteOffset; i < len(content); i++ {
+						if content[i] == '\n' {
+							return &types.Change{
+								File:        filePath,
+								Start:       i + 1,
+								End:         i + 1,
+								OldText:     "",
+								NewText:     fmt.Sprintf("\nimport \"%s\"\n", importPath),
+								Description: fmt.Sprintf("Add import for %s", importPath),
 							}
 						}
 					}
@@ -1308,82 +1311,6 @@ func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, fileP
 	return nil
 }
 
-// findImportInsertPosition finds the correct position to insert a new import
-func findImportInsertPosition(ws *types.Workspace, filePath string) int {
-	// Find the file and its AST
-	for _, pkg := range ws.Packages {
-		for _, file := range pkg.Files {
-			if file.Path == filePath && file.AST != nil {
-				// If there are existing imports, add after the last one
-				if len(file.AST.Imports) > 0 {
-					lastImport := file.AST.Imports[len(file.AST.Imports)-1]
-					// Convert token.Pos to file byte offset using FileSet
-					// We need to find the end of the line, not just the end of the import spec
-					if ws.FileSet != nil {
-						pos := ws.FileSet.Position(lastImport.End())
-						// Get the byte offset for the end of the import, then find the next newline
-						byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
-
-						// Read file content to find the end of this line
-						content, err := os.ReadFile(filePath)
-						if err == nil {
-							// Find the next newline after the import
-							for i := byteOffset; i < len(content); i++ {
-								if content[i] == '\n' {
-									return i + 1 // Return position after the newline
-								}
-							}
-							// If no newline found, return the offset (shouldn't happen in well-formed files)
-							return byteOffset
-						}
-						return byteOffset
-					}
-					// Fallback if no FileSet
-					return int(lastImport.End())
-				}
-
-				// If no imports, add after package declaration
-				if file.AST.Name != nil {
-					// Convert token.Pos to file byte offset using FileSet
-					if ws.FileSet != nil {
-						pos := ws.FileSet.Position(file.AST.Name.End())
-						byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
-
-						// Read file content to find the end of the package line
-						content, err := os.ReadFile(filePath)
-						if err == nil {
-							// Find the next newline after package declaration
-							for i := byteOffset; i < len(content); i++ {
-								if content[i] == '\n' {
-									return i + 1 // Return position after the newline
-								}
-							}
-							return byteOffset
-						}
-						return byteOffset
-					}
-					// Fallback: Find the end of the package line by looking for the first newline after package name
-					return int(file.AST.Name.End()) + 1 // +1 to get past the newline
-				}
-			}
-		}
-	}
-
-	// Fallback: beginning of file
-	return 0
-}
-
-// clampPosition ensures a position is within file bounds
-func clampPosition(pos int, fileContent []byte) int {
-	if pos < 0 {
-		return 0
-	}
-	if pos > len(fileContent) {
-		return len(fileContent)
-	}
-	return pos
-}
-
 // extractSymbolSource extracts the source code of a symbol from a file
 func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol) (string, error) {
 	var sourceCode string
@@ -1409,19 +1336,19 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 						start := i
 
 						// Include doc comments if present - look backwards for comment lines
+					docSearch3:
 						for j := i - 1; j >= 0; j-- {
 							trimmed := strings.TrimSpace(lines[j])
-							if strings.HasPrefix(trimmed, "//") {
+							switch {
+							case strings.HasPrefix(trimmed, "//"):
 								start = j
-							} else if trimmed == "" {
-								// Skip empty lines between comments and func
+							case trimmed == "":
 								continue
-							} else {
-								break
+							default:
+								break docSearch3
 							}
 						}
 
-						end := i + 1
 						braceCount := 0
 						foundOpenBrace := false
 
@@ -1434,7 +1361,7 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 								} else if char == '}' && foundOpenBrace {
 									braceCount--
 									if braceCount == 0 {
-										end = j + 1
+										end := j + 1
 										sourceCode = strings.Join(lines[start:end], "\n")
 										found = true
 										return false
@@ -1454,7 +1381,6 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 						if strings.Contains(line, "type "+symbol.Name) {
 							// Extract the entire type definition
 							start := i
-							end := start + 1
 							braceCount := 0
 							foundOpenBrace := false
 
@@ -1467,7 +1393,7 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 									} else if char == '}' && foundOpenBrace {
 										braceCount--
 										if braceCount == 0 {
-											end = j + 1
+											end := j + 1
 											sourceCode = strings.Join(lines[start:end], "\n")
 											found = true
 											return false
@@ -1530,19 +1456,20 @@ func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName 
 							start := i
 
 							// Include doc comments if present
+						docSearch4:
 							for j := i - 1; j >= 0; j-- {
 								trimmed := strings.TrimSpace(lines[j])
-								if strings.HasPrefix(trimmed, "//") {
+								switch {
+								case strings.HasPrefix(trimmed, "//"):
 									start = j
-								} else if trimmed == "" {
+								case trimmed == "":
 									continue
-								} else {
-									break
+								default:
+									break docSearch4
 								}
 							}
 
 							// Find the end of the method
-							end := i + 1
 							braceCount := 0
 							foundOpenBrace := false
 
@@ -1554,7 +1481,7 @@ func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName 
 									} else if char == '}' && foundOpenBrace {
 										braceCount--
 										if braceCount == 0 {
-											end = j + 1
+											end := j + 1
 											methodCode := strings.Join(lines[start:end], "\n")
 											methods = append(methods, methodCode)
 											return false
@@ -1605,29 +1532,29 @@ func calculateByteOffset(filePath string, line, column int) int {
 	if err != nil {
 		return 0 // Return 0 if we can't read the file
 	}
-	
+
 	if line <= 0 || column <= 0 {
 		return 0
 	}
-	
+
 	lines := strings.Split(string(content), "\n")
 	if line > len(lines) {
 		return len(content) // Return end of file if line is beyond file
 	}
-	
+
 	// Calculate offset by summing up previous lines plus current column
 	offset := 0
 	for i := 0; i < line-1; i++ {
 		offset += len(lines[i]) + 1 // +1 for the newline character
 	}
-	
+
 	// Add column offset (subtract 1 since columns are 1-based)
 	if column-1 < len(lines[line-1]) {
 		offset += column - 1
 	} else {
 		offset += len(lines[line-1]) // If column is beyond line, go to end of line
 	}
-	
+
 	return offset
 }
 
@@ -1670,13 +1597,13 @@ func (op *MoveSymbolOperation) generateStructFromSymbol(symbol *types.Symbol, so
 					} else {
 						structBuilder.WriteString("interface{}")
 					}
-					
+
 					// Add struct tags if present
 					if field.Tag != nil {
 						structBuilder.WriteString(" ")
 						structBuilder.WriteString(field.Tag.Value)
 					}
-					
+
 					structBuilder.WriteString("\n")
 				}
 			} else {
@@ -1701,7 +1628,7 @@ func (op *MoveSymbolOperation) generateStructFromSymbol(symbol *types.Symbol, so
 func (op *RenamePackageOperation) generatePackageDeclarationChange(file *types.File, oldName, newName string) (*types.Change, error) {
 	content := string(file.OriginalContent)
 	lines := strings.Split(content, "\n")
-	
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "package ") {
@@ -1712,22 +1639,22 @@ func (op *RenamePackageOperation) generatePackageDeclarationChange(file *types.F
 				for j := 0; j < i; j++ {
 					startByte += len(lines[j]) + 1 // +1 for newline
 				}
-				
+
 				// Find the start of the package name within the line
 				packageKeywordPos := strings.Index(line, "package")
 				if packageKeywordPos == -1 {
 					continue
 				}
-				
+
 				nameStartInLine := packageKeywordPos + len("package")
 				// Skip whitespace to find the actual name
 				for nameStartInLine < len(line) && (line[nameStartInLine] == ' ' || line[nameStartInLine] == '\t') {
 					nameStartInLine++
 				}
-				
+
 				startByte += nameStartInLine
 				endByte := startByte + len(oldName)
-				
+
 				return &types.Change{
 					File:        file.Path,
 					Start:       startByte,
@@ -1739,60 +1666,60 @@ func (op *RenamePackageOperation) generatePackageDeclarationChange(file *types.F
 			}
 		}
 	}
-	
+
 	return nil, fmt.Errorf("package declaration not found in file %s", file.Path)
 }
 
 func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, packagePath, newPackageName string) ([]types.Change, []string, error) {
 	var changes []types.Change
 	var affectedFiles []string
-	
+
 	// Get the import path for this package
 	importPath := packagePathToImportPath(ws, packagePath)
-	
+
 	// Find all files that import this package
 	for _, pkg := range ws.Packages {
 		if pkg.Path == packagePath {
 			continue // Skip the package itself
 		}
-		
+
 		for _, file := range pkg.Files {
 			hasImport, change, err := op.generateFileImportUpdate(file, importPath, newPackageName)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to update imports in %s: %v", file.Path, err)
 			}
-			
+
 			if hasImport && change != nil {
 				changes = append(changes, *change)
 				affectedFiles = append(affectedFiles, file.Path)
 			}
 		}
 	}
-	
+
 	return changes, affectedFiles, nil
 }
 
 func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, importPath, newPackageName string) (bool, *types.Change, error) {
 	content := string(file.OriginalContent)
-	
+
 	// Check if this file imports the target package
 	if !strings.Contains(content, `"`+importPath+`"`) {
 		return false, nil, nil
 	}
-	
+
 	// For files that use the old package name, we need to update qualified references
 	// This is a simplified implementation - a full implementation would parse the AST
 	lines := strings.Split(content, "\n")
-	
+
 	// Find all qualified references to the old package name and update them
 	var changes []types.Change
 	oldPackageName := lastPathComponent(importPath) // Get default package name from import path
-	
+
 	if oldPackageName == newPackageName {
 		// If the package name doesn't actually change (just the internal declaration), no updates needed
 		return true, nil, nil
 	}
-	
+
 	for i, line := range lines {
 		if strings.Contains(line, oldPackageName+".") {
 			// Replace qualified references
@@ -1804,7 +1731,7 @@ func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, imp
 					startByte += len(lines[j]) + 1
 				}
 				endByte := startByte + len(line)
-				
+
 				change := types.Change{
 					File:        file.Path,
 					Start:       startByte,
@@ -1817,12 +1744,12 @@ func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, imp
 			}
 		}
 	}
-	
+
 	// For simplicity, return the first change if any
 	if len(changes) > 0 {
 		return true, &changes[0], nil
 	}
-	
+
 	return true, nil, nil
 }
 
@@ -1889,7 +1816,7 @@ func (op *RenameInterfaceMethodOperation) Execute(ws *types.Workspace) (*types.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate interface method change: %v", err)
 	}
-	
+
 	if interfaceChange != nil {
 		plan.Changes = append(plan.Changes, *interfaceChange)
 		if !contains(plan.AffectedFiles, interfaceChange.File) {
@@ -1903,7 +1830,7 @@ func (op *RenameInterfaceMethodOperation) Execute(ws *types.Workspace) (*types.R
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate implementation changes: %v", err)
 		}
-		
+
 		plan.Changes = append(plan.Changes, implChanges...)
 		for _, file := range implFiles {
 			if !contains(plan.AffectedFiles, file) {
@@ -1917,7 +1844,7 @@ func (op *RenameInterfaceMethodOperation) Execute(ws *types.Workspace) (*types.R
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate method call changes: %v", err)
 	}
-	
+
 	plan.Changes = append(plan.Changes, callChanges...)
 	for _, file := range callFiles {
 		if !contains(plan.AffectedFiles, file) {
@@ -1937,7 +1864,7 @@ func (op *RenameInterfaceMethodOperation) Description() string {
 func (op *RenameInterfaceMethodOperation) findInterface(ws *types.Workspace) (*types.Symbol, error) {
 	// Search for the interface in the specified package or workspace-wide
 	var targetPackages []*types.Package
-	
+
 	if op.Request.PackagePath != "" {
 		if pkg, exists := ws.Packages[op.Request.PackagePath]; exists {
 			targetPackages = []*types.Package{pkg}
@@ -1958,7 +1885,7 @@ func (op *RenameInterfaceMethodOperation) findInterface(ws *types.Workspace) (*t
 		if pkg.Symbols == nil {
 			continue
 		}
-		
+
 		for _, symbol := range pkg.Symbols.Types {
 			if symbol.Name == op.Request.InterfaceName && symbol.Kind == types.InterfaceSymbol {
 				return symbol, nil
@@ -2009,7 +1936,7 @@ func (op *RenameInterfaceMethodOperation) findInterfaceMethod(ws *types.Workspac
 
 func (op *RenameInterfaceMethodOperation) findMethodInInterface(file *types.File, interfaceSymbol *types.Symbol) (*types.Symbol, error) {
 	var methodSymbol *types.Symbol
-	
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		if typeSpec, ok := n.(*ast.TypeSpec); ok && typeSpec.Name.Name == interfaceSymbol.Name {
 			if interfaceType, ok := typeSpec.Type.(*ast.InterfaceType); ok {
@@ -2105,7 +2032,7 @@ func (op *RenameInterfaceMethodOperation) generateInterfaceMethodChange(ws *type
 					if len(field.Names) > 0 && field.Names[0].Name == op.Request.MethodName {
 						// Calculate the byte position of the method name
 						pos := field.Names[0].Pos()
-						startByte := int(pos) - 1  // Convert to 0-based
+						startByte := int(pos) - 1 // Convert to 0-based
 						endByte := startByte + len(op.Request.MethodName)
 
 						change = &types.Change{
@@ -2143,7 +2070,7 @@ func (op *RenameInterfaceMethodOperation) generateImplementationChanges(ws *type
 		if err != nil {
 			continue // Skip implementations we can't process
 		}
-		
+
 		for _, change := range implChanges {
 			changes = append(changes, change)
 			if !contains(affectedFiles, change.File) {
@@ -2192,7 +2119,7 @@ func (op *RenameInterfaceMethodOperation) implementsInterface(ws *types.Workspac
 	// Check if the struct has a method with the name we're looking for
 	for _, method := range structMethods {
 		if method.Name == op.Request.MethodName {
-			return true  // Simplified check - real implementation would verify full signature
+			return true // Simplified check - real implementation would verify full signature
 		}
 	}
 
@@ -2284,7 +2211,7 @@ func (op *RenameInterfaceMethodOperation) generateMethodCallChanges(ws *types.Wo
 			if err != nil {
 				continue // Skip files we can't process
 			}
-			
+
 			if len(fileChanges) > 0 {
 				changes = append(changes, fileChanges...)
 				if !contains(affectedFiles, file.Path) {
@@ -2419,7 +2346,7 @@ func (op *RenameMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 		}
 	}
 
-	// If this is an interface and UpdateImplementations is true, 
+	// If this is an interface and UpdateImplementations is true,
 	// also rename the method on all implementations
 	if typeSymbol.Kind == types.InterfaceSymbol && op.Request.UpdateImplementations {
 		implChanges, err := op.generateImplementationChanges(ws, typeSymbol, methodSymbol)
@@ -2454,7 +2381,7 @@ func (op *RenameMethodOperation) Description() string {
 func (op *RenameMethodOperation) findType(ws *types.Workspace) (*types.Symbol, error) {
 	// Search for the type in the specified package or workspace-wide
 	var targetPackages []*types.Package
-	
+
 	if op.Request.PackagePath != "" {
 		if pkg, exists := ws.Packages[op.Request.PackagePath]; exists {
 			targetPackages = []*types.Package{pkg}
@@ -2475,21 +2402,34 @@ func (op *RenameMethodOperation) findType(ws *types.Workspace) (*types.Symbol, e
 		if pkg.Symbols == nil {
 			continue
 		}
-		
+
 		// Look for the type in the package
 		if symbol, exists := pkg.Symbols.Types[op.Request.TypeName]; exists {
 			return symbol, nil
 		}
 	}
-	
+
 	return nil, &types.RefactorError{
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("type %s not found", op.Request.TypeName),
 	}
 }
 
+// resolveSymbolPackage looks up a symbol's package, handling the mismatch
+// between import paths (stored in Symbol.Package) and filesystem paths
+// (used as keys in ws.Packages).
+func resolveSymbolPackage(ws *types.Workspace, sym *types.Symbol) *types.Package {
+	if pkg := ws.Packages[sym.Package]; pkg != nil {
+		return pkg
+	}
+	if fsPath := ws.ImportToPath[sym.Package]; fsPath != "" {
+		return ws.Packages[fsPath]
+	}
+	return nil
+}
+
 func (op *RenameMethodOperation) findMethodOnType(ws *types.Workspace, typeSymbol *types.Symbol) (*types.Symbol, error) {
-	pkg := ws.Packages[typeSymbol.Package]
+	pkg := resolveSymbolPackage(ws, typeSymbol)
 	if pkg == nil || pkg.Symbols == nil {
 		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -2513,7 +2453,7 @@ func (op *RenameMethodOperation) findMethodOnType(ws *types.Workspace, typeSymbo
 }
 
 func (op *RenameMethodOperation) checkMethodNameConflict(ws *types.Workspace, typeSymbol *types.Symbol) error {
-	pkg := ws.Packages[typeSymbol.Package]
+	pkg := resolveSymbolPackage(ws, typeSymbol)
 	if pkg == nil || pkg.Symbols == nil {
 		return nil
 	}
@@ -2534,7 +2474,7 @@ func (op *RenameMethodOperation) checkMethodNameConflict(ws *types.Workspace, ty
 }
 
 func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Workspace, typeSymbol *types.Symbol, methodSymbol *types.Symbol) (*types.Change, error) {
-	pkg := ws.Packages[typeSymbol.Package]
+	pkg := resolveSymbolPackage(ws, typeSymbol)
 	if pkg == nil {
 		return nil, fmt.Errorf("package %s not found", typeSymbol.Package)
 	}
@@ -2552,7 +2492,7 @@ func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Worksp
 	}
 
 	// Calculate the byte position for the method name change
-	startByte := int(methodSymbol.Position) - 1  // Convert to 0-based
+	startByte := int(methodSymbol.Position) - 1 // Convert to 0-based
 	endByte := startByte + len(op.Request.MethodName)
 
 	return &types.Change{

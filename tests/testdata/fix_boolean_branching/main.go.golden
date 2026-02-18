@@ -1,0 +1,23 @@
+package main
+
+import (
+	"fmt"
+)
+
+func handleFormat(format string) {
+
+	switch format {
+	case "json":
+		fmt.Println("handling json")
+	case "xml":
+		fmt.Println("handling xml")
+	case "csv":
+		fmt.Println("handling csv")
+	default:
+		fmt.Println("unknown format")
+	}
+}
+
+func main() {
+	handleFormat("json")
+}

@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"path/filepath"
@@ -274,7 +275,7 @@ func (sa *ScopeAnalyzer) buildNestedScopes(parent *Scope, node ast.Node) error {
 	case *ast.BlockStmt:
 		// Process each statement in the block
 		for _, stmt := range n.List {
-			sa.buildNestedScopes(parent, stmt)
+			_ = sa.buildNestedScopes(parent, stmt)
 		}
 		
 	case *ast.IfStmt:
@@ -373,26 +374,6 @@ func (sa *ScopeAnalyzer) createFunctionScope(parent *Scope, funcDecl *ast.FuncDe
 	return scope, nil
 }
 
-func (sa *ScopeAnalyzer) createBlockScope(parent *Scope, block *ast.BlockStmt) (*Scope, error) {
-	scope := &Scope{
-		Kind:    BlockScope,
-		Node:    block,
-		Parent:  parent,
-		Symbols: make(map[string]*types.Symbol),
-		Start:   block.Pos(),
-		End:     block.End(),
-	}
-
-	// Add local variable declarations
-	for _, stmt := range block.List {
-		sa.addLocalSymbols(scope, stmt)
-	}
-
-	// Nested scopes will be built separately
-
-	return scope, nil
-}
-
 func (sa *ScopeAnalyzer) createImplicitBlockScope(parent *Scope, node ast.Node) (*Scope, error) {
 	scope := &Scope{
 		Kind:    BlockScope,
@@ -462,57 +443,6 @@ func (sa *ScopeAnalyzer) createImplicitBlockScope(parent *Scope, node ast.Node) 
 	// Nested scopes will be built separately
 
 	return scope, nil
-}
-
-func (sa *ScopeAnalyzer) addLocalSymbols(scope *Scope, stmt ast.Stmt) {
-	switch s := stmt.(type) {
-	case *ast.DeclStmt:
-		if genDecl, ok := s.Decl.(*ast.GenDecl); ok {
-			for _, spec := range genDecl.Specs {
-				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
-					for _, name := range valueSpec.Names {
-						if name.Name != "_" {
-							pos := sa.workspace.FileSet.Position(name.Pos())
-							kind := types.VariableSymbol
-							if genDecl.Tok == token.CONST {
-								kind = types.ConstantSymbol
-							}
-							symbol := &types.Symbol{
-								Name:     name.Name,
-								Kind:     kind,
-								Position: name.Pos(),
-								End:      name.End(),
-								Line:     pos.Line,
-								Column:   pos.Column,
-								Exported: false, // Local symbols are never exported
-							}
-							scope.Symbols[name.Name] = symbol
-						}
-					}
-				}
-			}
-		}
-
-	case *ast.AssignStmt:
-		// Handle short variable declarations (:=)
-		if s.Tok == token.DEFINE {
-			for _, lhs := range s.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name != "_" {
-					pos := sa.workspace.FileSet.Position(ident.Pos())
-					symbol := &types.Symbol{
-						Name:     ident.Name,
-						Kind:     types.VariableSymbol,
-						Position: ident.Pos(),
-						End:      ident.End(),
-						Line:     pos.Line,
-						Column:   pos.Column,
-						Exported: false,
-					}
-					scope.Symbols[ident.Name] = symbol
-				}
-			}
-		}
-	}
 }
 
 func (sa *ScopeAnalyzer) findEnclosingScope(root *Scope, pos token.Pos) *Scope {
@@ -674,4 +604,224 @@ func (sa *ScopeAnalyzer) InvalidateCache(filePath string) {
 // ClearCache clears all cached scopes
 func (sa *ScopeAnalyzer) ClearCache() {
 	sa.scopeCache = make(map[string]*Scope)
+}
+
+// NEW: Type Resolution Helpers for Method Call Matching
+
+// GetIdentifierType resolves the type of an identifier at a given position in a file.
+// This uses direct AST walking to avoid scope analysis position-matching issues.
+func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, pos token.Pos) *types.Symbol {
+	// Check cache first
+	cacheKey := fmt.Sprintf("%s:%s:%d", file.Path, identName, pos)
+	if cached := sa.resolver.cache.GetIdentifierType(cacheKey); cached != nil {
+		return cached
+	}
+
+	if file.AST == nil {
+		return nil
+	}
+
+	// Find the enclosing function for this position
+	var enclosingFunc *ast.FuncDecl
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if funcDecl, ok := n.(*ast.FuncDecl); ok {
+			if funcDecl.Pos() <= pos && pos <= funcDecl.End() {
+				enclosingFunc = funcDecl
+				return false // Stop once we find it
+			}
+		}
+		return true
+	})
+
+	if enclosingFunc == nil {
+		// Not inside a function - check package-level variables
+		typeSymbol := sa.findPackageLevelVarType(identName, file)
+		if typeSymbol != nil {
+			sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
+		}
+		return typeSymbol
+	}
+
+	// Search for variable declarations in the function BY NAME (not position)
+	var typeExpr ast.Expr
+	ast.Inspect(enclosingFunc, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			// Handle := and = assignments
+			for i, lhs := range node.Lhs {
+				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == identName {
+					// Found declaration! Extract type from RHS
+					if i < len(node.Rhs) {
+						typeExpr = sa.extractTypeFromExpression(node.Rhs[i])
+						return false
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			// Handle var declarations
+			for _, name := range node.Names {
+				if name.Name == identName {
+					if node.Type != nil {
+						typeExpr = node.Type // Explicit type
+					} else if len(node.Values) > 0 {
+						typeExpr = sa.extractTypeFromExpression(node.Values[0]) // Infer from RHS
+					}
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	// If not found in function body, check function parameters and receiver
+	if typeExpr == nil {
+		if enclosingFunc.Recv != nil {
+			for _, field := range enclosingFunc.Recv.List {
+				for _, name := range field.Names {
+					if name.Name == identName {
+						typeExpr = field.Type
+						break
+					}
+				}
+			}
+		}
+		if typeExpr == nil && enclosingFunc.Type.Params != nil {
+			for _, field := range enclosingFunc.Type.Params.List {
+				for _, name := range field.Names {
+					if name.Name == identName {
+						typeExpr = field.Type
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if typeExpr == nil {
+		return nil
+	}
+
+	// Resolve the type expression to a symbol (reuse existing helper)
+	typeSymbol := sa.resolveTypeExpression(typeExpr, file)
+	if typeSymbol != nil {
+		sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
+	}
+	return typeSymbol
+}
+
+// findPackageLevelVarType finds the type of a package-level variable by name.
+// This handles variables declared outside of any function.
+func (sa *ScopeAnalyzer) findPackageLevelVarType(identName string, file *types.File) *types.Symbol {
+	var typeExpr ast.Expr
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if genDecl, ok := n.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+			for _, spec := range genDecl.Specs {
+				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+					for _, name := range valueSpec.Names {
+						if name.Name == identName {
+							if valueSpec.Type != nil {
+								typeExpr = valueSpec.Type
+							} else if len(valueSpec.Values) > 0 {
+								typeExpr = sa.extractTypeFromExpression(valueSpec.Values[0])
+							}
+							return false
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+
+	if typeExpr == nil {
+		return nil
+	}
+
+	return sa.resolveTypeExpression(typeExpr, file)
+}
+
+// extractTypeFromExpression gets the type from an expression (for := assignments).
+// Handles: &Type{}, Type{}, Type(value), x.(*Type)
+func (sa *ScopeAnalyzer) extractTypeFromExpression(expr ast.Expr) ast.Expr {
+	switch e := expr.(type) {
+	case *ast.UnaryExpr:
+		if e.Op == token.AND { // &Type{}
+			return sa.extractTypeFromExpression(e.X)
+		}
+	case *ast.CompositeLit: // Type{} or &Type{}
+		return e.Type
+	case *ast.CallExpr:
+		// Type conversion: Type(value) or pkg.Type(value)
+		if ident, ok := e.Fun.(*ast.Ident); ok {
+			return ident
+		}
+		if sel, ok := e.Fun.(*ast.SelectorExpr); ok {
+			return sel
+		}
+	case *ast.TypeAssertExpr: // x.(*Type)
+		return e.Type
+	}
+	return nil
+}
+
+// resolveTypeExpression converts an AST type expression to a type symbol.
+// Handles: Ident, SelectorExpr (pkg.Type), StarExpr (*Type)
+func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.File) *types.Symbol {
+	if typeExpr == nil {
+		return nil
+	}
+
+	switch expr := typeExpr.(type) {
+	case *ast.Ident:
+		// Simple type like "User" or built-in like "string"
+		// Check built-in first
+		if builtin := sa.resolveBuiltinSymbol(expr.Name); builtin != nil {
+			return builtin
+		}
+
+		// Try to resolve in same package
+		if file.Package != nil {
+			sym, _ := sa.resolver.ResolveSymbol(file.Package, expr.Name)
+			if sym != nil {
+				return sym
+			}
+		}
+		return nil
+
+	case *ast.SelectorExpr:
+		// Qualified type like "pkg.Type"
+		if pkgIdent, ok := expr.X.(*ast.Ident); ok {
+			// Resolve package from imports
+			for _, imp := range file.AST.Imports {
+				var importAlias string
+				if imp.Name != nil {
+					importAlias = imp.Name.Name
+				} else {
+					parts := strings.Split(strings.Trim(imp.Path.Value, `"`), "/")
+					importAlias = parts[len(parts)-1]
+				}
+
+				if importAlias == pkgIdent.Name {
+					importPath := strings.Trim(imp.Path.Value, `"`)
+					// Try to find package by import path
+					if sa.resolver.workspace != nil {
+						if fsPath, ok := sa.resolver.workspace.ImportToPath[importPath]; ok {
+							if pkg := sa.resolver.workspace.Packages[fsPath]; pkg != nil {
+								sym, _ := sa.resolver.ResolveSymbol(pkg, expr.Sel.Name)
+								return sym
+							}
+						}
+					}
+				}
+			}
+		}
+		return nil
+
+	case *ast.StarExpr:
+		// Pointer type like *User - resolve the underlying type
+		return sa.resolveTypeExpression(expr.X, file)
+
+	default:
+		return nil
+	}
 }

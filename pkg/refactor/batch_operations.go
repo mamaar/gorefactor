@@ -25,7 +25,7 @@ func (op *BatchOperation) Validate(ws *types.Workspace) error {
 			Message: "batch operation name cannot be empty",
 		}
 	}
-	if op.Operations == nil || len(op.Operations) == 0 {
+	if len(op.Operations) == 0 {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "batch operation must contain at least one operation",
@@ -133,7 +133,7 @@ func (op *BatchOperation) Description() string {
 
 func (op *BatchOperation) detectConflicts(changes []types.Change) []string {
 	var conflicts []string
-	
+
 	// Group changes by file
 	fileChanges := make(map[string][]types.Change)
 	for _, change := range changes {
@@ -160,13 +160,13 @@ func (op *BatchOperation) changesOverlap(a, b types.Change) bool {
 		return false
 	}
 	// Check if ranges overlap: [a.Start, a.End) and [b.Start, b.End)
-	return !(a.End <= b.Start || b.End <= a.Start)
+	return a.End > b.Start && b.End > a.Start
 }
 
 func (op *BatchOperation) sortChanges(changes []types.Change) []types.Change {
 	// Sort changes by file path first, then by start position in reverse order
 	// (reverse order ensures that later changes don't affect earlier positions)
-	
+
 	sorted := make([]types.Change, len(changes))
 	copy(sorted, changes)
 

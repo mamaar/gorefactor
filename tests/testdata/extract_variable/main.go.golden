@@ -1,0 +1,10 @@
+package main
+
+import (
+	"fmt"
+)
+
+func main() {
+	result := 2*3 + 4*5
+	fmt.Println(result)
+}

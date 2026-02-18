@@ -56,6 +56,16 @@ func (op *ExtractConstantOperation) Validate(ws *pkgtypes.Workspace) error {
 			sourceFile = file
 			break
 		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				break
+			}
+		}
+		if sourceFile != nil {
+			break
+		}
 	}
 	if sourceFile == nil {
 		return &pkgtypes.RefactorError{
@@ -92,6 +102,17 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		if file, exists := pkg.Files[op.SourceFile]; exists {
 			sourceFile = file
 			sourcePackage = pkg
+			break
+		}
+		// Also try to match by comparing file paths (for absolute paths from MCP)
+		for _, file := range pkg.Files {
+			if file.Path == op.SourceFile {
+				sourceFile = file
+				sourcePackage = pkg
+				break
+			}
+		}
+		if sourceFile != nil {
 			break
 		}
 	}

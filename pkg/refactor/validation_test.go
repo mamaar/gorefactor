@@ -2,13 +2,15 @@ package refactor
 
 import (
 	"go/token"
+	"io"
+	"log/slog"
 	"testing"
 
 	refactorTypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
 func TestNewValidator(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if validator == nil {
 		t.Fatal("Expected NewValidator to return a non-nil validator")
 	}
@@ -19,7 +21,7 @@ func TestNewValidator(t *testing.T) {
 }
 
 func TestValidator_ValidatePlan_NilPlan(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	err := validator.ValidatePlan(nil)
 	if err == nil {
@@ -37,7 +39,7 @@ func TestValidator_ValidatePlan_NilPlan(t *testing.T) {
 }
 
 func TestValidator_ValidatePlan_EmptyPlan(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	plan := &refactorTypes.RefactoringPlan{
 		Operations:    make([]refactorTypes.Operation, 0),
@@ -58,7 +60,7 @@ func TestValidator_ValidatePlan_EmptyPlan(t *testing.T) {
 }
 
 func TestValidator_ValidatePlan_WithOperations(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Create a rename operation
 	renameOp := &RenameSymbolOperation{
@@ -117,7 +119,7 @@ func TestValidator_ValidateMove(t *testing.T) {
 		FileSet: token.NewFileSet(),
 	}
 
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test valid move
 	req := refactorTypes.MoveSymbolRequest{
@@ -148,7 +150,7 @@ func TestValidator_ValidateMove_NonExistentSource(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	req := refactorTypes.MoveSymbolRequest{
 		SymbolName:  "TestFunc",
@@ -195,7 +197,7 @@ func TestValidator_ValidateRename(t *testing.T) {
 		FileSet: token.NewFileSet(),
 	}
 
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test valid rename
 	req := refactorTypes.RenameSymbolRequest{
@@ -225,7 +227,7 @@ func TestValidator_ValidateRename_InvalidIdentifier(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	req := refactorTypes.RenameSymbolRequest{
 		SymbolName: "TestFunc",
@@ -255,7 +257,7 @@ func TestValidator_ValidateRename_GoKeyword(t *testing.T) {
 		FileSet:  token.NewFileSet(),
 	}
 
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	req := refactorTypes.RenameSymbolRequest{
 		SymbolName: "TestFunc",
@@ -280,7 +282,7 @@ func TestValidator_ValidateRename_GoKeyword(t *testing.T) {
 }
 
 func TestValidator_validateChanges(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test non-overlapping changes
 	changes := []refactorTypes.Change{
@@ -305,7 +307,7 @@ func TestValidator_validateChanges(t *testing.T) {
 }
 
 func TestValidator_validateChanges_Overlapping(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test overlapping changes
 	changes := []refactorTypes.Change{
@@ -330,7 +332,7 @@ func TestValidator_validateChanges_Overlapping(t *testing.T) {
 }
 
 func TestValidator_validateChanges_InvalidBounds(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test invalid change bounds
 	changes := []refactorTypes.Change{
@@ -354,7 +356,7 @@ func TestValidator_validateChanges_InvalidBounds(t *testing.T) {
 }
 
 func TestValidator_isValidGoIdentifier(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	testCases := []struct {
 		name     string
@@ -382,7 +384,7 @@ func TestValidator_isValidGoIdentifier(t *testing.T) {
 }
 
 func TestValidator_isGoKeyword(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	keywords := []string{"func", "var", "const", "type", "if", "else", "for", "range", "return"}
 	nonKeywords := []string{"function", "variable", "constant", "myType", "ifElse", "forEach"}
@@ -401,7 +403,7 @@ func TestValidator_isGoKeyword(t *testing.T) {
 }
 
 func TestValidator_isSymbolMoveable(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	testCases := []struct {
 		name     string
@@ -451,7 +453,7 @@ func TestValidator_isSymbolMoveable(t *testing.T) {
 }
 
 func TestValidator_validateGoSyntax(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	testCases := []struct {
 		name        string
@@ -499,7 +501,7 @@ func TestValidator_validateGoSyntax(t *testing.T) {
 }
 
 func TestValidator_changesOverlap(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	testCases := []struct {
 		name     string
@@ -544,7 +546,7 @@ func TestValidator_changesOverlap(t *testing.T) {
 }
 
 func TestValidator_filterCriticalIssues(t *testing.T) {
-	validator := NewValidator()
+	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	allIssues := []refactorTypes.Issue{
 		{Severity: refactorTypes.Error, Description: "Critical error 1"},

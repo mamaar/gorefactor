@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/parser"
 	"go/token"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -14,7 +16,7 @@ import (
 func TestCompleteSymbolResolution(t *testing.T) {
 	// Create a comprehensive test workspace
 	workspace := createTestWorkspace(t)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Test 1: Basic symbol resolution
 	t.Run("BasicSymbolResolution", func(t *testing.T) {
@@ -152,7 +154,7 @@ func TestCompleteSymbolResolution(t *testing.T) {
 
 func TestEmbeddedFieldResolution(t *testing.T) {
 	workspace := createEmbeddedFieldWorkspace(t)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	pkg := workspace.Packages["test/embedded"]
 	compositeType, err := resolver.ResolveSymbol(pkg, "CompositeStruct")
@@ -191,7 +193,7 @@ func TestEmbeddedFieldResolution(t *testing.T) {
 
 func TestScopeAnalysis(t *testing.T) {
 	workspace := createScopedWorkspace(t)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	file := workspace.Packages["test/scoped"].Files["scoped.go"]
 	
@@ -221,7 +223,7 @@ func TestScopeAnalysis(t *testing.T) {
 
 func TestCacheInvalidation(t *testing.T) {
 	workspace := createTestWorkspace(t)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	pkg := workspace.Packages["test/main"]
 	
@@ -259,7 +261,7 @@ func TestCacheInvalidation(t *testing.T) {
 
 func TestPerformanceWithLargeCodebase(t *testing.T) {
 	workspace := createLargeWorkspace(t)
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Warm up the cache
 	resolver.cache.WarmCache(workspace)
@@ -384,7 +386,7 @@ func privateFunction() string {
 	}
 
 	// Build symbol tables
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, _ = resolver.BuildSymbolTable(mainPkg)
 	_, _ = resolver.BuildSymbolTable(utilsPkg)
 
@@ -440,7 +442,7 @@ func (cs *CompositeStruct) OwnMethod() int {
 	}
 
 	// Build symbol tables
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, _ = resolver.BuildSymbolTable(pkg)
 
 	return workspace
@@ -505,7 +507,7 @@ type SomeType struct {
 	}
 
 	// Build symbol tables
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, _ = resolver.BuildSymbolTable(pkg)
 
 	return workspace
@@ -567,7 +569,7 @@ var Var%d = "var%d"
 	}
 
 	// Build symbol tables for all packages
-	resolver := NewSymbolResolver(workspace)
+	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range workspace.Packages {
 		_, _ = resolver.BuildSymbolTable(pkg)
 	}
