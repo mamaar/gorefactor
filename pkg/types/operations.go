@@ -171,6 +171,22 @@ type Change struct {
 	Description string
 }
 
+// SuggestedMove represents a symbol that would benefit from being moved
+type SuggestedMove struct {
+	Symbol              string   `json:"symbol"`
+	FromPackage         string   `json:"from_package"`
+	ToPackage           string   `json:"to_package"`
+	Reason              string   `json:"reason"`
+	ReferencingPackages []string `json:"referencing_packages"`
+}
+
+// PackageCouplingInfo holds coupling metrics for a single package
+type PackageCouplingInfo struct {
+	IncomingDeps int `json:"incoming_deps"`
+	OutgoingDeps int `json:"outgoing_deps"`
+	SymbolCount  int `json:"symbol_count"`
+}
+
 // ImpactAnalysis shows what will be affected by a refactoring
 type ImpactAnalysis struct {
 	AffectedPackages []string
@@ -178,6 +194,8 @@ type ImpactAnalysis struct {
 	AffectedSymbols  []*Symbol
 	PotentialIssues  []Issue
 	ImportChanges    []ImportChange
+	SuggestedMoves   []SuggestedMove                `json:"suggested_moves,omitempty"`
+	PackageCoupling  map[string]PackageCouplingInfo  `json:"package_coupling,omitempty"`
 }
 
 type Issue struct {

@@ -1193,13 +1193,15 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 		return nil, fmt.Errorf("failed to generate move by dependencies plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	// Only set impact from analyzer if the operation didn't already compute it
+	if plan.Impact == nil {
+		impact, err := e.analyzer.AnalyzeImpact(operation)
+		if err != nil {
+			return nil, fmt.Errorf("failed to analyze impact: %w", err)
+		}
+		plan.Impact = impact
 	}
 
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil

@@ -3,15 +3,28 @@ package refactor
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"path/filepath"
+	"sort"
 	"strings"
 
+	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // MoveByDependenciesOperation implements moving symbols based on dependency analysis
 type MoveByDependenciesOperation struct {
 	Request types.MoveByDependenciesRequest
+}
+
+// sharedSymbolCandidate holds a symbol and the packages that reference it externally
+type sharedSymbolCandidate struct {
+	symbol              *types.Symbol
+	pkg                 *types.Package
+	referencingPackages []string
+	targetFSPath        string
+	targetImportPath    string
 }
 
 func (op *MoveByDependenciesOperation) Type() types.OperationType {
@@ -37,39 +50,93 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 		Reversible:    true,
 	}
 
-	// Analyze dependencies and identify shared components
-	sharedSymbols := op.identifySharedSymbols(ws)
-	
+	candidates := op.identifySharedSymbols(ws)
+
+	// Build packageCoupling map
+	incomingDeps := computeIncomingDeps(ws)
+	packageCoupling := make(map[string]types.PackageCouplingInfo)
+	for fsPath, pkg := range ws.Packages {
+		symbolCount := 0
+		if pkg.Symbols != nil {
+			symbolCount = len(pkg.Symbols.Functions) + len(pkg.Symbols.Types) +
+				len(pkg.Symbols.Variables) + len(pkg.Symbols.Constants)
+		}
+		outgoingDeps := 0
+		if ws.Dependencies != nil {
+			outgoingDeps = len(ws.Dependencies.PackageImports[fsPath])
+		}
+		packageCoupling[fsPath] = types.PackageCouplingInfo{
+			IncomingDeps: incomingDeps[fsPath],
+			OutgoingDeps: outgoingDeps,
+			SymbolCount:  symbolCount,
+		}
+	}
+
 	if op.Request.AnalyzeOnly {
-		// Only create a report, don't make changes
-		reportFile := filepath.Join(op.Request.Workspace, "dependency_analysis.md")
-		content := op.generateAnalysisReport(sharedSymbols)
-		
-		plan.Changes = append(plan.Changes, types.Change{
-			File:        reportFile,
-			Start:       0,
-			End:         0,
-			OldText:     "",
-			NewText:     content,
-			Description: "Generate dependency analysis report",
-		})
-		
-		plan.AffectedFiles = []string{reportFile}
-	} else {
-		// Generate moves based on dependency analysis
-		for _, symbol := range sharedSymbols {
-			if op.shouldMoveSymbol(symbol) {
-				targetPackage := op.getTargetPackage(symbol)
-				plan.Changes = append(plan.Changes, types.Change{
-					File:        fmt.Sprintf("%s/%s.go", targetPackage, strings.ToLower(symbol.Name)),
-					Start:       0,
-					End:         0,
-					OldText:     "",
-					NewText:     fmt.Sprintf("// Moved %s to %s based on dependency analysis\n", symbol.Name, targetPackage),
-					Description: fmt.Sprintf("Move %s to %s based on dependencies", symbol.Name, targetPackage),
-				})
-				
-				plan.AffectedFiles = append(plan.AffectedFiles, fmt.Sprintf("%s/%s.go", targetPackage, strings.ToLower(symbol.Name)))
+		suggestedMoves := make([]types.SuggestedMove, 0, len(candidates))
+		affectedPackagesSet := make(map[string]bool)
+		var affectedSymbols []*types.Symbol
+
+		for _, c := range candidates {
+			from := c.pkg.ImportPath
+			if from == "" {
+				from = c.pkg.Path
+			}
+			to := c.targetImportPath
+			if to == "" {
+				to = c.targetFSPath
+			}
+			suggestedMoves = append(suggestedMoves, types.SuggestedMove{
+				Symbol:              c.symbol.Name,
+				FromPackage:         from,
+				ToPackage:           to,
+				Reason:              fmt.Sprintf("referenced by %d packages: %s", len(c.referencingPackages), strings.Join(c.referencingPackages, ", ")),
+				ReferencingPackages: c.referencingPackages,
+			})
+			affectedPackagesSet[from] = true
+			affectedSymbols = append(affectedSymbols, c.symbol)
+		}
+
+		var affectedPackages []string
+		for pkg := range affectedPackagesSet {
+			affectedPackages = append(affectedPackages, pkg)
+		}
+		sort.Strings(affectedPackages)
+
+		plan.Impact = &types.ImpactAnalysis{
+			SuggestedMoves:   suggestedMoves,
+			PackageCoupling:  packageCoupling,
+			AffectedPackages: affectedPackages,
+			AffectedSymbols:  affectedSymbols,
+		}
+		return plan, nil
+	}
+
+	if op.Request.MoveSharedTo == "" {
+		return nil, fmt.Errorf("MoveSharedTo must be specified when AnalyzeOnly is false")
+	}
+
+	toPackage := op.getTargetFSPath(ws)
+	for _, c := range candidates {
+		moveReq := types.MoveSymbolRequest{
+			SymbolName:   c.symbol.Name,
+			FromPackage:  c.pkg.Path,
+			ToPackage:    toPackage,
+			CreateTarget: true,
+			UpdateTests:  true,
+		}
+		moveOp := &MoveSymbolOperation{Request: moveReq}
+		if err := moveOp.Validate(ws); err != nil {
+			continue
+		}
+		movePlan, err := moveOp.Execute(ws)
+		if err != nil {
+			continue
+		}
+		plan.Changes = append(plan.Changes, movePlan.Changes...)
+		for _, f := range movePlan.AffectedFiles {
+			if !containsString(plan.AffectedFiles, f) {
+				plan.AffectedFiles = append(plan.AffectedFiles, f)
 			}
 		}
 	}
@@ -77,57 +144,153 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 	return plan, nil
 }
 
-func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace) []*types.Symbol {
-	var sharedSymbols []*types.Symbol
-	
-	// Placeholder implementation - would analyze actual dependency graph
-	// to identify symbols used across multiple packages
-	
-	return sharedSymbols
-}
-
-func (op *MoveByDependenciesOperation) shouldMoveSymbol(symbol *types.Symbol) bool {
-	// Check if symbol should be moved to shared location
-	for _, keepPackage := range op.Request.KeepInternal {
-		if strings.HasPrefix(symbol.Package, keepPackage) {
-			return false
+func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace) []sharedSymbolCandidate {
+	// Ensure dependencies are built
+	if ws.Dependencies == nil {
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		analyzer := analysis.NewDependencyAnalyzer(ws, logger)
+		if _, err := analyzer.BuildDependencyGraph(); err != nil {
+			return nil
 		}
 	}
-	
-	// If it's used by multiple packages, consider it for moving
-	return len(symbol.References) > 1
+
+	fileToPackage := buildFilePackageIndex(ws)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	resolver := analysis.NewSymbolResolver(ws, logger)
+	idx := resolver.BuildReferenceIndex()
+
+	targetFSPath := op.getTargetFSPath(ws)
+	targetImportPath := op.getTargetImportPath(ws)
+
+	var candidates []sharedSymbolCandidate
+	for _, pkg := range ws.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		if isKeepInternal(pkg, op.Request.KeepInternal) {
+			continue
+		}
+		for _, sym := range getAllExportedSymbols(pkg) {
+			refs, err := resolver.FindReferencesIndexed(sym, idx)
+			if err != nil || len(refs) == 0 {
+				continue
+			}
+
+			// Collect distinct external referencing package identifiers
+			externalSet := make(map[string]bool)
+			for _, ref := range refs {
+				refPkg := fileToPackage[ref.File]
+				if refPkg == nil || refPkg == pkg {
+					continue
+				}
+				pkgID := refPkg.ImportPath
+				if pkgID == "" {
+					pkgID = refPkg.Path
+				}
+				externalSet[pkgID] = true
+			}
+
+			if len(externalSet) >= 2 {
+				refPkgs := make([]string, 0, len(externalSet))
+				for pkgID := range externalSet {
+					refPkgs = append(refPkgs, pkgID)
+				}
+				sort.Strings(refPkgs)
+				candidates = append(candidates, sharedSymbolCandidate{
+					symbol:              sym,
+					pkg:                 pkg,
+					referencingPackages: refPkgs,
+					targetFSPath:        targetFSPath,
+					targetImportPath:    targetImportPath,
+				})
+			}
+		}
+	}
+
+	return candidates
 }
 
-func (op *MoveByDependenciesOperation) getTargetPackage(symbol *types.Symbol) string {
-	// Determine where to move the symbol based on its usage patterns
+func (op *MoveByDependenciesOperation) getTargetFSPath(ws *types.Workspace) string {
 	if op.Request.MoveSharedTo != "" {
-		return filepath.Join(op.Request.MoveSharedTo, strings.ToLower(symbol.Kind.String()))
+		return filepath.Join(ws.RootPath, op.Request.MoveSharedTo)
 	}
-	
-	return "pkg/shared"
+	return ""
 }
 
-func (op *MoveByDependenciesOperation) generateAnalysisReport(symbols []*types.Symbol) string {
-	var report strings.Builder
-	
-	report.WriteString("# Dependency Analysis Report\n\n")
-	report.WriteString("## Summary\n\n")
-	report.WriteString(fmt.Sprintf("Analyzed workspace: %s\n", op.Request.Workspace))
-	report.WriteString(fmt.Sprintf("Found %d shared symbols\n\n", len(symbols)))
-	
-	if len(symbols) > 0 {
-		report.WriteString("## Shared Symbols\n\n")
-		for _, symbol := range symbols {
-			report.WriteString(fmt.Sprintf("- **%s** (%s) in `%s`\n", 
-				symbol.Name, symbol.Kind.String(), symbol.Package))
-			report.WriteString(fmt.Sprintf("  - References: %d\n", len(symbol.References)))
-			report.WriteString(fmt.Sprintf("  - Suggested move to: %s\n\n", op.getTargetPackage(symbol)))
-		}
-	} else {
-		report.WriteString("No shared symbols identified for relocation.\n")
+func (op *MoveByDependenciesOperation) getTargetImportPath(ws *types.Workspace) string {
+	if op.Request.MoveSharedTo != "" && ws.Module != nil {
+		return ws.Module.Path + "/" + op.Request.MoveSharedTo
 	}
-	
-	return report.String()
+	return ""
+}
+
+// buildFilePackageIndex returns a map of file path → Package for all files in the workspace.
+func buildFilePackageIndex(ws *types.Workspace) map[string]*types.Package {
+	index := make(map[string]*types.Package)
+	for _, pkg := range ws.Packages {
+		for path := range pkg.Files {
+			index[path] = pkg
+		}
+		for path := range pkg.TestFiles {
+			index[path] = pkg
+		}
+	}
+	return index
+}
+
+// getAllExportedSymbols returns all exported symbols from a package's symbol table.
+func getAllExportedSymbols(pkg *types.Package) []*types.Symbol {
+	if pkg.Symbols == nil {
+		return nil
+	}
+	var result []*types.Symbol
+	for _, sym := range pkg.Symbols.Functions {
+		if sym.Exported {
+			result = append(result, sym)
+		}
+	}
+	for _, sym := range pkg.Symbols.Types {
+		if sym.Exported {
+			result = append(result, sym)
+		}
+	}
+	for _, sym := range pkg.Symbols.Variables {
+		if sym.Exported {
+			result = append(result, sym)
+		}
+	}
+	for _, sym := range pkg.Symbols.Constants {
+		if sym.Exported {
+			result = append(result, sym)
+		}
+	}
+	return result
+}
+
+// isKeepInternal returns true if the package path or import path has any keepInternal entry as a prefix.
+func isKeepInternal(pkg *types.Package, keepInternal []string) bool {
+	for _, prefix := range keepInternal {
+		if strings.HasPrefix(pkg.Path, prefix) || strings.HasPrefix(pkg.ImportPath, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// computeIncomingDeps returns a map of filesystem path → number of packages that import it.
+func computeIncomingDeps(ws *types.Workspace) map[string]int {
+	result := make(map[string]int)
+	if ws.Dependencies == nil {
+		return result
+	}
+	for _, importPaths := range ws.Dependencies.PackageImports {
+		for _, importPath := range importPaths {
+			if toFSPath, ok := ws.ImportToPath[importPath]; ok {
+				result[toFSPath]++
+			}
+		}
+	}
+	return result
 }
 
 // OrganizeByLayersOperation implements organizing packages by architectural layers
