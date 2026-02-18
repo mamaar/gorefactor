@@ -325,7 +325,7 @@ func (op *OrganizeByLayersOperation) Execute(ws *types.Workspace) (*types.Refact
 	if op.Request.ReorderImports {
 		for _, pkg := range ws.Packages {
 			for _, file := range pkg.Files {
-				changes := op.reorderImportsByLayers(file)
+				changes := op.reorderImportsByLayers(ws, file)
 				plan.Changes = append(plan.Changes, changes...)
 				if len(changes) > 0 {
 					plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
@@ -352,17 +352,127 @@ func (op *OrganizeByLayersOperation) Execute(ws *types.Workspace) (*types.Refact
 	return plan, nil
 }
 
-func (op *OrganizeByLayersOperation) reorderImportsByLayers(file *types.File) []types.Change {
-	var changes []types.Change
-	
-	// Placeholder - would reorder imports according to layer hierarchy:
-	// 1. Standard library
-	// 2. External dependencies  
-	// 3. Infrastructure layer
-	// 4. Domain layer
-	// 5. Application layer
-	
-	return changes
+// reorderImportsByLayers classifies each import into a tier and returns a Change
+// replacing the import block with the sorted version when the order would change.
+//
+// Tiers (ascending order): 0 stdlib, 1 external, 2 infrastructure, 3 domain, 4 application.
+func (op *OrganizeByLayersOperation) reorderImportsByLayers(ws *types.Workspace, file *types.File) []types.Change {
+	if file.AST == nil || len(file.AST.Imports) == 0 || ws.FileSet == nil {
+		return nil
+	}
+
+	type impEntry struct {
+		tier      int
+		importPath string
+		text      string // original source text for this spec (with surrounding whitespace)
+		start     int    // byte offset in file
+		end       int    // byte offset in file (exclusive)
+	}
+
+	content := file.OriginalContent
+	var entries []impEntry
+
+	for _, imp := range file.AST.Imports {
+		impPath := strings.Trim(imp.Path.Value, `"`)
+		tier := op.classifyImportTier(ws, impPath)
+
+		startPos := ws.FileSet.Position(imp.Pos())
+		endPos := ws.FileSet.Position(imp.End())
+		start := startPos.Offset
+		end := endPos.Offset
+
+		// Expand start to include leading tab
+		for start > 0 && content[start-1] == '\t' {
+			start--
+		}
+		// Expand end to include trailing newline
+		if end < len(content) && content[end] == '\n' {
+			end++
+		}
+
+		if start < 0 || end > len(content) || start >= end {
+			return nil // safety: cannot determine positions
+		}
+
+		entries = append(entries, impEntry{
+			tier:       tier,
+			importPath: impPath,
+			text:       string(content[start:end]),
+			start:      start,
+			end:        end,
+		})
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Sort by tier then import path
+	sorted := make([]impEntry, len(entries))
+	copy(sorted, entries)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].tier != sorted[j].tier {
+			return sorted[i].tier < sorted[j].tier
+		}
+		return sorted[i].importPath < sorted[j].importPath
+	})
+
+	alreadySorted := true
+	for i := range entries {
+		if entries[i].importPath != sorted[i].importPath {
+			alreadySorted = false
+			break
+		}
+	}
+	if alreadySorted {
+		return nil
+	}
+
+	blockStart := entries[0].start
+	blockEnd := entries[len(entries)-1].end
+
+	var newBlock strings.Builder
+	for _, e := range sorted {
+		newBlock.WriteString(e.text)
+	}
+
+	oldBlock := string(content[blockStart:blockEnd])
+	newBlockStr := newBlock.String()
+	if oldBlock == newBlockStr {
+		return nil
+	}
+
+	return []types.Change{{
+		File:        file.Path,
+		Start:       blockStart,
+		End:         blockEnd,
+		OldText:     oldBlock,
+		NewText:     newBlockStr,
+		Description: "Reorder imports by architectural layers",
+	}}
+}
+
+// classifyImportTier maps an import path to a tier number for ordering.
+func (op *OrganizeByLayersOperation) classifyImportTier(ws *types.Workspace, importPath string) int {
+	// stdlib: no dots in the path (e.g. "fmt", "net/http")
+	if !strings.Contains(importPath, ".") {
+		return 0
+	}
+	// Project-local packages: classify by layer
+	if ws.Module != nil && strings.HasPrefix(importPath, ws.Module.Path) {
+		rel := strings.TrimPrefix(importPath, ws.Module.Path+"/")
+		switch op.classifyPackage(rel) {
+		case "Infrastructure":
+			return 2
+		case "Domain":
+			return 3
+		case "Application":
+			return 4
+		}
+		return 1 // project-local but unclassified → treat as external tier
+	}
+	// External (third-party)
+	return 1
 }
 
 func (op *OrganizeByLayersOperation) generateLayerReport(ws *types.Workspace) string {
@@ -470,11 +580,17 @@ func (op *FixCyclesOperation) Execute(ws *types.Workspace) (*types.RefactoringPl
 }
 
 func (op *FixCyclesOperation) detectCycles(ws *types.Workspace) [][]string {
-	// Placeholder implementation - would implement cycle detection algorithm
-	// like strongly connected components (Tarjan's algorithm)
-	var cycles [][]string
-	
-	return cycles
+	if ws.Dependencies != nil && len(ws.Dependencies.ImportCycles) > 0 {
+		return ws.Dependencies.ImportCycles
+	}
+	// Dependencies not yet built — build them now
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	analyzer := analysis.NewDependencyAnalyzer(ws, logger)
+	graph, err := analyzer.BuildDependencyGraph()
+	if err != nil {
+		return nil
+	}
+	return graph.ImportCycles
 }
 
 func (op *FixCyclesOperation) generateCycleReport(cycles [][]string) string {
@@ -508,14 +624,11 @@ func (op *FixCyclesOperation) generateCycleReport(cycles [][]string) string {
 }
 
 func (op *FixCyclesOperation) generateCycleFixes(cycle []string) []types.Change {
-	var fixes []types.Change
-	
-	// Placeholder - would implement cycle breaking strategies:
-	// 1. Extract interfaces to break dependencies
-	// 2. Move shared code to separate packages
-	// 3. Use dependency inversion
-	
-	return fixes
+	// Cycle breaking requires moving code, extracting interfaces, or dependency
+	// injection — transformations too destructive to automate safely.
+	// The value of fix_cycles is the detection (via detectCycles), not auto-fix.
+	_ = cycle
+	return nil
 }
 
 // AnalyzeDependenciesOperation implements analyzing dependency flow
@@ -650,20 +763,116 @@ func (op *AnalyzeDependenciesOperation) performDependencyAnalysis(ws *types.Work
 	return analysis
 }
 
+// packageTier returns a numeric tier for an import path based on naming conventions:
+//
+//	-1 = unclassified, 0 = inner (domain/core/model), 1 = middle (service/usecase),
+//	2 = outer (handler/http/infra/repository/…)
+func packageTier(importPath string) int {
+	lower := strings.ToLower(importPath)
+	outerKeywords := []string{"handler", "controller", "http", "api", "grpc",
+		"infra", "adapter", "repository", "persistence", "delivery", "transport"}
+	for _, kw := range outerKeywords {
+		if strings.Contains(lower, kw) {
+			return 2
+		}
+	}
+	middleKeywords := []string{"service", "usecase", "application", "/app/"}
+	for _, kw := range middleKeywords {
+		if strings.Contains(lower, kw) {
+			return 1
+		}
+	}
+	innerKeywords := []string{"domain", "core", "model", "entity"}
+	for _, kw := range innerKeywords {
+		if strings.Contains(lower, kw) {
+			return 0
+		}
+	}
+	return -1
+}
+
 func (op *AnalyzeDependenciesOperation) detectBackwardsDependencies(ws *types.Workspace) []BackwardDep {
-	var backwardsDeps []BackwardDep
-	
-	// Placeholder - would implement backwards dependency detection
-	// by analyzing the dependency graph and architectural layers
-	
-	return backwardsDeps
+	if ws.Dependencies == nil {
+		return nil
+	}
+	var deps []BackwardDep
+	for fromFSPath, importPaths := range ws.Dependencies.PackageImports {
+		fromPkg, ok := ws.Packages[fromFSPath]
+		if !ok {
+			continue
+		}
+		fromTier := packageTier(fromPkg.ImportPath)
+		if fromTier < 0 {
+			continue
+		}
+		for _, importPath := range importPaths {
+			toTier := packageTier(importPath)
+			if toTier > fromTier {
+				from := fromPkg.ImportPath
+				if from == "" {
+					from = fromPkg.Path
+				}
+				deps = append(deps, BackwardDep{
+					From:   from,
+					To:     importPath,
+					Reason: fmt.Sprintf("inner layer (tier %d) imports outer layer (tier %d)", fromTier, toTier),
+				})
+			}
+		}
+	}
+	return deps
 }
 
 func (op *AnalyzeDependenciesOperation) generateSuggestedMoves(ws *types.Workspace) []SuggestedMove {
+	if ws.Dependencies == nil {
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		analyzer := analysis.NewDependencyAnalyzer(ws, logger)
+		if _, err := analyzer.BuildDependencyGraph(); err != nil {
+			return nil
+		}
+	}
+
+	fileToPackage := buildFilePackageIndex(ws)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	resolver := analysis.NewSymbolResolver(ws, logger)
+	idx := resolver.BuildReferenceIndex()
+
 	var moves []SuggestedMove
-	
-	// Placeholder - would analyze usage patterns and suggest optimal locations
-	
+	for _, pkg := range ws.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		for _, sym := range getAllExportedSymbols(pkg) {
+			refs, err := resolver.FindReferencesIndexed(sym, idx)
+			if err != nil || len(refs) == 0 {
+				continue
+			}
+			externalSet := make(map[string]bool)
+			for _, ref := range refs {
+				refPkg := fileToPackage[ref.File]
+				if refPkg == nil || refPkg == pkg {
+					continue
+				}
+				pkgID := refPkg.ImportPath
+				if pkgID == "" {
+					pkgID = refPkg.Path
+				}
+				externalSet[pkgID] = true
+			}
+			if len(externalSet) >= 2 {
+				from := pkg.ImportPath
+				if from == "" {
+					from = pkg.Path
+				}
+				moves = append(moves, SuggestedMove{
+					Symbol:      sym.Name,
+					FromPackage: from,
+					ToPackage:   "pkg/shared",
+					Reason:      fmt.Sprintf("referenced by %d packages", len(externalSet)),
+				})
+			}
+		}
+	}
 	return moves
 }
 
