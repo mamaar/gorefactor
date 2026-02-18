@@ -1,188 +1,133 @@
 # GoRefactor
 
-GoRefactor is a safe, automated refactoring tool for Go code. It provides intelligent symbol moving and renaming with comprehensive safety checks to ensure your code remains correct after refactoring.
-
-## Features
-
-- **Safe Symbol Moving**: Move functions, types, constants, and variables between packages
-- **Intelligent Renaming**: Rename symbols across your entire workspace or within specific packages
-- **Comprehensive Validation**: Checks for compilation errors, import cycles, naming conflicts, and visibility violations
-- **Format Preservation**: Maintains your code formatting and style
-- **Dry Run Mode**: Preview changes before applying them
-- **Backup Support**: Automatic backup creation before modifications
+GoRefactor is an MCP (Model Context Protocol) server that provides safe, automated refactoring tools for Go code. It integrates with AI assistants like Claude to enable intelligent code transformations with comprehensive safety checks.
 
 ## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/mamaar/gorefactor.git
 cd gorefactor
 
-# Build and install
-make install
-
-# Or just build locally
+# Build the MCP server
 make build
-./bin/gorefactor --help
+
+# Or install to GOPATH/bin
+make install
 ```
 
-## Usage
+## Configuration
 
-### Move a Symbol
+Add GoRefactor to your MCP client configuration. For Claude Code, add to your settings:
 
-Move a function, type, constant, or variable from one package to another:
-
-```bash
-# Move a function
-gorefactor move MyFunction pkg/old pkg/new
-
-# Move a type and all its methods
-gorefactor move UserType internal/models pkg/types
-
-# Preview changes without applying
-gorefactor --dry-run move ConfigStruct config pkg/settings
+```json
+{
+  "mcpServers": {
+    "gorefactor": {
+      "command": "gorefactor-mcp"
+    }
+  }
+}
 ```
 
-### Rename a Symbol
+The server communicates over stdio using the MCP protocol.
 
-Rename a symbol across your entire workspace or within a specific package:
+## Tools
 
-```bash
-# Rename across entire workspace
-gorefactor rename OldName NewName
+### Workspace
 
-# Rename only within a specific package
-gorefactor rename Helper Utility pkg/utils
+| Tool | Description |
+|------|-------------|
+| `load_workspace` | Load a Go workspace for analysis and refactoring |
+| `workspace_status` | Show current workspace state |
 
-# Use --package-only flag to ensure package-scoped rename
-gorefactor --package-only rename internal externalAPI pkg/client
-```
+### Refactoring
 
-### Analyze Symbol Usage
+| Tool | Description |
+|------|-------------|
+| `move_symbol` | Move a function, type, constant, or variable between packages |
+| `move_package` | Move an entire package to a new location |
+| `move_dir` | Move a directory of packages |
+| `move_packages` | Move multiple packages at once |
+| `rename_symbol` | Rename a symbol across the workspace |
+| `rename_method` | Rename a method on a type |
+| `rename_package` | Rename a package |
+| `extract_function` | Extract a code block into a new function |
+| `extract_method` | Extract a code block into a new method |
+| `extract_interface` | Extract an interface from a struct's methods |
+| `extract_variable` | Extract an expression into a variable |
+| `inline_function` | Inline a function at its call sites |
+| `inline_method` | Inline a method at its call sites |
+| `inline_variable` | Inline a variable at its usage sites |
+| `change_signature` | Change a function's parameter list and update all callers |
+| `add_context_parameter` | Add a `context.Context` parameter to a function and its callers |
+| `safe_delete` | Delete a symbol only if it has no references |
+| `batch_operations` | Run multiple refactoring operations atomically |
 
-Analyze a symbol to understand its usage before refactoring:
+### Analysis
 
-```bash
-# Analyze a symbol
-gorefactor analyze MyFunction
+| Tool | Description |
+|------|-------------|
+| `analyze_symbol` | Analyze a symbol's usage, references, and dependencies |
+| `analyze_dependencies` | Analyze package dependency structure |
+| `complexity` | Compute cyclomatic complexity for functions |
+| `unused` | Find unused symbols in the workspace |
 
-# Analyze with verbose output to see all references
-gorefactor --verbose analyze DatabaseConnection pkg/db
+### Code Quality Detection & Auto-Fix
 
-# Output analysis in JSON format
-gorefactor --json analyze Config
-```
+| Tool | Description |
+|------|-------------|
+| `detect_if_init_assignments` | Find assignments that could use if-init statements |
+| `fix_if_init_assignments` | Auto-fix if-init assignments |
+| `detect_boolean_branching` | Find boolean parameters that control branching |
+| `fix_boolean_branching` | Auto-fix boolean branching issues |
+| `detect_deep_if_else_chains` | Find deeply nested if-else chains |
+| `fix_deep_if_else_chains` | Flatten deep if-else chains |
+| `detect_improper_error_wrapping` | Find improperly wrapped errors |
+| `fix_error_wrapping` | Auto-fix error wrapping |
+| `detect_missing_context_params` | Find functions that should accept `context.Context` |
+| `detect_environment_booleans` | Find environment variable boolean patterns |
 
-## Command Line Options
+### Import Management
 
-- `--workspace PATH`: Set the workspace root directory (default: current directory)
-- `--dry-run`: Preview changes without applying them
-- `--json`: Output results in JSON format
-- `--verbose`: Enable verbose output
-- `--force`: Force operation even with warnings
-- `--allow-breaking`: Allow potentially breaking refactorings that may require manual fixes
-- `--backup`: Create backup files before changes (default: true)
-- `--package-only`: For rename operations, only rename within the specified package
+| Tool | Description |
+|------|-------------|
+| `clean_aliases` | Remove unnecessary import aliases |
+| `standardize_imports` | Standardize import grouping and ordering |
+| `resolve_alias_conflicts` | Resolve conflicting import aliases |
+| `convert_aliases` | Convert between alias styles |
 
-## Examples
+### Package Organization
 
-### Example 1: Moving a Utility Function
+| Tool | Description |
+|------|-------------|
+| `create_facade` | Create a facade package that re-exports symbols |
+| `generate_facades` | Generate facades for a set of packages |
+| `update_facades` | Update existing facades after changes |
+| `move_by_dependencies` | Reorganize packages based on dependency analysis |
+| `organize_by_layers` | Organize packages into architectural layers |
+| `fix_cycles` | Break import cycles |
 
-```bash
-# Check current usage
-gorefactor analyze StringUtils pkg/common
+## Safety
 
-# Move to a more appropriate package
-gorefactor --dry-run move StringUtils pkg/common pkg/strings
+GoRefactor validates all transformations before applying them:
 
-# Apply the change
-gorefactor move StringUtils pkg/common pkg/strings
-```
+- Compilation validation
+- Import cycle detection
+- Visibility rule enforcement
+- Name conflict detection
+- Reference tracking across the workspace
 
-### Example 2: Renaming a Widely-Used Type
-
-```bash
-# See the impact first
-gorefactor analyze User pkg/models
-
-# Preview the rename
-gorefactor --dry-run rename User Account
-
-# Apply with backups
-gorefactor --backup rename User Account
-```
-
-### Example 3: Package-Scoped Rename
-
-```bash
-# Rename only within the auth package
-gorefactor rename Token AuthToken pkg/auth
-
-# Ensure it only affects the specified package
-gorefactor --package-only rename validate checkAuth pkg/auth
-```
-
-### Example 4: Breaking Refactoring with Manual Fix Intent
-
-```bash
-# Allow potentially breaking changes when you plan to fix issues manually
-gorefactor --allow-breaking move LegacyHandler pkg/old pkg/new
-
-# Combine with dry-run to see what breaking changes would occur
-gorefactor --dry-run --allow-breaking rename ComplexType NewComplexType
-
-# Use with backup for safety when allowing breaking changes
-gorefactor --allow-breaking --backup move DatabaseConnection internal/db pkg/storage
-```
-
-## Safety Features
-
-GoRefactor includes multiple safety checks:
-
-1. **Compilation Validation**: Ensures changes don't break compilation
-2. **Import Cycle Detection**: Prevents creating circular dependencies
-3. **Visibility Rules**: Maintains Go's export rules and accessibility
-4. **Name Conflict Detection**: Prevents naming conflicts in target packages
-5. **Reference Tracking**: Updates all references to moved/renamed symbols
-
-**Note:** The `--allow-breaking` flag disables these safety checks when you need to perform potentially breaking refactorings and plan to fix issues manually afterward.
-
-## How It Works
-
-1. **Parsing**: GoRefactor parses your entire Go workspace using the standard `go/ast` package
-2. **Analysis**: Builds a complete symbol table and dependency graph
-3. **Validation**: Checks all safety conditions before making changes
-4. **Transformation**: Applies changes while preserving formatting
-5. **Verification**: Ensures the resulting code is valid
-
-## Limitations
-
-- Currently supports moving functions, types, constants, and variables (not methods independently)
-- Requires all code to be syntactically valid Go
-- Works with modules (go.mod) and GOPATH projects
+A file watcher keeps the workspace state current as files change on disk.
 
 ## Development
 
 ```bash
-# Run tests
-make test
-
-# Run tests with coverage
-make test-coverage
-
-# Format code
-make fmt
-
-# Build for multiple platforms
-make build-all
+make test           # Run all tests
+make test-coverage  # Run tests with coverage report
+make lint           # Run golangci-lint
+make fmt            # Format code
+make dev            # Format, build, and test
 ```
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- All tests pass (`make test`)
-- Code is formatted (`make fmt`)
-- New features include tests
 
 ## License
 
