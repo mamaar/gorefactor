@@ -63,7 +63,7 @@ func TestCompleteSymbolResolution(t *testing.T) {
 	// Test 3: Interface implementation checking
 	t.Run("InterfaceCompliance", func(t *testing.T) {
 		pkg := workspace.Packages["test/main"]
-		
+
 		typeSymbol, err := resolver.ResolveSymbol(pkg, "TestStruct")
 		if err != nil {
 			t.Fatalf("Failed to resolve TestStruct: %v", err)
@@ -83,7 +83,7 @@ func TestCompleteSymbolResolution(t *testing.T) {
 	// Test 4: Scope-aware resolution
 	t.Run("ScopeAwareResolution", func(t *testing.T) {
 		file := workspace.Packages["test/main"].Files["main.go"]
-		
+
 		// Test resolution at different positions
 		// This would require knowing specific positions in the test file
 		scope, err := resolver.scopeAnalyzer.GetScopeAt(file, token.Pos(100))
@@ -95,9 +95,9 @@ func TestCompleteSymbolResolution(t *testing.T) {
 	// Test 5: Cache performance
 	t.Run("CachePerformance", func(t *testing.T) {
 		pkg := workspace.Packages["test/main"]
-		
+
 		// Resolve the same symbol multiple times
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			_, err := resolver.ResolveSymbol(pkg, "MainFunction")
 			if err != nil {
 				t.Fatalf("Failed to resolve MainFunction on iteration %d: %v", i, err)
@@ -117,7 +117,7 @@ func TestCompleteSymbolResolution(t *testing.T) {
 	// Test 6: Error diagnostics
 	t.Run("ErrorDiagnostics", func(t *testing.T) {
 		pkg := workspace.Packages["test/main"]
-		
+
 		// Try to resolve a non-existent symbol
 		_, err := resolver.ResolveSymbol(pkg, "NonExistentSymbol")
 		if err == nil {
@@ -196,7 +196,7 @@ func TestScopeAnalysis(t *testing.T) {
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	file := workspace.Packages["test/scoped"].Files["scoped.go"]
-	
+
 	// Build scope tree
 	scopeTree, err := resolver.scopeAnalyzer.BuildScopeTree(file)
 	if err != nil {
@@ -226,7 +226,7 @@ func TestCacheInvalidation(t *testing.T) {
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	pkg := workspace.Packages["test/main"]
-	
+
 	// Resolve a symbol to populate cache
 	symbol1, err := resolver.ResolveSymbol(pkg, "MainFunction")
 	if err != nil {
@@ -268,8 +268,8 @@ func TestPerformanceWithLargeCodebase(t *testing.T) {
 
 	// Perform many resolution operations
 	const numOperations = 1000
-	
-	for i := 0; i < numOperations; i++ {
+
+	for range numOperations {
 		for _, pkg := range workspace.Packages {
 			if pkg.Symbols != nil && len(pkg.Symbols.Functions) > 0 {
 				// Resolve first function in package
@@ -284,13 +284,13 @@ func TestPerformanceWithLargeCodebase(t *testing.T) {
 	// Check cache performance
 	stats := resolver.cache.GetStats()
 	hitRate := resolver.cache.GetHitRate()
-	
+
 	t.Logf("Performance test completed:")
 	t.Logf("  Total operations: %d", numOperations*len(workspace.Packages))
 	t.Logf("  Cache hit rate: %.2f%%", hitRate)
 	t.Logf("  Cache hits: %d", stats.ResolvedRefHits)
 	t.Logf("  Cache misses: %d", stats.ResolvedRefMisses)
-	
+
 	if hitRate < 50.0 {
 		t.Errorf("Expected cache hit rate > 50%%, got %.2f%%", hitRate)
 	}
@@ -300,7 +300,7 @@ func TestPerformanceWithLargeCodebase(t *testing.T) {
 
 func createTestWorkspace(t *testing.T) *types.Workspace {
 	fileSet := token.NewFileSet()
-	
+
 	// Create main package
 	mainSrc := `package main
 
@@ -395,7 +395,7 @@ func privateFunction() string {
 
 func createEmbeddedFieldWorkspace(t *testing.T) *types.Workspace {
 	fileSet := token.NewFileSet()
-	
+
 	src := `package embedded
 
 type BaseStruct struct {
@@ -450,7 +450,7 @@ func (cs *CompositeStruct) OwnMethod() int {
 
 func createScopedWorkspace(t *testing.T) *types.Workspace {
 	fileSet := token.NewFileSet()
-	
+
 	src := `package scoped
 
 import "fmt"
@@ -521,7 +521,7 @@ func createLargeWorkspace(t *testing.T) *types.Workspace {
 	}
 
 	// Create multiple packages with many symbols
-	for pkgNum := 0; pkgNum < 10; pkgNum++ {
+	for pkgNum := range 10 {
 		src := fmt.Sprintf(`package pkg%d
 
 import "fmt"

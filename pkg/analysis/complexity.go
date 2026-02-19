@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"sort"
+	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -29,8 +30,8 @@ type ComplexityResult struct {
 
 // ComplexityAnalyzer analyzes code complexity
 type ComplexityAnalyzer struct {
-	workspace   *types.Workspace
-	fileSet     *token.FileSet
+	workspace     *types.Workspace
+	fileSet       *token.FileSet
 	minComplexity int // Only report functions above this threshold
 }
 
@@ -38,7 +39,7 @@ func NewComplexityAnalyzer(ws *types.Workspace, minComplexity int) *ComplexityAn
 	if minComplexity <= 0 {
 		minComplexity = 10 // Default threshold
 	}
-	
+
 	return &ComplexityAnalyzer{
 		workspace:     ws,
 		fileSet:       ws.FileSet,
@@ -104,7 +105,7 @@ func (ca *ComplexityAnalyzer) AnalyzeFile(file *types.File) ([]*ComplexityResult
 // AnalyzeFunction analyzes complexity of a single function
 func (ca *ComplexityAnalyzer) AnalyzeFunction(funcDecl *ast.FuncDecl, file *types.File) *ComplexityResult {
 	pos := ca.fileSet.Position(funcDecl.Pos())
-	
+
 	// Create symbol for the function
 	symbol := &types.Symbol{
 		Name:     funcDecl.Name.Name,
@@ -249,8 +250,8 @@ func (ca *ComplexityAnalyzer) analyzeBlockComplexity(node ast.Node, metrics *Com
 
 		// Continue recursion for nested structures with increased nesting level
 		switch n.(type) {
-		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, 
-			 *ast.TypeSwitchStmt, *ast.SelectStmt, *ast.BlockStmt:
+		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt,
+			*ast.TypeSwitchStmt, *ast.SelectStmt, *ast.BlockStmt:
 			// These increase nesting level for their children
 			return true
 		default:
@@ -272,7 +273,7 @@ func (ca *ComplexityAnalyzer) calculateCognitiveWeight(nestingLevel int) int {
 func (ca *ComplexityAnalyzer) countSwitchCases(body *ast.BlockStmt) int {
 	count := 0
 	hasDefault := false
-	
+
 	for _, stmt := range body.List {
 		if caseClause, ok := stmt.(*ast.CaseClause); ok {
 			if caseClause.List == nil {
@@ -284,25 +285,25 @@ func (ca *ComplexityAnalyzer) countSwitchCases(body *ast.BlockStmt) int {
 			}
 		}
 	}
-	
+
 	// If there's no default case, add 1 for the implicit default path
 	if !hasDefault {
 		count++
 	}
-	
+
 	return count
 }
 
 // countSelectCases counts the number of case clauses in a select statement
 func (ca *ComplexityAnalyzer) countSelectCases(body *ast.BlockStmt) int {
 	count := 0
-	
+
 	for _, stmt := range body.List {
 		if _, ok := stmt.(*ast.CommClause); ok {
 			count++
 		}
 	}
-	
+
 	return count
 }
 
@@ -320,7 +321,7 @@ func GetComplexityThresholds() map[string]int {
 // ClassifyComplexity classifies complexity level
 func ClassifyComplexity(complexity int) string {
 	thresholds := GetComplexityThresholds()
-	
+
 	switch {
 	case complexity >= thresholds["extreme"]:
 		return "extreme"
@@ -341,30 +342,31 @@ func FormatComplexityReport(results []*ComplexityResult) string {
 		return "No complex functions found."
 	}
 
-	report := fmt.Sprintf("Found %d complex functions:\n\n", len(results))
-	
+	var report strings.Builder
+	report.WriteString(fmt.Sprintf("Found %d complex functions:\n\n", len(results)))
+
 	for i, result := range results {
 		if i >= 20 { // Limit to top 20 most complex functions
-			report += fmt.Sprintf("... and %d more functions\n", len(results)-i)
+			report.WriteString(fmt.Sprintf("... and %d more functions\n", len(results)-i))
 			break
 		}
-		
+
 		level := ClassifyComplexity(result.Metrics.CyclomaticComplexity)
-		report += fmt.Sprintf("%d. %s (%s:%d)\n", i+1, 
-			result.Function.Name, 
-			result.Function.File, 
-			result.Position.Line)
-		report += fmt.Sprintf("   Cyclomatic Complexity: %d (%s)\n", 
-			result.Metrics.CyclomaticComplexity, level)
-		report += fmt.Sprintf("   Cognitive Complexity: %d\n", 
-			result.Metrics.CognitiveComplexity)
-		report += fmt.Sprintf("   Lines of Code: %d\n", 
-			result.Metrics.LinesOfCode)
-		report += fmt.Sprintf("   Parameters: %d, Local Variables: %d\n", 
-			result.Metrics.Parameters, result.Metrics.LocalVariables)
-		report += fmt.Sprintf("   Max Nesting Depth: %d\n\n", 
-			result.Metrics.MaxNestingDepth)
+		report.WriteString(fmt.Sprintf("%d. %s (%s:%d)\n", i+1,
+			result.Function.Name,
+			result.Function.File,
+			result.Position.Line))
+		report.WriteString(fmt.Sprintf("   Cyclomatic Complexity: %d (%s)\n",
+			result.Metrics.CyclomaticComplexity, level))
+		report.WriteString(fmt.Sprintf("   Cognitive Complexity: %d\n",
+			result.Metrics.CognitiveComplexity))
+		report.WriteString(fmt.Sprintf("   Lines of Code: %d\n",
+			result.Metrics.LinesOfCode))
+		report.WriteString(fmt.Sprintf("   Parameters: %d, Local Variables: %d\n",
+			result.Metrics.Parameters, result.Metrics.LocalVariables))
+		report.WriteString(fmt.Sprintf("   Max Nesting Depth: %d\n\n",
+			result.Metrics.MaxNestingDepth))
 	}
-	
-	return report
+
+	return report.String()
 }

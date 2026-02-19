@@ -92,7 +92,7 @@ func (m *MyStruct) ProcessData(items []string, count int) error {
 	// total (compound-assigned via +=, used after block) should be a return
 	// Find the signature line (first non-empty line containing "func")
 	var sigLine string
-	for _, line := range strings.Split(methodDef, "\n") {
+	for line := range strings.SplitSeq(methodDef, "\n") {
 		if strings.Contains(line, "func (") {
 			sigLine = line
 			break

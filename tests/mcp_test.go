@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -219,13 +220,13 @@ func TestMCPTools(t *testing.T) {
 				t.Fatalf("CallTool(%s): %v", tt.tool, err)
 			}
 			if result.IsError {
-				var errMsg string
+				var errMsg strings.Builder
 				for _, c := range result.Content {
 					if tc, ok := c.(*mcpsdk.TextContent); ok {
-						errMsg += tc.Text
+						errMsg.WriteString(tc.Text)
 					}
 				}
-				t.Fatalf("CallTool(%s) returned error: %s", tt.tool, errMsg)
+				t.Fatalf("CallTool(%s) returned error: %s", tt.tool, errMsg.String())
 			}
 
 			compareGoldenFiles(t, tt.fixture, tmpDir)

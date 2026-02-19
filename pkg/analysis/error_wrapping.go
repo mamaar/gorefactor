@@ -3,6 +3,7 @@ package analysis
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -12,9 +13,9 @@ import (
 type ErrorWrappingViolationType string
 
 const (
-	BareReturn          ErrorWrappingViolationType = "bare_return"
-	FormatVerbV         ErrorWrappingViolationType = "format_verb_v_instead_of_w"
-	NoContext           ErrorWrappingViolationType = "no_context"
+	BareReturn  ErrorWrappingViolationType = "bare_return"
+	FormatVerbV ErrorWrappingViolationType = "format_verb_v_instead_of_w"
+	NoContext   ErrorWrappingViolationType = "no_context"
 )
 
 // ErrorWrappingSeverity indicates severity level.
@@ -288,12 +289,7 @@ func isGenericMessage(msg string) bool {
 		"", "error", "err", "failed", "failure", "fail",
 		"something went wrong", "unexpected error",
 	}
-	for _, g := range generic {
-		if lower == g {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(generic, lower)
 }
 
 // suggestContext generates a context suggestion from a function name.

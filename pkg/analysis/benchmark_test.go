@@ -25,7 +25,7 @@ func BenchmarkSymbolResolution(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	
+
 	// Find available symbols in the test package
 	var availableSymbols []string
 	if testPkg.Symbols != nil {
@@ -42,16 +42,16 @@ func BenchmarkSymbolResolution(b *testing.B) {
 			}
 		}
 	}
-	
+
 	if len(availableSymbols) == 0 {
 		b.Fatal("No symbols available for benchmarking")
 	}
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		symbolName := availableSymbols[i%len(availableSymbols)]
-		
+
 		_, err := resolver.ResolveSymbol(testPkg, symbolName)
 		if err != nil {
 			b.Fatalf("Failed to resolve symbol %s: %v", symbolName, err)
@@ -73,7 +73,7 @@ func BenchmarkSymbolResolutionWithCache(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	
+
 	// Find available symbols
 	var availableSymbols []string
 	if testPkg.Symbols != nil {
@@ -84,16 +84,16 @@ func BenchmarkSymbolResolutionWithCache(b *testing.B) {
 			}
 		}
 	}
-	
+
 	if len(availableSymbols) == 0 {
 		b.Fatal("No symbols available for benchmarking")
 	}
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		symbolName := availableSymbols[i%len(availableSymbols)]
-		
+
 		_, err := resolver.ResolveSymbol(testPkg, symbolName)
 		if err != nil {
 			b.Fatalf("Failed to resolve symbol %s: %v", symbolName, err)
@@ -115,7 +115,7 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 					break
 				}
 			}
-		}  
+		}
 		if typeSymbol != nil {
 			break
 		}
@@ -126,7 +126,7 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := resolver.ResolveMethodSet(typeSymbol)
 		if err != nil {
@@ -142,7 +142,7 @@ func BenchmarkScopeAnalysis(b *testing.B) {
 	file := workspace.Packages["test/scoped"].Files["scoped.go"]
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := resolver.scopeAnalyzer.BuildScopeTree(file)
 		if err != nil {
@@ -161,7 +161,7 @@ func BenchmarkScopeAnalysisWithCache(b *testing.B) {
 	_, _ = resolver.scopeAnalyzer.BuildScopeTree(file)
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := resolver.scopeAnalyzer.BuildScopeTree(file)
 		if err != nil {
@@ -182,7 +182,7 @@ func BenchmarkFindReferences(b *testing.B) {
 				funcSymbol = symbol
 				break
 			}
-		}  
+		}
 		if funcSymbol != nil {
 			break
 		}
@@ -193,7 +193,7 @@ func BenchmarkFindReferences(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		_, err := resolver.FindReferences(funcSymbol)
 		if err != nil {
@@ -204,7 +204,7 @@ func BenchmarkFindReferences(b *testing.B) {
 
 func BenchmarkBuildSymbolTable(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 1) // Single package for symbol table building
-	
+
 	var testPkg *types.Package
 	for _, pkg := range workspace.Packages {
 		testPkg = pkg
@@ -212,7 +212,7 @@ func BenchmarkBuildSymbolTable(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	
+
 	for i := 0; i < b.N; i++ {
 		resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		_, err := resolver.BuildSymbolTable(testPkg)
@@ -232,7 +232,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	
+
 	b.Run("Set", func(b *testing.B) {
 		for i := 0; i < b.N; i++ {
 			cache.SetResolvedRef(fmt.Sprintf("key%d", i), testSymbol)
@@ -241,10 +241,10 @@ func BenchmarkCacheOperations(b *testing.B) {
 
 	b.Run("Get", func(b *testing.B) {
 		// Pre-populate cache
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			cache.SetResolvedRef(fmt.Sprintf("key%d", i), testSymbol)
 		}
-		
+
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			cache.GetResolvedRef(fmt.Sprintf("key%d", i%1000))
@@ -253,10 +253,10 @@ func BenchmarkCacheOperations(b *testing.B) {
 
 	b.Run("Invalidate", func(b *testing.B) {
 		// Pre-populate cache
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			cache.SetResolvedRef(fmt.Sprintf("test/pkg%d:symbol", i), testSymbol)
 		}
-		
+
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			cache.InvalidatePackage(fmt.Sprintf("test/pkg%d", i%1000))
@@ -266,17 +266,17 @@ func BenchmarkCacheOperations(b *testing.B) {
 
 func BenchmarkLargeCodebase(b *testing.B) {
 	sizes := []int{10, 50, 100, 200}
-	
+
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Packages_%d", size), func(b *testing.B) {
 			workspace := createBenchmarkWorkspace(b, size)
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-			
+
 			// Warm up cache
 			resolver.cache.WarmCache(workspace)
-			
+
 			b.ResetTimer()
-			
+
 			for i := 0; i < b.N; i++ {
 				// Perform various operations across the workspace
 				for _, pkg := range workspace.Packages {
@@ -313,7 +313,7 @@ func BenchmarkMemoryUsage(b *testing.B) {
 				}
 			}
 		}
-		
+
 		// Periodically clear cache to test memory cleanup
 		if i%100 == 0 {
 			resolver.cache.Clear()
@@ -330,7 +330,7 @@ func createBenchmarkWorkspace(b *testing.B, numPackages int) *types.Workspace {
 		FileSet:  fileSet,
 	}
 
-	for pkgNum := 0; pkgNum < numPackages; pkgNum++ {
+	for pkgNum := range numPackages {
 		// Create a more complex package with multiple symbols
 		src := fmt.Sprintf(`package pkg%d
 
@@ -434,7 +434,7 @@ func ComplexFunction%d() {
 
 func createScopedWorkspaceForBenchmark(b *testing.B) *types.Workspace {
 	fileSet := token.NewFileSet()
-	
+
 	// Create a file with deep nesting for scope analysis benchmarking
 	src := `package scoped
 

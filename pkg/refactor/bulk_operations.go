@@ -277,7 +277,7 @@ func (op *MoveDirOperation) generateImportPathUpdates(file *types.File, ws *type
 
 			// Calculate line position in bytes
 			lineStart := 0
-			for j := 0; j < i; j++ {
+			for j := range i {
 				lineStart += len(lines[j]) + 1 // +1 for newline
 			}
 
@@ -699,7 +699,7 @@ func isFacadePackage(pkg *types.Package) bool {
 			continue
 		}
 		hasFiles = true
-		for _, line := range strings.Split(string(file.OriginalContent), "\n") {
+		for line := range strings.SplitSeq(string(file.OriginalContent), "\n") {
 			trimmed := strings.TrimSpace(line)
 			switch {
 			case trimmed == "", strings.HasPrefix(trimmed, "//"),

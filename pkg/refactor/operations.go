@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -33,22 +34,23 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 			availablePackages = append(availablePackages, pkgPath)
 		}
 
-		message := fmt.Sprintf("source package not found: %s\nAvailable packages:\n", op.Request.FromPackage)
+		var message strings.Builder
+		message.WriteString(fmt.Sprintf("source package not found: %s\nAvailable packages:\n", op.Request.FromPackage))
 		if len(availablePackages) == 0 {
-			message += "  (no packages found - ensure you're in a Go workspace with go.mod)"
+			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
 		} else {
 			for _, pkgPath := range availablePackages {
 				if pkg, exists := ws.Packages[pkgPath]; exists {
-					message += fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name)
+					message.WriteString(fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name))
 				} else {
-					message += fmt.Sprintf("  - %s\n", pkgPath)
+					message.WriteString(fmt.Sprintf("  - %s\n", pkgPath))
 				}
 			}
 		}
 
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
-			Message: message,
+			Message: message.String(),
 		}
 	}
 
@@ -79,15 +81,16 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 				availablePackages = append(availablePackages, pkgPath)
 			}
 
-			message := fmt.Sprintf("target package not found: %s (CreateTarget=false)\nAvailable packages:\n", op.Request.ToPackage)
+			var message strings.Builder
+			message.WriteString(fmt.Sprintf("target package not found: %s (CreateTarget=false)\nAvailable packages:\n", op.Request.ToPackage))
 			for _, pkg := range availablePackages {
-				message += fmt.Sprintf("  - %s\n", pkg)
+				message.WriteString(fmt.Sprintf("  - %s\n", pkg))
 			}
-			message += "\nTip: Use CreateTarget=true to create the target package automatically"
+			message.WriteString("\nTip: Use CreateTarget=true to create the target package automatically")
 
 			return &types.RefactorError{
 				Type:    types.InvalidOperation,
-				Message: message,
+				Message: message.String(),
 			}
 		}
 	}
@@ -285,17 +288,18 @@ func (op *RenameSymbolOperation) buildAvailableSymbolsList(pkg *types.Package) [
 
 // formatSymbolNotFoundError creates a detailed error message with available symbols
 func (op *RenameSymbolOperation) formatSymbolNotFoundError(symbolName, packageName string, availableSymbols []string, originalErr error) error {
-	message := fmt.Sprintf("symbol not found: %s in package %s\nAvailable symbols (%d):",
-		symbolName, packageName, len(availableSymbols))
+	var message strings.Builder
+	message.WriteString(fmt.Sprintf("symbol not found: %s in package %s\nAvailable symbols (%d):",
+		symbolName, packageName, len(availableSymbols)))
 
 	if len(availableSymbols) == 0 {
-		message += "\n  (no symbols found - package may not be parsed correctly)"
+		message.WriteString("\n  (no symbols found - package may not be parsed correctly)")
 	} else {
 		for i, sym := range availableSymbols {
 			if i < 20 { // Limit output
-				message += fmt.Sprintf("\n  - %s", sym)
+				message.WriteString(fmt.Sprintf("\n  - %s", sym))
 			} else {
-				message += fmt.Sprintf("\n  ... and %d more", len(availableSymbols)-20)
+				message.WriteString(fmt.Sprintf("\n  ... and %d more", len(availableSymbols)-20))
 				break
 			}
 		}
@@ -303,7 +307,7 @@ func (op *RenameSymbolOperation) formatSymbolNotFoundError(symbolName, packageNa
 
 	return &types.RefactorError{
 		Type:    types.SymbolNotFound,
-		Message: message,
+		Message: message.String(),
 		Cause:   originalErr,
 	}
 }
@@ -439,20 +443,21 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 			availablePackages = append(availablePackages, pkgPath)
 		}
 
-		message := fmt.Sprintf("package not found: %s\nAvailable packages:\n", op.Request.PackagePath)
+		var message strings.Builder
+		message.WriteString(fmt.Sprintf("package not found: %s\nAvailable packages:\n", op.Request.PackagePath))
 		if len(availablePackages) == 0 {
-			message += "  (no packages found - ensure you're in a Go workspace with go.mod)"
+			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
 		} else {
 			for _, pkgPath := range availablePackages {
 				if pkg, exists := ws.Packages[pkgPath]; exists {
-					message += fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name)
+					message.WriteString(fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name))
 				}
 			}
 		}
 
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
-			Message: message,
+			Message: message.String(),
 		}
 	}
 
@@ -634,7 +639,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, sy
 
 							// Calculate byte positions
 							startByte := 0
-							for k := 0; k < start; k++ {
+							for k := range start {
 								startByte += len(lines[k]) + 1 // +1 for newline
 							}
 							endByte := startByte
@@ -698,7 +703,7 @@ func mergeChanges(changes []types.Change) []types.Change {
 	copy(sortedChanges, changes)
 
 	// Simple bubble sort by Start position
-	for i := 0; i < len(sortedChanges); i++ {
+	for i := range sortedChanges {
 		for j := i + 1; j < len(sortedChanges); j++ {
 			if sortedChanges[j].Start < sortedChanges[i].Start {
 				sortedChanges[i], sortedChanges[j] = sortedChanges[j], sortedChanges[i]
@@ -958,13 +963,7 @@ func (op *MoveSymbolOperation) generateImportChanges(ws *types.Workspace, refere
 			importPath := packagePathToImportPath(ws, targetPackagePath)
 
 			// Check if import already exists
-			hasImport := false
-			for _, imp := range refPackage.Imports {
-				if imp == importPath {
-					hasImport = true
-					break
-				}
-			}
+			hasImport := slices.Contains(refPackage.Imports, importPath)
 
 			if !hasImport {
 				// Generate import change (handles both single-line and multi-line imports)
@@ -1110,13 +1109,7 @@ func wouldCreateImportCycle(ws *types.Workspace, fromPkg, toPkg string) bool {
 		return false
 	}
 
-	for _, dep := range toDeps {
-		if dep == fromPkg {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(toDeps, fromPkg)
 }
 
 func isValidGoIdentifier(name string) bool {
@@ -1149,12 +1142,7 @@ func lastPathComponent(path string) string {
 }
 
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }
 
 // generateAddImportChange generates a change to add a new import, handling both
@@ -1237,8 +1225,8 @@ func isSingleLineImport(astFile *ast.File, content []byte) bool {
 	}
 
 	// Find the first import in the content
-	lines := strings.Split(string(content), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(string(content), "\n")
+	for line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "import ") {
 			// Check if it has an opening parenthesis (multi-line format)
@@ -1266,7 +1254,7 @@ func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, fileP
 
 			// Calculate byte position of the import line
 			startByte := 0
-			for j := 0; j < i; j++ {
+			for j := range i {
 				startByte += len(lines[j]) + 1 // +1 for newline
 			}
 			endByte := startByte + len(lines[i]) + 1 // +1 for newline
@@ -1624,7 +1612,7 @@ func (op *RenamePackageOperation) generatePackageDeclarationChange(file *types.F
 			if len(parts) >= 2 && parts[1] == oldName {
 				// Calculate byte position of the package name
 				startByte := 0
-				for j := 0; j < i; j++ {
+				for j := range i {
 					startByte += len(lines[j]) + 1 // +1 for newline
 				}
 
@@ -1715,7 +1703,7 @@ func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, imp
 			if newLine != line {
 				// Calculate byte positions
 				startByte := 0
-				for j := 0; j < i; j++ {
+				for j := range i {
 					startByte += len(lines[j]) + 1
 				}
 				endByte := startByte + len(line)

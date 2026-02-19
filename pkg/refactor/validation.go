@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -99,22 +100,23 @@ func (v *Validator) ValidateMove(ws *refactorTypes.Workspace, req refactorTypes.
 			availablePackages = append(availablePackages, pkgPath)
 		}
 
-		description := fmt.Sprintf("source package not found: %s\nAvailable packages:\n", req.FromPackage)
+		var description strings.Builder
+		description.WriteString(fmt.Sprintf("source package not found: %s\nAvailable packages:\n", req.FromPackage))
 		if len(availablePackages) == 0 {
-			description += "  (no packages found - ensure you're in a Go workspace with go.mod)"
+			description.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
 		} else {
 			for _, pkgPath := range availablePackages {
 				if pkg, exists := ws.Packages[pkgPath]; exists {
-					description += fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name)
+					description.WriteString(fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name))
 				} else {
-					description += fmt.Sprintf("  - %s\n", pkgPath)
+					description.WriteString(fmt.Sprintf("  - %s\n", pkgPath))
 				}
 			}
 		}
 
 		issues = append(issues, refactorTypes.Issue{
 			Type:        refactorTypes.IssueCompilationError,
-			Description: description,
+			Description: description.String(),
 			Severity:    refactorTypes.Error,
 		})
 		return issues
@@ -444,13 +446,7 @@ func (v *Validator) wouldCreateImportCycle(ws *refactorTypes.Workspace, fromPkg,
 		return false
 	}
 
-	for _, dep := range toDeps {
-		if dep == fromPkg {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(toDeps, fromPkg)
 }
 
 func (v *Validator) isValidGoIdentifier(name string) bool {

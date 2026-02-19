@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -337,7 +338,7 @@ func (op *OrganizeByLayersOperation) Execute(ws *types.Workspace) (*types.Refact
 	// Generate layer organization report
 	reportFile := filepath.Join(op.Request.Workspace, "layer_organization.md")
 	content := op.generateLayerReport(ws)
-	
+
 	plan.Changes = append(plan.Changes, types.Change{
 		File:        reportFile,
 		Start:       0,
@@ -346,7 +347,7 @@ func (op *OrganizeByLayersOperation) Execute(ws *types.Workspace) (*types.Refact
 		NewText:     content,
 		Description: "Generate layer organization report",
 	})
-	
+
 	plan.AffectedFiles = append(plan.AffectedFiles, reportFile)
 
 	return plan, nil
@@ -362,11 +363,11 @@ func (op *OrganizeByLayersOperation) reorderImportsByLayers(ws *types.Workspace,
 	}
 
 	type impEntry struct {
-		tier      int
+		tier       int
 		importPath string
-		text      string // original source text for this spec (with surrounding whitespace)
-		start     int    // byte offset in file
-		end       int    // byte offset in file (exclusive)
+		text       string // original source text for this spec (with surrounding whitespace)
+		start      int    // byte offset in file
+		end        int    // byte offset in file (exclusive)
 	}
 
 	content := file.OriginalContent
@@ -477,10 +478,10 @@ func (op *OrganizeByLayersOperation) classifyImportTier(ws *types.Workspace, imp
 
 func (op *OrganizeByLayersOperation) generateLayerReport(ws *types.Workspace) string {
 	var report strings.Builder
-	
+
 	report.WriteString("# Layer Organization Report\n\n")
 	report.WriteString("## Architectural Layers\n\n")
-	
+
 	if op.Request.DomainLayer != "" {
 		report.WriteString(fmt.Sprintf("**Domain Layer**: %s\n", op.Request.DomainLayer))
 	}
@@ -490,14 +491,14 @@ func (op *OrganizeByLayersOperation) generateLayerReport(ws *types.Workspace) st
 	if op.Request.ApplicationLayer != "" {
 		report.WriteString(fmt.Sprintf("**Application Layer**: %s\n", op.Request.ApplicationLayer))
 	}
-	
+
 	report.WriteString("\n## Package Classification\n\n")
-	
+
 	for pkgPath := range ws.Packages {
 		layer := op.classifyPackage(pkgPath)
 		report.WriteString(fmt.Sprintf("- `%s` → %s Layer\n", pkgPath, layer))
 	}
-	
+
 	return report.String()
 }
 
@@ -544,14 +545,14 @@ func (op *FixCyclesOperation) Execute(ws *types.Workspace) (*types.RefactoringPl
 
 	// Detect cycles first
 	cycles := op.detectCycles(ws)
-	
+
 	// Generate report
 	reportContent := op.generateCycleReport(cycles)
 	reportFile := op.Request.OutputReport
 	if reportFile == "" {
 		reportFile = filepath.Join(op.Request.Workspace, "cycles_report.md")
 	}
-	
+
 	plan.Changes = append(plan.Changes, types.Change{
 		File:        reportFile,
 		Start:       0,
@@ -560,7 +561,7 @@ func (op *FixCyclesOperation) Execute(ws *types.Workspace) (*types.RefactoringPl
 		NewText:     reportContent,
 		Description: "Generate circular dependency report",
 	})
-	
+
 	plan.AffectedFiles = append(plan.AffectedFiles, reportFile)
 
 	// If auto-fix is requested and cycles exist, attempt fixes
@@ -595,11 +596,11 @@ func (op *FixCyclesOperation) detectCycles(ws *types.Workspace) [][]string {
 
 func (op *FixCyclesOperation) generateCycleReport(cycles [][]string) string {
 	var report strings.Builder
-	
+
 	report.WriteString("# Circular Dependencies Report\n\n")
 	report.WriteString(fmt.Sprintf("Analyzed workspace: %s\n", op.Request.Workspace))
 	report.WriteString(fmt.Sprintf("Found %d circular dependencies\n\n", len(cycles)))
-	
+
 	if len(cycles) > 0 {
 		report.WriteString("## Detected Cycles\n\n")
 		for i, cycle := range cycles {
@@ -619,7 +620,7 @@ func (op *FixCyclesOperation) generateCycleReport(cycles [][]string) string {
 	} else {
 		report.WriteString("✅ No circular dependencies detected!\n")
 	}
-	
+
 	return report.String()
 }
 
@@ -661,7 +662,7 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 
 	// Perform comprehensive dependency analysis
 	analysis := op.performDependencyAnalysis(ws)
-	
+
 	// Generate output
 	if op.Request.OutputFile != "" {
 		// JSON output
@@ -669,7 +670,7 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal analysis to JSON: %w", err)
 		}
-		
+
 		plan.Changes = append(plan.Changes, types.Change{
 			File:        op.Request.OutputFile,
 			Start:       0,
@@ -678,13 +679,13 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 			NewText:     string(jsonData),
 			Description: "Generate dependency analysis JSON",
 		})
-		
+
 		plan.AffectedFiles = []string{op.Request.OutputFile}
 	} else {
 		// Markdown report
 		reportFile := filepath.Join(op.Request.Workspace, "dependency_analysis.md")
 		content := op.generateAnalysisReport(analysis)
-		
+
 		plan.Changes = append(plan.Changes, types.Change{
 			File:        reportFile,
 			Start:       0,
@@ -693,7 +694,7 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 			NewText:     content,
 			Description: "Generate dependency analysis report",
 		})
-		
+
 		plan.AffectedFiles = []string{reportFile}
 	}
 
@@ -701,30 +702,30 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 }
 
 type DependencyAnalysis struct {
-	Workspace        string              `json:"workspace"`
-	TotalPackages    int                 `json:"total_packages"`
-	BackwardsDeps    []BackwardDep       `json:"backwards_dependencies,omitempty"`
-	SuggestedMoves   []SuggestedMove     `json:"suggested_moves,omitempty"`
-	PackageMetrics   map[string]PackageMetric `json:"package_metrics"`
+	Workspace      string                   `json:"workspace"`
+	TotalPackages  int                      `json:"total_packages"`
+	BackwardsDeps  []BackwardDep            `json:"backwards_dependencies,omitempty"`
+	SuggestedMoves []SuggestedMove          `json:"suggested_moves,omitempty"`
+	PackageMetrics map[string]PackageMetric `json:"package_metrics"`
 }
 
 type BackwardDep struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From   string `json:"from"`
+	To     string `json:"to"`
 	Reason string `json:"reason"`
 }
 
 type SuggestedMove struct {
-	Symbol     string `json:"symbol"`
+	Symbol      string `json:"symbol"`
 	FromPackage string `json:"from_package"`
 	ToPackage   string `json:"to_package"`
 	Reason      string `json:"reason"`
 }
 
 type PackageMetric struct {
-	IncomingDeps  int `json:"incoming_deps"`
-	OutgoingDeps  int `json:"outgoing_deps"`
-	SymbolCount   int `json:"symbol_count"`
+	IncomingDeps int `json:"incoming_deps"`
+	OutgoingDeps int `json:"outgoing_deps"`
+	SymbolCount  int `json:"symbol_count"`
 }
 
 func (op *AnalyzeDependenciesOperation) performDependencyAnalysis(ws *types.Workspace) *DependencyAnalysis {
@@ -733,33 +734,33 @@ func (op *AnalyzeDependenciesOperation) performDependencyAnalysis(ws *types.Work
 		TotalPackages:  len(ws.Packages),
 		PackageMetrics: make(map[string]PackageMetric),
 	}
-	
+
 	// Calculate metrics for each package
 	for pkgPath, pkg := range ws.Packages {
 		symbolCount := 0
 		if pkg.Symbols != nil {
-			symbolCount = len(pkg.Symbols.Functions) + 
-						   len(pkg.Symbols.Types) + 
-						   len(pkg.Symbols.Variables) + 
-						   len(pkg.Symbols.Constants)
+			symbolCount = len(pkg.Symbols.Functions) +
+				len(pkg.Symbols.Types) +
+				len(pkg.Symbols.Variables) +
+				len(pkg.Symbols.Constants)
 		}
-		
+
 		analysis.PackageMetrics[pkgPath] = PackageMetric{
 			SymbolCount: symbolCount,
 			// IncomingDeps and OutgoingDeps would be calculated from dependency graph
 		}
 	}
-	
+
 	// Detect backwards dependencies if requested
 	if op.Request.DetectBackwardsDeps {
 		analysis.BackwardsDeps = op.detectBackwardsDependencies(ws)
 	}
-	
+
 	// Generate suggested moves if requested
 	if op.Request.SuggestMoves {
 		analysis.SuggestedMoves = op.generateSuggestedMoves(ws)
 	}
-	
+
 	return analysis
 }
 
@@ -878,11 +879,11 @@ func (op *AnalyzeDependenciesOperation) generateSuggestedMoves(ws *types.Workspa
 
 func (op *AnalyzeDependenciesOperation) generateAnalysisReport(analysis *DependencyAnalysis) string {
 	var report strings.Builder
-	
+
 	report.WriteString("# Dependency Analysis Report\n\n")
 	report.WriteString(fmt.Sprintf("**Workspace**: %s\n", analysis.Workspace))
 	report.WriteString(fmt.Sprintf("**Total Packages**: %d\n\n", analysis.TotalPackages))
-	
+
 	if len(analysis.BackwardsDeps) > 0 {
 		report.WriteString("## Backwards Dependencies\n\n")
 		for _, dep := range analysis.BackwardsDeps {
@@ -890,33 +891,28 @@ func (op *AnalyzeDependenciesOperation) generateAnalysisReport(analysis *Depende
 		}
 		report.WriteString("\n")
 	}
-	
+
 	if len(analysis.SuggestedMoves) > 0 {
 		report.WriteString("## Suggested Moves\n\n")
 		for _, move := range analysis.SuggestedMoves {
-			report.WriteString(fmt.Sprintf("- Move `%s` from `%s` to `%s`: %s\n", 
+			report.WriteString(fmt.Sprintf("- Move `%s` from `%s` to `%s`: %s\n",
 				move.Symbol, move.FromPackage, move.ToPackage, move.Reason))
 		}
 		report.WriteString("\n")
 	}
-	
+
 	report.WriteString("## Package Metrics\n\n")
 	report.WriteString("| Package | Symbols | Incoming Deps | Outgoing Deps |\n")
 	report.WriteString("|---------|---------|---------------|---------------|\n")
 	for pkgPath, metrics := range analysis.PackageMetrics {
-		report.WriteString(fmt.Sprintf("| `%s` | %d | %d | %d |\n", 
+		report.WriteString(fmt.Sprintf("| `%s` | %d | %d | %d |\n",
 			pkgPath, metrics.SymbolCount, metrics.IncomingDeps, metrics.OutgoingDeps))
 	}
-	
+
 	return report.String()
 }
 
 // Helper functions
 func containsString(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(slice, item)
 }

@@ -3,6 +3,7 @@ package analysis
 import (
 	"go/ast"
 	"go/token"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -167,10 +168,9 @@ func (a *EnvBooleanAnalyzer) tracePropagation(fn *ast.FuncDecl, paramName string
 		return true
 	})
 
-	depth := len(chain) - 1 // subtract the function itself
-	if depth < 0 {
-		depth = 0
-	}
+	depth := max(
+		// subtract the function itself
+		len(chain)-1, 0)
 
 	return chain, depth
 }
@@ -192,12 +192,7 @@ func (a *EnvBooleanAnalyzer) callName(call *ast.CallExpr) string {
 // isEnvBoolName checks if a parameter name matches environment boolean patterns.
 func isEnvBoolName(name string) bool {
 	lower := strings.ToLower(name)
-	for _, pattern := range envBoolPatterns {
-		if lower == pattern {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(envBoolPatterns, lower)
 }
 
 // suggestEnvPattern suggests the appropriate replacement pattern for an env boolean.

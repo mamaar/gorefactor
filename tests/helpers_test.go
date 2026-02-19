@@ -206,10 +206,7 @@ func unifiedDiff(expected, actual string) string {
 	var buf strings.Builder
 	buf.WriteString("--- expected\n+++ actual\n")
 
-	maxLen := len(expectedLines)
-	if len(actualLines) > maxLen {
-		maxLen = len(actualLines)
-	}
+	maxLen := max(len(actualLines), len(expectedLines))
 
 	for i := 0; i < maxLen; i++ {
 		var eLine, aLine string

@@ -15,7 +15,7 @@ import (
 func DemoSymbolResolution() {
 	// Create a sample workspace
 	fileSet := token.NewFileSet()
-	
+
 	src := `package example
 
 import "fmt"
@@ -85,7 +85,7 @@ func main() {
 
 	// Create symbol resolver
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	
+
 	// Build symbol table
 	symbolTable, err := resolver.BuildSymbolTable(pkg)
 	if err != nil {
@@ -98,11 +98,11 @@ func main() {
 	fmt.Printf("Functions: %d\n", len(symbolTable.Functions))
 	fmt.Printf("Types: %d\n", len(symbolTable.Types))
 	fmt.Printf("Methods: %d types with methods\n", len(symbolTable.Methods))
-	
+
 	// Demonstrate type resolution
 	if personType, err := resolver.ResolveSymbol(pkg, "Person"); err == nil {
 		fmt.Printf("\nFound type: %s (exported: %v)\n", personType.Name, personType.Exported)
-		
+
 		// Get method set
 		methods, err := resolver.ResolveMethodSet(personType)
 		if err == nil {
@@ -113,10 +113,10 @@ func main() {
 		}
 	}
 
-	// Demonstrate embedded field resolution  
+	// Demonstrate embedded field resolution
 	if employeeType, err := resolver.ResolveSymbol(pkg, "Employee"); err == nil {
 		fmt.Printf("\nFound type: %s\n", employeeType.Name)
-		
+
 		// Get embedded fields
 		embedded, err := resolver.ResolveEmbeddedFields(employeeType)
 		if err == nil && len(embedded) > 0 {
@@ -125,7 +125,7 @@ func main() {
 				fmt.Printf("  - %s\n", field.Name)
 			}
 		}
-		
+
 		// Get promoted methods
 		promoted, err := resolver.FindPromotedMethods(employeeType)
 		if err == nil && len(promoted) > 0 {
@@ -149,12 +149,12 @@ func main() {
 	// Demonstrate cache performance
 	fmt.Printf("\n=== Cache Performance ===\n")
 	// Resolve same symbols multiple times
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, _ = resolver.ResolveSymbol(pkg, "Person")
 		_, _ = resolver.ResolveSymbol(pkg, "Employee")
 		_, _ = resolver.ResolveSymbol(pkg, "CreateEmployee")
 	}
-	
+
 	stats := resolver.cache.GetStats()
 	fmt.Printf("Cache hits: %d\n", stats.ResolvedRefHits)
 	fmt.Printf("Cache misses: %d\n", stats.ResolvedRefMisses)
