@@ -6,7 +6,8 @@ import (
 )
 
 func parseAndPrint(s string) {
-	if val, err := strconv.Atoi(s); err != nil {
+	val, err := strconv.Atoi(s)
+	if err != nil {
 		fmt.Println("error:", err)
 	} else {
 		fmt.Println("value:", val)

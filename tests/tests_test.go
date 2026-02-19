@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/mamaar/gorefactor/pkg/analysis"
+	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/analyzers/booleanbranch"
+	"github.com/mamaar/gorefactor/pkg/analyzers/deepifelse"
+	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
+	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -339,11 +343,12 @@ func TestFixIfInit(t *testing.T) {
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, tmpDir)
 
-	fixer := analysis.NewIfInitFixer(ws)
-	plan, err := fixer.Fix("")
+	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
-		t.Fatalf("Fix: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
@@ -355,11 +360,12 @@ func TestFixBooleanBranching(t *testing.T) {
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, tmpDir)
 
-	fixer := analysis.NewBooleanBranchingFixer(ws, 2)
-	plan, _, err := fixer.Fix("")
+	rr, err := analyzers.Run(ws, booleanbranch.Analyzer, "")
 	if err != nil {
-		t.Fatalf("Fix: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
@@ -371,11 +377,13 @@ func TestFixDeepIfElse(t *testing.T) {
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, tmpDir)
 
-	fixer := analysis.NewDeepIfElseFixer(ws, 2, 3)
-	plan, _, err := fixer.Fix("")
+	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(2), deepifelse.WithMinElseLines(3))
+	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
-		t.Fatalf("Fix: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
@@ -387,11 +395,13 @@ func TestFixErrorWrapping(t *testing.T) {
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, tmpDir)
 
-	fixer := analysis.NewErrorWrappingFixer(ws, analysis.SeverityCritical)
-	plan, _, err := fixer.Fix("")
+	a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(errorwrap.SeverityCritical))
+	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
-		t.Fatalf("Fix: %v", err)
+		t.Fatalf("Run: %v", err)
 	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}

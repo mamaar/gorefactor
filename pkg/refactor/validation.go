@@ -379,7 +379,10 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 				strings.Contains(desc, "call to") ||
 				strings.Contains(desc, "argument") ||
 				strings.Contains(desc, "import") ||
-				strings.Contains(desc, "qualified references")
+				strings.Contains(desc, "qualified references") ||
+				strings.Contains(desc, "Split") ||
+				strings.Contains(desc, "Replace") ||
+				strings.Contains(desc, "Wrap")
 			if !isFragment {
 				if err := v.validateGoSyntax(change.NewText); err != nil {
 					issues = append(issues, refactorTypes.Issue{

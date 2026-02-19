@@ -7,6 +7,14 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
+	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/analyzers/booleanbranch"
+	"github.com/mamaar/gorefactor/pkg/analyzers/complexity"
+	"github.com/mamaar/gorefactor/pkg/analyzers/deepifelse"
+	"github.com/mamaar/gorefactor/pkg/analyzers/envbool"
+	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
+	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
+	"github.com/mamaar/gorefactor/pkg/analyzers/missingctx"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -44,14 +52,14 @@ type ComplexityInput struct {
 }
 
 type ComplexityResultItem struct {
-	Function            string `json:"function"`
-	File                string `json:"file"`
-	Line                int    `json:"line"`
-	CyclomaticComplexity int   `json:"cyclomatic_complexity"`
-	CognitiveComplexity  int   `json:"cognitive_complexity"`
-	LinesOfCode          int   `json:"lines_of_code"`
-	Parameters           int   `json:"parameters"`
-	MaxNestingDepth      int   `json:"max_nesting_depth"`
+	Function             string `json:"function"`
+	File                 string `json:"file"`
+	Line                 int    `json:"line"`
+	CyclomaticComplexity int    `json:"cyclomatic_complexity"`
+	CognitiveComplexity  int    `json:"cognitive_complexity"`
+	LinesOfCode          int    `json:"lines_of_code"`
+	Parameters           int    `json:"parameters"`
+	MaxNestingDepth      int    `json:"max_nesting_depth"`
 	Level                string `json:"level"`
 }
 
@@ -138,9 +146,9 @@ type FixBooleanBranchingInput struct {
 // --- detect_deep_if_else_chains ---
 
 type DetectDeepIfElseInput struct {
-	Package        string `json:"package,omitempty" jsonschema:"specific package to analyze"`
-	MaxNestingDepth int   `json:"max_nesting_depth,omitempty" jsonschema:"maximum acceptable nesting depth (default 2)"`
-	MinElseLines    int   `json:"min_else_lines,omitempty" jsonschema:"minimum lines in else to trigger detection (default 3)"`
+	Package         string `json:"package,omitempty" jsonschema:"specific package to analyze"`
+	MaxNestingDepth int    `json:"max_nesting_depth,omitempty" jsonschema:"maximum acceptable nesting depth (default 2)"`
+	MinElseLines    int    `json:"min_else_lines,omitempty" jsonschema:"minimum lines in else to trigger detection (default 3)"`
 }
 
 type DeepIfElseViolationItem struct {
@@ -283,35 +291,28 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minC <= 0 {
 			minC = 10
 		}
-		analyzer := analysis.NewComplexityAnalyzer(ws, minC)
 
-		var results []*analysis.ComplexityResult
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			results, err = analyzer.AnalyzePackage(pkg)
-		} else {
-			results, err = analyzer.AnalyzeWorkspace()
-		}
+		a := complexity.NewAnalyzer(complexity.WithMinComplexity(minC))
+		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
-		items := make([]ComplexityResultItem, len(results))
-		for i, r := range results {
-			items[i] = ComplexityResultItem{
-				Function:             r.Function.Name,
-				File:                 r.Function.File,
-				Line:                 r.Position.Line,
-				CyclomaticComplexity: r.Metrics.CyclomaticComplexity,
-				CognitiveComplexity:  r.Metrics.CognitiveComplexity,
-				LinesOfCode:          r.Metrics.LinesOfCode,
-				Parameters:           r.Metrics.Parameters,
-				MaxNestingDepth:      r.Metrics.MaxNestingDepth,
-				Level:                analysis.ClassifyComplexity(r.Metrics.CyclomaticComplexity),
+		var items []ComplexityResultItem
+		if results, ok := rr.Result.([]*complexity.Result); ok {
+			items = make([]ComplexityResultItem, len(results))
+			for i, r := range results {
+				items[i] = ComplexityResultItem{
+					Function:             r.Function,
+					File:                 r.File,
+					Line:                 r.Line,
+					CyclomaticComplexity: r.CyclomaticComplexity,
+					CognitiveComplexity:  r.CognitiveComplexity,
+					LinesOfCode:          r.LinesOfCode,
+					Parameters:           r.Parameters,
+					MaxNestingDepth:      r.MaxNestingDepth,
+					Level:                r.Level,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -390,30 +391,24 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		analyzer := analysis.NewIfInitAnalyzer(ws)
-
-		var violations []*analysis.IfInitViolation
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			violations = analyzer.AnalyzePackage(pkg)
-		} else {
-			violations = analyzer.AnalyzeWorkspace()
+		rr, err := analyzers.Run(ws, ifinit.Analyzer, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		items := make([]IfInitViolationItem, len(violations))
-		for i, v := range violations {
-			items[i] = IfInitViolationItem{
-				File:       v.File,
-				Line:       v.Line,
-				Column:     v.Column,
-				Variables:  v.Variables,
-				Expression: v.Expression,
-				Snippet:    v.Snippet,
-				Function:   v.Function,
+		var items []IfInitViolationItem
+		if results, ok := rr.Result.([]*ifinit.Result); ok {
+			items = make([]IfInitViolationItem, len(results))
+			for i, v := range results {
+				items[i] = IfInitViolationItem{
+					File:       v.File,
+					Line:       v.Line,
+					Column:     v.Column,
+					Variables:  v.Variables,
+					Expression: v.Expression,
+					Snippet:    v.Snippet,
+					Function:   v.Function,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -434,14 +429,14 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		fixer := analysis.NewIfInitFixer(ws)
-		plan, err := fixer.Fix(in.Package)
+		rr, err := analyzers.Run(ws, ifinit.Analyzer, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		if len(plan.Changes) == 0 {
+		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		if len(changes) == 0 {
 			state.RUnlock()
 			return textResult(map[string]any{
 				"files_modified": []string{},
@@ -450,6 +445,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			}), nil, nil
 		}
 
+		plan := analyzers.ChangesToPlan(changes)
 		result, err := executePlanWithUnlock(state, plan, "Fix if-init assignments")
 		if err != nil {
 			return errResult(err), nil, nil
@@ -472,29 +468,23 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		analyzer := analysis.NewMissingContextAnalyzer(ws)
-
-		var violations []*analysis.MissingContextViolation
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			violations = analyzer.AnalyzePackage(pkg)
-		} else {
-			violations = analyzer.AnalyzeWorkspace()
+		rr, err := analyzers.Run(ws, missingctx.Analyzer, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		items := make([]MissingContextViolationItem, len(violations))
-		for i, v := range violations {
-			items[i] = MissingContextViolationItem{
-				File:         v.File,
-				Line:         v.Line,
-				Column:       v.Column,
-				FunctionName: v.FunctionName,
-				Signature:    v.Signature,
-				ContextCalls: v.ContextCalls,
+		var items []MissingContextViolationItem
+		if results, ok := rr.Result.([]*missingctx.Result); ok {
+			items = make([]MissingContextViolationItem, len(results))
+			for i, v := range results {
+				items[i] = MissingContextViolationItem{
+					File:         v.File,
+					Line:         v.Line,
+					Column:       v.Column,
+					FunctionName: v.FunctionName,
+					Signature:    v.Signature,
+					ContextCalls: v.ContextCalls,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -519,31 +509,26 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minBranches <= 0 {
 			minBranches = 2
 		}
-		analyzer := analysis.NewBooleanBranchingAnalyzer(ws, minBranches)
-
-		var violations []*analysis.BooleanBranchingViolation
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			violations = analyzer.AnalyzePackage(pkg)
-		} else {
-			violations = analyzer.AnalyzeWorkspace()
+		a := booleanbranch.NewAnalyzer(booleanbranch.WithMinBranches(minBranches))
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		items := make([]BooleanBranchingViolationItem, len(violations))
-		for i, v := range violations {
-			items[i] = BooleanBranchingViolationItem{
-				File:             v.File,
-				Line:             v.Line,
-				Column:           v.Column,
-				Function:         v.Function,
-				SourceVariable:   v.SourceVariable,
-				BooleanVariables: v.BooleanVariables,
-				BranchCount:      v.BranchCount,
-				Suggestion:       v.Suggestion,
+		var items []BooleanBranchingViolationItem
+		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
+			items = make([]BooleanBranchingViolationItem, len(results))
+			for i, v := range results {
+				items[i] = BooleanBranchingViolationItem{
+					File:             v.File,
+					Line:             v.Line,
+					Column:           v.Column,
+					Function:         v.Function,
+					SourceVariable:   v.SourceVariable,
+					BooleanVariables: v.BooleanVariables,
+					BranchCount:      v.BranchCount,
+					Suggestion:       v.Suggestion,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -568,32 +553,36 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minBranches <= 0 {
 			minBranches = 2
 		}
-		fixer := analysis.NewBooleanBranchingFixer(ws, minBranches)
-		plan, fixResults, err := fixer.Fix(in.Package)
+		a := booleanbranch.NewAnalyzer(booleanbranch.WithMinBranches(minBranches))
+		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		if len(plan.Changes) == 0 {
+		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		if len(changes) == 0 {
 			state.RUnlock()
 			return textResult(map[string]any{
-				"files_modified":    []string{},
-				"changes_count":     0,
-				"booleans_removed":  []string{},
-				"switch_cases":      0,
-				"message":           "No boolean branching violations found",
+				"files_modified":   []string{},
+				"changes_count":    0,
+				"booleans_removed": []string{},
+				"switch_cases":     0,
+				"message":          "No boolean branching violations found",
 			}), nil, nil
 		}
 
-		// Collect all booleans removed and total switch cases
+		// Collect fix metadata from results.
 		var allBooleansRemoved []string
 		totalCases := 0
-		for _, r := range fixResults {
-			allBooleansRemoved = append(allBooleansRemoved, r.BooleansRemoved...)
-			totalCases += r.SwitchCases
+		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
+			for _, r := range results {
+				allBooleansRemoved = append(allBooleansRemoved, r.BooleanVariables...)
+				totalCases += r.BranchCount
+			}
 		}
 
+		plan := analyzers.ChangesToPlan(changes)
 		result, err := executePlanWithUnlock(state, plan, "Fix boolean branching")
 		if err != nil {
 			return errResult(err), nil, nil
@@ -626,32 +615,30 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minElseLines <= 0 {
 			minElseLines = 3
 		}
-		analyzer := analysis.NewDeepIfElseAnalyzer(ws, maxNesting, minElseLines)
-
-		var violations []*analysis.DeepIfElseViolation
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			violations = analyzer.AnalyzePackage(pkg)
-		} else {
-			violations = analyzer.AnalyzeWorkspace()
+		a := deepifelse.NewAnalyzer(
+			deepifelse.WithMaxNesting(maxNesting),
+			deepifelse.WithMinElseLines(minElseLines),
+		)
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		items := make([]DeepIfElseViolationItem, len(violations))
-		for i, v := range violations {
-			items[i] = DeepIfElseViolationItem{
-				File:                       v.File,
-				Line:                       v.Line,
-				Column:                     v.Column,
-				Function:                   v.Function,
-				NestingDepth:               v.NestingDepth,
-				HappyPathDepth:             v.HappyPathDepth,
-				ErrorBranches:              v.ErrorBranches,
-				ComplexityReductionPercent: v.ComplexityReductionPercent,
-				Suggestion:                 v.Suggestion,
+		var items []DeepIfElseViolationItem
+		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+			items = make([]DeepIfElseViolationItem, len(results))
+			for i, v := range results {
+				items[i] = DeepIfElseViolationItem{
+					File:                       v.File,
+					Line:                       v.Line,
+					Column:                     v.Column,
+					Function:                   v.Function,
+					NestingDepth:               v.NestingDepth,
+					HappyPathDepth:             v.HappyPathDepth,
+					ErrorBranches:              v.ErrorBranches,
+					ComplexityReductionPercent: v.ComplexityReductionPercent,
+					Suggestion:                 v.Suggestion,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -680,31 +667,38 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minElseLines <= 0 {
 			minElseLines = 3
 		}
-		fixer := analysis.NewDeepIfElseFixer(ws, maxNesting, minElseLines)
-		plan, fixResults, err := fixer.Fix(in.Package)
+		a := deepifelse.NewAnalyzer(
+			deepifelse.WithMaxNesting(maxNesting),
+			deepifelse.WithMinElseLines(minElseLines),
+		)
+		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		if len(plan.Changes) == 0 {
+		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		if len(changes) == 0 {
 			state.RUnlock()
 			return textResult(map[string]any{
-				"files_modified":    []string{},
-				"changes_count":     0,
-				"functions_fixed":   []string{},
-				"early_returns":     0,
-				"message":           "No deep if-else chain violations found",
+				"files_modified":  []string{},
+				"changes_count":   0,
+				"functions_fixed": []string{},
+				"early_returns":   0,
+				"message":         "No deep if-else chain violations found",
 			}), nil, nil
 		}
 
 		var functionsFixed []string
 		totalEarlyReturns := 0
-		for _, r := range fixResults {
-			functionsFixed = append(functionsFixed, r.Function)
-			totalEarlyReturns += r.EarlyReturnsAdded
+		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+			for _, r := range results {
+				functionsFixed = append(functionsFixed, r.Function)
+				totalEarlyReturns += r.NestingDepth // approximate early returns from depth
+			}
 		}
 
+		plan := analyzers.ChangesToPlan(changes)
 		result, err := executePlanWithUnlock(state, plan, "Fix deep if-else chains")
 		if err != nil {
 			return errResult(err), nil, nil
@@ -729,35 +723,30 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		severity := analysis.ErrorWrappingSeverity(in.SeverityLevel)
-		if severity == "" {
-			severity = analysis.SeverityCritical
+		sev := errorwrap.Severity(in.SeverityLevel)
+		if sev == "" {
+			sev = errorwrap.SeverityCritical
 		}
-		analyzer := analysis.NewErrorWrappingAnalyzer(ws, severity)
-
-		var violations []*analysis.ErrorWrappingViolation
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			violations = analyzer.AnalyzePackage(pkg)
-		} else {
-			violations = analyzer.AnalyzeWorkspace()
+		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev))
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		items := make([]ErrorWrappingViolationItem, len(violations))
-		for i, v := range violations {
-			items[i] = ErrorWrappingViolationItem{
-				File:              v.File,
-				Line:              v.Line,
-				Column:            v.Column,
-				Function:          v.Function,
-				ViolationType:     string(v.ViolationType),
-				CurrentCode:       v.CurrentCode,
-				ContextSuggestion: v.ContextSuggestion,
-				Severity:          string(v.Severity),
+		var items []ErrorWrappingViolationItem
+		if results, ok := rr.Result.([]*errorwrap.Result); ok {
+			items = make([]ErrorWrappingViolationItem, len(results))
+			for i, v := range results {
+				items[i] = ErrorWrappingViolationItem{
+					File:              v.File,
+					Line:              v.Line,
+					Column:            v.Column,
+					Function:          v.Function,
+					ViolationType:     v.ViolationType,
+					CurrentCode:       v.CurrentCode,
+					ContextSuggestion: v.ContextSuggestion,
+					Severity:          v.Severity,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -778,29 +767,48 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		severity := analysis.ErrorWrappingSeverity(in.SeverityLevel)
-		if severity == "" {
-			severity = analysis.SeverityCritical
+		sev := errorwrap.Severity(in.SeverityLevel)
+		if sev == "" {
+			sev = errorwrap.SeverityCritical
 		}
-		fixer := analysis.NewErrorWrappingFixer(ws, severity)
-		plan, fixResult, err := fixer.Fix(in.Package)
+		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev))
+		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		if len(plan.Changes) == 0 {
+		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		if len(changes) == 0 {
 			state.RUnlock()
 			return textResult(map[string]any{
-				"files_modified":   []string{},
-				"changes_count":    0,
-				"errors_wrapped":   0,
+				"files_modified":     []string{},
+				"changes_count":      0,
+				"errors_wrapped":     0,
 				"format_verbs_fixed": 0,
-				"contexts_added":   0,
-				"message":          "No error wrapping violations found",
+				"contexts_added":     0,
+				"message":            "No error wrapping violations found",
 			}), nil, nil
 		}
 
+		// Count fix types from results.
+		errorsWrapped := 0
+		formatVerbsFixed := 0
+		contextsAdded := 0
+		if results, ok := rr.Result.([]*errorwrap.Result); ok {
+			for _, r := range results {
+				switch r.ViolationType {
+				case errorwrap.BareReturn:
+					errorsWrapped++
+				case errorwrap.FormatVerbV:
+					formatVerbsFixed++
+				case errorwrap.NoContext:
+					contextsAdded++
+				}
+			}
+		}
+
+		plan := analyzers.ChangesToPlan(changes)
 		result, err := executePlanWithUnlock(state, plan, "Fix error wrapping")
 		if err != nil {
 			return errResult(err), nil, nil
@@ -808,9 +816,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		return textResult(map[string]any{
 			"files_modified":     result.ModifiedFiles,
 			"changes_count":      result.ChangeCount,
-			"errors_wrapped":     fixResult.ErrorsWrapped,
-			"format_verbs_fixed": fixResult.FormatVerbsFixed,
-			"contexts_added":     fixResult.ContextsAdded,
+			"errors_wrapped":     errorsWrapped,
+			"format_verbs_fixed": formatVerbsFixed,
+			"contexts_added":     contextsAdded,
 		}), nil, nil
 	})
 
@@ -830,33 +838,28 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if maxDepth <= 0 {
 			maxDepth = 1
 		}
-		analyzer := analysis.NewEnvBooleanAnalyzer(ws, maxDepth)
-
-		var violations []*analysis.EnvBooleanViolation
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			pkg, ok := ws.Packages[resolved]
-			if !ok {
-				return errResult(fmt.Errorf("package not found: %s", in.Package)), nil, nil
-			}
-			violations = analyzer.AnalyzePackage(pkg)
-		} else {
-			violations = analyzer.AnalyzeWorkspace()
+		a := envbool.NewAnalyzer(envbool.WithMaxDepth(maxDepth))
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		items := make([]EnvBooleanViolationItem, len(violations))
-		for i, v := range violations {
-			items[i] = EnvBooleanViolationItem{
-				File:             v.File,
-				Line:             v.Line,
-				Column:           v.Column,
-				Function:         v.Function,
-				ParameterName:    v.ParameterName,
-				ParameterType:    v.ParameterType,
-				PropagationDepth: v.PropagationDepth,
-				CallChain:        v.CallChain,
-				SuggestedPattern: v.SuggestedPattern,
-				Suggestion:       v.Suggestion,
+		var items []EnvBooleanViolationItem
+		if results, ok := rr.Result.([]*envbool.Result); ok {
+			items = make([]EnvBooleanViolationItem, len(results))
+			for i, v := range results {
+				items[i] = EnvBooleanViolationItem{
+					File:             v.File,
+					Line:             v.Line,
+					Column:           v.Column,
+					Function:         v.Function,
+					ParameterName:    v.ParameterName,
+					ParameterType:    v.ParameterType,
+					PropagationDepth: v.PropagationDepth,
+					CallChain:        v.CallChain,
+					SuggestedPattern: v.SuggestedPattern,
+					Suggestion:       v.Suggestion,
+				}
 			}
 		}
 		return textResult(map[string]any{
@@ -892,4 +895,3 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}), nil, nil
 	})
 }
-
