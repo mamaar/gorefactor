@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	gotypes "go/types"
 	"log/slog"
 	"path/filepath"
 	"runtime"
@@ -12,14 +13,8 @@ import (
 	"unicode"
 
 	"github.com/mamaar/gorefactor/pkg/types"
+	"golang.org/x/tools/go/ast/inspector"
 )
-
-// methodCallInfo represents information about a method call pattern (receiver.Method)
-type methodCallInfo struct {
-	isMethodCall bool      // true if this is part of a method call
-	receiverName string    // receiver identifier name
-	receiverPos  token.Pos // position of receiver identifier
-}
 
 // indexEntry represents a single identifier occurrence found during index building.
 type indexEntry struct {
@@ -29,10 +24,13 @@ type indexEntry struct {
 	IsSelector    bool   // true if this ident is the Sel part of a SelectorExpr (e.g., pkg.Ident)
 	PkgAlias      string // the "pkg" part if IsSelector is true
 
-	// NEW: Method call detection fields
+	// Method call detection fields
 	IsMethodCall bool      // true if part of receiver.Method() pattern
 	ReceiverName string    // receiver identifier name (e.g., "repo")
 	ReceiverPos  token.Pos // position of receiver identifier
+
+	// Type-checked object identity (nil when type info is unavailable)
+	TypesObject gotypes.Object
 }
 
 // ReferenceIndex maps identifier names to all their occurrences across the workspace.
@@ -181,7 +179,12 @@ func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 		go func(local map[string][]indexEntry) {
 			defer wg.Done()
 			for i := range ch {
-				sr.indexFileLocal(files[i], local)
+				f := files[i]
+				if f.Package != nil && f.Package.TypesInfo != nil {
+					sr.indexFileTyped(f, local, f.Package.TypesInfo)
+				} else {
+					sr.indexFileLocal(f, local)
+				}
 			}
 		}(localIndexes[w])
 	}
@@ -199,11 +202,10 @@ func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 	return idx
 }
 
-// indexFileLocal performs a single AST walk over a file, collecting declarations,
-// selectors, and identifiers in one pass, writing results to a local map.
-// Since ast.Inspect visits parents before children, FuncDecl/GenDecl/SelectorExpr
-// nodes are visited before their child Ident nodes, so declPositions and selectorMap
-// are populated before the Ident case reads them.
+// indexFileLocal performs a single AST walk over a file using the cursor-based
+// inspector API, collecting declarations, selectors, method calls, and identifiers
+// in one pass. The cursor's Parent() method replaces the need for a pre-built
+// methodCallMap, enabling a true single-pass traversal.
 func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string][]indexEntry) {
 	if file.AST == nil {
 		return
@@ -211,68 +213,127 @@ func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string]
 
 	declPositions := make(map[token.Pos]bool)
 	selectorMap := make(map[token.Pos]string)
-	methodCallMap := make(map[token.Pos]methodCallInfo) // NEW: track method calls
 
-	// NEW: First pass to identify method calls
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if callExpr, ok := n.(*ast.CallExpr); ok {
-			// Check if this CallExpr's Fun is a SelectorExpr (method call pattern)
-			if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
-				if receiverIdent, ok := selExpr.X.(*ast.Ident); ok {
-					// This is a method call: receiver.Method(args)
-					methodCallMap[selExpr.Sel.Pos()] = methodCallInfo{
-						isMethodCall: true,
-						receiverName: receiverIdent.Name,
-						receiverPos:  receiverIdent.Pos(),
+	ins := inspector.New([]*ast.File{file.AST})
+	ins.Root().Inspect(
+		[]ast.Node{(*ast.FuncDecl)(nil), (*ast.GenDecl)(nil), (*ast.SelectorExpr)(nil), (*ast.Ident)(nil)},
+		func(cur inspector.Cursor) bool {
+			switch node := cur.Node().(type) {
+			case *ast.FuncDecl:
+				if node.Name != nil {
+					declPositions[node.Name.Pos()] = true
+				}
+			case *ast.GenDecl:
+				for _, spec := range node.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						declPositions[s.Name.Pos()] = true
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							declPositions[name.Pos()] = true
+						}
 					}
 				}
-			}
-		}
-		return true
-	})
-
-	// Second pass: regular indexing with method call information
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.FuncDecl:
-			if node.Name != nil {
-				declPositions[node.Name.Pos()] = true
-			}
-		case *ast.GenDecl:
-			for _, spec := range node.Specs {
-				switch s := spec.(type) {
-				case *ast.TypeSpec:
-					declPositions[s.Name.Pos()] = true
-				case *ast.ValueSpec:
-					for _, name := range s.Names {
-						declPositions[name.Pos()] = true
+			case *ast.SelectorExpr:
+				if pkgIdent, ok := node.X.(*ast.Ident); ok {
+					selectorMap[node.Sel.Pos()] = pkgIdent.Name
+				}
+			case *ast.Ident:
+				entry := indexEntry{
+					File:          file,
+					Pos:           node.Pos(),
+					IsDeclaration: declPositions[node.Pos()],
+				}
+				if alias, found := selectorMap[node.Pos()]; found {
+					entry.IsSelector = true
+					entry.PkgAlias = alias
+				}
+				// Use cursor parent chain to detect method calls without a pre-pass.
+				// Pattern: CallExpr -> SelectorExpr -> Ident (the .Sel)
+				parentCur := cur.Parent()
+				if parentCur.Node() != nil {
+					if selExpr, ok := parentCur.Node().(*ast.SelectorExpr); ok && selExpr.Sel == node {
+						// This ident is the Sel of a SelectorExpr — check if grandparent is a CallExpr
+						grandparent := parentCur.Parent()
+						if grandparent.Node() != nil {
+							if _, isCall := grandparent.Node().(*ast.CallExpr); isCall {
+								if receiverIdent, ok := selExpr.X.(*ast.Ident); ok {
+									entry.IsMethodCall = true
+									entry.ReceiverName = receiverIdent.Name
+									entry.ReceiverPos = receiverIdent.Pos()
+								}
+							}
+						}
 					}
 				}
+				nameIndex[node.Name] = append(nameIndex[node.Name], entry)
 			}
-		case *ast.SelectorExpr:
-			if pkgIdent, ok := node.X.(*ast.Ident); ok {
-				selectorMap[node.Sel.Pos()] = pkgIdent.Name
-			}
-		case *ast.Ident:
-			entry := indexEntry{
-				File:          file,
-				Pos:           node.Pos(),
-				IsDeclaration: declPositions[node.Pos()],
-			}
-			if alias, found := selectorMap[node.Pos()]; found {
-				entry.IsSelector = true
-				entry.PkgAlias = alias
-			}
-			// NEW: Check for method call information
-			if methodInfo, found := methodCallMap[node.Pos()]; found {
-				entry.IsMethodCall = methodInfo.isMethodCall
-				entry.ReceiverName = methodInfo.receiverName
-				entry.ReceiverPos = methodInfo.receiverPos
-			}
-			nameIndex[node.Name] = append(nameIndex[node.Name], entry)
+			return true
+		},
+	)
+}
+
+// indexFileTyped builds index entries using go/types information directly.
+// Instead of walking the AST, it iterates the TypesInfo.Defs and Uses maps,
+// which provide *ast.Ident → types.Object pairs. This eliminates AST walking
+// for type-checked packages and populates TypesObject for pointer-equality matching.
+func (sr *SymbolResolver) indexFileTyped(file *types.File, nameIndex map[string][]indexEntry, info *gotypes.Info) {
+	if file.AST == nil || info == nil {
+		return
+	}
+
+	// Process definitions (Defs maps defining identifiers to their objects)
+	for ident, obj := range info.Defs {
+		if obj == nil {
+			continue
 		}
-		return true
-	})
+		// Only include idents that belong to this file
+		if sr.workspace.FileSet.File(ident.Pos()) != sr.workspace.FileSet.File(file.AST.Pos()) {
+			continue
+		}
+		entry := indexEntry{
+			File:          file,
+			Pos:           ident.Pos(),
+			IsDeclaration: true,
+			TypesObject:   obj,
+		}
+		nameIndex[ident.Name] = append(nameIndex[ident.Name], entry)
+	}
+
+	// Process uses (Uses maps using identifiers to their objects)
+	for ident, obj := range info.Uses {
+		if obj == nil {
+			continue
+		}
+		if sr.workspace.FileSet.File(ident.Pos()) != sr.workspace.FileSet.File(file.AST.Pos()) {
+			continue
+		}
+		entry := indexEntry{
+			File:        file,
+			Pos:         ident.Pos(),
+			TypesObject: obj,
+		}
+		// Determine if this is a selector (qualified reference)
+		// Walk file AST to find if this ident is the Sel of a SelectorExpr
+		ast.Inspect(file.AST, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if sel.Sel.Pos() == ident.Pos() {
+				if pkgIdent, ok := sel.X.(*ast.Ident); ok {
+					entry.IsSelector = true
+					entry.PkgAlias = pkgIdent.Name
+					// Check for method call pattern
+					// We'd need parent context, but for typed index we rely on TypesObject
+				}
+				return false
+			}
+			return true
+		})
+
+		nameIndex[ident.Name] = append(nameIndex[ident.Name], entry)
+	}
 }
 
 // FindReferencesIndexed finds references to a symbol using the pre-built index.
@@ -289,6 +350,9 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 	if !ok {
 		return nil, nil
 	}
+
+	// Resolve the target symbol's types.Object for pointer-equality matching.
+	targetObj := sr.resolveTypesObject(symbol)
 
 	var references []*types.Reference
 	skippedReasons := make(map[string]int) // DEBUG: track why entries are skipped
@@ -331,16 +395,24 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 			}
 		}
 
-		// Check package matching and method calls
-		if entry.IsSelector {
-			// NEW: Method call path (receiver.Method) — check if method belongs to receiver's type
+		// Fast path: when both entry and target have types.Object, use pointer equality.
+		// This eliminates false positives from name shadowing across packages.
+		if targetObj != nil && entry.TypesObject != nil {
+			if entry.TypesObject != targetObj {
+				skippedReasons["types_object_mismatch"]++
+				continue
+			}
+			// Object identity confirmed — skip string-based checks
+		} else if entry.IsSelector {
+			// Fallback: string-based matching
+			// Method call path (receiver.Method) — check if method belongs to receiver's type
 			if entry.IsMethodCall && symbol.Kind == types.MethodSymbol {
 				if !sr.isMethodCallMatch(entry, symbol) {
 					skippedReasons["method_call_no_match"]++
 					continue
 				}
 			} else {
-				// Existing: Qualified reference (pkg.Symbol) — check if the alias refers to the symbol's package
+				// Qualified reference (pkg.Symbol) — check if the alias refers to the symbol's package
 				if !sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package) {
 					skippedReasons["import_alias_mismatch"]++
 					continue
@@ -387,6 +459,8 @@ func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *
 		return false
 	}
 
+	targetObj := sr.resolveTypesObject(symbol)
+
 	for i := range entries {
 		entry := &entries[i]
 
@@ -397,14 +471,20 @@ func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *
 			continue
 		}
 
+		// Fast path: type-identity comparison
+		if targetObj != nil && entry.TypesObject != nil {
+			if entry.TypesObject != targetObj {
+				continue
+			}
+			return true
+		}
+
 		if entry.IsSelector {
-			// NEW: Method call path
 			if entry.IsMethodCall && symbol.Kind == types.MethodSymbol {
 				if !sr.isMethodCallMatch(entry, symbol) {
 					continue
 				}
 			} else {
-				// Existing: Qualified reference
 				if !sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package) {
 					continue
 				}
@@ -1668,4 +1748,29 @@ func (sr *SymbolResolver) methodBelongsToType(methodSym *types.Symbol, typeSym *
 		"type_kind", typeSym.Kind)
 
 	return false
+}
+
+// resolveTypesObject resolves a Symbol to its go/types.Object by looking up
+// the identifier at the symbol's position in the TypesInfo of its package.
+// Returns nil if type info is unavailable.
+func (sr *SymbolResolver) resolveTypesObject(symbol *types.Symbol) gotypes.Object {
+	// Find the package containing the symbol
+	pkg := sr.workspace.Packages[symbol.Package]
+	if pkg == nil {
+		if fsPath, ok := sr.workspace.ImportToPath[symbol.Package]; ok {
+			pkg = sr.workspace.Packages[fsPath]
+		}
+	}
+	if pkg == nil || pkg.TypesInfo == nil {
+		return nil
+	}
+
+	// Search Defs for declarations at the symbol's position
+	for ident, obj := range pkg.TypesInfo.Defs {
+		if ident.Pos() == symbol.Position && obj != nil {
+			return obj
+		}
+	}
+
+	return nil
 }

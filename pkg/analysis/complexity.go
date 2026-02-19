@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
+	"golang.org/x/tools/go/ast/inspector"
 )
 
 // ComplexityMetrics holds complexity analysis results
@@ -86,18 +87,16 @@ func (ca *ComplexityAnalyzer) AnalyzePackage(pkg *types.Package) ([]*ComplexityR
 func (ca *ComplexityAnalyzer) AnalyzeFile(file *types.File) ([]*ComplexityResult, error) {
 	var results []*ComplexityResult
 
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			if funcDecl.Body != nil { // Skip function declarations without body
-				result := ca.AnalyzeFunction(funcDecl, file)
-				// Only include functions above complexity threshold
-				if result.Metrics.CyclomaticComplexity >= ca.minComplexity {
-					results = append(results, result)
-				}
+	ins := inspector.New([]*ast.File{file.AST})
+	for cur := range ins.Root().Preorder((*ast.FuncDecl)(nil)) {
+		funcDecl := cur.Node().(*ast.FuncDecl)
+		if funcDecl.Body != nil {
+			result := ca.AnalyzeFunction(funcDecl, file)
+			if result.Metrics.CyclomaticComplexity >= ca.minComplexity {
+				results = append(results, result)
 			}
 		}
-		return true
-	})
+	}
 
 	return results, nil
 }
@@ -163,101 +162,156 @@ func (ca *ComplexityAnalyzer) calculateMetrics(funcDecl *ast.FuncDecl) *Complexi
 	return metrics
 }
 
-// analyzeBlockComplexity recursively analyzes complexity within a block
+// analyzeBlockComplexity recursively analyzes complexity within a block,
+// properly tracking nesting depth by recursing into scope-introducing nodes
+// with an incremented depth.
 func (ca *ComplexityAnalyzer) analyzeBlockComplexity(node ast.Node, metrics *ComplexityMetrics, nestingLevel int) {
 	if nestingLevel > metrics.MaxNestingDepth {
 		metrics.MaxNestingDepth = nestingLevel
 	}
 
-	ast.Inspect(node, func(n ast.Node) bool {
-		if n == nil {
-			return false
+	ca.walkWithDepth(node, metrics, nestingLevel)
+}
+
+// walkWithDepth walks the AST rooted at node, tracking nesting depth explicitly.
+// Scope-introducing nodes (if, for, range, switch, typeswitch, select) recurse
+// into their children with depth+1.
+func (ca *ComplexityAnalyzer) walkWithDepth(node ast.Node, metrics *ComplexityMetrics, depth int) {
+	if node == nil {
+		return
+	}
+
+	switch stmt := node.(type) {
+	case *ast.IfStmt:
+		metrics.CyclomaticComplexity++
+		metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+		if stmt.Else != nil {
+			if _, ok := stmt.Else.(*ast.IfStmt); !ok {
+				metrics.CyclomaticComplexity++
+			}
+		}
+		// Recurse into init, cond (expression children are handled by default walk),
+		// body and else at depth+1
+		if stmt.Init != nil {
+			ca.walkWithDepth(stmt.Init, metrics, depth+1)
+		}
+		ca.walkWithDepth(stmt.Body, metrics, depth+1)
+		if stmt.Else != nil {
+			// "else if" stays at same depth, plain "else" at depth+1
+			if _, ok := stmt.Else.(*ast.IfStmt); ok {
+				ca.walkWithDepth(stmt.Else, metrics, depth)
+			} else {
+				ca.walkWithDepth(stmt.Else, metrics, depth+1)
+			}
 		}
 
-		switch stmt := n.(type) {
-		case *ast.IfStmt:
-			metrics.CyclomaticComplexity++
-			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
-			if stmt.Else != nil {
-				// Don't count "else if" as separate complexity
-				if _, ok := stmt.Else.(*ast.IfStmt); !ok {
-					metrics.CyclomaticComplexity++
-				}
-			}
+	case *ast.ForStmt:
+		metrics.CyclomaticComplexity++
+		metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+		ca.walkWithDepth(stmt.Body, metrics, depth+1)
 
-		case *ast.ForStmt, *ast.RangeStmt:
-			metrics.CyclomaticComplexity++
-			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
+	case *ast.RangeStmt:
+		metrics.CyclomaticComplexity++
+		metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+		ca.walkWithDepth(stmt.Body, metrics, depth+1)
 
-		case *ast.SwitchStmt, *ast.TypeSwitchStmt:
-			// Each case adds to complexity
-			if switchStmt, ok := stmt.(*ast.SwitchStmt); ok && switchStmt.Body != nil {
-				caseCount := ca.countSwitchCases(switchStmt.Body)
-				metrics.CyclomaticComplexity += caseCount
-				metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
-			}
-			if typeSwitchStmt, ok := stmt.(*ast.TypeSwitchStmt); ok && typeSwitchStmt.Body != nil {
-				caseCount := ca.countSwitchCases(typeSwitchStmt.Body)
-				metrics.CyclomaticComplexity += caseCount
-				metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
-			}
-
-		case *ast.SelectStmt:
-			if stmt.Body != nil {
-				caseCount := ca.countSelectCases(stmt.Body)
-				metrics.CyclomaticComplexity += caseCount
-				metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
-			}
-
-		case *ast.CaseClause, *ast.CommClause:
-			// Individual cases are handled in switch/select analysis above
-			return false
-
-		case *ast.FuncLit:
-			// Anonymous functions add cognitive complexity
-			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
-			return false // Don't recurse into anonymous functions
-
-		case *ast.GoStmt, *ast.DeferStmt:
-			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(nestingLevel)
-
-		case *ast.BlockStmt:
-			// Count nested blocks
-			if nestingLevel > 0 {
-				metrics.NestedBlocks++
-			}
-
-		case *ast.AssignStmt:
-			// Count local variable declarations
-			if stmt.Tok == token.DEFINE {
-				for _, expr := range stmt.Lhs {
-					if ident, ok := expr.(*ast.Ident); ok && ident.Name != "_" {
-						metrics.LocalVariables++
-					}
-				}
-			}
-
-		case *ast.GenDecl:
-			// Count local variable declarations in var blocks
-			if stmt.Tok == token.VAR {
-				for _, spec := range stmt.Specs {
-					if valueSpec, ok := spec.(*ast.ValueSpec); ok {
-						metrics.LocalVariables += len(valueSpec.Names)
+	case *ast.SwitchStmt:
+		if stmt.Body != nil {
+			caseCount := ca.countSwitchCases(stmt.Body)
+			metrics.CyclomaticComplexity += caseCount
+			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+			// Walk case clauses at depth+1
+			for _, s := range stmt.Body.List {
+				if cc, ok := s.(*ast.CaseClause); ok {
+					for _, child := range cc.Body {
+						ca.walkWithDepth(child, metrics, depth+1)
 					}
 				}
 			}
 		}
 
-		// Continue recursion for nested structures with increased nesting level
-		switch n.(type) {
-		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt,
-			*ast.TypeSwitchStmt, *ast.SelectStmt, *ast.BlockStmt:
-			// These increase nesting level for their children
-			return true
-		default:
-			return true
+	case *ast.TypeSwitchStmt:
+		if stmt.Body != nil {
+			caseCount := ca.countSwitchCases(stmt.Body)
+			metrics.CyclomaticComplexity += caseCount
+			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+			for _, s := range stmt.Body.List {
+				if cc, ok := s.(*ast.CaseClause); ok {
+					for _, child := range cc.Body {
+						ca.walkWithDepth(child, metrics, depth+1)
+					}
+				}
+			}
 		}
-	})
+
+	case *ast.SelectStmt:
+		if stmt.Body != nil {
+			caseCount := ca.countSelectCases(stmt.Body)
+			metrics.CyclomaticComplexity += caseCount
+			metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+			for _, s := range stmt.Body.List {
+				if cc, ok := s.(*ast.CommClause); ok {
+					for _, child := range cc.Body {
+						ca.walkWithDepth(child, metrics, depth+1)
+					}
+				}
+			}
+		}
+
+	case *ast.FuncLit:
+		metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+		// Don't recurse into anonymous functions
+
+	case *ast.GoStmt:
+		metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+		// Walk the call expression but not as a deeper nesting scope
+		ca.walkWithDepth(stmt.Call, metrics, depth)
+
+	case *ast.DeferStmt:
+		metrics.CognitiveComplexity += ca.calculateCognitiveWeight(depth)
+		ca.walkWithDepth(stmt.Call, metrics, depth)
+
+	case *ast.BlockStmt:
+		if depth > 0 {
+			metrics.NestedBlocks++
+		}
+		if depth > metrics.MaxNestingDepth {
+			metrics.MaxNestingDepth = depth
+		}
+		for _, child := range stmt.List {
+			ca.walkWithDepth(child, metrics, depth)
+		}
+
+	case *ast.AssignStmt:
+		if stmt.Tok == token.DEFINE {
+			for _, expr := range stmt.Lhs {
+				if ident, ok := expr.(*ast.Ident); ok && ident.Name != "_" {
+					metrics.LocalVariables++
+				}
+			}
+		}
+
+	case *ast.DeclStmt:
+		ca.walkWithDepth(stmt.Decl, metrics, depth)
+
+	case *ast.GenDecl:
+		if stmt.Tok == token.VAR {
+			for _, spec := range stmt.Specs {
+				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+					metrics.LocalVariables += len(valueSpec.Names)
+				}
+			}
+		}
+
+	case *ast.ExprStmt:
+		ca.walkWithDepth(stmt.X, metrics, depth)
+
+	case *ast.ReturnStmt:
+		// nothing special
+
+	case *ast.LabeledStmt:
+		ca.walkWithDepth(stmt.Stmt, metrics, depth)
+	}
 }
 
 // calculateCognitiveWeight calculates cognitive complexity weight based on nesting

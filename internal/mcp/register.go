@@ -17,4 +17,5 @@ func RegisterAllTools(s *mcpsdk.Server, state *MCPServer) {
 	registerChangeSignatureTools(s, state)
 	registerContextTools(s, state)
 	registerDeleteTools(s, state)
+	registerFixTools(s, state)
 }
