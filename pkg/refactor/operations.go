@@ -472,18 +472,6 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	// Check that new package name doesn't conflict with existing packages
-	if op.Request.UpdateImports {
-		for _, pkg := range ws.Packages {
-			if pkg.Name == op.Request.NewPackageName && pkg.Path != op.Request.PackagePath {
-				return &types.RefactorError{
-					Type:    types.NameConflict,
-					Message: fmt.Sprintf("package name conflict: %s already exists in %s", op.Request.NewPackageName, pkg.Path),
-				}
-			}
-		}
-	}
-
 	return nil
 }
 
@@ -1684,13 +1672,13 @@ func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, pac
 		}
 
 		for _, file := range pkg.Files {
-			hasImport, change, err := op.generateFileImportUpdate(file, importPath, newPackageName)
+			hasImport, fileChanges, err := op.generateFileImportUpdate(file, importPath, newPackageName)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to update imports in %s: %v", file.Path, err)
 			}
 
-			if hasImport && change != nil {
-				changes = append(changes, *change)
+			if hasImport && len(fileChanges) > 0 {
+				changes = append(changes, fileChanges...)
 				affectedFiles = append(affectedFiles, file.Path)
 			}
 		}
@@ -1699,7 +1687,7 @@ func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, pac
 	return changes, affectedFiles, nil
 }
 
-func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, importPath, newPackageName string) (bool, *types.Change, error) {
+func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, importPath, newPackageName string) (bool, []types.Change, error) {
 	content := string(file.OriginalContent)
 
 	// Check if this file imports the target package
@@ -1745,9 +1733,8 @@ func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, imp
 		}
 	}
 
-	// For simplicity, return the first change if any
 	if len(changes) > 0 {
-		return true, &changes[0], nil
+		return true, changes, nil
 	}
 
 	return true, nil, nil

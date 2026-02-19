@@ -4,11 +4,72 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
+
+// parseOperationString parses a JSON operation string into a types.Operation.
+// The JSON object must contain a "type" field to identify the operation kind.
+func parseOperationString(opStr string) (types.Operation, error) {
+	var raw map[string]string
+	if err := json.Unmarshal([]byte(opStr), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse operation JSON: %w", err)
+	}
+
+	opType, ok := raw["type"]
+	if !ok {
+		return nil, fmt.Errorf("operation JSON missing 'type' field")
+	}
+
+	switch opType {
+	case "rename_symbol":
+		return &RenameSymbolOperation{
+			Request: types.RenameSymbolRequest{
+				SymbolName: raw["symbol"],
+				NewName:    raw["new_name"],
+				Package:    raw["package"],
+			},
+		}, nil
+	case "move_symbol":
+		return &MoveSymbolOperation{
+			Request: types.MoveSymbolRequest{
+				SymbolName:  raw["symbol"],
+				FromPackage: raw["from_package"],
+				ToPackage:   raw["to_package"],
+			},
+		}, nil
+	case "rename_package":
+		return &RenamePackageOperation{
+			Request: types.RenamePackageRequest{
+				OldPackageName: raw["old_name"],
+				NewPackageName: raw["new_name"],
+				PackagePath:    raw["package_path"],
+				UpdateImports:  true,
+			},
+		}, nil
+	case "move_package":
+		return &MovePackageOperation{
+			Request: types.MovePackageRequest{
+				SourcePackage: raw["source"],
+				TargetPackage: raw["target"],
+				UpdateImports: true,
+			},
+		}, nil
+	case "rename_method":
+		return &RenameInterfaceMethodOperation{
+			Request: types.RenameInterfaceMethodRequest{
+				InterfaceName:         raw["type_name"],
+				MethodName:            raw["method_name"],
+				NewMethodName:         raw["new_method_name"],
+				PackagePath:           raw["package_path"],
+				UpdateImplementations: true,
+			},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unknown operation type: %s", opType)
+	}
+}
 
 // BatchOperationOperation implements executing multiple operations atomically
 type BatchOperationOperation struct {
@@ -31,6 +92,16 @@ func (op *BatchOperationOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *BatchOperationOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	// Parse all operation strings first so we fail fast on bad input.
+	operations := make([]types.Operation, 0, len(op.Request.Operations))
+	for i, opStr := range op.Request.Operations {
+		parsed, err := parseOperationString(opStr)
+		if err != nil {
+			return nil, fmt.Errorf("operation %d: %w", i+1, err)
+		}
+		operations = append(operations, parsed)
+	}
+
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -39,46 +110,38 @@ func (op *BatchOperationOperation) Execute(ws *types.Workspace) (*types.Refactor
 	}
 
 	if op.Request.DryRun {
-		// Just create a plan preview
-		for i, operation := range op.Request.Operations {
+		// Validate each and return descriptions only.
+		for i, parsed := range operations {
+			if err := parsed.Validate(ws); err != nil {
+				return nil, fmt.Errorf("operation %d validation failed: %w", i+1, err)
+			}
 			plan.Changes = append(plan.Changes, types.Change{
-				File:        fmt.Sprintf("batch_operation_%d.md", i+1),
-				Start:       0,
-				End:         0,
-				OldText:     "",
-				NewText:     fmt.Sprintf("# Batch Operation %d\n\nCommand: %s\n\nThis operation would be executed atomically as part of a batch.\n", i+1, operation),
-				Description: fmt.Sprintf("Batch operation %d: %s", i+1, operation),
+				Description: fmt.Sprintf("Step %d: %s", i+1, parsed.Description()),
 			})
-			plan.AffectedFiles = append(plan.AffectedFiles, fmt.Sprintf("batch_operation_%d.md", i+1))
 		}
-	} else {
-		// Execute all operations
-		// This is a placeholder - in reality, this would parse each operation string,
-		// create the appropriate operation objects, and execute them
-		
-		// Create a batch execution log
-		logFile := filepath.Join(ws.RootPath, "batch_execution.log")
-		logContent := fmt.Sprintf("Batch Execution Log\n===================\n\nStart Time: %s\n\nOperations:\n", time.Now().Format(time.RFC3339))
-		
-		for i, operation := range op.Request.Operations {
-			logContent += fmt.Sprintf("%d. %s\n", i+1, operation)
+		return plan, nil
+	}
+
+	// Execute each operation sequentially, collecting all changes.
+	fileSet := make(map[string]bool)
+	for i, parsed := range operations {
+		if err := parsed.Validate(ws); err != nil {
+			return nil, fmt.Errorf("operation %d validation failed: %w", i+1, err)
 		}
-		
-		logContent += fmt.Sprintf("\nStatus: %s\n", "Ready for execution")
-		if op.Request.RollbackOnFailure {
-			logContent += "Rollback: Enabled\n"
+		result, err := parsed.Execute(ws)
+		if err != nil {
+			if op.Request.RollbackOnFailure {
+				return nil, fmt.Errorf("operation %d failed (no changes applied): %w", i+1, err)
+			}
+			return nil, fmt.Errorf("operation %d failed: %w", i+1, err)
 		}
-		
-		plan.Changes = append(plan.Changes, types.Change{
-			File:        logFile,
-			Start:       0,
-			End:         0,
-			OldText:     "",
-			NewText:     logContent,
-			Description: "Create batch execution log",
-		})
-		
-		plan.AffectedFiles = []string{logFile}
+		plan.Changes = append(plan.Changes, result.Changes...)
+		for _, f := range result.AffectedFiles {
+			if !fileSet[f] {
+				plan.AffectedFiles = append(plan.AffectedFiles, f)
+				fileSet[f] = true
+			}
+		}
 	}
 
 	return plan, nil
@@ -178,6 +241,17 @@ func (op *ExecuteOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *ExecuteOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	// Read the plan file
+	planData, err := os.ReadFile(op.Request.PlanFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read plan file: %w", err)
+	}
+
+	var planFile RefactoringPlanFile
+	if err := json.Unmarshal(planData, &planFile); err != nil {
+		return nil, fmt.Errorf("failed to parse plan file: %w", err)
+	}
+
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -185,58 +259,41 @@ func (op *ExecuteOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 		Reversible:    true,
 	}
 
-	// Read the plan file
-	planData, err := os.ReadFile(op.Request.PlanFile)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read plan file: %w", err)
-	}
-	
-	var planFile RefactoringPlanFile
-	if err := json.Unmarshal(planData, &planFile); err != nil {
-		return nil, fmt.Errorf("failed to parse plan file: %w", err)
-	}
-	
-	// Create execution log
-	logFile := filepath.Join(ws.RootPath, "plan_execution.log")
-	logContent := fmt.Sprintf("Plan Execution Log\n==================\n\nPlan File: %s\n", op.Request.PlanFile)
-	logContent += fmt.Sprintf("Plan Version: %s\n", planFile.Version)
-	logContent += fmt.Sprintf("Plan Created: %s\n", planFile.CreatedAt)
-	logContent += fmt.Sprintf("Execution Time: %s\n\n", time.Now().Format(time.RFC3339))
-	
-	logContent += "Steps to Execute:\n"
+	// Convert each PlanStep to an operation, validate, and execute.
+	fileSet := make(map[string]bool)
 	for i, step := range planFile.Steps {
-		logContent += fmt.Sprintf("%d. %s\n", i+1, step.Type)
-		for key, value := range step.Args {
-			logContent += fmt.Sprintf("   %s: %s\n", key, value)
+		// Marshal step args back to JSON for parseOperationString
+		stepArgs := make(map[string]string)
+		for k, v := range step.Args {
+			stepArgs[k] = v
 		}
-	}
-	
-	plan.Changes = append(plan.Changes, types.Change{
-		File:        logFile,
-		Start:       0,
-		End:         0,
-		OldText:     "",
-		NewText:     logContent,
-		Description: "Create plan execution log",
-	})
-	
-	plan.AffectedFiles = []string{logFile}
-	
-	// Execute each step (placeholder implementation)
-	for i, step := range planFile.Steps {
-		stepLogFile := fmt.Sprintf("step_%d_execution.log", i+1)
-		stepContent := fmt.Sprintf("Step %d Execution\n================\n\nType: %s\nStatus: Executed\n", i+1, step.Type)
-		
-		plan.Changes = append(plan.Changes, types.Change{
-			File:        stepLogFile,
-			Start:       0,
-			End:         0,
-			OldText:     "",
-			NewText:     stepContent,
-			Description: fmt.Sprintf("Execute step %d: %s", i+1, step.Type),
-		})
-		
-		plan.AffectedFiles = append(plan.AffectedFiles, stepLogFile)
+		stepArgs["type"] = step.Type
+		stepJSON, err := json.Marshal(stepArgs)
+		if err != nil {
+			return nil, fmt.Errorf("step %d: failed to marshal: %w", i+1, err)
+		}
+
+		parsed, err := parseOperationString(string(stepJSON))
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", i+1, err)
+		}
+
+		if err := parsed.Validate(ws); err != nil {
+			return nil, fmt.Errorf("step %d validation failed: %w", i+1, err)
+		}
+
+		result, err := parsed.Execute(ws)
+		if err != nil {
+			return nil, fmt.Errorf("step %d execution failed: %w", i+1, err)
+		}
+
+		plan.Changes = append(plan.Changes, result.Changes...)
+		for _, f := range result.AffectedFiles {
+			if !fileSet[f] {
+				plan.AffectedFiles = append(plan.AffectedFiles, f)
+				fileSet[f] = true
+			}
+		}
 	}
 
 	return plan, nil
@@ -265,56 +322,6 @@ func (op *RollbackOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
-func (op *RollbackOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	plan := &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       make([]types.Change, 0),
-		AffectedFiles: make([]string, 0),
-		Reversible:    false, // Rollback operations are typically not reversible
-	}
-
-	// Create rollback log
-	logFile := filepath.Join(ws.RootPath, "rollback.log")
-	logContent := fmt.Sprintf("Rollback Operation Log\n=====================\n\nRollback Time: %s\n", time.Now().Format(time.RFC3339))
-	
-	if op.Request.LastBatch {
-		logContent += "Type: Rollback last batch\n"
-		logContent += "Status: Initiated\n\n"
-		logContent += "This operation will restore the workspace to the state before the last batch operation.\n"
-	} else {
-		logContent += fmt.Sprintf("Type: Rollback to step %d\n", op.Request.ToStep)
-		logContent += "Status: Initiated\n\n"
-		logContent += fmt.Sprintf("This operation will restore the workspace to the state after step %d.\n", op.Request.ToStep)
-	}
-	
-	plan.Changes = append(plan.Changes, types.Change{
-		File:        logFile,
-		Start:       0,
-		End:         0,
-		OldText:     "",
-		NewText:     logContent,
-		Description: "Create rollback operation log",
-	})
-	
-	plan.AffectedFiles = []string{logFile}
-	
-	// In a real implementation, this would:
-	// 1. Load the rollback state from backup files
-	// 2. Apply reverse operations to undo changes
-	// 3. Update workspace state
-	
-	// Create placeholder restore operations
-	if op.Request.LastBatch {
-		plan.Changes = append(plan.Changes, types.Change{
-			File:        "restore_last_batch.md",
-			Start:       0,
-			End:         0,
-			OldText:     "",
-			NewText:     "# Restore Last Batch\n\nThis file represents the restoration of the workspace state before the last batch operation.\n",
-			Description: "Restore workspace from last batch backup",
-		})
-		plan.AffectedFiles = append(plan.AffectedFiles, "restore_last_batch.md")
-	}
-
-	return plan, nil
+func (op *RollbackOperation) Execute(_ *types.Workspace) (*types.RefactoringPlan, error) {
+	return nil, fmt.Errorf("rollback is not yet supported; use version control (git) to revert changes instead")
 }

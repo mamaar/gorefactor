@@ -71,10 +71,14 @@ func (op *CleanAliasesOperation) cleanFileAliases(file *types.File) []types.Chan
 				return true
 			}
 
-			// For now, create a placeholder change - in reality we'd need to:
-			// 1. Check if removing alias causes conflicts
-			// 2. Update all references to use full package name
-			// 3. Remove the alias from import statement
+			// Only remove aliases that match the default package name (redundant aliases).
+			// An alias like `import log "log"` is unnecessary, but
+			// `import mylog "log"` is intentional and must be kept.
+			parts := strings.Split(strings.Trim(importPath, "/"), "/")
+			defaultName := parts[len(parts)-1]
+			if alias != defaultName {
+				return true
+			}
 
 			if !op.Request.PreserveConflicts || !op.wouldCauseConflict(alias, importPath, file) {
 				changes = append(changes, types.Change{
