@@ -535,7 +535,7 @@ var MyVar = "global"
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
-	_, err = conf.Check("testpkg", fileSet, []*ast.File{astFile}, info)
+	typesPkg, err := conf.Check("testpkg", fileSet, []*ast.File{astFile}, info)
 	if err != nil {
 		// Type errors may occur in isolation; continue
 		_ = err
@@ -551,6 +551,7 @@ var MyVar = "global"
 		Path:      "test/testpkg",
 		Files:     map[string]*types.File{"testpkg.go": file},
 		TypesInfo: info,
+		TypesPkg:  typesPkg,
 	}
 	file.Package = pkg
 
@@ -574,25 +575,25 @@ func TestObjectIndex_MatchesNameIndex(t *testing.T) {
 	ws, resolver := createTypedTestWorkspace(t)
 	idx := resolver.BuildReferenceIndex()
 
-	// The object index should be populated
-	if len(idx.objectIndex) == 0 {
-		t.Fatal("Expected object index to be populated for typed workspace")
+	// The workspace index should be populated
+	if idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
+		t.Fatal("Expected workspace index to be populated for typed workspace")
 	}
 
 	pkg := ws.Packages["test/testpkg"]
 
-	// Test each function symbol: query via object-path and name-path should match
+	// Test each function symbol: query via workspace-path and name-path should match
 	for _, symbol := range pkg.Symbols.Functions {
-		// Get references via normal path (which uses object fast-path internally)
+		// Get references via normal path (which uses workspace fast-path internally)
 		refs, err := resolver.FindReferencesIndexed(symbol, idx)
 		if err != nil {
 			t.Fatalf("FindReferencesIndexed failed for %s: %v", symbol.Name, err)
 		}
 
-		// Get references via name-path only (build an index without object entries)
+		// Get references via name-path only (build an index without workspace entries)
 		nameOnlyIdx := &ReferenceIndex{
-			nameIndex:   idx.nameIndex,
-			objectIndex: nil, // force name path
+			nameIndex: idx.nameIndex,
+			// workspaceIdx nil — forces name path
 		}
 		nameRefs, err := resolver.FindReferencesIndexed(symbol, nameOnlyIdx)
 		if err != nil {
@@ -668,9 +669,10 @@ func Bar() { Foo() }
 
 	idx := resolver.BuildReferenceIndex()
 
-	// Object index should be empty (no type info)
-	if len(idx.objectIndex) != 0 {
-		t.Errorf("Expected empty object index without type info, got %d entries", len(idx.objectIndex))
+	// Workspace index should have no packages (no type info)
+	if idx.workspaceIdx != nil && len(idx.workspaceIdx.packages) != 0 {
+		t.Errorf("Expected empty workspace index without type info, got %d packages",
+			len(idx.workspaceIdx.packages))
 	}
 
 	// Name-based lookup should still work
@@ -727,6 +729,7 @@ func SharedFunc() string { return "shared" }
 		Path:      "test/pkga",
 		Files:     map[string]*types.File{"pkga.go": fileA},
 		TypesInfo: infoA,
+		TypesPkg:  typsPkgA,
 	}
 	fileA.Package = pkgA
 
@@ -754,7 +757,7 @@ func Caller() string { return pkga.SharedFunc() }
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
-	_, err = confB.Check("pkgb", fileSet, []*ast.File{astB}, infoB)
+	typsPkgB, err := confB.Check("pkgb", fileSet, []*ast.File{astB}, infoB)
 	if err != nil {
 		_ = err
 	}
@@ -770,6 +773,7 @@ func Caller() string { return pkga.SharedFunc() }
 		ImportPath: "pkgb",
 		Files:      map[string]*types.File{"pkgb.go": fileB},
 		TypesInfo:  infoB,
+		TypesPkg:   typsPkgB,
 	}
 	fileB.Package = pkgB
 
@@ -791,9 +795,9 @@ func Caller() string { return pkga.SharedFunc() }
 
 	idx := resolver.BuildReferenceIndex()
 
-	// Object index should be populated
-	if len(idx.objectIndex) == 0 {
-		t.Fatal("Expected object index to be populated")
+	// Workspace index should be populated
+	if idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
+		t.Fatal("Expected workspace index to be populated")
 	}
 
 	// Find SharedFunc in pkgA
@@ -823,4 +827,239 @@ type importerFunc func(path string) (*gotypes.Package, error)
 
 func (f importerFunc) Import(path string) (*gotypes.Package, error) {
 	return f(path)
+}
+
+// TestWorkspaceIndex_MatchesNameIndex verifies that the workspaceIndex and name-path
+// return identical reference sets for every function/type symbol (differential test).
+func TestWorkspaceIndex_MatchesNameIndex(t *testing.T) {
+	ws, resolver := createTypedTestWorkspace(t)
+	idx := resolver.BuildReferenceIndex()
+
+	// workspaceIndex should be populated
+	if idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
+		t.Fatal("Expected workspaceIndex to be populated for typed workspace")
+	}
+
+	pkg := ws.Packages["test/testpkg"]
+
+	// Test each function symbol: workspace-path and name-path should match
+	for _, symbol := range pkg.Symbols.Functions {
+		// Get references via workspace-path (normal flow)
+		refs, err := resolver.FindReferencesIndexed(symbol, idx)
+		if err != nil {
+			t.Fatalf("FindReferencesIndexed failed for %s: %v", symbol.Name, err)
+		}
+
+		// Get references via name-path only
+		nameOnlyIdx := &ReferenceIndex{
+			nameIndex: idx.nameIndex,
+		}
+		nameRefs, err := resolver.FindReferencesIndexed(symbol, nameOnlyIdx)
+		if err != nil {
+			t.Fatalf("FindReferencesIndexed (name-only) failed for %s: %v", symbol.Name, err)
+		}
+
+		wsPos := extractPositions(refs)
+		namePos := extractPositions(nameRefs)
+
+		sort.Ints(wsPos)
+		sort.Ints(namePos)
+
+		if len(wsPos) != len(namePos) {
+			t.Errorf("Symbol %s: workspace-path found %d refs, name-path found %d refs",
+				symbol.Name, len(wsPos), len(namePos))
+			continue
+		}
+		for i := range wsPos {
+			if wsPos[i] != namePos[i] {
+				t.Errorf("Symbol %s: ref position mismatch at index %d: ws=%d, name=%d",
+					symbol.Name, i, wsPos[i], namePos[i])
+			}
+		}
+	}
+}
+
+// TestWorkspaceIndex_NilWithoutTypesInfo verifies graceful fallback when
+// type info is absent.
+func TestWorkspaceIndex_NilWithoutTypesInfo(t *testing.T) {
+	fileSet := token.NewFileSet()
+	src := `package untyped
+
+func Foo() {}
+func Bar() { Foo() }
+`
+	astFile, err := parser.ParseFile(fileSet, "untyped2.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	file := &types.File{
+		Path:            "untyped2.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+	pkg := &types.Package{
+		Name:  "untyped",
+		Path:  "test/untyped2",
+		Files: map[string]*types.File{"untyped2.go": file},
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages: map[string]*types.Package{"test/untyped2": pkg},
+		FileSet:  fileSet,
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		t.Fatalf("Failed to build symbol table: %v", err)
+	}
+
+	idx := resolver.BuildReferenceIndex()
+
+	// workspaceIndex should have no packages (no TypesInfo)
+	if idx.workspaceIdx != nil && len(idx.workspaceIdx.packages) != 0 {
+		t.Errorf("Expected empty workspaceIndex without type info, got %d packages",
+			len(idx.workspaceIdx.packages))
+	}
+
+	// Name-based lookup should still work
+	fooSymbol := pkg.Symbols.Functions["Foo"]
+	if fooSymbol == nil {
+		t.Fatal("Expected to find Foo symbol")
+	}
+
+	refs, err := resolver.FindReferencesIndexed(fooSymbol, idx)
+	if err != nil {
+		t.Fatalf("FindReferencesIndexed failed: %v", err)
+	}
+	if len(refs) == 0 {
+		t.Error("Expected at least one reference to Foo via name path")
+	}
+}
+
+// TestWorkspaceIndex_CrossPackageReferences verifies cross-package refs are found
+// via the workspaceIndex path.
+func TestWorkspaceIndex_CrossPackageReferences(t *testing.T) {
+	fileSet := token.NewFileSet()
+
+	// Package A
+	srcA := `package pkga
+
+func SharedFunc() string { return "shared" }
+`
+	astA, err := parser.ParseFile(fileSet, "ws_pkga.go", srcA, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse pkga: %v", err)
+	}
+
+	confA := gotypes.Config{Importer: importer.Default()}
+	infoA := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	typsPkgA, err := confA.Check("pkga", fileSet, []*ast.File{astA}, infoA)
+	if err != nil {
+		_ = err
+	}
+
+	fileA := &types.File{
+		Path:            "ws_pkga.go",
+		AST:             astA,
+		OriginalContent: []byte(srcA),
+	}
+	pkgA := &types.Package{
+		Name:      "pkga",
+		Path:      "test/ws_pkga",
+		Files:     map[string]*types.File{"ws_pkga.go": fileA},
+		TypesInfo: infoA,
+		TypesPkg:  typsPkgA,
+	}
+	fileA.Package = pkgA
+
+	// Package B
+	srcB := `package pkgb
+
+import "pkga"
+
+func Caller() string { return pkga.SharedFunc() }
+`
+	astB, err := parser.ParseFile(fileSet, "ws_pkgb.go", srcB, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse pkgb: %v", err)
+	}
+
+	confB := gotypes.Config{
+		Importer: importerFunc(func(path string) (*gotypes.Package, error) {
+			if path == "pkga" {
+				return typsPkgA, nil
+			}
+			return importer.Default().Import(path)
+		}),
+	}
+	infoB := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	typsPkgB, err := confB.Check("pkgb", fileSet, []*ast.File{astB}, infoB)
+	if err != nil {
+		_ = err
+	}
+
+	fileB := &types.File{
+		Path:            "ws_pkgb.go",
+		AST:             astB,
+		OriginalContent: []byte(srcB),
+	}
+	pkgB := &types.Package{
+		Name:       "pkgb",
+		Path:       "test/ws_pkgb",
+		ImportPath: "pkgb",
+		Files:      map[string]*types.File{"ws_pkgb.go": fileB},
+		TypesInfo:  infoB,
+		TypesPkg:   typsPkgB,
+	}
+	fileB.Package = pkgB
+
+	ws := &types.Workspace{
+		Packages: map[string]*types.Package{
+			"test/ws_pkga": pkgA,
+			"test/ws_pkgb": pkgB,
+		},
+		FileSet:      fileSet,
+		ImportToPath: make(map[string]string),
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, pkg := range ws.Packages {
+		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+			t.Fatalf("Failed to build symbol table for %s: %v", pkg.Name, err)
+		}
+	}
+
+	idx := resolver.BuildReferenceIndex()
+
+	if idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
+		t.Fatal("Expected workspaceIndex to be populated")
+	}
+
+	// Find SharedFunc in pkgA
+	sharedFunc := pkgA.Symbols.Functions["SharedFunc"]
+	if sharedFunc == nil {
+		t.Fatal("Expected to find SharedFunc symbol")
+	}
+
+	// workspaceIndex should find the cross-package reference
+	refs, err := resolver.FindReferencesIndexed(sharedFunc, idx)
+	if err != nil {
+		t.Fatalf("FindReferencesIndexed failed: %v", err)
+	}
+	if len(refs) == 0 {
+		t.Error("Expected at least one cross-package reference to SharedFunc")
+	}
+
+	// HasNonDeclarationReference should work
+	if !resolver.HasNonDeclarationReference(sharedFunc, idx) {
+		t.Error("Expected HasNonDeclarationReference to find cross-package usage")
+	}
 }
