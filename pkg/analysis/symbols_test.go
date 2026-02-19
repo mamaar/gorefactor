@@ -2,10 +2,13 @@ package analysis
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"io"
 	"log/slog"
+	"sort"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -495,4 +498,329 @@ func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 			}
 		})
 	}
+}
+
+// createTypedTestWorkspace builds a workspace with full type-checking info for tests.
+func createTypedTestWorkspace(t *testing.T) (*types.Workspace, *SymbolResolver) {
+	t.Helper()
+	fileSet := token.NewFileSet()
+
+	src := `package testpkg
+
+type MyStruct struct {
+	Name string
+}
+
+func (s *MyStruct) GetName() string { return s.Name }
+
+func Hello() string { return "hello" }
+
+func Caller() {
+	s := &MyStruct{Name: "test"}
+	_ = s.GetName()
+	_ = Hello()
+}
+
+const MyConst = 42
+var MyVar = "global"
+`
+
+	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	conf := gotypes.Config{Importer: importer.Default()}
+	info := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	_, err = conf.Check("testpkg", fileSet, []*ast.File{astFile}, info)
+	if err != nil {
+		// Type errors may occur in isolation; continue
+		_ = err
+	}
+
+	file := &types.File{
+		Path:            "testpkg.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+	pkg := &types.Package{
+		Name:      "testpkg",
+		Path:      "test/testpkg",
+		Files:     map[string]*types.File{"testpkg.go": file},
+		TypesInfo: info,
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages:     map[string]*types.Package{"test/testpkg": pkg},
+		FileSet:      fileSet,
+		ImportToPath: make(map[string]string),
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		t.Fatalf("Failed to build symbol table: %v", err)
+	}
+
+	return ws, resolver
+}
+
+// TestObjectIndex_MatchesNameIndex verifies that the object-path and name-path
+// return identical reference sets (differential test).
+func TestObjectIndex_MatchesNameIndex(t *testing.T) {
+	ws, resolver := createTypedTestWorkspace(t)
+	idx := resolver.BuildReferenceIndex()
+
+	// The object index should be populated
+	if len(idx.objectIndex) == 0 {
+		t.Fatal("Expected object index to be populated for typed workspace")
+	}
+
+	pkg := ws.Packages["test/testpkg"]
+
+	// Test each function symbol: query via object-path and name-path should match
+	for _, symbol := range pkg.Symbols.Functions {
+		// Get references via normal path (which uses object fast-path internally)
+		refs, err := resolver.FindReferencesIndexed(symbol, idx)
+		if err != nil {
+			t.Fatalf("FindReferencesIndexed failed for %s: %v", symbol.Name, err)
+		}
+
+		// Get references via name-path only (build an index without object entries)
+		nameOnlyIdx := &ReferenceIndex{
+			nameIndex:   idx.nameIndex,
+			objectIndex: nil, // force name path
+		}
+		nameRefs, err := resolver.FindReferencesIndexed(symbol, nameOnlyIdx)
+		if err != nil {
+			t.Fatalf("FindReferencesIndexed (name-only) failed for %s: %v", symbol.Name, err)
+		}
+
+		// Compare reference positions
+		objPositions := extractPositions(refs)
+		namePositions := extractPositions(nameRefs)
+
+		sort.Ints(objPositions)
+		sort.Ints(namePositions)
+
+		if len(objPositions) != len(namePositions) {
+			t.Errorf("Symbol %s: object-path found %d refs, name-path found %d refs",
+				symbol.Name, len(objPositions), len(namePositions))
+			continue
+		}
+
+		for i := range objPositions {
+			if objPositions[i] != namePositions[i] {
+				t.Errorf("Symbol %s: ref position mismatch at index %d: object=%d, name=%d",
+					symbol.Name, i, objPositions[i], namePositions[i])
+			}
+		}
+	}
+}
+
+func extractPositions(refs []*types.Reference) []int {
+	positions := make([]int, len(refs))
+	for i, r := range refs {
+		positions[i] = int(r.Position)
+	}
+	return positions
+}
+
+// TestObjectIndex_NilWithoutTypesInfo verifies that the object index falls back
+// to the name path when type info is absent.
+func TestObjectIndex_NilWithoutTypesInfo(t *testing.T) {
+	fileSet := token.NewFileSet()
+	src := `package untyped
+
+func Foo() {}
+func Bar() { Foo() }
+`
+	astFile, err := parser.ParseFile(fileSet, "untyped.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	file := &types.File{
+		Path:            "untyped.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+	pkg := &types.Package{
+		Name:  "untyped",
+		Path:  "test/untyped",
+		Files: map[string]*types.File{"untyped.go": file},
+		// No TypesInfo — deliberately omitted
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages: map[string]*types.Package{"test/untyped": pkg},
+		FileSet:  fileSet,
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		t.Fatalf("Failed to build symbol table: %v", err)
+	}
+
+	idx := resolver.BuildReferenceIndex()
+
+	// Object index should be empty (no type info)
+	if len(idx.objectIndex) != 0 {
+		t.Errorf("Expected empty object index without type info, got %d entries", len(idx.objectIndex))
+	}
+
+	// Name-based lookup should still work
+	fooSymbol := pkg.Symbols.Functions["Foo"]
+	if fooSymbol == nil {
+		t.Fatal("Expected to find Foo symbol")
+	}
+
+	refs, err := resolver.FindReferencesIndexed(fooSymbol, idx)
+	if err != nil {
+		t.Fatalf("FindReferencesIndexed failed: %v", err)
+	}
+	if len(refs) == 0 {
+		t.Error("Expected at least one reference to Foo via name path")
+	}
+
+	// HasNonDeclarationReference should work via name path
+	if !resolver.HasNonDeclarationReference(fooSymbol, idx) {
+		t.Error("Expected HasNonDeclarationReference to return true for Foo")
+	}
+}
+
+// TestObjectIndex_CrossPackageReferences verifies object index finds cross-package refs.
+func TestObjectIndex_CrossPackageReferences(t *testing.T) {
+	fileSet := token.NewFileSet()
+
+	// Package A: defines a function
+	srcA := `package pkga
+
+func SharedFunc() string { return "shared" }
+`
+	astA, err := parser.ParseFile(fileSet, "pkga.go", srcA, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse pkga: %v", err)
+	}
+
+	confA := gotypes.Config{Importer: importer.Default()}
+	infoA := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	typsPkgA, err := confA.Check("pkga", fileSet, []*ast.File{astA}, infoA)
+	if err != nil {
+		_ = err
+	}
+
+	fileA := &types.File{
+		Path:            "pkga.go",
+		AST:             astA,
+		OriginalContent: []byte(srcA),
+	}
+	pkgA := &types.Package{
+		Name:      "pkga",
+		Path:      "test/pkga",
+		Files:     map[string]*types.File{"pkga.go": fileA},
+		TypesInfo: infoA,
+	}
+	fileA.Package = pkgA
+
+	// Package B: uses pkga.SharedFunc
+	srcB := `package pkgb
+
+import "pkga"
+
+func Caller() string { return pkga.SharedFunc() }
+`
+	astB, err := parser.ParseFile(fileSet, "pkgb.go", srcB, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse pkgb: %v", err)
+	}
+
+	confB := gotypes.Config{
+		Importer: importerFunc(func(path string) (*gotypes.Package, error) {
+			if path == "pkga" {
+				return typsPkgA, nil
+			}
+			return importer.Default().Import(path)
+		}),
+	}
+	infoB := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	_, err = confB.Check("pkgb", fileSet, []*ast.File{astB}, infoB)
+	if err != nil {
+		_ = err
+	}
+
+	fileB := &types.File{
+		Path:            "pkgb.go",
+		AST:             astB,
+		OriginalContent: []byte(srcB),
+	}
+	pkgB := &types.Package{
+		Name:       "pkgb",
+		Path:       "test/pkgb",
+		ImportPath: "pkgb",
+		Files:      map[string]*types.File{"pkgb.go": fileB},
+		TypesInfo:  infoB,
+	}
+	fileB.Package = pkgB
+
+	ws := &types.Workspace{
+		Packages: map[string]*types.Package{
+			"test/pkga": pkgA,
+			"test/pkgb": pkgB,
+		},
+		FileSet:      fileSet,
+		ImportToPath: make(map[string]string),
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, pkg := range ws.Packages {
+		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+			t.Fatalf("Failed to build symbol table for %s: %v", pkg.Name, err)
+		}
+	}
+
+	idx := resolver.BuildReferenceIndex()
+
+	// Object index should be populated
+	if len(idx.objectIndex) == 0 {
+		t.Fatal("Expected object index to be populated")
+	}
+
+	// Find SharedFunc in pkgA
+	sharedFunc := pkgA.Symbols.Functions["SharedFunc"]
+	if sharedFunc == nil {
+		t.Fatal("Expected to find SharedFunc symbol")
+	}
+
+	// The object index should find the cross-package reference
+	refs, err := resolver.FindReferencesIndexed(sharedFunc, idx)
+	if err != nil {
+		t.Fatalf("FindReferencesIndexed failed: %v", err)
+	}
+
+	if len(refs) == 0 {
+		t.Error("Expected at least one cross-package reference to SharedFunc")
+	}
+
+	// Verify HasNonDeclarationReference also works
+	if !resolver.HasNonDeclarationReference(sharedFunc, idx) {
+		t.Error("Expected HasNonDeclarationReference to find cross-package usage")
+	}
+}
+
+// importerFunc adapts a function to the go/types.Importer interface.
+type importerFunc func(path string) (*gotypes.Package, error)
+
+func (f importerFunc) Import(path string) (*gotypes.Package, error) {
+	return f(path)
 }
