@@ -18,4 +18,5 @@ func RegisterAllTools(s *mcpsdk.Server, state *MCPServer) {
 	registerContextTools(s, state)
 	registerDeleteTools(s, state)
 	registerFixTools(s, state)
+	registerTouchTools(s, state)
 }

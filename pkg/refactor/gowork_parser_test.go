@@ -169,7 +169,7 @@ use (
 		t.Fatal(err)
 	}
 
-	modules, err := discoverWorkspaceModules(filepath.Join(tmpDir, "moduleA"))
+	modules, err := DiscoverWorkspaceModules(filepath.Join(tmpDir, "moduleA"))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -191,7 +191,7 @@ use (
 func TestDiscoverWorkspaceModules_NoGoWork(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	modules, err := discoverWorkspaceModules(tmpDir)
+	modules, err := DiscoverWorkspaceModules(tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,7 +216,7 @@ use ./nomod
 		t.Fatal(err)
 	}
 
-	modules, err := discoverWorkspaceModules(tmpDir)
+	modules, err := DiscoverWorkspaceModules(tmpDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

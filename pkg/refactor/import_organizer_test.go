@@ -71,7 +71,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	// Should have stdlib group first
 	fmtIdx := strings.Index(result, `"fmt"`)
@@ -118,7 +118,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", []string{"github.com/mamaar/othermod"})
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", []string{"github.com/mamaar/othermod"})
 
 	fmtIdx := strings.Index(result, `"fmt"`)
 	assertIdx := strings.Index(result, `"github.com/stretchr/testify/assert"`)
@@ -155,7 +155,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	cIdx := strings.Index(result, `"C"`)
 	fmtIdx := strings.Index(result, `"fmt"`)
@@ -183,7 +183,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	if !strings.Contains(result, `. "github.com/onsi/gomega"`) {
 		t.Error("expected dot import to be preserved")
@@ -204,7 +204,7 @@ import "fmt"
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	if !strings.Contains(result, `"fmt"`) {
 		t.Fatalf("expected fmt import in result:\n%s", result)
@@ -217,7 +217,7 @@ func TestOrganizeImports_NoImports(t *testing.T) {
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 	if result != src {
 		t.Error("expected source to be unchanged when there are no imports")
 	}
@@ -236,7 +236,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	// Should merge into a single import block
 	importCount := strings.Count(result, "import (")
@@ -259,7 +259,7 @@ func main() {}
 func TestOrganizeImports_ParseFailure(t *testing.T) {
 	src := `this is not valid go code {{{`
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 	if result != src {
 		t.Error("expected source to be returned unchanged on parse failure")
 	}
@@ -277,7 +277,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	// Find the import block
 	start := strings.Index(result, "import (")
@@ -310,7 +310,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	if !strings.Contains(result, `// for printing`) {
 		t.Error("expected inline comment to be preserved")
@@ -330,7 +330,7 @@ import (
 func main() {}
 `
 
-	result := organizeImports(src, "github.com/mamaar/gorefactor", nil)
+	result := OrganizeImports(src, "github.com/mamaar/gorefactor", nil)
 
 	bufioIdx := strings.Index(result, `"bufio"`)
 	fmtIdx := strings.Index(result, `"fmt"`)

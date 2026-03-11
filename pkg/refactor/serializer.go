@@ -145,7 +145,7 @@ func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes
 	// Organize imports and format the modified content if it's Go code
 	if strings.HasSuffix(filePath, ".go") {
 		if s.modulePath != "" {
-			modifiedContent = organizeImports(modifiedContent, s.modulePath, s.workspaceModules)
+			modifiedContent = OrganizeImports(modifiedContent, s.modulePath, s.workspaceModules)
 		}
 
 		formatted, err := s.formatGoCode(modifiedContent)

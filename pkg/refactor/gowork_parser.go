@@ -6,10 +6,10 @@ import (
 	"strings"
 )
 
-// discoverWorkspaceModules walks up from rootPath looking for a go.work file,
+// DiscoverWorkspaceModules walks up from rootPath looking for a go.work file,
 // then reads each "use" directory's go.mod to collect workspace module paths.
 // Returns nil (not error) if no go.work is found.
-func discoverWorkspaceModules(rootPath string) ([]string, error) {
+func DiscoverWorkspaceModules(rootPath string) ([]string, error) {
 	workDir := rootPath
 	var goWorkPath string
 

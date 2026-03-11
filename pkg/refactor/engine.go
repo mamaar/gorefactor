@@ -167,7 +167,7 @@ func (e *DefaultEngine) LoadWorkspace(path string) (*types.Workspace, error) {
 
 	// Configure import ordering with module info
 	if workspace.Module != nil {
-		workspaceModules, _ := discoverWorkspaceModules(workspace.RootPath)
+		workspaceModules, _ := DiscoverWorkspaceModules(workspace.RootPath)
 		// Filter out the current module from workspace modules
 		var filtered []string
 		for _, wm := range workspaceModules {

@@ -25,11 +25,11 @@ type importEntry struct {
 	comment string // any trailing inline comment
 }
 
-// organizeImports rewrites the import block(s) in src so that imports are
+// OrganizeImports rewrites the import block(s) in src so that imports are
 // grouped into stdlib / external / workspace / module sections separated by
 // blank lines, with alphabetical sorting within each group.  On any error
 // (parse failure, etc.) the original source is returned unchanged.
-func organizeImports(src string, modulePath string, workspaceModules []string) string {
+func OrganizeImports(src string, modulePath string, workspaceModules []string) string {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
