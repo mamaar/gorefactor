@@ -152,6 +152,14 @@ type CallSite struct {
 	Column int
 }
 
+// SkippedSite records a call site that could not be automatically rewritten.
+type SkippedSite struct {
+	File        string `json:"file"`
+	Line        int    `json:"line"`
+	Reason      string `json:"reason"`
+	Snippet     string `json:"snippet"`
+}
+
 // RefactoringPlan represents a planned set of changes
 type RefactoringPlan struct {
 	Operations    []Operation
@@ -159,6 +167,9 @@ type RefactoringPlan struct {
 	AffectedFiles []string
 	Impact        *ImpactAnalysis
 	Reversible    bool
+	// SkippedSites holds call sites that were too complex to rewrite automatically.
+	// The caller should inspect these and update them manually.
+	SkippedSites  []SkippedSite
 }
 
 // Change represents a specific change to be made

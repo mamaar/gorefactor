@@ -274,6 +274,33 @@ func TestChangeSignature(t *testing.T) {
 	compareGoldenFiles(t, "change_signature", tmpDir)
 }
 
+// TestAddReturn verifies the three bugs that were present in the add_return subcommand:
+//  1. Parameter list was stripped when only returns were provided.
+//  2. Return statements inside the function body were not updated.
+//  3. Call sites with expression statements (discarded returns) were not rewritten.
+func TestAddReturn(t *testing.T) {
+	tmpDir := copyFixture(t, "add_return")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ChangeSignature(ws, refactor.ChangeSignatureRequest{
+		FunctionName: "GetConfig",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+		// Bug 1 regression: NewParams is nil — the engine must preserve existing params.
+		NewParams:  nil,
+		NewReturns: []string{"string", "error"},
+		Scope:      types.WorkspaceScope,
+		Subcommand: "add_return",
+	})
+	if err != nil {
+		t.Fatalf("ChangeSignature: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "add_return", tmpDir)
+}
+
 func TestAddContextParameter(t *testing.T) {
 	tmpDir := copyFixture(t, "add_context_parameter")
 	eng := createEngine(t)

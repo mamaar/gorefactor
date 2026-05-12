@@ -66,6 +66,7 @@ All call sites are updated automatically.`,
 			PropagateToInterface: in.Propagate,
 			DefaultValue:         in.DefaultValue,
 			NewParamPosition:     in.Position,
+			Subcommand:           in.Subcommand,
 			CachedIndex:          idx,
 		})
 		if err != nil {

@@ -11,11 +11,14 @@ import (
 
 // PlanResult is the structured output returned by mutating refactoring tools.
 type PlanResult struct {
-	Description   string   `json:"description"`
-	AffectedFiles []string `json:"affected_files"`
-	ChangeCount   int      `json:"change_count"`
-	ModifiedFiles []string `json:"modified_files"`
-	Success       bool     `json:"success"`
+	Description   string              `json:"description"`
+	AffectedFiles []string            `json:"affected_files"`
+	ChangeCount   int                 `json:"change_count"`
+	ModifiedFiles []string            `json:"modified_files"`
+	Success       bool                `json:"success"`
+	// SkippedSites lists call sites that could not be automatically rewritten.
+	// Each entry must be updated manually before the build will succeed.
+	SkippedSites  []types.SkippedSite `json:"skipped_sites,omitempty"`
 }
 
 // AnalysisResult is the structured output returned by read-only analysis tools.
@@ -42,6 +45,7 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string) (*P
 		ChangeCount:   len(plan.Changes),
 		ModifiedFiles: plan.AffectedFiles,
 		Success:       true,
+		SkippedSites:  plan.SkippedSites,
 	}, nil
 }
 
