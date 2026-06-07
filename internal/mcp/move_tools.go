@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"context"
+	"fmt"
+	"runtime/debug"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -47,12 +49,31 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_symbol",
 		Description: "Move a symbol (function, type, variable, constant) from one package to another. Updates all references across the workspace.",
-	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (*mcpsdk.CallToolResult, any, error) {
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
 		state.RLock()
+		locked := true
+		defer func() {
+			if r := recover(); r != nil {
+				stack := debug.Stack()
+				state.logger.Error("panic in move_symbol handler",
+					"symbol", in.Symbol,
+					"from", in.FromPackage,
+					"to", in.ToPackage,
+					"panic", fmt.Sprintf("%v", r),
+					"stack", string(stack),
+				)
+				if locked {
+					state.RUnlock()
+					locked = false
+				}
+				result = errResult(fmt.Errorf("internal error (panic) in move_symbol: %v", r))
+			}
+		}()
 
 		ws, err := state.GetWorkspace()
 		if err != nil {
 			state.RUnlock()
+			locked = false
 			return errResult(err), nil, nil
 		}
 		from := types.ResolvePackagePath(ws, in.FromPackage)
@@ -64,13 +85,15 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		})
 		if err != nil {
 			state.RUnlock()
+			locked = false
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "move symbol "+in.Symbol)
+		locked = false // executePlanWithUnlock releases the lock
+		planResult, err := executePlanWithUnlock(state, plan, "move symbol "+in.Symbol)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		return textResult(result), nil, nil
+		return textResult(planResult), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{

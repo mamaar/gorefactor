@@ -46,6 +46,11 @@ type ChangeSignatureOperation struct {
 	SourceFile           string
 	NewParams            []Parameter
 	NewReturns           []string
+	// NamedReturns holds named return parameters (e.g. {Name:"secret", Type:"[]byte"}).
+	// When non-nil it takes precedence over NewReturns in generateNewSignature so that
+	// the original named-result names are preserved verbatim.  Populated automatically
+	// by preserveExistingReturnsIfNeeded when the existing function uses named returns.
+	NamedReturns         []Parameter
 	Scope                pkgtypes.RenameScope     // PackageScope or WorkspaceScope
 	PropagateToInterface bool                     // When targeting a concrete method, also update interface + siblings
 	DefaultValue         string                   // Default value to use for new parameters at call sites
@@ -553,8 +558,29 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 	}
 	signature.WriteString(")")
 
-	// Add return types
-	if len(op.NewReturns) > 0 {
+	// Add return types.
+	// NamedReturns ([]Parameter) takes precedence over NewReturns ([]string) so that
+	// named result variables from the original signature are preserved verbatim.
+	if len(op.NamedReturns) > 0 {
+		signature.WriteString(" ")
+		needsParens := len(op.NamedReturns) > 1 || op.NamedReturns[0].Name != ""
+		if needsParens {
+			signature.WriteString("(")
+		}
+		for i, ret := range op.NamedReturns {
+			if i > 0 {
+				signature.WriteString(", ")
+			}
+			if ret.Name != "" {
+				signature.WriteString(ret.Name)
+				signature.WriteString(" ")
+			}
+			signature.WriteString(ret.Type)
+		}
+		if needsParens {
+			signature.WriteString(")")
+		}
+	} else if len(op.NewReturns) > 0 {
 		signature.WriteString(" ")
 		if len(op.NewReturns) == 1 {
 			signature.WriteString(op.NewReturns[0])
@@ -664,6 +690,16 @@ func (op *ChangeSignatureOperation) extractTypeString(expr ast.Expr) string {
 		return "[...]" + op.extractTypeString(t.Elt) // Simplified
 	case *ast.SelectorExpr:
 		return op.extractTypeString(t.X) + "." + t.Sel.Name
+	case *ast.Ellipsis:
+		return "..." + op.extractTypeString(t.Elt)
+	case *ast.MapType:
+		return "map[" + op.extractTypeString(t.Key) + "]" + op.extractTypeString(t.Value)
+	case *ast.InterfaceType:
+		return "interface{}"
+	case *ast.FuncType:
+		return "func(...)"
+	case *ast.ChanType:
+		return "chan " + op.extractTypeString(t.Value)
 	default:
 		return "interface{}" // Fallback
 	}
@@ -1037,9 +1073,10 @@ func (op *ChangeSignatureOperation) extractReturnTypes(funcType *ast.FuncType) [
 	return returns
 }
 
-// preserveExistingReturnsIfNeeded populates NewReturns from the existing signature
-// when the caller did not explicitly provide return types. This prevents add_param
-// and remove_param from accidentally dropping return types.
+// preserveExistingReturnsIfNeeded populates NewReturns (and NamedReturns when the
+// existing function uses named result variables) from the existing signature when
+// the caller did not explicitly provide return types.  This prevents add_param and
+// remove_param from accidentally dropping return types or stripping named results.
 func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *pkgtypes.File) error {
 	if len(op.NewReturns) > 0 {
 		return nil // User explicitly provided returns
@@ -1060,9 +1097,49 @@ func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *
 	funcDecl := op.findFunction(sourceFile, op.FunctionName)
 	if funcDecl != nil && funcDecl.Type != nil {
 		op.NewReturns = op.extractReturnTypes(funcDecl.Type)
+		// Also populate NamedReturns when the original signature uses named results.
+		// NamedReturns preserves both the name and the type so that generateNewSignature
+		// can emit e.g. "(secret []byte, err error)" instead of "([]byte, error)".
+		// A bare "return" inside the body would be invalid if names are stripped.
+		if hasNamedResults(funcDecl.Type) {
+			op.NamedReturns = op.extractNamedReturnParams(funcDecl.Type)
+		}
 	}
 
 	return nil
+}
+
+// hasNamedResults reports whether any result field in funcType has an explicit name.
+func hasNamedResults(funcType *ast.FuncType) bool {
+	if funcType.Results == nil {
+		return false
+	}
+	for _, field := range funcType.Results.List {
+		if len(field.Names) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// extractNamedReturnParams extracts named return parameters as []Parameter,
+// preserving both variable names and types (e.g. {Name:"err", Type:"error"}).
+func (op *ChangeSignatureOperation) extractNamedReturnParams(funcType *ast.FuncType) []Parameter {
+	if funcType.Results == nil {
+		return nil
+	}
+	var result []Parameter
+	for _, field := range funcType.Results.List {
+		typeStr := op.extractTypeString(field.Type)
+		if len(field.Names) == 0 {
+			result = append(result, Parameter{Type: typeStr})
+		} else {
+			for _, name := range field.Names {
+				result = append(result, Parameter{Name: name.Name, Type: typeStr})
+			}
+		}
+	}
+	return result
 }
 
 // preserveExistingParamsIfNeeded populates NewParams from the existing signature

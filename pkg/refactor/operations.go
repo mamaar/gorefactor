@@ -191,7 +191,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	for _, ref := range references {
 		// Check if this reference is within a removal change
 		isWithinRemoval := false
-		if ref.File == sourceFile.Path {
+		if sourceFile != nil && ref.File == sourceFile.Path {
 			for _, change := range removeChanges {
 				if ref.Offset >= change.Start && ref.Offset < change.End {
 					isWithinRemoval = true
@@ -1009,7 +1009,15 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	} else {
 		// Create new file (simplified)
 		filename := targetPackage.Name + ".go"
-		fullPath := filepath.Join(targetPackagePath, filename)
+		// targetPackagePath may be a relative user-supplied path; resolve it to an
+		// absolute filesystem path anchored at the workspace root so that
+		// MkdirAll/WriteFile land inside the actual project, not relative to the
+		// MCP server's working directory.
+		absPackageDir := targetPackagePath
+		if !filepath.IsAbs(absPackageDir) {
+			absPackageDir = filepath.Join(ws.RootPath, absPackageDir)
+		}
+		fullPath := filepath.Join(absPackageDir, filename)
 		initialContent := fmt.Sprintf("package %s\n", targetPackage.Name)
 
 		// Create the directory and file on disk
@@ -1018,6 +1026,14 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 		}
 		if err := os.WriteFile(fullPath, []byte(initialContent), 0644); err != nil {
 			return nil, nil, fmt.Errorf("failed to create initial file: %v", err)
+		}
+
+		// Update the package's Path to the resolved absolute path and re-register
+		// it in the workspace under the absolute key so subsequent lookups succeed.
+		if targetPackage.Path != absPackageDir {
+			delete(ws.Packages, targetPackage.Path)
+			targetPackage.Path = absPackageDir
+			ws.Packages[absPackageDir] = targetPackage
 		}
 
 		targetFile = &types.File{

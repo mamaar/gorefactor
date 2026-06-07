@@ -495,6 +495,123 @@ func TestResolveSourceFile_NotFound(t *testing.T) {
 	}
 }
 
+// TestAddContextParameter_NamedReturnsPreserved verifies that when a function has
+// named return values (e.g. "(secret []byte, err error)"), adding a ctx parameter
+// does not strip the names — Bug 1 regression test.
+func TestAddContextParameter_NamedReturnsPreserved(t *testing.T) {
+	src := `package main
+
+func getSecret(project string, secretName string) (secret []byte, err error) {
+	return secret, err
+}
+`
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, "secret.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	file := &types.File{
+		Path: "/test/secret.go",
+		AST:  astFile,
+	}
+
+	op := &ChangeSignatureOperation{
+		FunctionName: "getSecret",
+		SourceFile:   "/test/secret.go",
+		NewParams: []Parameter{
+			{Name: "ctx", Type: "context.Context"},
+			{Name: "project", Type: "string"},
+			{Name: "secretName", Type: "string"},
+		},
+		// NewReturns intentionally NOT set — simulates add_context_parameter caller
+	}
+
+	if err := op.preserveExistingReturnsIfNeeded(file); err != nil {
+		t.Fatalf("preserveExistingReturnsIfNeeded: %v", err)
+	}
+
+	// NamedReturns must be populated because the original signature had named results.
+	if len(op.NamedReturns) != 2 {
+		t.Fatalf("expected 2 NamedReturns, got %d: %v", len(op.NamedReturns), op.NamedReturns)
+	}
+	if op.NamedReturns[0].Name != "secret" || op.NamedReturns[0].Type != "[]byte" {
+		t.Errorf("NamedReturns[0] = %+v, want {Name:secret Type:[]byte}", op.NamedReturns[0])
+	}
+	if op.NamedReturns[1].Name != "err" || op.NamedReturns[1].Type != "error" {
+		t.Errorf("NamedReturns[1] = %+v, want {Name:err Type:error}", op.NamedReturns[1])
+	}
+
+	// generateNewSignature must emit the named return variables.
+	var funcDecl *ast.FuncDecl
+	ast.Inspect(astFile, func(n ast.Node) bool {
+		if fd, ok := n.(*ast.FuncDecl); ok && fd.Name.Name == "getSecret" {
+			funcDecl = fd
+			return false
+		}
+		return true
+	})
+	if funcDecl == nil {
+		t.Fatal("funcDecl not found")
+	}
+
+	sig := op.generateNewSignature(funcDecl)
+	if !strings.Contains(sig, "secret []byte") {
+		t.Errorf("signature missing named return 'secret []byte': %s", sig)
+	}
+	if !strings.Contains(sig, "err error") {
+		t.Errorf("signature missing named return 'err error': %s", sig)
+	}
+	if !strings.Contains(sig, "ctx context.Context") {
+		t.Errorf("signature missing new param 'ctx context.Context': %s", sig)
+	}
+}
+
+// TestAddContextParameter_UnnamedReturnsUnchanged verifies that functions with
+// unnamed return values are unaffected by the NamedReturns logic.
+func TestAddContextParameter_UnnamedReturnsUnchanged(t *testing.T) {
+	src := `package main
+
+func ListVersions(project string, secretName string) ([]string, error) {
+	return nil, nil
+}
+`
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, "secret.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+
+	file := &types.File{
+		Path: "/test/secret.go",
+		AST:  astFile,
+	}
+
+	op := &ChangeSignatureOperation{
+		FunctionName: "ListVersions",
+		SourceFile:   "/test/secret.go",
+		NewParams: []Parameter{
+			{Name: "ctx", Type: "context.Context"},
+			{Name: "project", Type: "string"},
+			{Name: "secretName", Type: "string"},
+		},
+	}
+
+	if err := op.preserveExistingReturnsIfNeeded(file); err != nil {
+		t.Fatalf("preserveExistingReturnsIfNeeded: %v", err)
+	}
+
+	// NamedReturns must be nil for unnamed returns.
+	if len(op.NamedReturns) != 0 {
+		t.Errorf("expected no NamedReturns for unnamed returns, got %v", op.NamedReturns)
+	}
+
+	// NewReturns should still be populated correctly.
+	if len(op.NewReturns) != 2 {
+		t.Fatalf("expected 2 NewReturns, got %d: %v", len(op.NewReturns), op.NewReturns)
+	}
+}
+
 func TestResolveSourceFile_PrefersNonTestFile(t *testing.T) {
 	src := `package main
 
