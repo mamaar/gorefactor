@@ -270,7 +270,17 @@ func (u *WorkspaceUpdater) findPackageByDir(dir string) *types.Package {
 func (u *WorkspaceUpdater) recollectImports(pkg *types.Package) {
 	seen := make(map[string]bool)
 	var imports []string
-	for _, f := range pkg.Files {
+	for path, f := range pkg.Files {
+		// Defensive: a *types.File with a nil AST should never be inserted
+		// into pkg.Files, but other code paths (e.g. refactor operations
+		// that fabricate a placeholder File before it has been parsed) have
+		// done so in the past and crashed this shared incremental-update
+		// path for every caller, not just the one that produced the bad
+		// entry. Skip rather than panic.
+		if f == nil || f.AST == nil {
+			u.logger.Warn("recollectImports: skipping file with nil AST", "package", pkg.Path, "file", path)
+			continue
+		}
 		for _, imp := range f.AST.Imports {
 			p := strings.Trim(imp.Path.Value, `"`)
 			if !seen[p] {

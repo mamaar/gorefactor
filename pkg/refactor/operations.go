@@ -3,6 +3,8 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"log/slog"
 	"os"
@@ -135,6 +137,25 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
+	// If we're moving a struct type, its constructor(s) almost always build
+	// it via unexported fields (idiomatic `func NewFoo(...) *Foo { return
+	// &Foo{unexportedField: ...} }`), which is only legal from within the
+	// type's own package. Rather than silently leave such a constructor
+	// behind — producing code that can never compile — resolve which
+	// constructors need to move alongside the type, and refuse the whole
+	// move if anything else (that we won't auto-move) would still be
+	// stranded. See move_companions.go.
+	if symbol.Kind == types.TypeSymbol {
+		sourceFile := findFileContainingSymbol(sourcePackage, symbol)
+		companions, err := op.resolveCompanionSymbols(resolver, sourcePackage, sourceFile, symbol)
+		if err != nil {
+			return err
+		}
+		if err := op.checkForStrandedDependents(ws, sourcePackage, sourceFile, symbol, companions); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -153,42 +174,79 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	// Find all references to the symbol
-	references, err := resolver.FindReferences(symbol)
+	sourceFile := findFileContainingSymbol(sourcePackage, symbol)
+
+	// If symbol is a struct type, bring along any constructors that build it
+	// via unexported fields — see move_companions.go. Validate already
+	// refused the move if anything else would be left stranded, so by this
+	// point it's safe to move exactly this set.
+	companions, err := op.resolveCompanionSymbols(resolver, sourcePackage, sourceFile, symbol)
 	if err != nil {
 		return nil, err
 	}
+	moveSet := append([]*types.Symbol{symbol}, companions...)
 
-	// Generate changes to remove symbol from source file
-	var removeChanges []types.Change
-	sourceFile := findFileContainingSymbol(sourcePackage, symbol)
-	if sourceFile != nil {
-		removeChanges, err = op.generateSymbolRemovalChanges(sourceFile, symbol)
+	// Find all references to every symbol being moved together.
+	var allReferences []*types.Reference
+	for _, s := range moveSet {
+		refs, err := resolver.FindReferences(s)
 		if err != nil {
 			return nil, err
 		}
-		plan.Changes = append(plan.Changes, removeChanges...)
-		plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
+		allReferences = append(allReferences, refs...)
 	}
 
-	// Generate changes to add symbol to target file
+	// Generate changes to remove each moved symbol from the source file
+	var removeChanges []types.Change
+	if sourceFile != nil {
+		for _, s := range moveSet {
+			c, err := op.generateSymbolRemovalChanges(sourceFile, s)
+			if err != nil {
+				return nil, err
+			}
+			removeChanges = append(removeChanges, c...)
+		}
+		plan.Changes = append(plan.Changes, removeChanges...)
+		plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
+
+		// If removing the moved declarations leaves any of the source
+		// file's own imports with nothing left that uses them, drop those
+		// imports too — an unused import is a hard compile error in Go, so
+		// leaving one behind is the source-side mirror of the target file
+		// missing an import it needs.
+		unusedImportChanges, err := generateUnusedImportRemovalChanges(ws, sourceFile, removeChanges)
+		if err != nil {
+			return nil, err
+		}
+		plan.Changes = append(plan.Changes, unusedImportChanges...)
+	}
+
+	// Generate changes to add the moved symbols (and any imports they need)
+	// to the target file
 	targetPackage, targetFile, err := op.getOrCreateTargetFile(ws, op.Request.ToPackage)
 	if err != nil {
 		return nil, err
 	}
 
-	addChange, err := op.generateSymbolAdditionChange(targetFile, symbol, sourcePackage, targetPackage)
+	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moveSet, sourcePackage, targetPackage)
 	if err != nil {
 		return nil, err
 	}
-	plan.Changes = append(plan.Changes, addChange)
+	plan.Changes = append(plan.Changes, addChanges...)
 	if !contains(plan.AffectedFiles, targetFile.Path) {
 		plan.AffectedFiles = append(plan.AffectedFiles, targetFile.Path)
 	}
 
-	// Update all reference sites
-	// But skip references that are within the removal changes (since we're removing that code anyway)
-	for _, ref := range references {
+	// Update all reference sites.
+	// But skip references that are within the removal changes (since we're
+	// removing that code anyway) — and keep track of which references
+	// survive, since only *those* files still need an import for the
+	// target package. Without this, moving a symbol whose only references
+	// were inside its own now-deleted method/constructor bodies (e.g. a
+	// constructor's `&Type{...}` referencing the type itself) left a
+	// dangling, unused import behind in the source file.
+	var survivingReferences []*types.Reference
+	for _, ref := range allReferences {
 		// Check if this reference is within a removal change
 		isWithinRemoval := false
 		if sourceFile != nil && ref.File == sourceFile.Path {
@@ -204,8 +262,15 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			// Skip this reference since it's being removed anyway
 			continue
 		}
+		survivingReferences = append(survivingReferences, ref)
 
-		updateChange, err := op.generateReferenceUpdateChange(ref, op.Request.ToPackage, targetPackage.Name)
+		// targetPackage.Path is the workspace-absolute filesystem path,
+		// resolved (and possibly created) by getOrCreateTargetFile above —
+		// unlike op.Request.ToPackage, which may still be the caller's raw,
+		// unresolved input (e.g. "pkg/memcache") when the target package
+		// didn't exist yet. packagePathToImportPath below requires an
+		// absolute path to compute a correct module-relative import path.
+		updateChange, err := op.generateReferenceUpdateChange(ws, ref, targetPackage.Path, targetPackage.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -217,8 +282,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 	}
 
-	// Generate import statement changes
-	importChanges := op.generateImportChanges(ws, references, op.Request.ToPackage, targetPackage.Name)
+	// Generate import statement changes (see targetPackage.Path note above)
+	importChanges := op.generateImportChanges(ws, survivingReferences, targetPackage.Path, targetPackage.Name)
 	plan.Changes = append(plan.Changes, importChanges...)
 
 	return plan, nil
@@ -841,61 +906,109 @@ func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, ty
 	return changes
 }
 
-func (op *MoveSymbolOperation) generateSymbolAdditionChange(targetFile *types.File, symbol *types.Symbol, sourcePackage, targetPackage *types.Package) (types.Change, error) {
-	// Get the actual source code of the symbol from the source file
-	sourceFile := findFileContainingSymbol(sourcePackage, symbol)
-	if sourceFile == nil {
-		return types.Change{}, fmt.Errorf("could not find source file for symbol %s", symbol.Name)
+// generateSymbolAdditionChanges builds the change(s) that add every symbol in
+// symbols (the primary moved symbol plus any companion functions — see
+// move_companions.go) to targetFile, along with whatever imports that code
+// needs (see move_imports.go). All of symbols must already live in
+// sourcePackage.
+func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace, targetFile *types.File, symbols []*types.Symbol, sourcePackage, targetPackage *types.Package) ([]types.Change, error) {
+	if len(symbols) == 0 {
+		return nil, fmt.Errorf("no symbols to add to %s", targetPackage.Path)
 	}
 
-	// Make sure we have the original content
-	if len(sourceFile.OriginalContent) == 0 {
-		return types.Change{}, fmt.Errorf("source file %s has no content loaded", sourceFile.Path)
-	}
+	// sourcePackage.Path is a workspace-absolute filesystem path; use the
+	// Go import path instead so the "moved from" comment doesn't leak the
+	// local filesystem layout (e.g. the author's home directory) into
+	// checked-in source.
+	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
 
-	// Extract the symbol's source code
-	symbolCode, err := op.extractSymbolSource(sourceFile, symbol)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to extract symbol source for %s: %v\n", symbol.Name, err)
-		// Fallback to a simple implementation for functions
-		switch symbol.Kind {
-		case types.FunctionSymbol:
-			symbolCode = fmt.Sprintf("func %s(a, b int) int {\n\treturn a + b\n}", symbol.Name)
-		case types.TypeSymbol:
-			// Attempt to generate struct with actual field information
-			structCode, err := op.generateStructFromSymbol(symbol, sourceFile)
-			if err != nil {
-				// Final fallback - empty struct
-				symbolCode = fmt.Sprintf("type %s struct {\n\t// Empty struct - original fields could not be extracted\n}", symbol.Name)
-			} else {
-				symbolCode = structCode
+	var blocks []string
+	var needed []neededImport
+	seenImportPaths := make(map[string]bool)
+	for _, symbol := range symbols {
+		symbolFile := findFileContainingSymbol(sourcePackage, symbol)
+		if symbolFile == nil {
+			return nil, fmt.Errorf("could not find source file for symbol %s", symbol.Name)
+		}
+		if len(symbolFile.OriginalContent) == 0 {
+			return nil, fmt.Errorf("source file %s has no content loaded", symbolFile.Path)
+		}
+
+		// Extract the symbol's source code
+		symbolCode, err := op.extractSymbolSource(symbolFile, symbol)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to extract symbol source for %s: %v\n", symbol.Name, err)
+			// Fallback to a simple implementation for functions
+			switch symbol.Kind {
+			case types.FunctionSymbol:
+				symbolCode = fmt.Sprintf("func %s(a, b int) int {\n\treturn a + b\n}", symbol.Name)
+			case types.TypeSymbol:
+				// Attempt to generate struct with actual field information
+				structCode, serr := op.generateStructFromSymbol(symbol, symbolFile)
+				if serr != nil {
+					// Final fallback - empty struct
+					symbolCode = fmt.Sprintf("type %s struct {\n\t// Empty struct - original fields could not be extracted\n}", symbol.Name)
+				} else {
+					symbolCode = structCode
+				}
+			default:
+				return nil, fmt.Errorf("failed to extract symbol source: %w", err)
 			}
-		default:
-			return types.Change{}, fmt.Errorf("failed to extract symbol source: %w", err)
+		}
+
+		blocks = append(blocks, fmt.Sprintf("// %s was moved from %s\n%s", symbol.Name, sourceImportPath, symbolCode))
+
+		// Resolve which imports this symbol's code needs by inspecting the
+		// actual identifiers it references against its own source file's
+		// import list (each moved symbol may originate from a different
+		// file within sourcePackage). See move_imports.go.
+		for _, imp := range resolveNeededImports(symbolFile, symbolCode) {
+			if seenImportPaths[imp.path] {
+				continue
+			}
+			seenImportPaths[imp.path] = true
+			needed = append(needed, imp)
 		}
 	}
 
-	// Add a comment indicating the move
-	symbolCode = fmt.Sprintf("\n// %s was moved from %s\n%s\n", symbol.Name, sourcePackage.Path, symbolCode)
+	combinedCode := "\n" + strings.Join(blocks, "\n\n") + "\n"
 
 	// Insert at end of file (simplified - real implementation would be smarter about placement)
-	change := types.Change{
+	changes := []types.Change{{
 		File:        targetFile.Path,
 		Start:       len(targetFile.OriginalContent),
 		End:         len(targetFile.OriginalContent),
 		OldText:     "",
-		NewText:     symbolCode,
-		Description: fmt.Sprintf("Add %s to %s", symbol.Name, targetPackage.Path),
+		NewText:     combinedCode,
+		Description: fmt.Sprintf("Add %s to %s", symbolNames(symbols), targetPackage.Path),
+	}}
+
+	if importChange := generateNeededImportsChange(ws, targetFile, needed); importChange != nil {
+		changes = append(changes, *importChange)
 	}
 
-	return change, nil
+	return changes, nil
 }
 
-func (op *MoveSymbolOperation) generateReferenceUpdateChange(ref *types.Reference, targetPackagePath, targetPackageName string) (*types.Change, error) {
+func symbolNames(symbols []*types.Symbol) string {
+	names := make([]string, len(symbols))
+	for i, s := range symbols {
+		names[i] = s.Name
+	}
+	return strings.Join(names, ", ")
+}
+
+func (op *MoveSymbolOperation) generateReferenceUpdateChange(ws *types.Workspace, ref *types.Reference, targetPackagePath, targetPackageName string) (*types.Change, error) {
 	// Update reference to use new package qualified name
-	// Skip references from the same package as the target
-	if strings.HasSuffix(ref.File, filepath.Join(targetPackagePath, "*.go")) {
-		return nil, nil // No change needed for references in the same package
+	// Skip references that already live in the target package — no
+	// qualifier is needed (or wanted) for a same-package reference.
+	//
+	// targetPackagePath must be the workspace-absolute filesystem path (the
+	// same convention as types.Package.Path everywhere else in this file),
+	// not a caller-supplied relative path — findPackageForFile below looks
+	// packages up by that absolute key.
+	if refPackage := findPackageForFile(ws, ref.File); refPackage != nil && refPackage.Path == targetPackagePath {
+		return nil, nil
 	}
 
 	// Read the file content to detect if this is a qualified reference
@@ -1035,14 +1148,40 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 			targetPackage.Path = absPackageDir
 			ws.Packages[absPackageDir] = targetPackage
 		}
+		targetPackage.Dir = absPackageDir
+
+		// Parse the freshly-written stub so File.AST is a real, non-nil AST
+		// (using the workspace's shared FileSet, same as the initial parse
+		// pass). A nil AST here is what previously caused a panic: the MCP
+		// layer re-syncs the workspace from disk after every write
+		// (internal/mcp.executePlan -> SyncWorkspaceChanges), which
+		// re-parses this same file and inserts it into targetPackage.Files
+		// keyed by filepath.Base(fullPath). If our own key here didn't match
+		// that convention, our nil-AST placeholder would linger in the map
+		// alongside the freshly-parsed entry, and the next iteration over
+		// Files (e.g. WorkspaceUpdater.recollectImports) would dereference
+		// the nil AST and crash the whole server process.
+		fset := ws.FileSet
+		if fset == nil {
+			fset = token.NewFileSet()
+		}
+		astFile, err := parser.ParseFile(fset, fullPath, initialContent, parser.ParseComments)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse initial file content: %v", err)
+		}
 
 		targetFile = &types.File{
 			Path:            fullPath,
 			Package:         targetPackage,
+			AST:             astFile,
 			OriginalContent: []byte(initialContent),
 			Modifications:   make([]types.Modification, 0),
 		}
-		targetPackage.Files[fullPath] = targetFile
+		// Keyed by base filename, matching the convention used everywhere
+		// else pkg.Files is populated (analysis.GoParser, WorkspaceUpdater),
+		// so a later re-parse of this same file replaces this entry instead
+		// of leaving a stale duplicate behind under a different key.
+		targetPackage.Files[filename] = targetFile
 	}
 
 	return targetPackage, targetFile, nil

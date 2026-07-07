@@ -4,7 +4,7 @@ func Greet() string {
 	return "hello"
 }
 
-// Multiply was moved from $TMPDIR
+// Multiply was moved from tests/move_symbol
 func Multiply(a, b int) int {
 	return a * b
 }

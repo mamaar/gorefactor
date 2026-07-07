@@ -4,6 +4,12 @@ import mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 // RegisterAllTools wires every gorefactor tool into the MCP server.
 func RegisterAllTools(s *mcpsdk.Server, state *MCPServer) {
+	// Recover from panics in any tool handler so a single bad refactoring
+	// operation returns an error to the caller instead of crashing the
+	// server process and disconnecting every client session. See
+	// recoveryMiddleware's doc comment for the incident this covers.
+	s.AddReceivingMiddleware(recoveryMiddleware(state.logger))
+
 	registerWorkspaceTools(s, state)
 	registerMoveTools(s, state)
 	registerRenameTools(s, state)

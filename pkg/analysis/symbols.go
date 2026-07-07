@@ -814,6 +814,13 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 // Helper methods
 
 func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *types.SymbolTable) error {
+	if file == nil || file.AST == nil {
+		// Defensive: pkg.Files entries should always carry a parsed AST, but
+		// a fabricated/placeholder File slipping through (see
+		// pkg/watch/updater.go's recollectImports for the matching guard)
+		// must not crash symbol-table rebuilds for the whole package.
+		return nil
+	}
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.FuncDecl:
