@@ -23,6 +23,7 @@ type RefactorEngine interface {
 	RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error)
 	RenameInterfaceMethod(ws *types.Workspace, req types.RenameInterfaceMethodRequest) (*types.RefactoringPlan, error)
 	RenameMethod(ws *types.Workspace, req types.RenameMethodRequest) (*types.RefactoringPlan, error)
+	RenameField(ws *types.Workspace, req types.RenameFieldRequest) (*types.RefactoringPlan, error)
 	ExtractMethod(ws *types.Workspace, req types.ExtractMethodRequest) (*types.RefactoringPlan, error)
 	ExtractFunction(ws *types.Workspace, req types.ExtractFunctionRequest) (*types.RefactoringPlan, error)
 	ExtractInterface(ws *types.Workspace, req types.ExtractInterfaceRequest) (*types.RefactoringPlan, error)
@@ -331,6 +332,48 @@ func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethod
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate rename method plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// RenameField implements renaming a struct field on a named type
+func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRequest) (*types.RefactoringPlan, error) {
+	operation := &RenameFieldOperation{Request: req}
+	// The operation cannot reach EngineConfig through the Operation interface,
+	// so the engine hands it the AllowBreaking flag for the export-status check.
+	if e.config != nil {
+		operation.AllowBreaking = e.config.AllowBreaking
+	}
+
+	// Struct-field renames resolve references by go/types object identity, which
+	// requires a type-checked workspace. Type-checking is lazy (LoadWorkspace does
+	// not perform it), so ensure every package is checked before the operation
+	// builds its reference index — otherwise FindFieldReferences fails closed.
+	if e.parser != nil {
+		for _, pkg := range ws.Packages {
+			e.parser.EnsureTypeChecked(ws, pkg)
+		}
+	}
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("rename field operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate rename field plan: %w", err)
 	}
 
 	// Analyze impact
@@ -1318,6 +1361,15 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 // BatchOperations implements executing multiple operations atomically
 func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error) {
 	operation := &BatchOperationOperation{Request: req}
+
+	// A batch may contain operations that resolve references by go/types object
+	// identity (rename_field), which fail closed without type info. Type-checking
+	// is lazy, and EnsureTypeChecked is a no-op once a package is checked.
+	if e.parser != nil {
+		for _, pkg := range ws.Packages {
+			e.parser.EnsureTypeChecked(ws, pkg)
+		}
+	}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {

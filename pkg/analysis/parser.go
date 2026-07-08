@@ -415,6 +415,38 @@ func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
 		return
 	}
 
+	// Include in-package test files so identifiers declared or used in _test.go
+	// land in Defs/Uses. Without them, object-identity lookups (FindFieldReferences)
+	// silently miss every test-file reference. External test packages (package x_test)
+	// carry a different package name and cannot be checked in the same pass.
+	pkgName := files[0].Name.Name
+	withTests := files
+	for _, f := range pkg.TestFiles {
+		if f.AST != nil && f.AST.Name.Name == pkgName {
+			withTests = append(withTests, f.AST)
+		}
+	}
+
+	typesPkg, info, err := p.checkFiles(ws, pkg, withTests)
+	if err != nil && len(withTests) > len(files) {
+		// A test file that fails to type-check must not cost the whole package its
+		// type info, so retry without them.
+		p.logger.Debug("type-checking with test files failed, retrying without", "package", pkg.ImportPath, "err", err)
+		typesPkg, info, err = p.checkFiles(ws, pkg, files)
+	}
+	if err != nil {
+		p.logger.Debug("type-checking failed (falling back to AST inference)", "package", pkg.ImportPath, "err", err)
+		// Still store partial results — go/types populates info even on errors
+		pkg.TypesInfo = info
+		return
+	}
+	pkg.TypesInfo = info
+	pkg.TypesPkg = typesPkg
+}
+
+// checkFiles runs go/types over the given file set, returning the populated Info
+// even when checking fails (go/types fills it in partially on error).
+func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*ast.File) (*gotypes.Package, *gotypes.Info, error) {
 	conf := gotypes.Config{
 		Importer: p.importer,
 		Error:    func(err error) {}, // silently ignore type errors
@@ -424,16 +456,8 @@ func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
 		Defs:  make(map[*ast.Ident]gotypes.Object),
 		Uses:  make(map[*ast.Ident]gotypes.Object),
 	}
-
 	typesPkg, err := conf.Check(pkg.ImportPath, ws.FileSet, files, info)
-	if err != nil {
-		p.logger.Debug("type-checking failed (falling back to AST inference)", "package", pkg.ImportPath, "err", err)
-		// Still store partial results — go/types populates info even on errors
-		pkg.TypesInfo = info
-		return
-	}
-	pkg.TypesInfo = info
-	pkg.TypesPkg = typesPkg
+	return typesPkg, info, err
 }
 
 // workspaceImporter implements go/types.Importer using workspace-local packages

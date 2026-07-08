@@ -235,3 +235,30 @@ func TestSymbolHierarchy(t *testing.T) {
 		t.Errorf("Expected second child to be 'Field1', got '%s'", parent.Children[1].Name)
 	}
 }
+func TestFindSymbolDottedTypeMember(t *testing.T) {
+	nameField := &Symbol{Name: "Name", Kind: StructFieldSymbol}
+	greet := &Symbol{Name: "Greet", Kind: MethodSymbol}
+	st := &SymbolTable{
+		Functions: map[string]*Symbol{},
+		Types:     map[string]*Symbol{"User": {Name: "User", Kind: TypeSymbol}},
+		Variables: map[string]*Symbol{},
+		Constants: map[string]*Symbol{},
+		Methods:   map[string][]*Symbol{"User": {greet}},
+		Fields:    map[string][]*Symbol{"User": {nameField}},
+	}
+
+	if got := st.FindSymbol("User.Name"); got != nameField {
+		t.Errorf("FindSymbol(\"User.Name\") = %v, want the struct field", got)
+	}
+	if got := st.FindSymbol("User.Greet"); got != greet {
+		t.Errorf("FindSymbol(\"User.Greet\") = %v, want the method", got)
+	}
+	// Fields must be unreachable by bare name: a bare lookup could otherwise
+	// shadow a top-level symbol for analyze_symbol's callers.
+	if got := st.FindSymbol("Name"); got != nil {
+		t.Errorf("FindSymbol(\"Name\") = %v, want nil (fields are dotted-form only)", got)
+	}
+	if got := st.FindSymbol("User.Missing"); got != nil {
+		t.Errorf("FindSymbol(\"User.Missing\") = %v, want nil", got)
+	}
+}

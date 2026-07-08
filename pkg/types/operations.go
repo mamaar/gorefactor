@@ -37,6 +37,7 @@ const (
 	PlanOperation
 	ExecuteOperation
 	RollbackOperation
+	RenameFieldOperationType
 )
 
 // MoveSymbolRequest represents moving a symbol between packages
@@ -80,6 +81,14 @@ type RenameMethodRequest struct {
 	NewMethodName     string  // New method name
 	PackagePath       string  // Path to the package containing the type (optional, "" means workspace-wide)
 	UpdateImplementations bool // For interfaces: whether to update all implementations
+}
+
+// RenameFieldRequest represents renaming a struct field on a named type
+type RenameFieldRequest struct {
+	TypeName     string // Named struct type that owns the field
+	FieldName    string // Current field name
+	NewFieldName string // New field name
+	PackagePath  string // Path to the package containing the type ("" means search the workspace)
 }
 
 type RenameScope int

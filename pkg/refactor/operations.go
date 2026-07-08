@@ -1208,6 +1208,14 @@ func (op *RenameSymbolOperation) checkNameConflict(ws *types.Workspace, symbol *
 }
 
 func (op *RenameSymbolOperation) generateDefinitionRenameChange(symbol *types.Symbol, newName string) types.Change {
+	return definitionRenameChange(symbol, newName)
+}
+
+// definitionRenameChange builds the byte-offset splice that rewrites a symbol's
+// own declaration ident from symbol.Name to newName. It resolves the offset from
+// the symbol's line/column via calculateByteOffset so callers never duplicate
+// that logic. Shared by RenameSymbolOperation and RenameFieldOperation.
+func definitionRenameChange(symbol *types.Symbol, newName string) types.Change {
 	start := calculateByteOffset(symbol.File, symbol.Line, symbol.Column)
 	return types.Change{
 		File:        symbol.File,

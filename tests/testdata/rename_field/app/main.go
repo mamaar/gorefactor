@@ -1,0 +1,38 @@
+package app
+
+import (
+	"fmt"
+
+	"tests/rename_field/model"
+)
+
+// Run exercises every access path to model.User.Name from another package.
+func Run() {
+	// Keyed composite literal.
+	u := model.User{Name: "Alice", Age: 30}
+
+	// Plain selector on a value.
+	fmt.Println(u.Name)
+
+	// Pointer selector.
+	p := &u
+	fmt.Println(p.Name)
+
+	// Unkeyed composite literal (constructed inside the model package, see
+	// model.NewLegacyUser) — has no field name, must be left untouched.
+	u2 := model.NewLegacyUser()
+	fmt.Println(u2.Age)
+
+	// Promoted field access through embedding (Admin embeds User).
+	adm := model.Admin{User: model.User{Name: "Carol", Age: 40}, Level: 1}
+	fmt.Println(adm.Name)
+
+	// REGRESSION GUARD: Company.Name is an unrelated field on an unrelated
+	// struct. It must NOT be renamed even though it shares the name "Name".
+	c := model.Company{Name: "Acme"}
+	fmt.Println(c.Name)
+}
+
+func main() {
+	Run()
+}

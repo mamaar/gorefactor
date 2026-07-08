@@ -55,6 +55,25 @@ func TestRenameMethod(t *testing.T) {
 	compareGoldenFiles(t, "rename_method", tmpDir)
 }
 
+func TestRenameField(t *testing.T) {
+	tmpDir := copyFixture(t, "rename_field")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.RenameField(ws, types.RenameFieldRequest{
+		TypeName:     "User",
+		FieldName:    "Name",
+		NewFieldName: "FullName",
+	})
+	if err != nil {
+		t.Fatalf("RenameField: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "rename_field", tmpDir)
+}
+
 func TestRenamePackage(t *testing.T) {
 	tmpDir := copyFixture(t, "rename_package")
 	eng := createEngine(t)

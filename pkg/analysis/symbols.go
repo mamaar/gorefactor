@@ -90,6 +90,7 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 		Variables: make(map[string]*types.Symbol),
 		Constants: make(map[string]*types.Symbol),
 		Methods:   make(map[string][]*types.Symbol),
+		Fields:    make(map[string][]*types.Symbol),
 	}
 
 	// Process all files in the package
@@ -106,6 +107,18 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// Extract struct field symbols. This is a separate pass (not folded into the
+	// ast.Inspect above) because it must iterate file.AST.Decls directly to see
+	// only package-level TypeSpecs — ast.Inspect would also descend into
+	// function-local struct types, whose names could collide with package-level
+	// type names in symbolTable.Fields.
+	for _, file := range pkg.Files {
+		sr.extractStructFieldSymbols(file, symbolTable)
+	}
+	for _, file := range pkg.TestFiles {
+		sr.extractStructFieldSymbols(file, symbolTable)
 	}
 
 	// Second pass: Fix up method Parent pointers that couldn't be resolved during extraction
@@ -450,43 +463,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 	// Workspace-index fast-path: varint-compressed cursor index with ~10x memory savings.
 	if targetObj != nil && idx.workspaceIdx != nil && len(idx.workspaceIdx.packages) > 0 {
 		if objEntries := idx.workspaceIdx.findReferences(targetObj); len(objEntries) > 0 {
-			var references []*types.Reference
-			for i := range objEntries {
-				oe := &objEntries[i]
-				if oe.Pos == symbol.Position {
-					continue
-				}
-				if oe.IsDeclaration {
-					continue
-				}
-				if allowedPackages != nil && oe.File != nil {
-					inAllowed := false
-					for _, pkg := range allowedPackages {
-						if _, exists := pkg.Files[oe.File.Path]; exists {
-							inAllowed = true
-							break
-						}
-						if oe.File.Package == pkg {
-							inAllowed = true
-							break
-						}
-					}
-					if !inAllowed {
-						continue
-					}
-				}
-				pos := sr.workspace.FileSet.Position(oe.Pos)
-				references = append(references, &types.Reference{
-					Symbol:   symbol,
-					Position: oe.Pos,
-					Offset:   pos.Offset,
-					File:     oe.File.Path,
-					Line:     pos.Line,
-					Column:   pos.Column,
-					Context:  sr.extractContext2(oe.File, pos.Line),
-				})
-			}
-			return references, nil
+			return sr.objectEntriesToReferences(symbol, objEntries, allowedPackages), nil
 		}
 	}
 
@@ -591,6 +568,126 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 	}
 
 	return references, nil
+}
+
+// objectEntriesToReferences converts workspace-index object entries into
+// []*types.Reference. It skips the symbol's own declaration position and any
+// declaration entries, and optionally filters to allowedPackages. This is the
+// shared conversion used by both FindReferencesIndexedFiltered (the fast path)
+// and FindFieldReferences (the fail-closed field path), so both populate
+// Offset/File/Line/Column identically.
+func (sr *SymbolResolver) objectEntriesToReferences(symbol *types.Symbol, objEntries []objectEntry, allowedPackages map[string]*types.Package) []*types.Reference {
+	var references []*types.Reference
+	for i := range objEntries {
+		oe := &objEntries[i]
+		if oe.Pos == symbol.Position {
+			continue
+		}
+		if oe.IsDeclaration {
+			continue
+		}
+		if allowedPackages != nil && oe.File != nil {
+			inAllowed := false
+			for _, pkg := range allowedPackages {
+				if _, exists := pkg.Files[oe.File.Path]; exists {
+					inAllowed = true
+					break
+				}
+				if oe.File.Package == pkg {
+					inAllowed = true
+					break
+				}
+			}
+			if !inAllowed {
+				continue
+			}
+		}
+		pos := sr.workspace.FileSet.Position(oe.Pos)
+		references = append(references, &types.Reference{
+			Symbol:   symbol,
+			Position: oe.Pos,
+			Offset:   pos.Offset,
+			File:     oe.File.Path,
+			Line:     pos.Line,
+			Column:   pos.Column,
+			Context:  sr.extractContext2(oe.File, pos.Line),
+		})
+	}
+	return references
+}
+
+// FindFieldReferences resolves symbol to its go/types object and returns every
+// non-declaration reference via the workspace index. It never falls back to
+// name-based matching: for a struct field that would rewrite unrelated
+// identically-named identifiers.
+//
+// It fails closed. Any condition that would prevent go/types-backed resolution
+// (missing package or type info, an unresolvable object, or an empty/absent
+// workspace index) is returned as a *types.RefactorError rather than degrading
+// to a name match or a silently-empty result. An empty (but non-nil-object)
+// result set is legitimate — a field with zero uses — and returns (nil, nil).
+func (sr *SymbolResolver) FindFieldReferences(symbol *types.Symbol, idx *ReferenceIndex) ([]*types.Reference, error) {
+	// The workspace type index must be present and populated; without it there
+	// is no object-identity path and name matching would corrupt source.
+	if idx == nil || idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
+		return nil, &types.RefactorError{
+			Type: types.InvalidOperation,
+			Message: fmt.Sprintf(
+				"cannot safely find references to field %q: the workspace type index is unavailable; struct-field renames require a fully type-checked workspace",
+				symbol.Name),
+			File:   symbol.File,
+			Line:   symbol.Line,
+			Column: symbol.Column,
+		}
+	}
+
+	// The symbol's package must be present and type-checked.
+	pkg := sr.findPackageForSymbol(symbol)
+	if pkg == nil || pkg.TypesInfo == nil {
+		return nil, &types.RefactorError{
+			Type: types.InvalidOperation,
+			Message: fmt.Sprintf(
+				"cannot safely find references to field %q: type information for package %q is unavailable; struct-field renames require a fully type-checked workspace",
+				symbol.Name, symbol.Package),
+			File:   symbol.File,
+			Line:   symbol.Line,
+			Column: symbol.Column,
+		}
+	}
+
+	// Resolve to the go/types object. A nil object here means we cannot
+	// distinguish this field from same-named identifiers, so we must not fall
+	// back to a name walk — fail closed instead.
+	obj := sr.resolveTypesObject(symbol)
+	if obj == nil {
+		return nil, &types.RefactorError{
+			Type: types.SymbolNotFound,
+			Message: fmt.Sprintf(
+				"cannot resolve field %q to a type-checked object; struct-field renames require full type information to avoid rewriting unrelated identifiers of the same name",
+				symbol.Name),
+			File:   symbol.File,
+			Line:   symbol.Line,
+			Column: symbol.Column,
+		}
+	}
+
+	// Object resolved: an empty result is a legitimate "field is never used",
+	// not an error.
+	objEntries := idx.workspaceIdx.findReferences(obj)
+	return sr.objectEntriesToReferences(symbol, objEntries, nil), nil
+}
+
+// findPackageForSymbol locates the package that declares symbol, trying the
+// package identifier directly and then the import-path mapping. Mirrors the
+// lookup performed by resolveTypesObject.
+func (sr *SymbolResolver) findPackageForSymbol(symbol *types.Symbol) *types.Package {
+	pkg := sr.workspace.Packages[symbol.Package]
+	if pkg == nil {
+		if fsPath, ok := sr.workspace.ImportToPath[symbol.Package]; ok {
+			pkg = sr.workspace.Packages[fsPath]
+		}
+	}
+	return pkg
 }
 
 // HasNonDeclarationReference checks if a symbol has at least one non-declaration reference
@@ -744,18 +841,63 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 
 	var symbol *types.Symbol
 
-	// Check for method symbols (Type.Method syntax) first for explicit disambiguation
+	// Dotted Type.Member syntax: explicit disambiguation for methods and struct
+	// fields. Method first, then field — Go forbids a field and method sharing a
+	// name on the same type, so at most one matches; ordering only affects error
+	// text. Fields are reachable ONLY through this dotted form (see the bare-name
+	// guard below), because bare field names are highly collision-prone.
 	if strings.Contains(name, ".") {
 		parts := strings.Split(name, ".")
 		if len(parts) == 2 {
-			typeName, methodName := parts[0], parts[1]
+			typeName, member := parts[0], parts[1]
 			if methods, exists := pkg.Symbols.Methods[typeName]; exists {
 				for _, method := range methods {
-					if method.Name == methodName {
+					if method.Name == member {
 						sr.cache.SetResolvedRef(cacheKey, method)
 						return method, nil
 					}
 				}
+			}
+			if fields, exists := pkg.Symbols.Fields[typeName]; exists {
+				for _, field := range fields {
+					if field.Name == member {
+						sr.cache.SetResolvedRef(cacheKey, field)
+						return field, nil
+					}
+				}
+			}
+
+			// Dotted form supplied but member not found. Report an actionable
+			// error rather than falling through to the bare-name paths (which
+			// would try to resolve the literal string "Type.Member" and fail
+			// generically).
+			_, typeIsKnown := pkg.Symbols.Types[typeName]
+			methodsForType := pkg.Symbols.Methods[typeName]
+			fieldsForType := pkg.Symbols.Fields[typeName]
+			if typeIsKnown || len(methodsForType) > 0 || len(fieldsForType) > 0 {
+				var availFields, availMethods []string
+				for _, f := range fieldsForType {
+					availFields = append(availFields, f.Name)
+				}
+				for _, m := range methodsForType {
+					availMethods = append(availMethods, m.Name)
+				}
+				return nil, &types.RefactorError{
+					Type: types.SymbolNotFound,
+					Message: fmt.Sprintf(
+						"type %q has no field or method %q.\nAvailable fields: %s\nAvailable methods: %s",
+						typeName, member,
+						formatMemberList(availFields),
+						formatMemberList(availMethods)),
+					File: pkg.Dir,
+				}
+			}
+			return nil, &types.RefactorError{
+				Type: types.SymbolNotFound,
+				Message: fmt.Sprintf(
+					"unknown type %q in %q: no such type in package %s",
+					typeName, name, pkg.Path),
+				File: pkg.Dir,
 			}
 		}
 	}
@@ -804,11 +946,43 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 		return symbol, nil
 	}
 
+	// A bare (undotted) name that matches only struct field(s) must NOT resolve:
+	// fields are far more collision-prone than methods, and a bare match could
+	// silently target the wrong symbol. Suggest the Type.Field form instead
+	// (mirrors the ambiguous-method block above).
+	var fieldSuggestions []string
+	for typeName, fields := range pkg.Symbols.Fields {
+		for _, field := range fields {
+			if field.Name == name {
+				fieldSuggestions = append(fieldSuggestions, typeName+"."+name)
+				break
+			}
+		}
+	}
+	if len(fieldSuggestions) > 0 {
+		return nil, &types.RefactorError{
+			Type: types.SymbolNotFound,
+			Message: fmt.Sprintf(
+				"%q is a struct field and cannot be resolved by bare name.\nUse Type.Field syntax to select it:\n  %s",
+				name, strings.Join(fieldSuggestions, "\n  ")),
+			File: pkg.Dir,
+		}
+	}
+
 	return nil, &types.RefactorError{
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("symbol not found: %s", name),
 		File:    pkg.Dir,
 	}
+}
+
+// formatMemberList renders a list of member names for error messages, using a
+// placeholder when the list is empty.
+func formatMemberList(names []string) string {
+	if len(names) == 0 {
+		return "(none)"
+	}
+	return strings.Join(names, ", ")
 }
 
 // Helper methods
@@ -966,6 +1140,77 @@ func (sr *SymbolResolver) extractTypeSymbol(typeSpec *ast.TypeSpec, file *types.
 	}
 
 	return symbol
+}
+
+// extractStructFieldSymbols walks a file's top-level type declarations and indexes
+// struct field symbols into symbolTable.Fields, keyed by the owning type's name.
+//
+// This deliberately does not reuse the file-wide ast.Inspect in extractSymbolsFromFile:
+// that walk also visits function-local struct type literals, whose type names could
+// collide with a package-level type of the same name in symbolTable.Fields. Instead,
+// only top-level GenDecl/TypeSpec nodes (from file.AST.Decls) are considered, which
+// covers both `type T struct{...}` and grouped `type ( ... )` declarations in one place.
+func (sr *SymbolResolver) extractStructFieldSymbols(file *types.File, symbolTable *types.SymbolTable) {
+	if file == nil || file.AST == nil {
+		return
+	}
+
+	for _, decl := range file.AST.Decls {
+		genDecl, ok := decl.(*ast.GenDecl)
+		if !ok || genDecl.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range genDecl.Specs {
+			typeSpec, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
+			structType, ok := typeSpec.Type.(*ast.StructType)
+			if !ok || structType.Fields == nil {
+				continue
+			}
+
+			typeName := typeSpec.Name.Name
+
+			// Only index fields for the TypeSpec that was actually retained as the
+			// package's symbol for typeName. extractSymbolsFromFile/extractGenDeclSymbols
+			// refuse to let a _test.go TypeSpec overwrite a non-test one, so a
+			// test-file redeclaration of the same type name must not contribute
+			// phantom fields to the kept type. Comparing positions identifies the
+			// exact retained TypeSpec (equivalent to, but more robust than,
+			// re-checking the _test.go suffix condition here).
+			typeSymbol, exists := symbolTable.Types[typeName]
+			if !exists || typeSymbol.Position != typeSpec.Name.Pos() {
+				continue
+			}
+
+			for _, field := range structType.Fields.List {
+				// Skip embedded/anonymous fields — they have no field-name ident.
+				if len(field.Names) == 0 {
+					continue
+				}
+				for _, name := range field.Names {
+					pos := sr.workspace.FileSet.Position(name.Pos())
+					fieldSymbol := &types.Symbol{
+						Name:     name.Name,
+						Kind:     types.StructFieldSymbol,
+						Package:  getPackageIdentifier(file.Package),
+						File:     file.Path,
+						Position: name.Pos(),
+						End:      name.End(),
+						Line:     pos.Line,
+						Column:   pos.Column,
+						Exported: sr.isExported(name.Name),
+						Parent:   typeSymbol,
+					}
+					if field.Doc != nil {
+						fieldSymbol.DocComment = field.Doc.Text()
+					}
+					symbolTable.Fields[typeName] = append(symbolTable.Fields[typeName], fieldSymbol)
+				}
+			}
+		}
+	}
 }
 
 // extractInterfaceMethodSymbols extracts method symbols from an interface type

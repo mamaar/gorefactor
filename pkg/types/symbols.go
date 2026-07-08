@@ -1,6 +1,9 @@
 package types
 
-import "go/token"
+import (
+	"go/token"
+	"strings"
+)
 
 // Symbol represents any named entity in Go code
 type Symbol struct {
@@ -83,11 +86,35 @@ type SymbolTable struct {
 	Variables map[string]*Symbol
 	Constants map[string]*Symbol
 	Methods   map[string][]*Symbol  // type name -> methods
+	Fields    map[string][]*Symbol  // type name -> struct fields
 }
 
 // FindSymbol searches the symbol table for a symbol by name across all categories.
 func (st *SymbolTable) FindSymbol(name string) *Symbol {
 	if st == nil {
+		return nil
+	}
+	// Dotted Type.Member form: resolve methods and struct fields explicitly.
+	// Method first, then field (Go forbids a field and method of the same name
+	// on a type). Fields are reachable ONLY via this dotted form — they are
+	// deliberately excluded from the bare-name lookup below to avoid shadowing
+	// top-level symbols. This branch is purely additive; dotted names previously
+	// returned nil.
+	if strings.Contains(name, ".") {
+		parts := strings.Split(name, ".")
+		if len(parts) == 2 {
+			typeName, member := parts[0], parts[1]
+			for _, m := range st.Methods[typeName] {
+				if m.Name == member {
+					return m
+				}
+			}
+			for _, f := range st.Fields[typeName] {
+				if f.Name == member {
+					return f
+				}
+			}
+		}
 		return nil
 	}
 	if s, ok := st.Functions[name]; ok {

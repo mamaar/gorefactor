@@ -67,6 +67,15 @@ func parseOperationString(opStr string) (types.Operation, error) {
 				UpdateImplementations: true,
 			},
 		}, nil
+	case "rename_field":
+		return &RenameFieldOperation{
+			Request: types.RenameFieldRequest{
+				TypeName:     raw["type_name"],
+				FieldName:    raw["field_name"],
+				NewFieldName: raw["new_field_name"],
+				PackagePath:  raw["package_path"],
+			},
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown operation type: %s", opType)
 	}

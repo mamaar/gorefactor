@@ -822,6 +822,137 @@ func Caller() string { return pkga.SharedFunc() }
 	}
 }
 
+// TestSymbolResolver_ExtractStructFieldSymbols verifies that struct fields are
+// indexed into symbolTable.Fields, that the recorded Position resolves via
+// pkg.TypesInfo.Defs to a *go/types.Var with IsField() == true, that embedded
+// fields are skipped, and that interfaces contribute no fields.
+func TestSymbolResolver_ExtractStructFieldSymbols(t *testing.T) {
+	fileSet := token.NewFileSet()
+
+	src := `package fieldtest
+
+type Embedded struct {
+	X int
+}
+
+// User represents a person.
+type User struct {
+	Embedded
+	Name string
+	Age  int
+}
+
+type Greeter interface {
+	Greet() string
+}
+`
+
+	astFile, err := parser.ParseFile(fileSet, "fieldtest.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse test source: %v", err)
+	}
+
+	conf := gotypes.Config{Importer: importer.Default()}
+	info := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	typesPkg, err := conf.Check("fieldtest", fileSet, []*ast.File{astFile}, info)
+	if err != nil {
+		_ = err
+	}
+
+	file := &types.File{
+		Path:            "fieldtest.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+
+	pkg := &types.Package{
+		Name:      "fieldtest",
+		Path:      "test/fieldtest",
+		Files:     map[string]*types.File{"fieldtest.go": file},
+		TypesInfo: info,
+		TypesPkg:  typesPkg,
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages:     map[string]*types.Package{"test/fieldtest": pkg},
+		FileSet:      fileSet,
+		ImportToPath: make(map[string]string),
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	symbolTable, err := resolver.BuildSymbolTable(pkg)
+	if err != nil {
+		t.Fatalf("Failed to build symbol table: %v", err)
+	}
+
+	// User should have exactly Name and Age indexed (Embedded is skipped).
+	userFields, exists := symbolTable.Fields["User"]
+	if !exists {
+		t.Fatal("Expected symbolTable.Fields[\"User\"] to exist")
+	}
+	if len(userFields) != 2 {
+		t.Fatalf("Expected 2 fields for User, got %d", len(userFields))
+	}
+
+	var nameField *types.Symbol
+	for _, f := range userFields {
+		if f.Name == "Embedded" {
+			t.Error("Expected embedded field 'Embedded' to NOT be indexed")
+		}
+		if f.Name == "Name" {
+			nameField = f
+		}
+	}
+	if nameField == nil {
+		t.Fatal("Expected to find Name field symbol for User")
+	}
+
+	if nameField.Kind != types.StructFieldSymbol {
+		t.Errorf("Expected StructFieldSymbol, got %v", nameField.Kind)
+	}
+	if !nameField.Exported {
+		t.Error("Expected Name field to be exported")
+	}
+	if nameField.Parent == nil || nameField.Parent.Name != "User" {
+		t.Error("Expected Name field's Parent to be the User type symbol")
+	}
+
+	// The recorded Position must resolve, via pkg.TypesInfo.Defs, to a
+	// *go/types.Var with IsField() == true.
+	var resolvedObj gotypes.Object
+	for ident, obj := range info.Defs {
+		if ident.Pos() == nameField.Position {
+			resolvedObj = obj
+			break
+		}
+	}
+	if resolvedObj == nil {
+		t.Fatal("Expected Name field's Position to resolve via TypesInfo.Defs")
+	}
+	fieldVar, ok := resolvedObj.(*gotypes.Var)
+	if !ok {
+		t.Fatalf("Expected resolved object to be *go/types.Var, got %T", resolvedObj)
+	}
+	if !fieldVar.IsField() {
+		t.Error("Expected resolved *go/types.Var to have IsField() == true")
+	}
+
+	// Interfaces must contribute no fields.
+	if _, exists := symbolTable.Fields["Greeter"]; exists {
+		t.Error("Expected interface type 'Greeter' to have no entry in symbolTable.Fields")
+	}
+
+	// Embedded struct's own field (X) should still be indexed under "Embedded".
+	embeddedFields, exists := symbolTable.Fields["Embedded"]
+	if !exists || len(embeddedFields) != 1 || embeddedFields[0].Name != "X" {
+		t.Error("Expected symbolTable.Fields[\"Embedded\"] to contain field X")
+	}
+}
+
 // importerFunc adapts a function to the go/types.Importer interface.
 type importerFunc func(path string) (*gotypes.Package, error)
 
@@ -1061,5 +1192,214 @@ func Caller() string { return pkga.SharedFunc() }
 	// HasNonDeclarationReference should work
 	if !resolver.HasNonDeclarationReference(sharedFunc, idx) {
 		t.Error("Expected HasNonDeclarationReference to find cross-package usage")
+	}
+}
+
+// createFieldRefTestWorkspace builds a type-checked single-package workspace
+// containing two unrelated structs that both declare a field named "Name",
+// plus a struct with a field that is never referenced. Used by the
+// FindFieldReferences tests.
+func createFieldRefTestWorkspace(t *testing.T) (*types.Workspace, *SymbolResolver, *types.Package) {
+	t.Helper()
+	fileSet := token.NewFileSet()
+
+	src := `package fieldrefs
+
+type User struct {
+	Name string
+	Age  int
+}
+
+type Product struct {
+	Name  string
+	Price int
+}
+
+type Unused struct {
+	Ghost string
+}
+
+func Build() {
+	u := User{Name: "alice"}
+	_ = u.Name
+	u.Name = "bob"
+
+	p := Product{Name: "widget"}
+	_ = p.Name
+	_ = Unused{}
+}
+`
+
+	astFile, err := parser.ParseFile(fileSet, "fieldrefs.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("Failed to parse: %v", err)
+	}
+
+	conf := gotypes.Config{Importer: importer.Default()}
+	info := &gotypes.Info{
+		Defs: make(map[*ast.Ident]gotypes.Object),
+		Uses: make(map[*ast.Ident]gotypes.Object),
+	}
+	typesPkg, err := conf.Check("fieldrefs", fileSet, []*ast.File{astFile}, info)
+	if err != nil {
+		t.Fatalf("Type-check failed: %v", err)
+	}
+
+	file := &types.File{
+		Path:            "fieldrefs.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+	pkg := &types.Package{
+		Name:      "fieldrefs",
+		Path:      "test/fieldrefs",
+		Files:     map[string]*types.File{"fieldrefs.go": file},
+		TypesInfo: info,
+		TypesPkg:  typesPkg,
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages:     map[string]*types.Package{"test/fieldrefs": pkg},
+		FileSet:      fileSet,
+		ImportToPath: make(map[string]string),
+	}
+
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		t.Fatalf("Failed to build symbol table: %v", err)
+	}
+
+	return ws, resolver, pkg
+}
+
+// TestFindFieldReferences_ErrorWhenTypesInfoNil verifies the load-bearing
+// fail-closed guarantee: with no type information available, FindFieldReferences
+// returns an error and NOT an empty-but-successful (name-fallback) result.
+func TestFindFieldReferences_ErrorWhenTypesInfoNil(t *testing.T) {
+	_, resolver, pkg := createFieldRefTestWorkspace(t)
+
+	// Build the index while type info is present so the workspace index itself
+	// is populated; this isolates the TypesInfo-nil guard specifically.
+	idx := resolver.BuildReferenceIndex()
+	if idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
+		t.Fatal("expected a populated workspace index for this fixture")
+	}
+
+	field := pkg.Symbols.FindSymbol("User.Name")
+	if field == nil {
+		t.Fatal("expected to resolve User.Name field symbol")
+	}
+
+	// Remove type info to trigger the fail-closed guard.
+	pkg.TypesInfo = nil
+
+	refs, err := resolver.FindFieldReferences(field, idx)
+	if err == nil {
+		t.Fatalf("expected an error when TypesInfo is nil, got nil (refs=%d)", len(refs))
+	}
+	if refs != nil {
+		t.Errorf("expected nil refs on error, got %d references", len(refs))
+	}
+	if _, ok := err.(*types.RefactorError); !ok {
+		t.Errorf("expected *types.RefactorError, got %T", err)
+	}
+}
+
+// TestFindFieldReferences_EmptyIsNotError verifies that a field with zero uses
+// resolves to its object and returns an empty slice with no error — this must be
+// distinguished from the nil-object failure case.
+func TestFindFieldReferences_EmptyIsNotError(t *testing.T) {
+	_, resolver, pkg := createFieldRefTestWorkspace(t)
+	idx := resolver.BuildReferenceIndex()
+
+	ghost := pkg.Symbols.FindSymbol("Unused.Ghost")
+	if ghost == nil {
+		t.Fatal("expected to resolve Unused.Ghost field symbol")
+	}
+
+	refs, err := resolver.FindFieldReferences(ghost, idx)
+	if err != nil {
+		t.Fatalf("expected no error for an unreferenced field, got: %v", err)
+	}
+	if len(refs) != 0 {
+		t.Errorf("expected 0 references for unreferenced field Ghost, got %d", len(refs))
+	}
+}
+
+// TestFindFieldReferences_DoesNotConflateSameNamedFields verifies that
+// FindFieldReferences for User.Name returns only User.Name uses and never a
+// reference to the identically-named Product.Name field.
+func TestFindFieldReferences_DoesNotConflateSameNamedFields(t *testing.T) {
+	_, resolver, pkg := createFieldRefTestWorkspace(t)
+	idx := resolver.BuildReferenceIndex()
+
+	userName := pkg.Symbols.FindSymbol("User.Name")
+	productName := pkg.Symbols.FindSymbol("Product.Name")
+	if userName == nil || productName == nil {
+		t.Fatalf("expected to resolve both User.Name and Product.Name (user=%v product=%v)", userName, productName)
+	}
+
+	userRefs, err := resolver.FindFieldReferences(userName, idx)
+	if err != nil {
+		t.Fatalf("FindFieldReferences(User.Name) failed: %v", err)
+	}
+	productRefs, err := resolver.FindFieldReferences(productName, idx)
+	if err != nil {
+		t.Fatalf("FindFieldReferences(Product.Name) failed: %v", err)
+	}
+
+	if len(userRefs) == 0 {
+		t.Fatal("expected at least one reference to User.Name")
+	}
+	if len(productRefs) == 0 {
+		t.Fatal("expected at least one reference to Product.Name")
+	}
+
+	// The position sets must be disjoint. If name-based matching leaked in, the
+	// same "Name" identifiers would appear in both sets.
+	productPositions := make(map[token.Pos]bool)
+	for _, r := range productRefs {
+		productPositions[r.Position] = true
+	}
+	for _, r := range userRefs {
+		if productPositions[r.Position] {
+			t.Errorf("User.Name reference at %s collides with a Product.Name reference",
+				resolver.workspace.FileSet.Position(r.Position))
+		}
+	}
+
+	// Sanity: a pure name walk would have returned every "Name" occurrence to
+	// both. Confirm the union exceeds either individual set.
+	if len(userRefs)+len(productRefs) <= len(userRefs) {
+		t.Error("expected distinct references for the two same-named fields")
+	}
+}
+
+// TestResolveSymbol_DottedFieldAndBareNameGuard verifies that ResolveSymbol
+// resolves the dotted form "User.Name" to a StructFieldSymbol, while a bare
+// "Name" does not resolve to a field.
+func TestResolveSymbol_DottedFieldAndBareNameGuard(t *testing.T) {
+	_, resolver, pkg := createFieldRefTestWorkspace(t)
+
+	sym, err := resolver.ResolveSymbol(pkg, "User.Name")
+	if err != nil {
+		t.Fatalf("expected User.Name to resolve, got error: %v", err)
+	}
+	if sym == nil || sym.Kind != types.StructFieldSymbol {
+		t.Fatalf("expected a StructFieldSymbol for User.Name, got %+v", sym)
+	}
+	if sym.Name != "Name" || sym.Parent == nil || sym.Parent.Name != "User" {
+		t.Errorf("resolved symbol is not the User.Name field: %+v", sym)
+	}
+
+	// A bare field name must NOT resolve; it should error and suggest the
+	// Type.Field form.
+	bare, err := resolver.ResolveSymbol(pkg, "Name")
+	if err == nil {
+		t.Fatalf("expected bare %q not to resolve to a field, got %+v", "Name", bare)
+	}
+	if bare != nil {
+		t.Errorf("expected nil symbol for bare field name, got %+v", bare)
 	}
 }

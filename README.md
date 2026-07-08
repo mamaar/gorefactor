@@ -50,6 +50,7 @@ The server communicates over stdio using the MCP protocol.
 | `move_packages` | Move multiple packages at once |
 | `rename_symbol` | Rename a symbol across the workspace |
 | `rename_method` | Rename a method on a type |
+| `rename_field` | Rename a struct field and update all references, including selector expressions, keyed composite literals, and promoted access through embedding |
 | `rename_package` | Rename a package |
 | `extract_function` | Extract a code block into a new function |
 | `extract_method` | Extract a code block into a new method |
@@ -118,6 +119,8 @@ GoRefactor validates all transformations before applying them:
 - Reference tracking across the workspace
 
 A file watcher keeps the workspace state current as files change on disk.
+
+`rename_field` has a couple of limitations worth knowing about. If the field being renamed has no struct tag, its `encoding/json` (and yaml/db) key is derived from the field name, so the rename silently changes the wire format; a field with an explicit tag like `json:"name"` is unaffected, since existing struct tags are never rewritten. Reflection-based and string-literal field access, such as `reflect`'s `FieldByName("Name")`, can't be detected by static analysis and won't be updated. Renaming an embedded field is also not supported, since that's really a type rename — use `rename_symbol` on the embedded type instead.
 
 ## Development
 
