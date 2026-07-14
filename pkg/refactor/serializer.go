@@ -46,8 +46,18 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 		fileChanges[change.File] = append(fileChanges[change.File], change)
 	}
 
-	// Apply changes to each file
+	// Apply changes to each file. A file marked for deletion is removed from
+	// disk instead of being written; edit changes are applied normally.
 	for filePath, changesForFile := range fileChanges {
+		if fileHasDeletion(changesForFile) {
+			if err := s.deleteFile(filePath); err != nil {
+				return &refactorTypes.RefactorError{
+					Type:    refactorTypes.FileSystemError,
+					Message: fmt.Sprintf("failed to delete file %s: %v", filePath, err),
+				}
+			}
+			continue
+		}
 		if err := s.applyChangesToFile(filePath, changesForFile); err != nil {
 			return &refactorTypes.RefactorError{
 				Type:    refactorTypes.FileSystemError,
@@ -57,6 +67,46 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 	}
 
 	return nil
+}
+
+// fileHasDeletion reports whether any change in the group marks the file for
+// deletion.
+func fileHasDeletion(changes []refactorTypes.Change) bool {
+	for _, c := range changes {
+		if c.Delete {
+			return true
+		}
+	}
+	return false
+}
+
+// deleteFile removes filePath from disk (tolerating an already-absent file)
+// and prunes parent directories that become empty as a result, so a moved
+// package leaves no empty husk behind. Pruning stops at the first non-empty
+// directory.
+func (s *Serializer) deleteFile(filePath string) error {
+	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	pruneEmptyDirs(filepath.Dir(filePath))
+	return nil
+}
+
+// pruneEmptyDirs removes dir and its ancestors while each is empty, stopping
+// at the first non-empty directory (or on any error). It never ascends past a
+// directory that still contains entries, so it cannot delete a sibling's
+// files or climb out of the workspace.
+func pruneEmptyDirs(dir string) {
+	for {
+		entries, err := os.ReadDir(dir)
+		if err != nil || len(entries) > 0 {
+			return
+		}
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // PreviewChanges generates a preview of what changes would be applied
@@ -94,6 +144,10 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 
 		for i, change := range changesForFile {
 			preview.WriteString(fmt.Sprintf("%d. %s\n", i+1, change.Description))
+			if change.Delete {
+				preview.WriteString("   Action: delete file\n\n")
+				continue
+			}
 			preview.WriteString(fmt.Sprintf("   Position: %d-%d\n", change.Start, change.End))
 
 			if change.OldText != "" {

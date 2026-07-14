@@ -28,9 +28,8 @@ type MovePackageInput struct {
 // --- move_dir ---
 
 type MoveDirInput struct {
-	SourceDir         string `json:"source_dir" jsonschema:"source directory"`
-	TargetDir         string `json:"target_dir" jsonschema:"target directory"`
-	PreserveStructure bool   `json:"preserve_structure,omitempty" jsonschema:"preserve directory structure"`
+	SourceDir string `json:"source_dir" jsonschema:"source directory"`
+	TargetDir string `json:"target_dir" jsonschema:"target directory"`
 }
 
 // --- move_packages ---
@@ -136,9 +135,8 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 		plan, err := state.GetEngine().MoveDir(ws, types.MoveDirRequest{
-			SourceDir:         in.SourceDir,
-			TargetDir:         in.TargetDir,
-			PreserveStructure: in.PreserveStructure,
+			SourceDir: in.SourceDir,
+			TargetDir: in.TargetDir,
 		})
 		if err != nil {
 			state.RUnlock()

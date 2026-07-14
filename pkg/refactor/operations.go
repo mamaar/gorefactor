@@ -922,6 +922,14 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 	// checked-in source.
 	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
 
+	// Needed to strip self-qualification below: if the moved code already
+	// referenced something now living in targetPackage (e.g. a symbol moved
+	// there by an earlier call), extractSymbolSource copies that qualifier
+	// verbatim. Left alone it produces an illegal self-qualified reference
+	// plus a self-import once resolveNeededImports sees the same qualifier.
+	// See unqualifySelfReferences in move_imports.go.
+	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
+
 	var blocks []string
 	var needed []neededImport
 	seenImportPaths := make(map[string]bool)
@@ -955,6 +963,8 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 				return nil, fmt.Errorf("failed to extract symbol source: %w", err)
 			}
 		}
+
+		symbolCode = unqualifySelfReferences(symbolFile, symbolCode, targetImportPath)
 
 		blocks = append(blocks, fmt.Sprintf("// %s was moved from %s\n%s", symbol.Name, sourceImportPath, symbolCode))
 

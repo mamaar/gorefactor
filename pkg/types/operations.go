@@ -189,6 +189,12 @@ type Change struct {
 	OldText     string
 	NewText     string
 	Description string
+	// Delete, when true, marks this change as a whole-file deletion: the
+	// serializer removes File from disk (and prunes now-empty parent
+	// directories) instead of writing NewText. Start/End/OldText/NewText are
+	// ignored for a delete. A file targeted by a Delete change must not also
+	// have other (edit) changes in the same plan.
+	Delete bool
 }
 
 // SuggestedMove represents a symbol that would benefit from being moved
@@ -292,7 +298,6 @@ type MovePackageRequest struct {
 type MoveDirRequest struct {
 	SourceDir     string
 	TargetDir     string
-	PreserveStructure bool
 	UpdateImports bool
 }
 

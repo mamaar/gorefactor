@@ -84,6 +84,93 @@ func collectPackageSelectorNames(code string) (map[string]bool, error) {
 	return names, nil
 }
 
+// unqualifySelfReferences rewrites code — a moved declaration's source text,
+// still carrying whatever package qualifiers it had back in sourceFile — so
+// that any reference to targetImportPath (the package code is being moved
+// INTO) is left bare instead of self-qualified.
+//
+// This matters when a move lands a symbol in a package that already
+// contains something the symbol's body refers to — typically because an
+// earlier move already relocated that something there. Example: move #1
+// relocates AsyncServer to pkg/asyncserver; since NewLoggedAsyncServer still
+// lived in the old package at that point and called NewAsyncServer, move #1
+// correctly qualified that call as asyncserver.NewAsyncServer and added the
+// asyncserver import to the old package. Move #2 then relocates
+// NewLoggedAsyncServer itself to pkg/asyncserver — but extractSymbolSource
+// copies its body verbatim, qualifier and all, so pasting it into
+// pkg/asyncserver produces a package that calls asyncserver.NewAsyncServer
+// (illegal self-qualification) and, via resolveNeededImports below spotting
+// that same qualifier, imports itself (an import cycle). Stripping the
+// qualifier here — before resolveNeededImports ever sees the code — fixes
+// both symptoms in one place.
+//
+// Returns code unchanged if sourceFile has no import of targetImportPath, or
+// code doesn't parse as a standalone declaration; the latter is the same
+// "don't know, don't touch it" fallback collectPackageSelectorNames uses.
+func unqualifySelfReferences(sourceFile *types.File, code string, targetImportPath string) string {
+	if sourceFile == nil || sourceFile.AST == nil || targetImportPath == "" {
+		return code
+	}
+
+	// Find the local alias sourceFile used to refer to targetImportPath, if
+	// any. Nothing to do if the source code never imported the destination
+	// package in the first place.
+	alias := ""
+	for _, imp := range sourceFile.AST.Imports {
+		if strings.Trim(imp.Path.Value, `"`) != targetImportPath {
+			continue
+		}
+		localName, _ := importLocalName(imp)
+		if localName != "" {
+			alias = localName
+		}
+		break
+	}
+	if alias == "" {
+		return code
+	}
+
+	const prefix = "package movedsymbols\n"
+	fset := token.NewFileSet()
+	synthetic, err := parser.ParseFile(fset, "", prefix+code, 0)
+	if err != nil {
+		return code
+	}
+
+	// Collect the byte ranges of "alias." prefixes to delete, keyed off the
+	// synthetic file's own offsets (which are prefix-relative, hence the
+	// -len(prefix) adjustment back to code's coordinate space).
+	type span struct{ start, end int }
+	var removals []span
+	ast.Inspect(synthetic, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := sel.X.(*ast.Ident)
+		if !ok || ident.Name != alias {
+			return true
+		}
+		start := fset.Position(sel.X.Pos()).Offset - len(prefix)
+		end := fset.Position(sel.Sel.Pos()).Offset - len(prefix)
+		if start < 0 || end < start || end > len(code) {
+			return true // out of bounds shouldn't happen, but don't corrupt code if it does
+		}
+		removals = append(removals, span{start, end})
+		return true
+	})
+	if len(removals) == 0 {
+		return code
+	}
+
+	sort.Slice(removals, func(i, j int) bool { return removals[i].start > removals[j].start })
+	result := code
+	for _, r := range removals {
+		result = result[:r.start] + result[r.end:]
+	}
+	return result
+}
+
 // resolveNeededImports maps the package-qualifier identifiers used in code
 // back to the import specs that provide them in sourceFile, carrying over
 // any explicit alias. Imports that can't be resolved (used name isn't any of
