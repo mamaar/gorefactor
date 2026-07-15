@@ -15,6 +15,16 @@ func ResolvePackagePath(workspace *Workspace, userPath string) string {
 		return absPath
 	}
 
+	// Strategy 2.5: Try as a Go import path (e.g. "scratch/pkg/widget").
+	// workspace_status and most callers report packages by import path, so this
+	// is the form users actually have in hand; ImportToPath maps it back to the
+	// filesystem path that Packages is keyed by.
+	if workspace.ImportToPath != nil {
+		if fsPath, exists := workspace.ImportToPath[userPath]; exists {
+			return fsPath
+		}
+	}
+
 	// Strategy 3: Try as "." for current directory
 	if userPath == "." {
 		if _, exists := workspace.Packages[workspace.RootPath]; exists {
