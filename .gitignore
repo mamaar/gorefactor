@@ -1,2 +1,5 @@
 # Binary artifacts created by Makefile
 bin/
+gorefactor
+gorefactor-mcp
+gorefactor-lsp
