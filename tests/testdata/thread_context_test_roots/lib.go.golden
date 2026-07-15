@@ -1,0 +1,8 @@
+package foo
+
+import (
+	"context"
+)
+
+// Seed is the seed function.
+func Seed(ctx context.Context) {}

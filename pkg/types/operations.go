@@ -38,6 +38,7 @@ const (
 	ExecuteOperation
 	RollbackOperation
 	RenameFieldOperationType
+	ThreadContextOperationType
 )
 
 // MoveSymbolRequest represents moving a symbol between packages
@@ -89,6 +90,18 @@ type RenameFieldRequest struct {
 	FieldName    string // Current field name
 	NewFieldName string // New field name
 	PackagePath  string // Path to the package containing the type ("" means search the workspace)
+}
+
+// ThreadContextRequest represents threading context.Context transitively
+// through every call chain in the workspace that reaches FunctionName. Unlike
+// ChangeSignatureRequest, this carries no CachedIndex: the engine call always
+// type-checks the whole workspace and hands the operation its own parser
+// (see DefaultEngine.ThreadContext), so the operation builds a fresh,
+// post-type-check reference index itself rather than reusing one that might
+// predate type-checking.
+type ThreadContextRequest struct {
+	FunctionName string // "Process" or "Type.Method"
+	SourceFile   string // File containing the function declaration
 }
 
 type RenameScope int

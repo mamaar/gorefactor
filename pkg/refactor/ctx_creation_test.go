@@ -1,4 +1,4 @@
-package mcp
+package refactor
 
 import (
 	"go/parser"
@@ -71,7 +71,7 @@ func getSecret(project string, secretName string, version string) (secret []byte
 	path := writeTemp(t, src)
 	ws := buildWorkspace(t, path, src)
 
-	changes := removeInternalCtxCreation(ws, path, "getSecret")
+	changes := RemoveInternalCtxCreation(ws, path, "getSecret")
 
 	if len(changes) != 1 {
 		t.Fatalf("expected 1 change (remove ctx := context.Background()), got %d: %v", len(changes), changes)
@@ -104,7 +104,7 @@ func listVersions(project string) ([]string, error) {
 	path := writeTemp(t, src)
 	ws := buildWorkspace(t, path, src)
 
-	changes := removeInternalCtxCreation(ws, path, "listVersions")
+	changes := RemoveInternalCtxCreation(ws, path, "listVersions")
 
 	if len(changes) != 1 {
 		t.Fatalf("expected 1 change (remove ctx := context.TODO()), got %d: %v", len(changes), changes)
@@ -126,7 +126,7 @@ func doWork(project string) error {
 	path := writeTemp(t, src)
 	ws := buildWorkspace(t, path, src)
 
-	changes := removeInternalCtxCreation(ws, path, "doWork")
+	changes := RemoveInternalCtxCreation(ws, path, "doWork")
 	if len(changes) != 0 {
 		t.Errorf("expected 0 changes, got %d: %v", len(changes), changes)
 	}
@@ -151,7 +151,7 @@ func doWork(project string) error {
 	path := writeTemp(t, src)
 	ws := buildWorkspace(t, path, src)
 
-	changes := removeInternalCtxCreation(ws, path, "doWork")
+	changes := RemoveInternalCtxCreation(ws, path, "doWork")
 	if len(changes) != 0 {
 		t.Errorf("expected 0 changes (nested closure should be untouched), got %d", len(changes))
 	}
@@ -177,7 +177,7 @@ func getSecret(project string, secretName string, version string) (secret []byte
 	path := writeTemp(t, src)
 	ws := buildWorkspace(t, path, src)
 
-	changes := removeInternalCtxCreation(ws, path, "getSecret")
+	changes := RemoveInternalCtxCreation(ws, path, "getSecret")
 
 	if len(changes) != 1 {
 		t.Fatalf("expected exactly 1 change, got %d", len(changes))

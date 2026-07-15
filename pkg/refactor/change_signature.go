@@ -1625,19 +1625,19 @@ func extractRequiredImport(defaultValue string) string {
 	return ""
 }
 
-// hasImport checks if a file already has a specific import
+// hasImport checks if a file already has a specific import. It searches test
+// files too (via findParsedFile) — reporting "no import" for a _test.go that
+// actually has one would add a duplicate.
 func hasImport(ws *pkgtypes.Workspace, filePath, importPath string) bool {
-	for _, pkg := range ws.Packages {
-		for _, file := range pkg.Files {
-			if file.Path == filePath && file.AST != nil {
-				for _, imp := range file.AST.Imports {
-					// Strip quotes from import path
-					path := strings.Trim(imp.Path.Value, "\"")
-					if path == importPath {
-						return true
-					}
-				}
-			}
+	file := findParsedFile(ws, filePath)
+	if file == nil {
+		return false
+	}
+	for _, imp := range file.AST.Imports {
+		// Strip quotes from import path
+		path := strings.Trim(imp.Path.Value, "\"")
+		if path == importPath {
+			return true
 		}
 	}
 	return false

@@ -168,6 +168,59 @@ func TestMCPTools(t *testing.T) {
 				}
 			},
 		},
+		// --- Thread context (transitive add_context_parameter) ---
+		{
+			name: "thread_context_chain", fixture: "thread_context_chain", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "c", "source_file": "c.go", "thread": true}
+			},
+		},
+		{
+			name: "thread_context_stops", fixture: "thread_context_stops", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{
+					"function_name": "Do",
+					"source_file":   filepath.Join(dir, "target", "target.go"),
+					"thread":        true,
+				}
+			},
+		},
+		{
+			name: "thread_context_interface", fixture: "thread_context_interface", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "MemStore.Save", "source_file": "main.go", "thread": true}
+			},
+		},
+		{
+			name: "thread_context_test_roots", fixture: "thread_context_test_roots", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "Seed", "source_file": "lib.go", "thread": true}
+			},
+		},
+		{
+			name: "thread_context_roots", fixture: "thread_context_roots", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "seed", "source_file": "main.go", "thread": true}
+			},
+		},
+		{
+			name: "thread_context_fake_root", fixture: "thread_context_fake_root", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "target", "source_file": "main.go", "thread": true}
+			},
+		},
+		{
+			name: "thread_context_nested", fixture: "thread_context_nested", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "Helper", "source_file": "main.go", "thread": true}
+			},
+		},
+		{
+			name: "thread_context_generics", fixture: "thread_context_generics", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{"function_name": "Seed", "source_file": "main.go", "thread": true}
+			},
+		},
 		{
 			name: "safe_delete", fixture: "safe_delete", tool: "safe_delete",
 			args: func(dir string) map[string]any {

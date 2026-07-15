@@ -24,6 +24,7 @@ type RefactorEngine interface {
 	RenameInterfaceMethod(ws *types.Workspace, req types.RenameInterfaceMethodRequest) (*types.RefactoringPlan, error)
 	RenameMethod(ws *types.Workspace, req types.RenameMethodRequest) (*types.RefactoringPlan, error)
 	RenameField(ws *types.Workspace, req types.RenameFieldRequest) (*types.RefactoringPlan, error)
+	ThreadContext(ws *types.Workspace, req types.ThreadContextRequest) (*types.RefactoringPlan, error)
 	ExtractMethod(ws *types.Workspace, req types.ExtractMethodRequest) (*types.RefactoringPlan, error)
 	ExtractFunction(ws *types.Workspace, req types.ExtractFunctionRequest) (*types.RefactoringPlan, error)
 	ExtractInterface(ws *types.Workspace, req types.ExtractInterfaceRequest) (*types.RefactoringPlan, error)
@@ -374,6 +375,65 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate rename field plan: %w", err)
+	}
+
+	// Analyze impact
+	impact, err := e.analyzer.AnalyzeImpact(operation)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+	}
+
+	plan.Impact = impact
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// ThreadContext implements transitive context.Context threading: it adds
+// `ctx context.Context` to a seed function and every caller up its call
+// chains, stopping only at a caller that already has a context in scope or at
+// a root that cannot take one.
+func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
+	operation := &ThreadContextOperation{
+		FunctionName: req.FunctionName,
+		SourceFile:   req.SourceFile,
+	}
+	// The operation cannot reach EngineConfig through the Operation interface,
+	// so the engine hands it the AllowBreaking flag, mirroring RenameField.
+	if e.config != nil {
+		operation.AllowBreaking = e.config.AllowBreaking
+	}
+
+	// Threading resolves every caller in the workspace by go/types object
+	// identity, which requires a type-checked workspace. Type-checking is lazy
+	// (LoadWorkspace does not perform it), so ensure every package is checked
+	// before the operation builds its reference index — otherwise CallSitesOf
+	// would silently find nothing and the operation would "succeed" having
+	// changed nothing. Mirrors RenameField above.
+	if e.parser != nil {
+		for _, pkg := range ws.Packages {
+			e.parser.EnsureTypeChecked(ws, pkg)
+		}
+	}
+
+	// The operation type-checks packages itself when it needs to build its own
+	// reference index (CachedIndex nil), and doing that requires a parser with
+	// a real importer. A parser built via analysis.NewParser has none — only
+	// ParseWorkspace populates it — so a self-made parser would panic partway
+	// through type-checking. The engine's own parser was built by
+	// ParseWorkspace (see LoadWorkspace) and so is safe to hand over.
+	operation.Parser = e.parser
+	operation.Logger = e.logger
+
+	// Validate the operation
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("thread context operation validation failed: %w", err)
+	}
+
+	// Execute the operation to generate the plan
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate thread context plan: %w", err)
 	}
 
 	// Analyze impact

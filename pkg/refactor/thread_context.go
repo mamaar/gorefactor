@@ -1,0 +1,913 @@
+package refactor
+
+import (
+	"fmt"
+	"go/ast"
+	"go/token"
+	gotypes "go/types"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"strings"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
+	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
+)
+
+// ThreadContextOperation adds `ctx context.Context` as the first parameter of a
+// seed function and then threads a real context up through every call chain in
+// the workspace that reaches it, stopping only at a caller that already has a
+// context or at a root that cannot take one (main, init, Test/Benchmark/Fuzz
+// declarations, closures, package-level var initializers).
+//
+// This file owns the ANALYSIS half: it computes a validated plan-of-record
+// (threadPlan) and emits no changes. Change emission lives in
+// thread_context_render.go.
+type ThreadContextOperation struct {
+	FunctionName string // "Process" or "Type.Method"
+	SourceFile   string
+
+	// Scope is carried for parity with the other rename/thread requests, but the
+	// traversal is deliberately workspace-wide: a signature change that is not
+	// propagated to every caller leaves the workspace uncompilable, so limiting
+	// the climb to one package could only ever produce a broken result.
+	Scope pkgtypes.RenameScope
+
+	CachedIndex *analysis.ReferenceIndex // may be nil; built inside Execute if so
+
+	// Parser lets the operation type-check the workspace itself when CachedIndex
+	// is nil. LoadWorkspace does not type-check and BuildReferenceIndex silently
+	// skips packages with no type info, so without this the index would come back
+	// empty and the whole traversal would "succeed" having found nothing. The
+	// HasTypeInfo guard in buildPlan is the backstop when Parser is nil too.
+	Parser *analysis.GoParser
+
+	Logger *slog.Logger
+
+	// AllowBreaking is populated by the engine from EngineConfig, mirroring
+	// RenameFieldOperation. The value-use abort is deliberately NOT gated on it:
+	// see valueUseAbort.
+	AllowBreaking bool
+
+	plan *threadPlan // populated by Validate/Execute
+
+	declIndex map[*gotypes.Func]*funcDecl
+
+	// seed is the resolved seed object, kept so that an external-interface abort
+	// can tell the user "the seed itself cannot be threaded" rather than the much
+	// more confusing "something it reaches cannot be".
+	seed *gotypes.Func
+
+	// ifaceCache memoizes the workspace's interface survey. It is derived from
+	// type info that does not change during a run, and expandInterfaces consults
+	// it once per worklist entry.
+	ifaceCache *ifaceSurvey
+}
+
+// funcDecl resolves a func object back to its declaration and its owning
+// package/file. go/types offers no reverse mapping (and this workspace's
+// type-checker does not populate Info.Scopes), so the mapping is built by
+// walking every declaration once and reading pkg.TypesInfo.Defs.
+//
+// An INTERFACE method is declared as an *ast.Field inside an *ast.InterfaceType,
+// not as an *ast.FuncDecl, so Decl cannot hold it. Rather than a parallel map
+// keyed the same way, such a method is carried here with Decl nil and
+// IfaceField/IfaceFuncType set. That keeps one lookup table for the fixpoint —
+// declIndex/plan.Decls stay total over everything that can enter the worklist,
+// so discover needs no interface special-case at all — and every consumer that
+// needs the signature reads FuncType(), which is non-nil for both kinds.
+type funcDecl struct {
+	Decl *ast.FuncDecl
+	Pkg  *pkgtypes.Package
+	File *pkgtypes.File
+
+	// IfaceField is the `Save(x int)` field inside an interface declaration, and
+	// IfaceFuncType its signature. Both nil for an ordinary function.
+	IfaceField    *ast.Field
+	IfaceFuncType *ast.FuncType
+}
+
+// IsInterfaceMethod reports whether this declaration is an interface method
+// field rather than an ordinary function declaration.
+func (fd *funcDecl) IsInterfaceMethod() bool { return fd.Decl == nil && fd.IfaceFuncType != nil }
+
+// FuncType returns the signature AST to rewrite, for either kind of
+// declaration. This is the node whose Params.Opening receives the injected ctx.
+func (fd *funcDecl) FuncType() *ast.FuncType {
+	if fd.Decl != nil {
+		return fd.Decl.Type
+	}
+	return fd.IfaceFuncType
+}
+
+// callEdit is the resolved decision for one call site: which expression must be
+// passed as the ctx argument there.
+type callEdit struct {
+	Expr string
+	Site analysis.CallSite
+}
+
+// threadPlan is the plan-of-record: everything decided before any change is
+// emitted. Rendering reads it and never re-derives any of these decisions.
+type threadPlan struct {
+	// Funcs maps each function that must GAIN a ctx param to the param name it
+	// receives (usually "ctx"; uniqueCtxName yields ctx0/ctx1 on collision).
+	Funcs map[*gotypes.Func]string
+	// Decls resolves every function the traversal touched (Funcs plus a seed that
+	// already had a context) back to its declaration.
+	Decls map[*gotypes.Func]*funcDecl
+	// Fake records top-level `ctx := context.Background()` statements to delete.
+	// A statement is recorded exactly when its function joins Funcs: once ctx is
+	// a parameter the `:=` is a redeclaration and will not compile. Roots never
+	// join Funcs, so a root's local ctx is never deleted.
+	Fake map[*gotypes.Func]*ast.AssignStmt
+	// ArgFor maps a call site (keyed by its CallExpr's Lparen, which is unique
+	// per call and is exactly where an argument is inserted) to the expression to
+	// pass there.
+	ArgFor map[token.Pos]*callEdit
+}
+
+func (op *ThreadContextOperation) Type() pkgtypes.OperationType {
+	return pkgtypes.ThreadContextOperationType
+}
+
+func (op *ThreadContextOperation) Description() string {
+	return fmt.Sprintf("Thread context.Context through every call chain reaching %s", op.FunctionName)
+}
+
+func (op *ThreadContextOperation) logger() *slog.Logger {
+	if op.Logger != nil {
+		return op.Logger
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func (op *ThreadContextOperation) Validate(ws *pkgtypes.Workspace) error {
+	plan, err := op.buildPlan(ws)
+	if err != nil {
+		return err
+	}
+	op.plan = plan
+	return nil
+}
+
+func (op *ThreadContextOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
+	if op.plan == nil {
+		plan, err := op.buildPlan(ws)
+		if err != nil {
+			return nil, err
+		}
+		op.plan = plan
+	}
+
+	// Change emission is owned by thread_context_render.go; this half computes
+	// the plan-of-record only.
+	changes, err := op.RenderChanges(ws)
+	if err != nil {
+		return nil, err
+	}
+
+	// Defensive check at the plan boundary. thread_context_render.go's package
+	// doc argues, and its own tests assert, that every change it emits is
+	// either zero-width or a tightly bounded replacement that can never
+	// contain another edit's offset — so two changes should never overlap by
+	// construction. Re-checking that guarantee here means a regression in it
+	// surfaces immediately as a clear error naming the two conflicting
+	// changes, rather than as a much later and more opaque rejection from
+	// Validator/Serializer.validateChangePositions deep inside ExecutePlan.
+	if err := assertNoOverlappingChanges(changes); err != nil {
+		return nil, err
+	}
+
+	affectedFiles := make([]string, 0, len(changes))
+	for _, c := range changes {
+		affectedFiles = append(affectedFiles, c.File)
+	}
+
+	return &pkgtypes.RefactoringPlan{
+		Operations:    []pkgtypes.Operation{op},
+		Changes:       changes,
+		AffectedFiles: removeDuplicateStrings(affectedFiles),
+		Reversible:    true,
+	}, nil
+}
+
+// assertNoOverlappingChanges groups changes by file and reports an error
+// naming the two conflicting changes (file, description, and byte range) the
+// moment an overlap is found, rather than letting an opaque rejection surface
+// later from Validator/Serializer. Mirrors Serializer.changesOverlap's own
+// definition of overlap.
+func assertNoOverlappingChanges(changes []pkgtypes.Change) error {
+	byFile := make(map[string][]pkgtypes.Change)
+	for _, c := range changes {
+		byFile[c.File] = append(byFile[c.File], c)
+	}
+	for file, cs := range byFile {
+		for i := range cs {
+			for j := i + 1; j < len(cs); j++ {
+				a, b := cs[i], cs[j]
+				if a.Start < b.End && b.Start < a.End {
+					return &pkgtypes.RefactorError{
+						Type: pkgtypes.InvalidOperation,
+						Message: fmt.Sprintf(
+							"internal error: context threading produced overlapping changes in %s: "+
+								"%q [%d,%d) conflicts with %q [%d,%d)",
+							file, a.Description, a.Start, a.End, b.Description, b.Start, b.End),
+						File: file,
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// buildPlan runs both analysis phases and returns the plan-of-record, or an
+// error if any abort condition fires. It emits nothing and mutates nothing.
+func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan, error) {
+	idx := op.referenceIndex(ws)
+
+	// Mandatory guard. An index built over a workspace that was never
+	// type-checked has no object-identity data at all, so CallSitesOf returns
+	// nothing for every function — the traversal would find no callers and report
+	// a successful no-op instead of an error.
+	if !idx.HasTypeInfo() {
+		return nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: "workspace has no type information: context threading resolves callers by go/types " +
+				"object identity and would silently find nothing; type-check the workspace first",
+		}
+	}
+
+	op.declIndex = buildFuncDeclIndex(ws)
+
+	seed, err := op.resolveSeed(ws)
+	if err != nil {
+		return nil, err
+	}
+	op.seed = seed
+
+	plan := &threadPlan{
+		Funcs:  make(map[*gotypes.Func]string),
+		Decls:  make(map[*gotypes.Func]*funcDecl),
+		Fake:   make(map[*gotypes.Func]*ast.AssignStmt),
+		ArgFor: make(map[token.Pos]*callEdit),
+	}
+
+	visited, err := op.discover(ws, idx, plan, seed)
+	if err != nil {
+		return nil, err
+	}
+	if err := op.resolve(idx, plan, visited); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+// discover is phase 1: the worklist fixpoint that decides WHICH functions gain a
+// ctx parameter. It deliberately does not resolve any argument expression —
+// discovery is monotone (a function only ever gains a ctx, never loses one), so
+// an argument resolved during the walk could be invalidated later when a
+// different branch pulls its enclosing function into Funcs. Resolving only after
+// Funcs is final is what makes phase 2 correct.
+//
+// The returned set is every function the traversal touched, which is Funcs plus
+// (possibly) the seed when the seed already carried a context.
+func (op *ThreadContextOperation) discover(
+	ws *pkgtypes.Workspace,
+	idx *analysis.ReferenceIndex,
+	plan *threadPlan,
+	seed *gotypes.Func,
+) (map[*gotypes.Func]bool, error) {
+	visited := make(map[*gotypes.Func]bool)
+	queue := []*gotypes.Func{seed}
+
+	for len(queue) > 0 {
+		f := queue[0]
+		queue = queue[1:]
+		if visited[f] {
+			continue // the visited set is what terminates cycles and diamonds
+		}
+		visited[f] = true
+
+		fd := op.declIndex[f]
+		if fd == nil {
+			return nil, &pkgtypes.RefactorError{
+				Type: pkgtypes.InvalidOperation,
+				Message: fmt.Sprintf(
+					"cannot thread context: no declaration found in the workspace for %s; "+
+						"its package may have failed to type-check", funcLabel(f)),
+			}
+		}
+		plan.Decls[f] = fd
+
+		if !funcHasContextParam(f) {
+			plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
+			if stmt, ok := isFakeRootCtxCreation(fd.Decl); ok {
+				plan.Fake[f] = stmt
+			}
+			if err := op.valueUseAbort(ws, idx, f); err != nil {
+				return nil, err
+			}
+		}
+
+		// Interface expansion seam: filled in by the interface-expansion task,
+		// which will pull in the interface method declaration plus every
+		// workspace implementation when f is a method (and abort on external
+		// interfaces such as http.Handler). Today it is a no-op.
+		extra, err := op.expandInterfaces(f, ws, idx)
+		if err != nil {
+			return nil, err
+		}
+		queue = append(queue, extra...)
+
+		for _, site := range idx.CallSitesOf(f) {
+			caller, climb, err := op.climbTarget(site)
+			if err != nil {
+				return nil, err
+			}
+			if climb {
+				queue = append(queue, caller)
+			}
+		}
+	}
+	return visited, nil
+}
+
+// climbTarget decides, for a single call site of a function that is gaining a
+// ctx, whether the enclosing function must itself be climbed (and thus gain a
+// ctx parameter of its own).
+func (op *ThreadContextOperation) climbTarget(site analysis.CallSite) (*gotypes.Func, bool, error) {
+	// A call inside a closure is a threading root by product decision: a closure
+	// may outlive or run outside its lexical caller (go/defer/callback), so its
+	// enclosing FuncDecl is not a reliable place to source a context from.
+	if site.Lit != nil {
+		// Still consult findCtxSource, purely so that missing type info is caught
+		// here in phase 1 rather than surfacing in phase 2 after Funcs is final.
+		if src, _ := findCtxSource(site.Pkg, site.Fn, site.Call); src.Kind == ctxUnknown {
+			return nil, false, op.unknownCtxAbort(site)
+		}
+		return nil, false, nil
+	}
+
+	// No enclosing function: a package-level var initializer. Nothing to climb.
+	if site.Fn == nil {
+		return nil, false, nil
+	}
+
+	src, found := findCtxSource(site.Pkg, site.Fn, site.Call)
+	if src.Kind == ctxUnknown {
+		return nil, false, op.unknownCtxAbort(site)
+	}
+
+	// Root-ness is checked BEFORE the fake-root hoist, and this ordering is the
+	// whole point. A root such as main() or TestXxx() cannot be given a
+	// parameter, so even when it holds a local `ctx := context.Background()` we
+	// must pass that local and stop — not hoist past it and delete it. Reversing
+	// these two checks silently strips main's context creation and produces code
+	// that does not compile.
+	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil); isRoot {
+		return nil, false, nil
+	}
+
+	// A local `ctx := context.Background()` IS in scope, so findCtxSource happily
+	// reports it — but it is a fabricated root, not a threaded context. The
+	// product decision is to hoist past it: the enclosing function gains a real
+	// ctx parameter and the fake creation is deleted (recorded when the function
+	// joins Funcs).
+	hoist := found && src.Kind == ctxInScope && sourceIsFakeRoot(site, src)
+
+	if found && !hoist {
+		return nil, false, nil // a real context is already in scope here
+	}
+
+	caller, err := op.callerObject(site)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// The caller is about to gain a ctx parameter, but it already declares one
+	// that the call site cannot reach — the parameter is unnamed or blank, or it
+	// is shadowed by a local. Adding a second context.Context parameter would not
+	// compile, and guessing which one to thread would be worse. Abort and let the
+	// user name/rename the existing parameter first.
+	if funcHasContextParam(caller) {
+		return nil, false, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf(
+				"cannot thread context through %s at %s: it already has a context.Context parameter that "+
+					"the call site cannot reference (unnamed, blank, or shadowed by a local); name or "+
+					"un-shadow that parameter and re-run", funcLabel(caller), op.sitePos(site)),
+			File: site.File.Path,
+			Line: op.siteLine(site),
+		}
+	}
+
+	return caller, true, nil
+}
+
+// resolve is phase 2: with Funcs final, walk every touched function's call sites
+// again and pin down the exact expression each one must pass.
+func (op *ThreadContextOperation) resolve(
+	idx *analysis.ReferenceIndex,
+	plan *threadPlan,
+	visited map[*gotypes.Func]bool,
+) error {
+	for f := range visited {
+		for _, site := range idx.CallSitesOf(f) {
+			expr, err := op.argFor(plan, site)
+			if err != nil {
+				return err
+			}
+			plan.ArgFor[site.Call.Lparen] = &callEdit{Expr: expr, Site: site}
+		}
+	}
+	return nil
+}
+
+// argFor returns the expression to pass as ctx at site.
+func (op *ThreadContextOperation) argFor(plan *threadPlan, site analysis.CallSite) (string, error) {
+	// 1. The enclosing function is itself gaining a ctx parameter — pass it.
+	//    Only when the call is directly in the FuncDecl body: a closure does not
+	//    automatically get to use its enclosing declaration's new parameter,
+	//    since phase 1 refused to climb through it.
+	if site.Fn != nil && site.Lit == nil {
+		caller, err := op.callerObject(site)
+		if err != nil {
+			return "", err
+		}
+		if name, ok := plan.Funcs[caller]; ok {
+			return name, nil
+		}
+	}
+
+	// 2/3. A context already reachable from the call site wins over any root
+	//      literal. This is also what makes a root with a local ctx (main with
+	//      `ctx := context.Background()`) pass its own ctx rather than a fresh
+	//      context.TODO(), and what lets a closure use a captured outer ctx.
+	if src, ok := findCtxSource(site.Pkg, site.Fn, site.Call); ok {
+		return src.Expr, nil
+	} else if src.Kind == ctxUnknown {
+		return "", op.unknownCtxAbort(site)
+	}
+
+	// 4. A root: t.Context() for a test declaration or t.Run closure,
+	//    context.TODO() otherwise.
+	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit); ok {
+		return src.Expr, nil
+	}
+
+	// 5. Phase 1 climbed through this site, so its enclosing function must be in
+	//    Funcs and case 1 must have matched. Report the inconsistency rather than
+	//    quietly emitting context.TODO(), which would drop a real chain on the
+	//    floor while reporting success.
+	return "", &pkgtypes.RefactorError{
+		Type: pkgtypes.InvalidOperation,
+		Message: fmt.Sprintf(
+			"internal error: call site at %s has no context source and no enclosing function in the "+
+				"threading plan", op.sitePos(site)),
+		File: site.File.Path,
+		Line: op.siteLine(site),
+	}
+}
+
+// expandInterfaces returns any additional functions that must gain a ctx
+// parameter alongside f: for a concrete method, the workspace interface methods
+// it satisfies; for an interface method, every workspace implementation of it.
+// Seeding one implementation therefore reaches all of its siblings in two hops
+// (impl -> interface method -> every impl), which is why neither branch needs to
+// enumerate both.
+//
+// Returning the INTERFACE method object (not just the implementations) is what
+// makes calls made through the interface thread at all: the caller enqueues it,
+// so CallSitesOf finds `var s Store; s.Save(x)` — whose Uses entry resolves to
+// Store.Save, never to MemStore.Save — and climbs those callers in turn.
+//
+// The implementation machinery lives in thread_context_iface.go.
+func (op *ThreadContextOperation) expandInterfaces(
+	f *gotypes.Func,
+	ws *pkgtypes.Workspace,
+	idx *analysis.ReferenceIndex,
+) ([]*gotypes.Func, error) {
+	// Checked for every worklist entry, before anything is expanded. Satisfaction
+	// of an interface declared outside the workspace is broken by the signature
+	// change itself and cannot be repaired by rewriting anything we own: adding a
+	// ctx to ServeHTTP silently stops the type satisfying http.Handler. This is an
+	// abort rather than a SkippedSite because the product decision is that the
+	// user must never be handed a half-threaded, uncompilable workspace.
+	if err := op.externalInterfaceAbort(ws, f); err != nil {
+		return nil, err
+	}
+
+	recv := methodRecvType(f)
+	if recv == nil {
+		return nil, nil // a plain function satisfies no interface
+	}
+
+	survey := op.interfaceSurvey(ws)
+
+	// f is itself an interface method: pull in every workspace implementation, so
+	// the concrete methods are rewritten alongside the declaration they satisfy.
+	if iface, ok := asInterfaceType(recv); ok {
+		return op.implementationsOf(survey, iface, f.Name()), nil
+	}
+
+	// f is a concrete method on T: every workspace interface that declares f's
+	// name and that T actually satisfies must be rewritten too. Only the
+	// interface method is returned here, not T's sibling implementations —
+	// enqueueing the interface method is sufficient, because the branch above
+	// expands it into every implementation when it is dequeued. Returning the
+	// siblings here as well would be pure duplication that the visited set
+	// discards.
+	var out []*gotypes.Func
+	for _, cand := range survey.workspace {
+		m := interfaceMethodNamed(cand.iface, f.Name())
+		if m == nil || !typeImplements(recv, cand.iface) {
+			continue
+		}
+		out = append(out, canonicalFunc(m))
+	}
+	return out, nil
+}
+
+// valueUseAbort fails when f is referenced as a value rather than called.
+//
+// `var h = Seed`, `Register(Seed)` and method values all bind the function's
+// current signature. CallSitesOf cannot see them and a signature change breaks
+// every one. These are reported as a hard abort rather than a SkippedSite: a
+// half-threaded workspace does not compile, so leaving the user to fix the
+// remainder by hand is strictly worse than not starting.
+func (op *ThreadContextOperation) valueUseAbort(
+	ws *pkgtypes.Workspace,
+	idx *analysis.ReferenceIndex,
+	f *gotypes.Func,
+) error {
+	uses := idx.NonCallUsesOf(f)
+	if len(uses) == 0 {
+		return nil
+	}
+	use := uses[0]
+	pos := ws.FileSet.Position(use.Pos)
+	return &pkgtypes.RefactorError{
+		Type: pkgtypes.InvalidOperation,
+		Message: fmt.Sprintf(
+			"cannot thread context through %s: it is used as a value (not called) at %s:%d:%d as %q"+
+				"%s; adding a parameter would break that use, so no changes were made",
+			funcLabel(f), pos.Filename, pos.Line, pos.Column, use.Ident.Name,
+			moreUses(len(uses)-1)),
+		File: use.File.Path,
+		Line: pos.Line,
+	}
+}
+
+func moreUses(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf(" (and %d more such use(s))", n)
+}
+
+func (op *ThreadContextOperation) unknownCtxAbort(site analysis.CallSite) error {
+	return &pkgtypes.RefactorError{
+		Type: pkgtypes.InvalidOperation,
+		Message: fmt.Sprintf(
+			"cannot thread context: package %s has no type information, so the context in scope at %s "+
+				"cannot be resolved; refusing to guess", site.Pkg.ImportPath, op.sitePos(site)),
+		File: site.File.Path,
+		Line: op.siteLine(site),
+	}
+}
+
+func (op *ThreadContextOperation) sitePos(site analysis.CallSite) string {
+	line := op.siteLine(site)
+	if line == 0 {
+		return site.File.Path
+	}
+	return fmt.Sprintf("%s:%d", site.File.Path, line)
+}
+
+func (op *ThreadContextOperation) siteLine(site analysis.CallSite) int {
+	if site.File == nil || site.File.Package == nil {
+		return 0
+	}
+	return offsetLine(site.File, site.Call.Pos())
+}
+
+// offsetLine derives a 1-based line number without a FileSet by counting
+// newlines in the file's original content up to pos' offset. CallSite carries no
+// FileSet, and the operation's error paths only need a human-readable location.
+func offsetLine(file *pkgtypes.File, pos token.Pos) int {
+	if file.AST == nil || len(file.OriginalContent) == 0 {
+		return 0
+	}
+	offset := int(pos - file.AST.FileStart)
+	if offset < 0 || offset > len(file.OriginalContent) {
+		return 0
+	}
+	return 1 + strings.Count(string(file.OriginalContent[:offset]), "\n")
+}
+
+// callerObject resolves site.Fn to its canonical *gotypes.Func.
+//
+// Info.Scopes is not populated by this workspace's type-checker, so the only
+// reliable FuncDecl -> object direction is TypesInfo.Defs on the declaration's
+// name identifier.
+func (op *ThreadContextOperation) callerObject(site analysis.CallSite) (*gotypes.Func, error) {
+	if site.Pkg == nil || site.Pkg.TypesInfo == nil {
+		return nil, op.unknownCtxAbort(site)
+	}
+	obj, _ := site.Pkg.TypesInfo.Defs[site.Fn.Name].(*gotypes.Func)
+	if obj == nil {
+		return nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf(
+				"cannot thread context: the function enclosing the call at %s could not be resolved to a "+
+					"go/types object; its package may have failed to type-check", op.sitePos(site)),
+			File: site.File.Path,
+			Line: op.siteLine(site),
+		}
+	}
+	return canonicalFunc(obj), nil
+}
+
+// sourceIsFakeRoot reports whether the context src names at site is exactly the
+// variable declared by a top-level `ctx := context.Background()` in the
+// enclosing function. Comparing declaration positions rather than the name
+// alone matters: an inner block may shadow the fake ctx with a real one that is
+// also called "ctx", and hoisting past that would discard a genuine context.
+func sourceIsFakeRoot(site analysis.CallSite, src ctxSource) bool {
+	fake, ok := isFakeRootCtxCreation(site.Fn)
+	if !ok {
+		return false
+	}
+	lhs, ok := fake.Lhs[0].(*ast.Ident)
+	if !ok {
+		return false
+	}
+	v := lookupVarAt(site.Pkg, src.Expr, site.Call.Pos())
+	return v != nil && v.Pos() == lhs.Pos()
+}
+
+// lookupVarAt resolves the variable that name refers to at pos, using go/types'
+// scope tree on the Package (which is populated even though Info.Scopes is not).
+func lookupVarAt(pkg *pkgtypes.Package, name string, pos token.Pos) *gotypes.Var {
+	if pkg == nil || pkg.TypesPkg == nil {
+		return nil
+	}
+	inner := pkg.TypesPkg.Scope().Innermost(pos)
+	if inner == nil {
+		return nil
+	}
+	_, obj := inner.LookupParent(name, pos)
+	v, _ := obj.(*gotypes.Var)
+	return v
+}
+
+// funcHasContextParam reports whether f already accepts a context.Context in ANY
+// position, not just the first. A first-position-only check silently adds a
+// second context parameter to `func f(a int, ctx context.Context)`.
+func funcHasContextParam(f *gotypes.Func) bool {
+	sig, ok := f.Type().(*gotypes.Signature)
+	if !ok {
+		return false
+	}
+	params := sig.Params()
+	for i := 0; i < params.Len(); i++ {
+		if analysis.IsContextType(params.At(i).Type()) {
+			return true
+		}
+	}
+	return false
+}
+
+// canonicalFunc collapses a generic instantiation to its origin declaration.
+// ReferenceIndex canonicalizes the objects it stores and the arguments it is
+// given, so keying every map here on the origin keeps both sides consistent.
+func canonicalFunc(f *gotypes.Func) *gotypes.Func {
+	if orig := f.Origin(); orig != nil {
+		return orig
+	}
+	return f
+}
+
+func funcLabel(f *gotypes.Func) string {
+	sig, ok := f.Type().(*gotypes.Signature)
+	if ok && sig.Recv() != nil {
+		return fmt.Sprintf("%s.%s", gotypes.TypeString(sig.Recv().Type(), nil), f.Name())
+	}
+	return f.Name()
+}
+
+// buildFuncDeclIndex maps every type-checked function declaration in the
+// workspace to its AST and owning package/file.
+func buildFuncDeclIndex(ws *pkgtypes.Workspace) map[*gotypes.Func]*funcDecl {
+	index := make(map[*gotypes.Func]*funcDecl)
+	for _, pkg := range ws.Packages {
+		if pkg.TypesInfo == nil {
+			continue
+		}
+		for _, file := range allFilesOf(pkg) {
+			if file.AST == nil {
+				continue
+			}
+			for _, decl := range file.AST.Decls {
+				if fd, ok := decl.(*ast.FuncDecl); ok {
+					if fd.Name == nil {
+						continue
+					}
+					obj, _ := pkg.TypesInfo.Defs[fd.Name].(*gotypes.Func)
+					if obj == nil {
+						continue
+					}
+					index[canonicalFunc(obj)] = &funcDecl{Decl: fd, Pkg: pkg, File: file}
+					continue
+				}
+				indexInterfaceMethods(index, decl, pkg, file)
+			}
+		}
+	}
+	return index
+}
+
+// indexInterfaceMethods adds every interface method declared by decl to the
+// index. Interface methods must be resolvable exactly like ordinary functions:
+// expandInterfaces enqueues them so that calls made THROUGH the interface get
+// climbed, and discover aborts on any worklist entry it cannot resolve to a
+// declaration.
+func indexInterfaceMethods(
+	index map[*gotypes.Func]*funcDecl,
+	decl ast.Decl,
+	pkg *pkgtypes.Package,
+	file *pkgtypes.File,
+) {
+	gen, ok := decl.(*ast.GenDecl)
+	if !ok || gen.Tok != token.TYPE {
+		return
+	}
+	for _, spec := range gen.Specs {
+		ts, ok := spec.(*ast.TypeSpec)
+		if !ok {
+			continue
+		}
+		iface, ok := ts.Type.(*ast.InterfaceType)
+		if !ok || iface.Methods == nil {
+			continue
+		}
+		for _, field := range iface.Methods.List {
+			// No name means an embedded interface (or a type-set element), which
+			// declares no method of its own here — the embedded interface's own
+			// declaration is indexed where it is written.
+			if len(field.Names) == 0 {
+				continue
+			}
+			ft, ok := field.Type.(*ast.FuncType)
+			if !ok {
+				continue
+			}
+			obj, _ := pkg.TypesInfo.Defs[field.Names[0]].(*gotypes.Func)
+			if obj == nil {
+				continue
+			}
+			index[canonicalFunc(obj)] = &funcDecl{
+				Pkg:           pkg,
+				File:          file,
+				IfaceField:    field,
+				IfaceFuncType: ft,
+			}
+		}
+	}
+}
+
+func allFilesOf(pkg *pkgtypes.Package) []*pkgtypes.File {
+	files := make([]*pkgtypes.File, 0, len(pkg.Files)+len(pkg.TestFiles))
+	for _, f := range pkg.Files {
+		files = append(files, f)
+	}
+	for _, f := range pkg.TestFiles {
+		files = append(files, f)
+	}
+	return files
+}
+
+// referenceIndex reuses the cached index or builds one, type-checking first when
+// a parser is available. The HasTypeInfo assertion in buildPlan catches the case
+// where neither happened.
+func (op *ThreadContextOperation) referenceIndex(ws *pkgtypes.Workspace) *analysis.ReferenceIndex {
+	if op.CachedIndex != nil {
+		return op.CachedIndex
+	}
+	if op.Parser != nil {
+		for _, pkg := range ws.Packages {
+			op.Parser.EnsureTypeChecked(ws, pkg)
+		}
+	}
+	return analysis.NewSymbolResolver(ws, op.logger()).BuildReferenceIndex()
+}
+
+// resolveSeed resolves FunctionName ("Process" or "Type.Method") in SourceFile
+// to its canonical func object.
+func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.Func, error) {
+	file, pkg, err := op.findSourceFile(ws)
+	if err != nil {
+		return nil, err
+	}
+	// The name identifier to resolve: an ordinary declaration's, or — when the
+	// seed names an interface method such as "Store.Save", which is an *ast.Field
+	// and so invisible to FindFuncDeclByName — that field's.
+	var seedIdent *ast.Ident
+	if fd := analysis.FindFuncDeclByName(file.AST, op.FunctionName); fd != nil {
+		seedIdent = fd.Name
+	} else {
+		seedIdent = findInterfaceMethodIdent(file.AST, op.FunctionName)
+	}
+	if seedIdent == nil {
+		return nil, &pkgtypes.RefactorError{
+			Type:    pkgtypes.SymbolNotFound,
+			Message: fmt.Sprintf("function %s not found in %s", op.FunctionName, file.Path),
+			File:    file.Path,
+		}
+	}
+	if pkg.TypesInfo == nil {
+		return nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf(
+				"package %s has no type information; cannot resolve %s", pkg.ImportPath, op.FunctionName),
+			File: file.Path,
+		}
+	}
+	obj, _ := pkg.TypesInfo.Defs[seedIdent].(*gotypes.Func)
+	if obj == nil {
+		return nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf(
+				"could not resolve %s in %s to a go/types object; the package may have failed to type-check",
+				op.FunctionName, file.Path),
+			File: file.Path,
+		}
+	}
+	return canonicalFunc(obj), nil
+}
+
+// fileHit is a source file matched by findSourceFile, paired with its package.
+type fileHit struct {
+	file *pkgtypes.File
+	pkg  *pkgtypes.Package
+}
+
+// findSourceFile locates SourceFile, accepting an absolute path, the map key the
+// loader used, or a workspace-relative path. Exact matches win outright; a
+// suffix match is only consulted when nothing matched exactly, and is rejected
+// when it is ambiguous rather than picking one arbitrarily.
+func (op *ThreadContextOperation) findSourceFile(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, error) {
+	var exact, loose []fileHit
+
+	want := filepath.ToSlash(op.SourceFile)
+	for _, pkg := range ws.Packages {
+		for key, f := range allNamedFilesOf(pkg) {
+			if f.AST == nil {
+				continue
+			}
+			switch {
+			case f.Path == op.SourceFile || key == op.SourceFile:
+				exact = append(exact, fileHit{file: f, pkg: pkg})
+			case strings.HasSuffix(filepath.ToSlash(f.Path), "/"+want):
+				loose = append(loose, fileHit{file: f, pkg: pkg})
+			}
+		}
+	}
+
+	hits := exact
+	if len(hits) == 0 {
+		hits = loose
+	}
+	switch len(hits) {
+	case 1:
+		return hits[0].file, hits[0].pkg, nil
+	case 0:
+		return nil, nil, &pkgtypes.RefactorError{
+			Type:    pkgtypes.SymbolNotFound,
+			Message: fmt.Sprintf("source file not found in workspace: %s", op.SourceFile),
+			File:    op.SourceFile,
+		}
+	default:
+		return nil, nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf(
+				"ambiguous source file %q: matches %d files; pass a full path", op.SourceFile, len(hits)),
+			File: op.SourceFile,
+		}
+	}
+}
+
+// allNamedFilesOf returns a package's source and test files keyed as the loader
+// keyed them.
+func allNamedFilesOf(pkg *pkgtypes.Package) map[string]*pkgtypes.File {
+	files := make(map[string]*pkgtypes.File, len(pkg.Files)+len(pkg.TestFiles))
+	for k, f := range pkg.Files {
+		files[k] = f
+	}
+	for k, f := range pkg.TestFiles {
+		files[k] = f
+	}
+	return files
+}

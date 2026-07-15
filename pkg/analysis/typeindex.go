@@ -10,7 +10,6 @@ import (
 	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/ast/edge"
 	"golang.org/x/tools/go/ast/inspector"
-	"golang.org/x/tools/go/types/typeutil"
 )
 
 // uses is a varint-compressed list of inspector.Cursor index values.
@@ -166,35 +165,50 @@ func (ix *packageIndex) Calls(callee gotypes.Object) iter.Seq[inspector.Cursor] 
 			return
 		}
 		for idx := range u.decode() {
-			cur := ix.inspect.At(idx)
-			// Walk up to find if this ident is within a CallExpr
-			// The ident might be the function name in CallExpr.Fun
-			// or the Sel in a SelectorExpr that is CallExpr.Fun
-			parent := cur.Parent()
-			if !parent.Valid() {
-				continue
-			}
-			switch parent.ParentEdgeKind() {
-			case edge.CallExpr_Fun:
-				// Direct call: f()
-				if !yield(parent.Parent()) {
+			if call, ok := callSiteFor(ix.inspect.At(idx)); ok {
+				if !yield(call) {
 					return
-				}
-			default:
-				// Check for selector call: x.f()
-				if sel, ok := parent.Node().(*ast.SelectorExpr); ok && sel.Sel == cur.Node().(*ast.Ident) {
-					gp := parent.Parent()
-					if gp.Valid() {
-						if _, ok := gp.Node().(*ast.CallExpr); ok {
-							if !yield(gp) {
-								return
-							}
-						}
-					}
 				}
 			}
 		}
 	}
+}
+
+// maxCallWrapDepth bounds the walk in callSiteFor. The longest legal chain between
+// an ident and its CallExpr is Ident → SelectorExpr → IndexListExpr → CallExpr, so
+// three steps suffice; the extra one is slack against a malformed tree looping.
+const maxCallWrapDepth = 4
+
+// callSiteFor walks up from a use of a symbol to the CallExpr that invokes it, and
+// reports false when the use is not in callee position at all.
+//
+// The walk keys on cur.ParentEdgeKind(), which names the edge FROM the parent TO cur —
+// not the edge above the parent. Reading that direction backwards is what made an
+// earlier version miss every direct call: for f() the Ident f already carries
+// edge.CallExpr_Fun and its parent IS the CallExpr, so asking the parent for its own
+// parent edge yields whatever encloses the call (edge.ExprStmt_X, ...) and never matches.
+//
+// Only edges that keep the symbol in callee position are followed: the .Sel of a
+// selector (x.f(), pkg.F()) and the .X of an index expression (generic instantiation
+// F[int](), F[int, string]()). These compose, e.g. pkg.F[int](). Deciding on edge kind
+// rather than node type is what distinguishes those from SelectorExpr_X, where the
+// symbol is the receiver in f.Method() — a use of f, not a call of it.
+func callSiteFor(cur inspector.Cursor) (inspector.Cursor, bool) {
+	for range maxCallWrapDepth {
+		parent := cur.Parent()
+		if !parent.Valid() {
+			return inspector.Cursor{}, false
+		}
+		switch cur.ParentEdgeKind() {
+		case edge.CallExpr_Fun:
+			return parent, true
+		case edge.SelectorExpr_Sel, edge.IndexExpr_X, edge.IndexListExpr_X:
+			cur = parent
+		default:
+			return inspector.Cursor{}, false
+		}
+	}
+	return inspector.Cursor{}, false
 }
 
 // workspaceIndex aggregates per-package indexes across the workspace.
@@ -305,6 +319,3 @@ func canonicalObject(obj gotypes.Object) gotypes.Object {
 func isPackageLevel(obj gotypes.Object) bool {
 	return obj.Pkg() != nil && obj.Parent() == obj.Pkg().Scope()
 }
-
-// Ensure typeutil.Callee is available (used by Calls method).
-var _ = typeutil.Callee

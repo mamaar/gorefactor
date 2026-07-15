@@ -3,7 +3,10 @@ package tests_test
 import (
 	"io"
 	"log/slog"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers"
@@ -355,6 +358,278 @@ func TestAddContextParameter(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	compareGoldenFiles(t, "add_context_parameter", tmpDir)
+}
+
+// --- Thread context (transitive add_context_parameter) ---
+
+func TestThreadContext_Chain(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_chain")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "c",
+		SourceFile:   filepath.Join(tmpDir, "c.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_chain", tmpDir)
+}
+
+func TestThreadContext_Stops(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_stops")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "Do",
+		SourceFile:   filepath.Join(tmpDir, "target", "target.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_stops", tmpDir)
+}
+
+func TestThreadContext_Interface(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_interface")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "MemStore.Save",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_interface", tmpDir)
+}
+
+func TestThreadContext_TestRoots(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_test_roots")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "Seed",
+		SourceFile:   filepath.Join(tmpDir, "lib.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_test_roots", tmpDir)
+}
+
+func TestThreadContext_Roots(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_roots")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "seed",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_roots", tmpDir)
+}
+
+func TestThreadContext_FakeRoot(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_fake_root")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "target",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_fake_root", tmpDir)
+}
+
+func TestThreadContext_Nested(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_nested")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "Helper",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_nested", tmpDir)
+}
+
+func TestThreadContext_Generics(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_generics")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "Seed",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_generics", tmpDir)
+}
+
+// TestThreadContext_AbortsOnValueUse asserts that threading a function that
+// is referenced as a value (not called) makes NO changes to disk at all: a
+// half-threaded workspace would not compile, so the abort must happen before
+// any file is touched.
+func TestThreadContext_AbortsOnValueUse(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_value_use")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	before, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
+	if err != nil {
+		t.Fatalf("reading fixture before ThreadContext: %v", err)
+	}
+
+	_, err = eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "Seed",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err == nil {
+		t.Fatalf("expected ThreadContext to abort, got nil error")
+	}
+	if !strings.Contains(err.Error(), "Seed") || !strings.Contains(err.Error(), "used as a value") {
+		t.Fatalf("error must name the offending value use, got: %v", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
+	if err != nil {
+		t.Fatalf("reading fixture after ThreadContext: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("expected zero files changed after an abort, but main.go differs:\n%s", unifiedDiff(string(before), string(after)))
+	}
+}
+
+// TestThreadContext_AbortsOnExternalInterface asserts that threading a
+// method satisfying an interface declared OUTSIDE the workspace (here
+// net/http.Handler) makes NO changes to disk: adding a ctx parameter would
+// silently break that satisfaction, and it cannot be repaired by rewriting
+// anything this workspace owns.
+func TestThreadContext_AbortsOnExternalInterface(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_external_iface")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	before, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
+	if err != nil {
+		t.Fatalf("reading fixture before ThreadContext: %v", err)
+	}
+
+	_, err = eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "H.ServeHTTP",
+		SourceFile:   filepath.Join(tmpDir, "main.go"),
+	})
+	if err == nil {
+		t.Fatalf("expected ThreadContext to abort, got nil error")
+	}
+	if !strings.Contains(err.Error(), "net/http.Handler") {
+		t.Fatalf("error must name the external interface by package path, got: %v", err)
+	}
+
+	after, err := os.ReadFile(filepath.Join(tmpDir, "main.go"))
+	if err != nil {
+		t.Fatalf("reading fixture after ThreadContext: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("expected zero files changed after an abort, but main.go differs:\n%s", unifiedDiff(string(before), string(after)))
+	}
+}
+
+// TestThreadContext_Compiles is the highest-value test in this file:
+// createEngine sets SkipCompilation: true, so every golden test above
+// compares text but never proves the result actually compiles. This test
+// applies the refactor for a representative sample of fixtures and then
+// runs `go build ./...` and `go vet ./...` in the temp module directory —
+// two independent, non-engine checks that the rendered output is real,
+// compiling Go.
+func TestThreadContext_Compiles(t *testing.T) {
+	cases := []struct {
+		fixture      string
+		functionName string
+		sourceRel    string
+	}{
+		{"thread_context_chain", "c", "c.go"},
+		{"thread_context_interface", "MemStore.Save", "main.go"},
+		{"thread_context_test_roots", "Seed", "lib.go"},
+		{"thread_context_generics", "Seed", "main.go"},
+		{"thread_context_nested", "Helper", "main.go"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.fixture, func(t *testing.T) {
+			tmpDir := copyFixture(t, tc.fixture)
+			eng := createEngine(t)
+			ws := loadWorkspace(t, eng, tmpDir)
+
+			plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+				FunctionName: tc.functionName,
+				SourceFile:   filepath.Join(tmpDir, tc.sourceRel),
+			})
+			if err != nil {
+				t.Fatalf("ThreadContext: %v", err)
+			}
+			if err := eng.ExecutePlan(plan); err != nil {
+				t.Fatalf("ExecutePlan: %v", err)
+			}
+
+			buildCmd := exec.Command("go", "build", "./...")
+			buildCmd.Dir = tmpDir
+			if out, err := buildCmd.CombinedOutput(); err != nil {
+				t.Fatalf("go build ./... failed after ThreadContext:\n%s", out)
+			}
+
+			// go vet also type-checks _test.go files, which go build does
+			// not compile at all. That makes vet the only check here that
+			// catches a _test.go left referencing an import that was never
+			// added — the exact failure findParsedFile exists to prevent.
+			vetCmd := exec.Command("go", "vet", "./...")
+			vetCmd.Dir = tmpDir
+			out, err := vetCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("go vet ./... failed after ThreadContext:\n%s", out)
+			}
+		})
+	}
 }
 
 func TestSafeDelete(t *testing.T) {

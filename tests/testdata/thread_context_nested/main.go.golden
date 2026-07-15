@@ -1,0 +1,28 @@
+package main
+
+import (
+	"context"
+)
+
+// run already has a context.Context in scope, so the climb stops here: run
+// itself is untouched, but the nested call below has both Outer and Inner
+// threaded independently as two zero-width insertions.
+func run(ctx context.Context) {
+	Outer(ctx, Inner(ctx, 1))
+}
+
+func Outer(ctx context.Context, x int) {
+	Helper(ctx, x)
+}
+
+func Inner(ctx context.Context, x int) int {
+	Helper(ctx, x)
+	return x
+}
+
+// Helper is the seed.
+func Helper(ctx context.Context, x int) {}
+
+func main() {
+	run(context.Background())
+}

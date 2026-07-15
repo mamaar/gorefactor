@@ -1,0 +1,11 @@
+package main
+
+import (
+	"context"
+)
+
+// a does not yet import "context", exercising import insertion once it
+// gains a ctx parameter of its own.
+func a(ctx context.Context) {
+	b(ctx)
+}

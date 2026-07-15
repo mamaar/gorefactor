@@ -1,0 +1,9 @@
+package main
+
+import (
+	"context"
+)
+
+func b(ctx context.Context) {
+	c(ctx)
+}

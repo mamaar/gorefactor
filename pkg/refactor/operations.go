@@ -1318,72 +1318,97 @@ func contains(slice []string, item string) bool {
 	return slices.Contains(slice, item)
 }
 
-// generateAddImportChange generates a change to add a new import, handling both
-// single-line and multi-line import formats
-func generateAddImportChange(ws *types.Workspace, filePath string, importPath string) *types.Change {
-	// Find the file and its AST
+// findParsedFile locates a parsed file by absolute path, searching both Files
+// and TestFiles.
+//
+// Package keeps test files in a separate map, so scanning only Files silently
+// skips every _test.go. For import insertion that omission is invisible to
+// `go build`, which never compiles test files: the result is a _test.go
+// referencing a package that was never imported, caught only by `go vet` or
+// `go test`.
+func findParsedFile(ws *types.Workspace, filePath string) *types.File {
 	for _, pkg := range ws.Packages {
 		for _, file := range pkg.Files {
 			if file.Path == filePath && file.AST != nil {
-				// Check if we have imports and if they're in single-line or multi-line format
-				if len(file.AST.Imports) > 0 {
-					// Read file content to check import format
-					content, err := os.ReadFile(filePath)
-					if err != nil {
-						return nil
+				return file
+			}
+		}
+		for _, file := range pkg.TestFiles {
+			if file.Path == filePath && file.AST != nil {
+				return file
+			}
+		}
+	}
+	return nil
+}
+
+// generateAddImportChange generates a change to add a new import, handling both
+// single-line and multi-line import formats
+func generateAddImportChange(ws *types.Workspace, filePath string, importPath string) *types.Change {
+	file := findParsedFile(ws, filePath)
+	if file == nil {
+		return nil
+	}
+
+	// Check if we have imports and if they're in single-line or multi-line format
+	if len(file.AST.Imports) > 0 {
+		// Read file content to check import format
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil
+		}
+
+		// Check if imports are in grouped format (with parentheses) or single-line format
+		isSingleLine := isSingleLineImport(file.AST, content)
+
+		if isSingleLine {
+			// Convert single-line import to multi-line format
+			return convertSingleLineImportToMultiLine(file.AST, content, filePath, importPath)
+		}
+
+		// Add to existing multi-line import block
+		lastImport := file.AST.Imports[len(file.AST.Imports)-1]
+		if ws.FileSet != nil {
+			pos := ws.FileSet.Position(lastImport.End())
+			byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+
+			// Find the next newline after the import
+			for i := byteOffset; i < len(content); i++ {
+				if content[i] == '\n' {
+					return &types.Change{
+						File:        filePath,
+						Start:       i + 1,
+						End:         i + 1,
+						OldText:     "",
+						NewText:     fmt.Sprintf("\t\"%s\"\n", importPath),
+						Description: fmt.Sprintf("Add import for %s", importPath),
 					}
+				}
+			}
+		}
+		return nil
+	}
 
-					// Check if imports are in grouped format (with parentheses) or single-line format
-					isSingleLine := isSingleLineImport(file.AST, content)
+	if file.AST.Name != nil && ws.FileSet != nil {
+		// No imports exist, add new import block after package declaration
+		pos := ws.FileSet.Position(file.AST.Name.End())
+		byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
 
-					if isSingleLine {
-						// Convert single-line import to multi-line format
-						return convertSingleLineImportToMultiLine(file.AST, content, filePath, importPath)
-					} else {
-						// Add to existing multi-line import block
-						lastImport := file.AST.Imports[len(file.AST.Imports)-1]
-						if ws.FileSet != nil {
-							pos := ws.FileSet.Position(lastImport.End())
-							byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			return nil
+		}
 
-							// Find the next newline after the import
-							for i := byteOffset; i < len(content); i++ {
-								if content[i] == '\n' {
-									return &types.Change{
-										File:        filePath,
-										Start:       i + 1,
-										End:         i + 1,
-										OldText:     "",
-										NewText:     fmt.Sprintf("\t\"%s\"\n", importPath),
-										Description: fmt.Sprintf("Add import for %s", importPath),
-									}
-								}
-							}
-						}
-					}
-				} else if file.AST.Name != nil && ws.FileSet != nil {
-					// No imports exist, add new import block after package declaration
-					pos := ws.FileSet.Position(file.AST.Name.End())
-					byteOffset := calculateByteOffset(filePath, pos.Line, pos.Column)
-
-					content, err := os.ReadFile(filePath)
-					if err != nil {
-						return nil
-					}
-
-					// Find the next newline after package declaration
-					for i := byteOffset; i < len(content); i++ {
-						if content[i] == '\n' {
-							return &types.Change{
-								File:        filePath,
-								Start:       i + 1,
-								End:         i + 1,
-								OldText:     "",
-								NewText:     fmt.Sprintf("\nimport \"%s\"\n", importPath),
-								Description: fmt.Sprintf("Add import for %s", importPath),
-							}
-						}
-					}
+		// Find the next newline after package declaration
+		for i := byteOffset; i < len(content); i++ {
+			if content[i] == '\n' {
+				return &types.Change{
+					File:        filePath,
+					Start:       i + 1,
+					End:         i + 1,
+					OldText:     "",
+					NewText:     fmt.Sprintf("\nimport \"%s\"\n", importPath),
+					Description: fmt.Sprintf("Add import for %s", importPath),
 				}
 			}
 		}

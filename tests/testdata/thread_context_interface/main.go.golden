@@ -1,0 +1,37 @@
+package main
+
+import (
+	"context"
+)
+
+// Store is a workspace-declared interface. Threading one implementation's
+// method must rewrite the interface declaration and every implementation
+// together, so the result compiles regardless of which implementation a
+// caller holds.
+type Store interface {
+	Save(ctx context.Context, x int)
+}
+
+type MemStore struct{}
+
+func (m *MemStore) Save(ctx context.Context, x int) {}
+
+type FileStore struct{}
+
+func (f *FileStore) Save(ctx context.Context, x int) {}
+
+// useMem calls a concrete implementation directly.
+func useMem(ctx context.Context, m *MemStore) {
+	m.Save(ctx, 1)
+}
+
+// use calls through the interface, so its call site is only reachable via
+// the interface method object.
+func use(ctx context.Context, s Store) {
+	s.Save(ctx, 2)
+}
+
+func main() {
+	useMem(context.TODO(), &MemStore{})
+	use(context.TODO(), &MemStore{})
+}

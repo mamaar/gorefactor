@@ -1,0 +1,29 @@
+package main
+
+import (
+	"context"
+)
+
+// init is a root: it cannot gain a parameter, so it fabricates
+// context.TODO() at its call to seed.
+func init() {
+	seed(context.TODO())
+}
+
+// spawn is not itself climbed: the call to seed lives inside a goroutine
+// closure, which is a threading root of its own because it may outlive
+// spawn. spawn's signature must stay untouched.
+func spawn() {
+	go func() {
+		seed(context.TODO())
+	}()
+}
+
+// main is a root: it cannot gain a parameter either.
+func main() {
+	seed(context.TODO())
+	spawn()
+}
+
+// seed is the seed function.
+func seed(ctx context.Context) {}

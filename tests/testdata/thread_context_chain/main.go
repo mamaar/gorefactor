@@ -1,0 +1,7 @@
+package main
+
+// main is a root: it can never gain a ctx parameter, so the climb stops
+// here and a fabricated context.TODO() is passed to a instead.
+func main() {
+	a()
+}

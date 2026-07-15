@@ -1,0 +1,341 @@
+package refactor
+
+import (
+	"fmt"
+	"go/ast"
+	"go/token"
+	gotypes "go/types"
+	"strings"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
+	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
+)
+
+// ctxSource describes where a call site's ctx argument comes from.
+type ctxSource struct {
+	Expr string // the Go expression to pass, e.g. "ctx", "c", "r.Context()", "context.TODO()", "t.Context()"
+	Kind ctxSourceKind
+}
+
+type ctxSourceKind int
+
+const (
+	ctxUnknown     ctxSourceKind = iota // type info missing — caller must abort, never guess
+	ctxInScope                          // a real context.Context is in scope
+	ctxFromRequest                      // derived via r.Context()
+	ctxFakeRoot                         // only a local `ctx := context.Background()/TODO()` — caller should hoist
+	ctxRootLiteral                      // a root: context.TODO() / t.Context()
+	ctxNeedsParam                       // nothing available; enclosing func must gain a param
+)
+
+// findCtxSource walks the go/types scope chain enclosing call, looking for
+// a context.Context (or, failing that, an *http.Request whose .Context()
+// can stand in for one) that the call site can legally reference.
+//
+// The returned bool is true only when a usable source (ctxInScope or
+// ctxFromRequest) was actually found. A false result still carries a
+// meaningful Kind — ctxUnknown or ctxNeedsParam — that the caller must
+// branch on; it is not a bare "error".
+func findCtxSource(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExpr) (ctxSource, bool) {
+	if pkg.TypesPkg == nil || pkg.TypesInfo == nil {
+		// The workspace loader type-checks lazily and swallows errors,
+		// so a nil TypesPkg/TypesInfo here is a real, silent condition,
+		// not a "shouldn't happen". Falling back to matching the `ctx`
+		// identifier by name would silently thread the wrong value (or
+		// a package-level unrelated var) whenever type info is missing.
+		// Aborting is the only safe move; the caller must not guess.
+		return ctxSource{Kind: ctxUnknown}, false
+	}
+
+	pkgScope := pkg.TypesPkg.Scope()
+
+	var scopes []*gotypes.Scope
+	// Climb from the innermost scope containing the call upward, but stop
+	// BEFORE reaching package scope. A package-level `var ctx
+	// context.Context` belongs to the package, not to whoever is calling
+	// into this function — picking it up here would thread a shared
+	// global instead of a caller-supplied context.
+	for s := pkgScope.Innermost(call.Pos()); s != nil && s != pkgScope; s = s.Parent() {
+		scopes = append(scopes, s)
+	}
+
+	for _, s := range scopes {
+		if v, ok := scopeCtxVar(s, call.Pos()); ok {
+			return ctxSource{Expr: v.Name(), Kind: ctxInScope}, true
+		}
+	}
+
+	if src, ok := requestParamCtx(pkg, fn); ok {
+		return src, true
+	}
+
+	return ctxSource{Kind: ctxNeedsParam}, false
+}
+
+// scopeCtxVar looks for a context.Context-typed variable declared directly
+// in s (not in an ancestor scope) and visible at callPos. It prefers a
+// variable named exactly "ctx"; failing that, the first match in s.Names()
+// order (which go/types returns sorted, so this is deterministic).
+func scopeCtxVar(s *gotypes.Scope, callPos token.Pos) (*gotypes.Var, bool) {
+	if obj := s.Lookup("ctx"); obj != nil {
+		if v, ok := acceptScopeVar(obj, callPos, analysis.IsContextType); ok {
+			return v, true
+		}
+	}
+	for _, name := range s.Names() {
+		if name == "ctx" {
+			continue // already tried above
+		}
+		if v, ok := acceptScopeVar(s.Lookup(name), callPos, analysis.IsContextType); ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// acceptScopeVar reports whether obj is a *gotypes.Var matching typeOK and
+// declared (Pos) strictly before callPos. A variable declared after the
+// call site — however it may be named or typed — is not in scope there.
+func acceptScopeVar(obj gotypes.Object, callPos token.Pos, typeOK func(gotypes.Type) bool) (*gotypes.Var, bool) {
+	v, ok := obj.(*gotypes.Var)
+	if !ok {
+		return nil, false
+	}
+	if !typeOK(v.Type()) {
+		return nil, false
+	}
+	if v.Pos() >= callPos {
+		return nil, false
+	}
+	return v, true
+}
+
+// requestParamCtx looks for an *http.Request parameter on fn itself (the
+// enclosing function declaration) and, if found and named, returns
+// "<name>.Context()". An unnamed or blank ("_") request parameter cannot be
+// referenced by an expression, so it is not returned as usable.
+func requestParamCtx(pkg *pkgtypes.Package, fn *ast.FuncDecl) (ctxSource, bool) {
+	if fn == nil || fn.Type.Params == nil {
+		return ctxSource{}, false
+	}
+	for _, field := range fn.Type.Params.List {
+		for _, name := range field.Names {
+			if name.Name == "_" {
+				continue
+			}
+			obj := pkg.TypesInfo.Defs[name]
+			if obj == nil {
+				continue
+			}
+			if analysis.IsHTTPRequestPtr(obj.Type()) {
+				return ctxSource{Expr: name.Name + ".Context()", Kind: ctxFromRequest}, true
+			}
+		}
+	}
+	return ctxSource{}, false
+}
+
+// isFakeRootCtxCreation detects a top-level statement in fn.Body.List of the
+// form `ctx := context.Background()` / `ctx := context.TODO()`.
+//
+// This is deliberately narrow: only a literal context.Background()/TODO()
+// call counts. `ctx := r.Context()`, `ctx := context.WithTimeout(parent,
+// ...)`, and `ctx := someFunc()` all produce a REAL context derived from
+// something else in scope — findCtxSource's scope walk will find that
+// variable and stop the climb there, which is correct. Reporting those as
+// fake roots would cause a real, already-threaded context to be discarded.
+//
+// Only the top level of the body is scanned, not nested closures — this
+// mirrors RemoveInternalCtxCreation in ctx_creation.go, which has its own
+// regression test for exactly this boundary.
+func isFakeRootCtxCreation(fn *ast.FuncDecl) (*ast.AssignStmt, bool) {
+	if fn == nil || fn.Body == nil {
+		return nil, false
+	}
+	for _, stmt := range fn.Body.List {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.DEFINE {
+			continue
+		}
+		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			continue
+		}
+		lhs, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok || lhs.Name != "ctx" {
+			continue
+		}
+		if !isRootContextCall(assign.Rhs[0]) {
+			continue
+		}
+		return assign, true
+	}
+	return nil, false
+}
+
+// classifyRoot reports whether the call site sitting in fn (or, if non-nil,
+// the more specific enclosing FuncLit lit) is a threading root, and if so
+// which literal expression to inject there. fn and file are still needed
+// even when lit is set, to resolve *_test.go-ness and to type-check any
+// test-signature parameters via pkg.TypesInfo.
+//
+// t.Context() is intentionally root-only here, not a general ctx
+// derivation: a test *helper* like `func helper(t *testing.T, ...)` has a
+// *testing.T in scope but is NOT a root — it must be climbed like any
+// other function and gain its own ctx parameter. Only Test/Benchmark/Fuzz
+// *declarations* and t.Run closures produce t.Context(). Getting this
+// backwards would silently stop the climb at every test helper, which is
+// exactly what findCtxSource must not do for the analogous *http.Request
+// case either (that one IS a general derivation, handled there instead).
+func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, lit *ast.FuncLit) (ctxSource, bool) {
+	if lit != nil {
+		// t.Run(name, func(t *testing.T) { ... }) and similar: a closure
+		// whose own signature carries a *testing.T/B/F root gets
+		// t.Context(); any other closure (go func(){}, defer func(){},
+		// a generic callback) gets context.TODO() since it may run
+		// outside any traceable synchronous caller chain.
+		if pkg != nil && pkg.TypesInfo != nil {
+			if p, ok := anyTestingTBParam(pkg, lit.Type); ok {
+				return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
+			}
+		}
+		return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
+	}
+
+	if fn == nil {
+		// No enclosing function at all: a package-level var initializer.
+		return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
+	}
+
+	if fn.Recv == nil {
+		switch {
+		case fn.Name.Name == "main" && pkg != nil && pkg.Name == "main":
+			return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
+		case fn.Name.Name == "init":
+			return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
+		}
+
+		if file != nil && strings.HasSuffix(file.Path, "_test.go") && pkg != nil && pkg.TypesInfo != nil {
+			if p, ok := firstParamIdent(fn.Type); ok {
+				pt := paramType(pkg, p)
+				switch {
+				case fn.Name.Name == "TestMain" && analysis.IsTestingM(pt):
+					// testing.M has no Context() method.
+					return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
+				case hasTestPrefix(fn.Name.Name) && analysis.IsTestingTB(pt):
+					return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
+				}
+			}
+		}
+	}
+
+	return ctxSource{}, false
+}
+
+// hasTestPrefix reports whether name looks like a Test/Benchmark/Fuzz
+// declaration recognized by `go test`.
+func hasTestPrefix(name string) bool {
+	return strings.HasPrefix(name, "Test") ||
+		strings.HasPrefix(name, "Benchmark") ||
+		strings.HasPrefix(name, "Fuzz")
+}
+
+// firstParamIdent returns the first parameter's identifier, if it is
+// named (not blank, not unnamed).
+func firstParamIdent(ft *ast.FuncType) (*ast.Ident, bool) {
+	if ft == nil || ft.Params == nil || len(ft.Params.List) == 0 {
+		return nil, false
+	}
+	field := ft.Params.List[0]
+	if len(field.Names) == 0 {
+		return nil, false
+	}
+	name := field.Names[0]
+	if name.Name == "_" {
+		return nil, false
+	}
+	return name, true
+}
+
+// anyTestingTBParam returns the first named parameter of ft (in any
+// position) whose type satisfies analysis.IsTestingTB.
+func anyTestingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType) (*ast.Ident, bool) {
+	if ft == nil || ft.Params == nil {
+		return nil, false
+	}
+	for _, field := range ft.Params.List {
+		for _, name := range field.Names {
+			if name.Name == "_" {
+				continue
+			}
+			if analysis.IsTestingTB(paramType(pkg, name)) {
+				return name, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// paramType resolves the go/types type of a parameter identifier via the
+// package's type-checked Defs.
+func paramType(pkg *pkgtypes.Package, ident *ast.Ident) gotypes.Type {
+	obj := pkg.TypesInfo.Defs[ident]
+	if obj == nil {
+		return nil
+	}
+	return obj.Type()
+}
+
+// uniqueCtxName returns the name to use for a newly injected ctx parameter
+// on fn: normally "ctx", or the first of ctx0, ctx1, ... that is free if
+// "ctx" is already bound in fn to something other than a context.Context.
+func uniqueCtxName(pkg *pkgtypes.Package, fn *ast.FuncDecl) string {
+	if pkg == nil || pkg.TypesInfo == nil || fn == nil {
+		return "ctx"
+	}
+	if !fnBindsNonCtxName(pkg, fn, "ctx") {
+		return "ctx"
+	}
+	for i := 0; ; i++ {
+		candidate := fmt.Sprintf("ctx%d", i)
+		if !fnBindsNonCtxName(pkg, fn, candidate) {
+			return candidate
+		}
+	}
+}
+
+// fnBindsNonCtxName reports whether fn declares name anywhere inside it —
+// as a parameter, a named result, or a local at any nesting depth (e.g.
+// `ctx := 5` inside an if-block) — bound to something that is not a
+// context.Context.
+//
+// This walks pkg.TypesInfo.Defs rather than go/types Scopes: this
+// workspace's type-checker (see analysis.GoParser.TypeCheckPackage) does
+// not populate Info.Scopes, only Types/Defs/Uses. Defs still works for
+// this purpose because it contains exactly the identifiers at their
+// declaration site, at any depth — so filtering fn's identifiers down to
+// those that are Defs keys already gives "does fn bind this name", without
+// needing a scope tree at all. A nested declaration shadows only within
+// its own block under ordinary Go rules, but it would still collide with
+// what callers mean by the injected `ctx` parameter, so any depth counts.
+func fnBindsNonCtxName(pkg *pkgtypes.Package, fn *ast.FuncDecl, name string) bool {
+	found := false
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		ident, ok := n.(*ast.Ident)
+		if !ok || ident.Name != name {
+			return true
+		}
+		obj, ok := pkg.TypesInfo.Defs[ident]
+		if !ok || obj == nil {
+			return true
+		}
+		if !analysis.IsContextType(obj.Type()) {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
