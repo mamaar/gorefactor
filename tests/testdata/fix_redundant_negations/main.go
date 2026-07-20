@@ -1,0 +1,32 @@
+package main
+
+import "fmt"
+
+// De Morgan's laws collapse this from 3 negations to 0.
+func bothClear(a, b bool) bool {
+	return !(!a && !b)
+}
+
+// Double negation cancels out.
+func identity(x bool) bool {
+	return !!x
+}
+
+// Negated equality flips to !=, carrying one negation over to zero.
+func differs(a, b int) bool {
+	return !(a == b)
+}
+
+// Left alone: !(a && b) has 1 negation before, and pushing it inward via De
+// Morgan gives !a || !b, which has 2. That is not a reduction, so the fixer
+// must leave this untouched.
+func eitherFalse(a, b bool) bool {
+	return !(a && b)
+}
+
+func main() {
+	fmt.Println(bothClear(true, false))
+	fmt.Println(identity(true))
+	fmt.Println(differs(1, 2))
+	fmt.Println(eitherFalse(true, false))
+}

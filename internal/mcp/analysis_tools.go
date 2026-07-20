@@ -10,6 +10,7 @@ import (
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/analyzers"
 	"github.com/mamaar/gorefactor/pkg/analyzers/booleanbranch"
+	"github.com/mamaar/gorefactor/pkg/analyzers/boolsimplify"
 	"github.com/mamaar/gorefactor/pkg/analyzers/complexity"
 	"github.com/mamaar/gorefactor/pkg/analyzers/deepifelse"
 	"github.com/mamaar/gorefactor/pkg/analyzers/earlyreturn"
@@ -248,6 +249,32 @@ type EarlyReturnFixResult struct {
 	Diffs         []FileDiff                 `json:"diffs,omitempty"`
 	BlockingIssue string                     `json:"blocking_issue,omitempty"`
 	Message       string                     `json:"message,omitempty"`
+}
+
+// --- detect_redundant_negations / fix_redundant_negations ---
+
+type DetectRedundantNegationsInput struct {
+	Package      string `json:"package,omitempty" jsonschema:"specific package to analyze"`
+	MinReduction int    `json:"min_reduction,omitempty" jsonschema:"minimum number of ! operators a rewrite must remove (default 1)"`
+}
+
+type FixRedundantNegationsInput struct {
+	Package      string `json:"package,omitempty" jsonschema:"specific package to fix"`
+	MinReduction int    `json:"min_reduction,omitempty" jsonschema:"minimum number of ! operators a rewrite must remove (default 1)"`
+	// Apply inverts the usual dry_run convention, matching fix_early_returns:
+	// this tool previews by default rather than writing on the first call.
+	Apply bool `json:"apply,omitempty" jsonschema:"write the changes to disk; defaults to false, which previews the full before/after diff without touching any file"`
+}
+
+type RedundantNegationViolationItem struct {
+	File            string `json:"file"`
+	Line            int    `json:"line"`
+	Column          int    `json:"column"`
+	Function        string `json:"function_name"`
+	Before          string `json:"before"`
+	After           string `json:"after"`
+	NegationsBefore int    `json:"negations_before"`
+	NegationsAfter  int    `json:"negations_after"`
 }
 
 // --- detect_improper_error_wrapping ---
@@ -559,12 +586,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		return textResult(map[string]any{
+		out := map[string]any{
 			"files_modified": result.ModifiedFiles,
 			"changes_count":  result.ChangeCount,
 			"skipped":        skipped,
 			"skipped_count":  len(skipped),
-		}), nil, nil
+		}
+		return textResult(withDryRun(out, result)), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -698,12 +726,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		return textResult(map[string]any{
+		out := map[string]any{
 			"files_modified":   result.ModifiedFiles,
 			"changes_count":    result.ChangeCount,
 			"booleans_removed": allBooleansRemoved,
 			"switch_cases":     totalCases,
-		}), nil, nil
+		}
+		return textResult(withDryRun(out, result)), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -717,6 +746,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
+		// InvertCondition only skips unsafe float comparison flips when it can
+		// see operand types, and type-checking is lazy.
+		state.GetEngine().EnsureTypeChecked(ws)
 
 		maxNesting := in.MaxNestingDepth
 		if maxNesting <= 0 {
@@ -771,6 +804,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
+		// InvertCondition only skips unsafe float comparison flips when it can
+		// see operand types, and type-checking is lazy.
+		state.GetEngine().EnsureTypeChecked(ws)
 
 		maxNesting := in.MaxNestingDepth
 		if maxNesting <= 0 {
@@ -843,17 +880,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"early_returns":   totalEarlyReturns,
 			"unfixable":       unfixable,
 		}
-		// Say so when nothing was written, rather than returning an empty
-		// files_modified that reads like a no-op apply.
-		if result.DryRun {
-			out["dry_run"] = true
-			out["diffs"] = result.Diffs
-			out["message"] = result.Description
-			if result.BlockingIssue != "" {
-				out["blocking_issue"] = result.BlockingIssue
-			}
-		}
-		return textResult(out), nil, nil
+		return textResult(withDryRun(out, result)), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -867,6 +894,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
+		// InvertCondition only skips unsafe float comparison flips when it can
+		// see operand types, and type-checking is lazy.
+		state.GetEngine().EnsureTypeChecked(ws)
 
 		a, err := earlyReturnAnalyzer(in.MinBodyLines, in.Patterns)
 		if err != nil {
@@ -904,6 +935,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
+		// InvertCondition only skips unsafe float comparison flips when it can
+		// see operand types, and type-checking is lazy.
+		state.GetEngine().EnsureTypeChecked(ws)
 
 		a, err := earlyReturnAnalyzer(in.MinBodyLines, in.Patterns)
 		if err != nil {
@@ -953,6 +988,86 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			BlockingIssue: result.BlockingIssue,
 			Message:       result.Description,
 		}), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "detect_redundant_negations",
+		Description: "Detect negated boolean expressions that De Morgan's laws would simplify, such as `!(!a && !b)`. Only reports rewrites that strictly reduce the number of `!` operators; `!(a && b)` is left alone. Useful as a cleanup pass after any refactoring that inverts conditions.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectRedundantNegationsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		// The float/NaN guard in pushNeg needs operand types to skip unsafe
+		// ordering-operator flips, and type-checking is lazy.
+		state.GetEngine().EnsureTypeChecked(ws)
+
+		a := redundantNegationsAnalyzer(in.MinReduction)
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := redundantNegationItems(rr.Result)
+
+		return textResult(map[string]any{
+			"violations":  items,
+			"total_count": len(items),
+		}), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "fix_redundant_negations",
+		Description: "Simplify negated boolean expressions via De Morgan's laws where doing so strictly reduces the number of `!` operators. Previews by default: call with apply=true to write the changes. Safe to run after any other fixer as a cleanup pass, and safe to run repeatedly.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixRedundantNegationsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		// The float/NaN guard in pushNeg needs operand types to skip unsafe
+		// ordering-operator flips, and type-checking is lazy.
+		state.GetEngine().EnsureTypeChecked(ws)
+
+		a := redundantNegationsAnalyzer(in.MinReduction)
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		items := redundantNegationItems(rr.Result)
+
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		if len(changes) == 0 {
+			state.RUnlock()
+			return textResult(map[string]any{
+				"files_modified": []string{},
+				"changes_count":  0,
+				"fixed":          []RedundantNegationViolationItem{},
+				"message":        "No redundant negations found",
+			}), nil, nil
+		}
+
+		plan := analyzers.ChangesToPlan(changes)
+		result, err := executePlanWithUnlock(state, plan, "Simplify redundant negations", !in.Apply)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		out := map[string]any{
+			"files_modified": result.ModifiedFiles,
+			"changes_count":  result.ChangeCount,
+			"fixed":          items,
+		}
+		return textResult(withDryRun(out, result)), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -1057,13 +1172,14 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		return textResult(map[string]any{
+		out := map[string]any{
 			"files_modified":     result.ModifiedFiles,
 			"changes_count":      result.ChangeCount,
 			"errors_wrapped":     errorsWrapped,
 			"format_verbs_fixed": formatVerbsFixed,
 			"contexts_added":     contextsAdded,
-		}), nil, nil
+		}
+		return textResult(withDryRun(out, result)), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
@@ -1182,6 +1298,42 @@ func earlyReturnItems(result any) []EarlyReturnViolationItem {
 			Fixable:    v.Fixable,
 			Reason:     v.Reason,
 			Suggestion: v.Suggestion,
+		}
+	}
+	return items
+}
+
+// redundantNegationsAnalyzer builds a configured boolsimplify analyzer.
+// minReduction <= 0 keeps the analyzer's own default (1).
+func redundantNegationsAnalyzer(minReduction int) *goanalysis.Analyzer {
+	var opts []boolsimplify.Option
+	if minReduction > 0 {
+		opts = append(opts, boolsimplify.WithMinReduction(minReduction))
+	}
+	return boolsimplify.NewAnalyzer(opts...)
+}
+
+// redundantNegationItems converts analyzer results into their MCP
+// representation. Every boolsimplify.Result already carries a rewrite - the
+// analyzer only reports a site once it has found one - so there is no
+// separate fixable/unfixable split to make here, unlike earlyReturnItems.
+func redundantNegationItems(result any) []RedundantNegationViolationItem {
+	results, ok := result.([]*boolsimplify.Result)
+	if !ok {
+		return nil
+	}
+
+	items := make([]RedundantNegationViolationItem, len(results))
+	for i, v := range results {
+		items[i] = RedundantNegationViolationItem{
+			File:            v.File,
+			Line:            v.Line,
+			Column:          v.Column,
+			Function:        v.Function,
+			Before:          v.Before,
+			After:           v.After,
+			NegationsBefore: v.NegationsBefore,
+			NegationsAfter:  v.NegationsAfter,
 		}
 	}
 	return items

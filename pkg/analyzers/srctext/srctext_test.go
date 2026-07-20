@@ -2,8 +2,10 @@ package srctext_test
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 
@@ -166,11 +168,187 @@ func TestInvertCondition(t *testing.T) {
 			fset, content, body := parseFuncBody(t, src)
 			ifStmt := firstIfStmt(t, body)
 
-			if got := srctext.InvertCondition(fset, content, ifStmt.Cond); got != tt.want {
+			if got := srctext.InvertCondition(fset, content, nil, ifStmt.Cond); got != tt.want {
 				t.Errorf("InvertCondition(%q) = %q, want %q", tt.cond, got, tt.want)
 			}
 		})
 	}
+}
+
+// typeCheck parses and type-checks src, returning the fileset, source bytes,
+// the first function's body, and the populated type info.
+func typeCheck(t *testing.T, src string) (*token.FileSet, []byte, *ast.BlockStmt, *types.Info) {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "src.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+	}
+	conf := types.Config{Importer: importer.Default()}
+	if _, err := conf.Check("p", fset, []*ast.File{file}, info); err != nil {
+		t.Fatalf("type check: %v", err)
+	}
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+			return fset, []byte(src), fn.Body, info
+		}
+	}
+
+	t.Fatal("no function declaration found")
+	return nil, nil, nil, nil
+}
+
+// TestInvertCondition_FloatNaNSafety is the regression for the NaN-unsafety
+// bug: flipping an ordering operator changes behavior when either operand is
+// a floating-point NaN, so InvertCondition must fall back to a blanket wrap
+// for float comparisons when type information says so.
+func TestInvertCondition_FloatNaNSafety(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "float less-than wraps instead of flipping",
+			src: `package p
+
+func f(x, y float64) bool {
+	if x < y {
+		return true
+	}
+	return false
+}
+`,
+			want: "!(x < y)",
+		},
+		{
+			name: "int less-than still flips",
+			src: `package p
+
+func f(i, n int) bool {
+	if i < n {
+		return true
+	}
+	return false
+}
+`,
+			want: "i >= n",
+		},
+		{
+			name: "float equality is unaffected",
+			src: `package p
+
+func f(x, y float64) bool {
+	if x == y {
+		return true
+	}
+	return false
+}
+`,
+			want: "x != y",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fset, content, body, info := typeCheck(t, tt.src)
+			ifStmt := firstIfStmt(t, body)
+
+			if got := srctext.InvertCondition(fset, content, info, ifStmt.Cond); got != tt.want {
+				t.Errorf("InvertCondition = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsFloatComparison(t *testing.T) {
+	t.Run("float operands", func(t *testing.T) {
+		src := `package p
+
+func f(x, y float64) bool {
+	return x < y
+}
+`
+		_, _, body, info := typeCheck(t, src)
+		binExpr := firstBinaryExpr(t, body)
+
+		if !srctext.IsFloatComparison(info, binExpr) {
+			t.Error("expected float operands to report true")
+		}
+	})
+
+	t.Run("int operands", func(t *testing.T) {
+		src := `package p
+
+func f(i, n int) bool {
+	return i < n
+}
+`
+		_, _, body, info := typeCheck(t, src)
+		binExpr := firstBinaryExpr(t, body)
+
+		if srctext.IsFloatComparison(info, binExpr) {
+			t.Error("expected int operands to report false")
+		}
+	})
+
+	t.Run("mixed float and int operands", func(t *testing.T) {
+		src := `package p
+
+func f(x float64, n int) bool {
+	return x < float64(n)
+}
+`
+		_, _, body, info := typeCheck(t, src)
+		binExpr := firstBinaryExpr(t, body)
+
+		if !srctext.IsFloatComparison(info, binExpr) {
+			t.Error("expected mixed float/int operands to report true")
+		}
+	})
+
+	t.Run("nil info", func(t *testing.T) {
+		src := `package p
+
+func f(x, y float64) bool {
+	return x < y
+}
+`
+		_, _, body, _ := typeCheck(t, src)
+		binExpr := firstBinaryExpr(t, body)
+
+		if srctext.IsFloatComparison(nil, binExpr) {
+			t.Error("expected nil info to report false")
+		}
+	})
+}
+
+// firstBinaryExpr returns the first binary expression in body.
+func firstBinaryExpr(t *testing.T, body *ast.BlockStmt) *ast.BinaryExpr {
+	t.Helper()
+
+	var found *ast.BinaryExpr
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		if binExpr, ok := n.(*ast.BinaryExpr); ok {
+			found = binExpr
+			return false
+		}
+		return true
+	})
+
+	if found == nil {
+		t.Fatal("no binary expression found")
+	}
+	return found
 }
 
 func TestIndentation(t *testing.T) {

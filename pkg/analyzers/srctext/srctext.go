@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 )
 
@@ -64,7 +65,15 @@ func ExprText(fset *token.FileSet, content []byte, expr ast.Expr) string {
 // InvertCondition returns source text for the logical negation of expr,
 // preferring an operator flip (`a == b` -> `a != b`) over a blanket `!(...)`
 // wrapper. It returns "" when the expression's text cannot be recovered.
-func InvertCondition(fset *token.FileSet, content []byte, expr ast.Expr) string {
+//
+// The ordering operators (<, >, <=, >=) are not flipped when either operand
+// is a floating-point type, since flipping changes behavior for NaN operands
+// (`!(x < y)` is not equivalent to `x >= y` when x or y is NaN). info is used
+// to detect this; when info is nil, or the package was not type-checked so
+// TypeOf returns nil for the operands, the guard cannot see the float type
+// and this function falls back to flipping the operator exactly as before -
+// callers relying on the NaN guard must supply type information.
+func InvertCondition(fset *token.FileSet, content []byte, info *types.Info, expr ast.Expr) string {
 	switch e := expr.(type) {
 	case *ast.BinaryExpr:
 		lhs := ExprText(fset, content, e.X)
@@ -78,12 +87,24 @@ func InvertCondition(fset *token.FileSet, content []byte, expr ast.Expr) string 
 		case token.NEQ:
 			return lhs + " == " + rhs
 		case token.LSS:
+			if IsFloatComparison(info, e) {
+				return "!(" + ExprText(fset, content, expr) + ")"
+			}
 			return lhs + " >= " + rhs
 		case token.GTR:
+			if IsFloatComparison(info, e) {
+				return "!(" + ExprText(fset, content, expr) + ")"
+			}
 			return lhs + " <= " + rhs
 		case token.LEQ:
+			if IsFloatComparison(info, e) {
+				return "!(" + ExprText(fset, content, expr) + ")"
+			}
 			return lhs + " > " + rhs
 		case token.GEQ:
+			if IsFloatComparison(info, e) {
+				return "!(" + ExprText(fset, content, expr) + ")"
+			}
 			return lhs + " < " + rhs
 		case token.LAND, token.LOR:
 			return "!(" + ExprText(fset, content, expr) + ")"
@@ -95,7 +116,7 @@ func InvertCondition(fset *token.FileSet, content []byte, expr ast.Expr) string 
 	case *ast.Ident:
 		return "!" + e.Name
 	case *ast.ParenExpr:
-		inner := InvertCondition(fset, content, e.X)
+		inner := InvertCondition(fset, content, info, e.X)
 		if inner == "" {
 			return ""
 		}
@@ -107,6 +128,30 @@ func InvertCondition(fset *token.FileSet, content []byte, expr ast.Expr) string 
 		return ""
 	}
 	return "!(" + text + ")"
+}
+
+// IsFloatComparison reports whether either operand of e has a floating-point
+// type. It returns false when info or e is nil, or when the type of an
+// operand cannot be determined (info.TypeOf returns nil for packages that
+// were not type-checked).
+func IsFloatComparison(info *types.Info, e *ast.BinaryExpr) bool {
+	if info == nil || e == nil {
+		return false
+	}
+	return isFloatType(info.TypeOf(e.X)) || isFloatType(info.TypeOf(e.Y))
+}
+
+// isFloatType reports whether t's underlying type is a floating-point basic
+// type, which covers float32, float64, and untyped float constants.
+func isFloatType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	basic, ok := t.Underlying().(*types.Basic)
+	if !ok {
+		return false
+	}
+	return basic.Info()&types.IsFloat != 0
 }
 
 // Indentation returns the leading whitespace of the line containing offset.

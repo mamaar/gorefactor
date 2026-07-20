@@ -333,7 +333,7 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 		return false
 	}
 
-	inverted := srctext.InvertCondition(w.pass.Fset, w.content, ifStmt.Cond)
+	inverted := srctext.InvertCondition(w.pass.Fset, w.content, w.pass.TypesInfo, ifStmt.Cond)
 	bodyText := srctext.BlockText(w.pass.Fset, w.content, ifStmt.Body)
 	if inverted == "" || bodyText == "" {
 		w.record(ifStmt, pattern, fnName, bodyLines, false, "source text for the condition or body is unavailable")
