@@ -7,6 +7,7 @@ import (
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/mamaar/gorefactor/pkg/analyzers"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -110,6 +111,27 @@ func buildDiffs(changes []types.Change) []FileDiff {
 // validation ExecutePlan would run, but reports a failure as BlockingIssue
 // rather than an error so the diffs are still returned for review.
 func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *PlanResult {
+	// Backfill OldText so every tool's preview shows a real before/after pair.
+	//
+	// Operations in pkg/refactor set OldText as they construct each change, but
+	// analyzer-driven tools build theirs from analysis.Diagnostic suggested
+	// fixes via analyzers.DiagnosticsToChanges, which only ever sets NewText.
+	// Those handlers were each expected to remember a follow-up
+	// analyzers.FillOldText call, and several did not — so their dry runs
+	// rendered a "diff" with no before side at all, silently violating the
+	// documented contract that a preview returns the full before/after text of
+	// every planned change. Doing it here instead makes the contract uniform
+	// for every mutating tool, present and future, rather than depending on
+	// each handler opting in.
+	//
+	// FillOldText is idempotent (it skips changes that already carry OldText)
+	// and deliberately leaves pure insertions alone: it requires Start < End,
+	// so a hunk that inserts at a point keeps an empty "old" because there
+	// genuinely is no prior text there.
+	if ws, err := state.GetWorkspace(); err == nil {
+		plan.Changes = analyzers.FillOldText(ws, plan.Changes)
+	}
+
 	res := &PlanResult{
 		Description:   desc + " (dry run - nothing was written)",
 		AffectedFiles: plan.AffectedFiles,
