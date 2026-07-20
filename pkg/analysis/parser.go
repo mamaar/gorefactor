@@ -557,6 +557,31 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	p.mu.Unlock()
 }
 
+// BindWorkspace attaches p to ws as ws's workspace importer, without going
+// through ParseWorkspace. It exists for one-off type-checking sessions that
+// need TypeCheckPackage's exact package-resolution logic (workspace-local
+// lookup, then the go/packages-backed external-module fallback, then
+// importer.Default()) against a *types.Workspace some other GoParser already
+// parsed — most notably pkg/refactor.VerifyPlanTypes, which type-checks
+// throwaway in-memory copies of a package's files and must not touch the
+// GoParser that owns ws's cached TypesChecked/TypesInfo state. Safe to call
+// on a fresh GoParser; overwrites any importer p already had.
+func (p *GoParser) BindWorkspace(ws *types.Workspace) {
+	p.importer = &workspaceImporter{ws: ws, fset: ws.FileSet, parser: p}
+}
+
+// Importer exposes p's workspace importer as a go/types.Importer. It exists
+// for callers that need to drive their own go/types.Config — most notably
+// pkg/refactor.VerifyPlanTypes, which needs a custom Config.Error that
+// collects every error instead of Config.Check's default of stopping (or, as
+// checkFiles below does, silently discarding) after the first — so they can
+// reuse the same import-resolution logic as checkFiles without duplicating
+// workspaceImporter. Returns nil if p has not been attached to a workspace
+// yet via ParseWorkspace or BindWorkspace.
+func (p *GoParser) Importer() gotypes.Importer {
+	return p.importer
+}
+
 // checkFiles runs go/types over the given file set, returning the populated Info
 // even when checking fails (go/types fills it in partially on error).
 func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*ast.File) (*gotypes.Package, *gotypes.Info, error) {

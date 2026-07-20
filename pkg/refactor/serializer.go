@@ -164,6 +164,38 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 	return preview.String(), nil
 }
 
+// ApplyChangesToContent applies changes (already known to target the same
+// logical file) to in-memory content and returns the result, without
+// touching disk. It sorts changes into descending Start order and validates
+// they don't overlap before applying each one via applyChange — the same
+// offset-application semantics applyChangesToFile uses, factored out here so
+// callers that never had a real file to read from disk (VerifyPlanTypes'
+// in-memory type-check verification, in particular) can reuse them exactly
+// rather than re-implementing the sort/validate/apply sequence.
+func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTypes.Change) ([]byte, error) {
+	// Copy before sorting: callers may hold their own reference to changes
+	// (e.g. a shared slice from a plan) and must not see it reordered.
+	sorted := make([]refactorTypes.Change, len(changes))
+	copy(sorted, changes)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Start > sorted[j].Start
+	})
+
+	if err := s.validateChangePositions(sorted); err != nil {
+		return nil, fmt.Errorf("invalid change positions: %v", err)
+	}
+
+	modifiedContent := string(content)
+	var err error
+	for _, change := range sorted {
+		modifiedContent, err = s.applyChange(modifiedContent, change)
+		if err != nil {
+			return nil, fmt.Errorf("failed to apply change: %v", err)
+		}
+	}
+	return []byte(modifiedContent), nil
+}
+
 // applyChangesToFile applies changes to a single file
 func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes.Change) error {
 	// Read the current file content, or start with empty content for new files
@@ -177,24 +209,11 @@ func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes
 		}
 	}
 
-	// Sort changes by position in reverse order so we can apply them without affecting positions
-	sort.Slice(changes, func(i, j int) bool {
-		return changes[i].Start > changes[j].Start
-	})
-
-	// Validate that changes don't overlap
-	if err := s.validateChangePositions(changes); err != nil {
-		return fmt.Errorf("invalid change positions: %v", err)
+	modifiedBytes, err := s.ApplyChangesToContent(content, changes)
+	if err != nil {
+		return err
 	}
-
-	// Apply changes
-	modifiedContent := string(content)
-	for _, change := range changes {
-		modifiedContent, err = s.applyChange(modifiedContent, change)
-		if err != nil {
-			return fmt.Errorf("failed to apply change: %v", err)
-		}
-	}
+	modifiedContent := string(modifiedBytes)
 
 	// Organize imports and format the modified content if it's Go code
 	if strings.HasSuffix(filePath, ".go") {
