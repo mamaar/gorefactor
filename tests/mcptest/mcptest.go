@@ -61,12 +61,30 @@ func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath 
 }
 
 // inProcess is the in-process transport using NewInMemoryTransports.
-type inProcess struct{}
+type inProcess struct {
+	// elicitationHandler is optionally set to make the client advertise the
+	// elicitation capability (see InProcessWithElicitation). Left nil by
+	// InProcess so the client's ClientOptions stay exactly nil, matching the
+	// transport's behavior before elicitation support was added.
+	elicitationHandler func(context.Context, *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error)
+}
 
-// InProcess returns a transport that runs the MCP server in-process.
+// InProcess returns a transport that runs the MCP server in-process. The
+// resulting client does not set an ElicitationHandler, so it never
+// advertises the elicitation capability.
 func InProcess() Transport { return inProcess{} }
 
-func (inProcess) connect(ctx context.Context, t testing.TB) (*Session, error) {
+// InProcessWithElicitation returns an in-process transport whose client uses
+// handler to answer MCP elicitation requests (e.g. the safe_delete
+// confirmation dialog). Setting a non-nil handler makes the SDK client
+// automatically advertise the elicitation capability during initialize;
+// pass a non-nil handler even if the test expects it never to be called, so
+// the capability is advertised and the resulting call proves that.
+func InProcessWithElicitation(handler func(context.Context, *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error)) Transport {
+	return inProcess{elicitationHandler: handler}
+}
+
+func (ip inProcess) connect(ctx context.Context, t testing.TB) (*Session, error) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	state := internalmcp.NewMCPServer(logger)
 
@@ -78,7 +96,13 @@ func (inProcess) connect(ctx context.Context, t testing.TB) (*Session, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	go server.Run(ctx, serverT)
 
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, nil)
+	// Only set ClientOptions when an elicitation handler was requested, so
+	// InProcess() keeps passing nil - identical to before this field existed.
+	var clientOpts *mcpsdk.ClientOptions
+	if ip.elicitationHandler != nil {
+		clientOpts = &mcpsdk.ClientOptions{ElicitationHandler: ip.elicitationHandler}
+	}
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, clientOpts)
 	session, err := client.Connect(ctx, clientT, nil)
 	if err != nil {
 		cancel()

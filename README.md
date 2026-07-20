@@ -61,7 +61,7 @@ The server communicates over stdio using the MCP protocol.
 | `inline_variable` | Inline a variable at its usage sites |
 | `change_signature` | Change a function's parameter list and update all callers |
 | `add_context_parameter` | Add a `context.Context` parameter to a function and its callers; with `thread: true`, thread a real context transitively through every call chain in the workspace that reaches it instead |
-| `safe_delete` | Delete a symbol only if it has no references; with `force`, deletes the declaration and reports surviving call sites in `skipped_sites` rather than rewriting them |
+| `safe_delete` | Delete a symbol only if it has no references; if it does, asks the human user to confirm before deleting unless `force` or `dry_run` is set. `force` deletes the declaration and reports surviving call sites in `skipped_sites` rather than rewriting them |
 | `batch_operations` | Run multiple refactoring operations atomically |
 
 ### Analysis

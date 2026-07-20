@@ -673,6 +673,21 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 	return plan, nil
 }
 
+// SafeDeleteBlockingReferences reports the references that would block a
+// SafeDelete for req, without deleting anything or consulting req.Force. It
+// lets a caller inspect what would block the delete before deciding whether
+// to proceed.
+func (e *DefaultEngine) SafeDeleteBlockingReferences(ws *types.Workspace, req types.SafeDeleteRequest) ([]types.Reference, error) {
+	operation := &SafeDeleteOperation{
+		SymbolName: req.Symbol,
+		SourceFile: req.SourceFile,
+		Scope:      types.WorkspaceScope,
+		Force:      req.Force,
+	}
+
+	return operation.BlockingReferences(ws)
+}
+
 // SafeDelete implements safe deletion of symbols
 func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequest) (*types.RefactoringPlan, error) {
 	operation := &SafeDeleteOperation{
