@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/mamaar/gorefactor/pkg/types"
+	"golang.org/x/tools/go/packages"
 )
 
 // Parser handles Go code parsing and AST management
@@ -579,6 +580,162 @@ type workspaceImporter struct {
 	fset   *token.FileSet
 	parser *GoParser
 	std    gotypes.Importer
+
+	// extOnce guards the one-time, workspace-wide load of external
+	// (non-workspace-local) packages via go/packages. It runs lazily, on the
+	// first Import call that misses ws.ImportToPath, rather than eagerly in
+	// ParseWorkspace: most callers only ever need a handful of stdlib/module
+	// packages, and eagerly loading the whole dependency graph for every
+	// workspace (including the many synthetic, no-dependency workspaces the
+	// test suite builds in t.TempDir()) would be pure waste.
+	extOnce sync.Once
+	// ext holds every externally-resolved package keyed by import path, found
+	// by loading the workspace with go/packages and walking the roots plus
+	// their transitive Imports. Populated once by extOnce; safe to read
+	// afterward without additional synchronization since extOnce.Do's happens
+	// -before guarantees visibility to every subsequent Import call.
+	ext map[string]*gotypes.Package
+	// extErr records why the load produced no (or a partial) result, purely
+	// for the Debug log below — a failure here is not fatal, it just means
+	// the importer.Default() fallback is all that's left.
+	extErr error
+}
+
+// loadExternal populates imp.ext by loading the whole workspace module with
+// go/packages and collecting every package it resolves that is not
+// workspace-local (those are already handled by the ws.ImportToPath branch
+// above and by the recursive type-check). This is what lets third-party
+// module dependencies (golang.org/x/..., etc.) resolve instead of falling
+// through to the GOPATH-only importer.Default(), which cannot see anything
+// in the module cache.
+//
+// Runs at most once per workspaceImporter (guarded by extOnce), triggered
+// lazily from Import. Must not be called while holding any lock: it does
+// its own network-free package load, which can take seconds on a large
+// workspace, and it takes none of GoParser's locks itself.
+func (imp *workspaceImporter) loadExternal() {
+	if imp.ws.Module == nil || imp.ws.RootPath == "" {
+		// No go.mod (or no root) means go/packages has nothing to resolve
+		// against; skip straight to the importer.Default() fallback.
+		return
+	}
+
+	if !imp.hasExternalImports() {
+		// Nothing in this workspace imports a third-party module, so the whole
+		// point of the load — resolving module-cache packages that
+		// importer.Default() cannot see — does not apply. Skipping matters
+		// because packages.Load shells out to the go tool: paying that on a
+		// workspace whose imports are entirely stdlib and local is pure
+		// overhead, and the test suite builds dozens of exactly such synthetic
+		// workspaces.
+		return
+	}
+
+	cfg := &packages.Config{
+		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
+		Dir:  imp.ws.RootPath,
+		Fset: imp.fset,
+		// GOPROXY=off is load-bearing, not a performance nicety: this runs
+		// inside an MCP request, potentially against a workspace whose module
+		// cache is cold. Without it, a missing module triggers a network
+		// fetch that can hang the request. GOPROXY=off makes resolution use
+		// only what's already in the local module cache and fail fast
+		// otherwise, which is exactly the "degrade gracefully" behavior this
+		// fallback needs — a failed load just leaves imp.ext empty and control
+		// falls through to importer.Default().
+		Env: append(os.Environ(), "GOPROXY=off"),
+	}
+
+	roots, err := packages.Load(cfg, "./...")
+	if err != nil {
+		imp.extErr = err
+		imp.parser.logger.Debug("external package load failed", "err", err)
+		return
+	}
+
+	imp.ext = make(map[string]*gotypes.Package)
+	seen := make(map[string]bool)
+
+	// The import graph is a DAG with heavy sharing (many packages depend on
+	// the same handful of leaves), so without a seen-set this recursion is
+	// exponential rather than linear in the number of packages.
+	var walk func(pkg *packages.Package)
+	walk = func(pkg *packages.Package) {
+		if pkg == nil || seen[pkg.PkgPath] {
+			return
+		}
+		seen[pkg.PkgPath] = true
+
+		// Keep only non-workspace packages. Import resolves workspace-local
+		// paths from ws.Packages before it ever consults ext, so go/packages'
+		// separately type-checked copy of them would never be read — and
+		// holding it alive costs real memory, since the workspace's own
+		// packages are the largest in the graph. Their dependencies are still
+		// reached by continuing the walk below; nothing outside the workspace
+		// imports them, so dropping the reference lets those copies be
+		// collected.
+		if pkg.Types != nil && pkg.Types.Complete() {
+			imp.ext[pkg.PkgPath] = pkg.Types
+		}
+		for _, dep := range pkg.Imports {
+			walk(dep)
+		}
+	}
+	for _, root := range roots {
+		walk(root)
+	}
+}
+
+// hasExternalImports reports whether any file in the workspace imports a
+// package that is neither workspace-local nor stdlib — i.e. whether anything
+// here actually needs the module cache.
+//
+// It reads import paths straight from the parsed ASTs rather than from
+// pkg.Imports, because ParsePackage only accumulates pkg.Imports from non-test
+// files. A package whose only third-party dependency appears in a _test.go
+// would otherwise look dependency-free, and since TypeCheckPackage folds
+// in-package test files into the same check, that would silently cost those
+// test files their type information.
+func (imp *workspaceImporter) hasExternalImports() bool {
+	external := func(file *types.File) bool {
+		if file == nil || file.AST == nil {
+			return false
+		}
+		for _, spec := range file.AST.Imports {
+			path := strings.Trim(spec.Path.Value, `"`)
+			if _, local := imp.ws.ImportToPath[path]; local {
+				continue
+			}
+			if isStdlibImportPath(path) {
+				continue
+			}
+			return true
+		}
+		return false
+	}
+
+	for _, pkg := range imp.ws.Packages {
+		for _, file := range pkg.Files {
+			if external(file) {
+				return true
+			}
+		}
+		for _, file := range pkg.TestFiles {
+			if external(file) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isStdlibImportPath reports whether path refers to a standard library
+// package, using the same rule the go tool does: the first path segment of
+// every non-stdlib module path contains a dot (a domain name), and no stdlib
+// path ever does.
+func isStdlibImportPath(path string) bool {
+	first, _, _ := strings.Cut(path, "/")
+	return !strings.Contains(first, ".")
 }
 
 func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
@@ -622,7 +779,20 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 			}
 		}
 	}
-	// Fall back to stdlib/export data
+
+	// Not a workspace-local package. Load (once) and consult the set of
+	// externally-resolved packages before falling back to importer.Default(),
+	// which is GOPATH-based and cannot see anything in the module cache — on
+	// a real workspace that fails on essentially every third-party import.
+	imp.extOnce.Do(imp.loadExternal)
+	if pkg, ok := imp.ext[path]; ok {
+		return pkg, nil
+	}
+
+	// Last resort: stdlib/export data via the GOPATH-based importer. Reached
+	// when the go/packages load failed entirely, found nothing for this path
+	// (e.g. a deliberately-unresolvable import in a synthetic test
+	// workspace), or the workspace had no go.mod to load against.
 	if imp.std == nil {
 		imp.std = importer.Default()
 	}
