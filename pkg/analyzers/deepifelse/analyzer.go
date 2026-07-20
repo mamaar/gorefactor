@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"go/types"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -145,7 +146,7 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, content []byte, fn *as
 		reason := ""
 		earlyReturns := 0
 
-		guards, happyPath, ok2 := extractChain(pass.Fset, content, ifStmt)
+		guards, happyPath, ok2 := extractChain(pass.Fset, content, pass.TypesInfo, ifStmt)
 		switch {
 		case !ok2:
 			reason = "chain shape is not a simple guard sequence: every else must be a block ending in return, and each body a single nested if-else"
@@ -317,7 +318,7 @@ type guardClause struct {
 	body         string
 }
 
-func extractChain(fset *token.FileSet, content []byte, ifStmt *ast.IfStmt) ([]guardClause, string, bool) {
+func extractChain(fset *token.FileSet, content []byte, info *types.Info, ifStmt *ast.IfStmt) ([]guardClause, string, bool) {
 	var guards []guardClause
 
 	current := ifStmt
@@ -334,7 +335,7 @@ func extractChain(fset *token.FileSet, content []byte, ifStmt *ast.IfStmt) ([]gu
 			return nil, "", false
 		}
 
-		inverted := srctext.InvertCondition(fset, content, current.Cond)
+		inverted := srctext.InvertCondition(fset, content, info, current.Cond)
 		if inverted == "" {
 			return nil, "", false
 		}

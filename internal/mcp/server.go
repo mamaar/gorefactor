@@ -82,6 +82,13 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 		s.logger.Warn("failed to build reference index")
 	}
 
+	// The updater also re-parses files we write ourselves (SyncWorkspaceChanges),
+	// which is what lets one operation observe the previous one's output. Build it
+	// before the watcher and independently of it: if it were only constructed on
+	// the watcher-available path, a failed watcher would silently turn every
+	// post-apply sync into a no-op and later operations would analyse stale ASTs.
+	s.updater = watch.NewUpdater(wctx.Workspace, wctx.Parser, wctx.Resolver, wctx.Analyzer, s.logger)
+
 	// Start watcher.
 	w, err := watch.NewWatcher(path, 200*time.Millisecond, s.logger)
 	if err != nil {
@@ -89,7 +96,6 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 		return indexBuilt, nil
 	}
 	s.watcher = w
-	s.updater = watch.NewUpdater(wctx.Workspace, wctx.Parser, wctx.Resolver, wctx.Analyzer, s.logger)
 
 	watchCtx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel

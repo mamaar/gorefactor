@@ -179,6 +179,20 @@ func executePlanWithUnlock(state *MCPServer, plan *types.RefactoringPlan, desc s
 	return executePlan(state, plan, desc, dryRun)
 }
 
+// withDryRun annotates a tool response with preview details when nothing was
+// written, so an empty files_modified is not mistaken for a no-op apply.
+func withDryRun(out map[string]any, result *PlanResult) map[string]any {
+	if result.DryRun {
+		out["dry_run"] = true
+		out["diffs"] = result.Diffs
+		out["message"] = result.Description
+		if result.BlockingIssue != "" {
+			out["blocking_issue"] = result.BlockingIssue
+		}
+	}
+	return out
+}
+
 // textResult is a convenience that marshals v to JSON and wraps it in a
 // CallToolResult with a single TextContent block.
 func textResult(v any) *mcpsdk.CallToolResult {

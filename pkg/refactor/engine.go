@@ -68,6 +68,7 @@ type RefactorEngine interface {
 	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
 	ValidateRefactoring(plan *types.RefactoringPlan) error
 	EnsureTypeChecked(ws *types.Workspace)
+	EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath string)
 
 	// Execution
 	ExecutePlan(plan *types.RefactoringPlan) error
@@ -891,6 +892,32 @@ func (e *DefaultEngine) EnsureTypeChecked(ws *types.Workspace) {
 		for _, pkg := range ws.Packages {
 			e.parser.EnsureTypeChecked(ws, pkg)
 		}
+	}
+}
+
+// EnsureTypeCheckedPackage type-checks only the requested package rather than
+// the whole workspace. This matters because type-checking is lazy and
+// workspaceImporter resolves imports on demand, so checking a single package
+// transitively pulls in exactly its dependency closure as go/types encounters
+// each import — there is no need to walk dependencies ourselves. On a large
+// monorepo this is the difference between checking one package and checking
+// all of them.
+//
+// An empty pkgPath falls back to the whole-workspace behavior of
+// EnsureTypeChecked. If pkgPath cannot be resolved to a known package, this is
+// a no-op: the subsequent analyzers.Run call already returns an empty result
+// for an unknown package filter, so there is nothing useful to type-check.
+func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath string) {
+	if e.parser == nil {
+		return
+	}
+	if pkgPath == "" {
+		e.EnsureTypeChecked(ws)
+		return
+	}
+	resolved := types.ResolvePackagePath(ws, pkgPath)
+	if pkg, ok := ws.Packages[resolved]; ok {
+		e.parser.EnsureTypeChecked(ws, pkg)
 	}
 }
 

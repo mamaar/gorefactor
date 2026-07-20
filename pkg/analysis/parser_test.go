@@ -1,13 +1,18 @@
 package analysis
 
 import (
+	"fmt"
+	gotypes "go/types"
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -436,5 +441,420 @@ func Test() {
 	// AST should remain the same
 	if file.AST != originalAST {
 		t.Error("Expected AST to remain unchanged when no modifications")
+	}
+}
+
+// TestParser_TypeCheckPackage_DiamondMemoization is a regression test for the
+// exponential re-checking bug: a package that FAILS to type-check (here,
+// because it imports an unresolvable third-party module) must still be
+// memoised, or every dependent that imports it re-triggers a full re-check —
+// recursively, through every package IT depends on.
+//
+// The workspace is a diamond: d imports b and c, both of which import a, and
+// a imports a module path that can never resolve. Under the old
+// "TypesPkg != nil" memo guard, a package that fails never gets cached, so
+// checking a is repeated once per importer (here 2x instead of 1x). This
+// test fails on the pre-fix code and passes after it — verified by stashing
+// the parser.go fix and re-running.
+func TestParser_TypeCheckPackage_DiamondMemoization(t *testing.T) {
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tempDir := t.TempDir()
+
+	writeFile := func(rel, content string) {
+		full := filepath.Join(tempDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", rel, err)
+		}
+	}
+
+	writeFile("go.mod", "module test/diamond\n\ngo 1.21\n")
+
+	// a imports a third-party module that can never resolve (workspaceImporter
+	// falls back to importer.Default(), which is GOPATH-based and can't see
+	// it), so a's own type-check always fails.
+	writeFile("a/a.go", `package a
+
+import bad "example.com/nonexistent/thirdparty"
+
+type T int
+
+func UseBad() bad.Thing {
+	var v bad.Thing
+	return v
+}
+`)
+
+	writeFile("b/b.go", `package b
+
+import "test/diamond/a"
+
+func UseA() a.T {
+	var v a.T
+	return v
+}
+`)
+
+	writeFile("c/c.go", `package c
+
+import "test/diamond/a"
+
+func UseA() a.T {
+	var v a.T
+	return v
+}
+`)
+
+	writeFile("d/d.go", `package d
+
+import (
+	"test/diamond/b"
+	"test/diamond/c"
+)
+
+func UseBoth() {
+	b.UseA()
+	c.UseA()
+}
+`)
+
+	ws, err := parser.ParseWorkspace(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	counts := make(map[string]int)
+	parser.typeCheckHook = func(pkg *types.Package) {
+		counts[pkg.ImportPath]++
+	}
+
+	fsPath, ok := ws.ImportToPath["test/diamond/d"]
+	if !ok {
+		t.Fatal("expected test/diamond/d to be in ImportToPath")
+	}
+	pkgD, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatal("expected package d to be parsed")
+	}
+
+	parser.EnsureTypeChecked(ws, pkgD)
+
+	for _, name := range []string{"test/diamond/a", "test/diamond/b", "test/diamond/c", "test/diamond/d"} {
+		if got := counts[name]; got != 1 {
+			t.Errorf("expected package %s to be type-checked exactly once, got %d", name, got)
+		}
+	}
+}
+
+// TestParser_TypeCheckPackage_CycleThroughTestFiles is a regression test for
+// the recursion guard: TypeCheckPackage folds in-package _test.go files into
+// the same check as the regular files (see the comment on TypeCheckPackage),
+// so a cycle "a_test.go imports b, b imports a" is reachable even though Go
+// forbids import cycles in non-test code. Without a guard this recurses
+// forever (stack overflow); the test asserts it terminates instead.
+func TestParser_TypeCheckPackage_CycleThroughTestFiles(t *testing.T) {
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tempDir := t.TempDir()
+
+	writeFile := func(rel, content string) {
+		full := filepath.Join(tempDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", rel, err)
+		}
+	}
+
+	writeFile("go.mod", "module test/cycle\n\ngo 1.21\n")
+
+	writeFile("a/a.go", `package a
+
+func F() {}
+`)
+	writeFile("a/a_test.go", `package a
+
+import "test/cycle/b"
+
+func UseB() {
+	b.G()
+}
+`)
+	writeFile("b/b.go", `package b
+
+import "test/cycle/a"
+
+func G() {
+	a.F()
+}
+`)
+
+	ws, err := parser.ParseWorkspace(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	fsPath, ok := ws.ImportToPath["test/cycle/a"]
+	if !ok {
+		t.Fatal("expected test/cycle/a to be in ImportToPath")
+	}
+	pkgA, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatal("expected package a to be parsed")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		parser.EnsureTypeChecked(ws, pkgA)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Terminated, as expected.
+	case <-time.After(5 * time.Second):
+		t.Fatal("EnsureTypeChecked did not terminate — cycle guard is broken")
+	}
+
+	if !pkgA.TypesChecked {
+		t.Error("expected package a to be marked TypesChecked after the call returns")
+	}
+}
+
+// TestParser_TypeCheckPackage_ConcurrentSharedDependency is a regression test
+// for the in-progress marker's meaning. The marker exists to break cycles, and
+// Import breaks a cycle by handing go/types an empty placeholder package. That
+// is only correct when the marked package is on the *same* call stack; if the
+// marker could also be set by another goroutine checking the same dependency,
+// Import would hand out a placeholder for a perfectly good package, the
+// dependent would fail to resolve anything from it, and — because results are
+// memoized — that degraded type info would be cached permanently.
+//
+// MCP handlers hold only a read lock on the workspace state, so concurrent
+// requests really do reach the importer at once. Here several goroutines
+// type-check different packages that all import one shared, deliberately slow
+// dependency. Every dependent must end up with a clean type-check; a leaked
+// placeholder shows up as a non-nil TypesErr on whichever dependent lost the
+// race.
+func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tempDir := t.TempDir()
+
+	writeFile := func(rel, content string) {
+		full := filepath.Join(tempDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", rel, err)
+		}
+	}
+
+	writeFile("go.mod", "module test/conc\n\ngo 1.21\n")
+
+	// Make the shared dependency big enough that checking it takes long enough
+	// for the other goroutines to pile up behind it.
+	var dep strings.Builder
+	dep.WriteString("package dep\n\ntype T int\n")
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&dep, "\nfunc F%d(a, b T) T { x := a + b; y := x * 2; return y - a }\n", i)
+	}
+	writeFile("dep/dep.go", dep.String())
+
+	const dependents = 8
+	for i := 0; i < dependents; i++ {
+		writeFile(fmt.Sprintf("user%d/user%d.go", i, i), fmt.Sprintf(`package user%d
+
+import "test/conc/dep"
+
+func Use() dep.T {
+	var v dep.T
+	return dep.F0(v, v)
+}
+`, i))
+	}
+
+	ws, err := parser.ParseWorkspace(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	pkgs := make([]*types.Package, 0, dependents)
+	for i := 0; i < dependents; i++ {
+		importPath := fmt.Sprintf("test/conc/user%d", i)
+		fsPath, ok := ws.ImportToPath[importPath]
+		if !ok {
+			t.Fatalf("expected %s to be in ImportToPath", importPath)
+		}
+		pkg, ok := ws.Packages[fsPath]
+		if !ok {
+			t.Fatalf("expected package %s to be parsed", importPath)
+		}
+		pkgs = append(pkgs, pkg)
+	}
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for _, pkg := range pkgs {
+		wg.Add(1)
+		go func(pkg *types.Package) {
+			defer wg.Done()
+			<-start // release all goroutines together to maximise overlap
+			parser.EnsureTypeChecked(ws, pkg)
+		}(pkg)
+	}
+	close(start)
+	wg.Wait()
+
+	for _, pkg := range pkgs {
+		if !pkg.TypesChecked {
+			t.Errorf("expected %s to be marked TypesChecked", pkg.ImportPath)
+			continue
+		}
+		if pkg.TypesErr != nil {
+			t.Errorf("package %s failed to type-check against the shared dependency: %v\n"+
+				"this means Import handed it a placeholder for test/conc/dep instead of the real package",
+				pkg.ImportPath, pkg.TypesErr)
+		}
+	}
+}
+
+// TestParser_WorkspaceImporter_ExternalModuleFallback is a regression test for
+// the workspaceImporter.Import fallback: replacing importer.Default() (GOPATH
+// only, cannot see the module cache) with a go/packages-backed loader. It
+// loads this very repository as the workspace — a real module with real
+// third-party dependencies already in the local module cache — and
+// type-checks pkg/analysis itself, which imports golang.org/x/tools/go/packages.
+// Before the fix this package's TypesErr would be non-nil (the import
+// unresolvable) and any type-aware logic guarded on TypeOf() for its symbols
+// would silently degrade; this asserts both the clean type-check and that a
+// symbol from the external package actually resolves.
+func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
+	// Skip rather than fail if the module cache doesn't already have
+	// golang.org/x/tools: GOPROXY=off (set inside loadExternal) makes a cold
+	// cache fail fast instead of hanging on a network fetch, but a cold cache
+	// is a legitimate reason to skip this test, not to fail it — the test
+	// must never become flaky in a clean environment with no prior `go build`.
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "golang.org/x/tools")
+	cmd.Env = append(os.Environ(), "GOPROXY=off")
+	out, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Skip("golang.org/x/tools not present in the local module cache; skipping")
+	}
+
+	repoRoot, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatalf("failed to resolve repo root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err != nil {
+		t.Skipf("repo root %s has no go.mod; skipping", repoRoot)
+	}
+
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ws, err := parser.ParseWorkspace(repoRoot)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	const importPath = "github.com/mamaar/gorefactor/pkg/analysis"
+	fsPath, ok := ws.ImportToPath[importPath]
+	if !ok {
+		t.Fatalf("expected %s to be in ImportToPath", importPath)
+	}
+	pkg, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatalf("expected %s to be parsed", importPath)
+	}
+
+	parser.EnsureTypeChecked(ws, pkg)
+
+	if pkg.TypesErr != nil {
+		t.Fatalf("expected %s to type-check cleanly via the go/packages fallback, got: %v", importPath, pkg.TypesErr)
+	}
+	if pkg.TypesPkg == nil {
+		t.Fatal("expected TypesPkg to be populated")
+	}
+
+	var extPkg *gotypes.Package
+	for _, imp := range pkg.TypesPkg.Imports() {
+		if imp.Path() == "golang.org/x/tools/go/packages" {
+			extPkg = imp
+			break
+		}
+	}
+	if extPkg == nil {
+		t.Fatal("expected golang.org/x/tools/go/packages among pkg/analysis's resolved imports")
+	}
+	if obj := extPkg.Scope().Lookup("Load"); obj == nil {
+		t.Error("expected golang.org/x/tools/go/packages.Load to resolve from the externally-loaded package")
+	}
+}
+
+// TestParser_WorkspaceImporter_HasExternalImports covers the check that
+// decides whether loading the module graph via go/packages is worth doing.
+// The interesting case is the third one: pkg.Imports is only accumulated from
+// non-test files, so a workspace whose sole third-party dependency sits in a
+// _test.go looks dependency-free unless test files are scanned too. Getting
+// that wrong silently costs those test files their type information, because
+// TypeCheckPackage folds in-package test files into the same check.
+func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
+	tests := []struct {
+		name  string
+		files map[string]string
+		want  bool
+	}{
+		{
+			name: "stdlib and local imports only",
+			files: map[string]string{
+				"go.mod": "module test/ext\n\ngo 1.21\n",
+				"a/a.go": "package a\n\nimport \"fmt\"\n\nfunc A() { fmt.Println(\"x\") }\n",
+				"b/b.go": "package b\n\nimport \"test/ext/a\"\n\nfunc B() { a.A() }\n",
+				"c/c.go": "package c\n\nimport \"strings\"\n\nfunc C() string { return strings.TrimSpace(\" x \") }\n",
+			},
+			want: false,
+		},
+		{
+			name: "third-party import in a regular file",
+			files: map[string]string{
+				"go.mod": "module test/ext\n\ngo 1.21\n",
+				"a/a.go": "package a\n\nimport \"golang.org/x/tools/go/packages\"\n\nvar _ = packages.Load\n",
+			},
+			want: true,
+		},
+		{
+			name: "third-party import only in a test file",
+			files: map[string]string{
+				"go.mod":      "module test/ext\n\ngo 1.21\n",
+				"a/a.go":      "package a\n\nfunc A() int { return 1 }\n",
+				"a/a_test.go": "package a\n\nimport (\n\t\"testing\"\n\n\t\"golang.org/x/tools/go/packages\"\n)\n\nvar _ = packages.Load\n\nfunc TestA(t *testing.T) { _ = A() }\n",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+			tempDir := t.TempDir()
+			for rel, content := range tt.files {
+				full := filepath.Join(tempDir, rel)
+				if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+					t.Fatalf("failed to create dir for %s: %v", rel, err)
+				}
+				if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+					t.Fatalf("failed to write %s: %v", rel, err)
+				}
+			}
+
+			if _, err := parser.ParseWorkspace(tempDir); err != nil {
+				t.Fatalf("failed to parse workspace: %v", err)
+			}
+
+			if got := parser.importer.hasExternalImports(); got != tt.want {
+				t.Errorf("hasExternalImports() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

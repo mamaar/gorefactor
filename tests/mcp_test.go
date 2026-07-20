@@ -264,6 +264,15 @@ func TestMCPTools(t *testing.T) {
 				return map[string]any{}
 			},
 		},
+		{
+			// apply=true is required: this tool previews by default, and a
+			// preview writes nothing, which would make the golden pass
+			// without the fixer having done anything.
+			name: "fix_redundant_negations", fixture: "fix_redundant_negations", tool: "fix_redundant_negations",
+			args: func(dir string) map[string]any {
+				return map[string]any{"apply": true}
+			},
+		},
 	}
 
 	for _, tt := range tests {

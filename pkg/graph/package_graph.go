@@ -6,7 +6,7 @@ import (
 
 // PackageGraph represents dependencies between packages
 type PackageGraph struct {
-	Nodes map[string]*PackageNode  // package path -> node
+	Nodes map[string]*PackageNode   // package path -> node
 	Edges map[string][]*PackageEdge // source package -> edges
 }
 
@@ -167,10 +167,11 @@ func (pg *PackageGraph) DetectCycles() [][]string {
 	}
 
 	for pkg := range pg.Nodes {
-		if !visited[pkg] {
-			if cycle := dfs(pkg, []string{}); cycle != nil {
-				cycles = append(cycles, cycle)
-			}
+		if visited[pkg] {
+			continue
+		}
+		if cycle := dfs(pkg, []string{}); cycle != nil {
+			cycles = append(cycles, cycle)
 		}
 	}
 
@@ -213,11 +214,12 @@ func (pg *PackageGraph) TopologicalSort() ([]*PackageNode, error) {
 	}
 
 	for pkg := range pg.Nodes {
-		if !visited[pkg] {
-			err := visit(pkg)
-			if err != nil {
-				return nil, err
-			}
+		if visited[pkg] {
+			continue
+		}
+		err := visit(pkg)
+		if err != nil {
+			return nil, err
 		}
 	}
 
