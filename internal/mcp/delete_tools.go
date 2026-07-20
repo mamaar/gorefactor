@@ -13,7 +13,7 @@ import (
 type SafeDeleteInput struct {
 	Symbol     string `json:"symbol" jsonschema:"name of the symbol to delete"`
 	SourceFile string `json:"source_file" jsonschema:"file containing the symbol declaration"`
-	Force      bool   `json:"force,omitempty" jsonschema:"delete even if references exist (removes references too)"`
+	Force      bool   `json:"force,omitempty" jsonschema:"delete even if references exist (surviving call sites are reported in skipped_sites, not rewritten)"`
 	DryRun     bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 

@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"testing"
@@ -202,6 +203,167 @@ func TestSafeDeleteOperation_Validate(t *testing.T) {
 				t.Errorf("SafeDeleteOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSafeDeleteOperation_BlockingReferences(t *testing.T) {
+	// Build a fixture where the symbol under test has real, resolvable
+	// references: Greet is called twice from UseGreet.
+	fset := token.NewFileSet()
+	src := `package sample
+
+func Greet() string {
+	return "hi"
+}
+
+func UseGreet() string {
+	return Greet() + Greet()
+}
+`
+	astFile, err := parser.ParseFile(fset, "greeter.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("failed to parse fixture source: %v", err)
+	}
+
+	file := &types.File{
+		Path:            "greeter.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+
+	// Locate the real declaration position of Greet so the symbol table
+	// matches what FindReferences will see when it walks the AST.
+	var greetDecl *ast.FuncDecl
+	for _, decl := range astFile.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Greet" {
+			greetDecl = fn
+			break
+		}
+	}
+	if greetDecl == nil {
+		t.Fatal("fixture is missing a Greet function declaration")
+	}
+
+	greetSymbol := &types.Symbol{
+		Name:     "Greet",
+		Kind:     types.FunctionSymbol,
+		Package:  "sample",
+		File:     "greeter.go",
+		Position: greetDecl.Name.Pos(),
+		End:      greetDecl.Name.End(),
+	}
+
+	pkg := &types.Package{
+		Path:  "sample",
+		Name:  "sample",
+		Files: map[string]*types.File{"greeter.go": file},
+		Symbols: &types.SymbolTable{
+			Functions: map[string]*types.Symbol{"Greet": greetSymbol},
+		},
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages: map[string]*types.Package{"sample": pkg},
+		FileSet:  fset,
+	}
+
+	op := &SafeDeleteOperation{
+		SymbolName: "Greet",
+		SourceFile: "greeter.go",
+		Scope:      types.WorkspaceScope,
+	}
+
+	blocking, err := op.BlockingReferences(ws)
+	if err != nil {
+		t.Fatalf("BlockingReferences() returned error: %v", err)
+	}
+
+	if len(blocking) != 2 {
+		t.Fatalf("expected 2 blocking references, got %d: %+v", len(blocking), blocking)
+	}
+
+	for _, ref := range blocking {
+		if ref.File != "greeter.go" {
+			t.Errorf("expected reference File %q, got %q", "greeter.go", ref.File)
+		}
+		if ref.Line <= 0 {
+			t.Errorf("expected positive Line, got %d", ref.Line)
+		}
+	}
+}
+
+func TestSafeDeleteOperation_BlockingReferences_None(t *testing.T) {
+	// A symbol with no callers should report zero blocking references,
+	// returned as an empty (non-nil) slice.
+	fset := token.NewFileSet()
+	src := `package sample
+
+func Unused() string {
+	return "hi"
+}
+`
+	astFile, err := parser.ParseFile(fset, "greeter.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("failed to parse fixture source: %v", err)
+	}
+
+	file := &types.File{
+		Path:            "greeter.go",
+		AST:             astFile,
+		OriginalContent: []byte(src),
+	}
+
+	var unusedDecl *ast.FuncDecl
+	for _, decl := range astFile.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Unused" {
+			unusedDecl = fn
+			break
+		}
+	}
+	if unusedDecl == nil {
+		t.Fatal("fixture is missing an Unused function declaration")
+	}
+
+	unusedSymbol := &types.Symbol{
+		Name:     "Unused",
+		Kind:     types.FunctionSymbol,
+		Package:  "sample",
+		File:     "greeter.go",
+		Position: unusedDecl.Name.Pos(),
+		End:      unusedDecl.Name.End(),
+	}
+
+	pkg := &types.Package{
+		Path:  "sample",
+		Name:  "sample",
+		Files: map[string]*types.File{"greeter.go": file},
+		Symbols: &types.SymbolTable{
+			Functions: map[string]*types.Symbol{"Unused": unusedSymbol},
+		},
+	}
+	file.Package = pkg
+
+	ws := &types.Workspace{
+		Packages: map[string]*types.Package{"sample": pkg},
+		FileSet:  fset,
+	}
+
+	op := &SafeDeleteOperation{
+		SymbolName: "Unused",
+		SourceFile: "greeter.go",
+		Scope:      types.WorkspaceScope,
+	}
+
+	blocking, err := op.BlockingReferences(ws)
+	if err != nil {
+		t.Fatalf("BlockingReferences() returned error: %v", err)
+	}
+	if blocking == nil {
+		t.Error("expected non-nil empty slice, got nil")
+	}
+	if len(blocking) != 0 {
+		t.Errorf("expected 0 blocking references, got %d: %+v", len(blocking), blocking)
 	}
 }
 

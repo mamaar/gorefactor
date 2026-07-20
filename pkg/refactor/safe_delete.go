@@ -36,6 +36,68 @@ func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
 		}
 	}
 
+	// Confirm the source file and symbol can be resolved before checking references
+	if _, _, _, _, err := op.resolveSourceAndSymbol(ws); err != nil {
+		return err
+	}
+
+	// Check if symbol is safe to delete (no references unless forced)
+	if !op.Force {
+		actualReferences, err := op.BlockingReferences(ws)
+		if err != nil {
+			return err
+		}
+
+		if len(actualReferences) > 0 {
+			return &pkgtypes.RefactorError{
+				Type: pkgtypes.InvalidOperation,
+				Message: fmt.Sprintf("cannot safely delete %s: found %d references (use --force to delete anyway)",
+					op.SymbolName, len(actualReferences)),
+			}
+		}
+	}
+
+	return nil
+}
+
+// BlockingReferences returns the references that would block a safe delete of
+// op's symbol, regardless of op.Force. It resolves the source file and
+// symbol, finds all references, and applies the same scope and
+// definition-exclusion filtering as Validate, but never deletes anything and
+// never consults op.Force — it always reports what would block the delete.
+// The returned slice is empty (not nil) when nothing blocks.
+func (op *SafeDeleteOperation) BlockingReferences(ws *pkgtypes.Workspace) ([]pkgtypes.Reference, error) {
+	_, sourcePackage, resolver, symbol, err := op.resolveSourceAndSymbol(ws)
+	if err != nil {
+		return nil, err
+	}
+
+	references, err := resolver.FindReferences(symbol)
+	if err != nil {
+		return nil, &pkgtypes.RefactorError{
+			Type:    pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("failed to find references: %v", err),
+		}
+	}
+
+	// Filter references based on scope
+	scopedReferences := op.filterReferencesByScope(references, sourcePackage, ws)
+
+	// Exclude the definition itself from references
+	actualReferences := op.filterOutDefinition(scopedReferences, symbol)
+
+	blocking := make([]pkgtypes.Reference, 0, len(actualReferences))
+	for _, ref := range actualReferences {
+		blocking = append(blocking, *ref)
+	}
+
+	return blocking, nil
+}
+
+// resolveSourceAndSymbol locates the file and package named by op.SourceFile
+// and resolves op.SymbolName within that package. It is the single place
+// Validate, Execute, and BlockingReferences share for this lookup.
+func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, *analysis.SymbolResolver, *pkgtypes.Symbol, error) {
 	// Check if source file exists
 	var sourceFile *pkgtypes.File
 	var sourcePackage *pkgtypes.Package
@@ -57,76 +119,30 @@ func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
 			break
 		}
 	}
+
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	if sourceFile == nil {
-		return &pkgtypes.RefactorError{
+		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
 
 	// Find the symbol to delete
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
 	if err != nil {
-		return &pkgtypes.RefactorError{
+		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.SymbolNotFound,
 			Message: fmt.Sprintf("symbol %s not found: %v", op.SymbolName, err),
 		}
 	}
 
-	// Check if symbol is safe to delete (no references unless forced)
-	if !op.Force {
-		references, err := resolver.FindReferences(symbol)
-		if err != nil {
-			return &pkgtypes.RefactorError{
-				Type:    pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("failed to find references: %v", err),
-			}
-		}
-
-		// Filter references based on scope
-		scopedReferences := op.filterReferencesByScope(references, sourcePackage, ws)
-		
-		// Exclude the definition itself from references
-		actualReferences := op.filterOutDefinition(scopedReferences, symbol)
-		
-		if len(actualReferences) > 0 {
-			return &pkgtypes.RefactorError{
-				Type:    pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("cannot safely delete %s: found %d references (use --force to delete anyway)", 
-					op.SymbolName, len(actualReferences)),
-			}
-		}
-	}
-
-	return nil
+	return sourceFile, sourcePackage, resolver, symbol, nil
 }
 
 func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
-	// Find the source file and symbol
-	var sourceFile *pkgtypes.File
-	var sourcePackage *pkgtypes.Package
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			sourcePackage = pkg
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				sourcePackage = pkg
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
+	sourceFile, _, _, symbol, err := op.resolveSourceAndSymbol(ws)
 	if err != nil {
 		return nil, err
 	}
@@ -151,23 +167,25 @@ func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Refact
 	plan.Changes = append(plan.Changes, removeChange)
 	plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
 
-	// If forced deletion, also remove all references
+	// If forced deletion, the declaration is removed but call sites are left
+	// in place: rewriting them safely would require distinguishing "remove
+	// the whole statement" from cases like `x := Foo()`, which is beyond
+	// what this operation attempts (see the removed generateReferenceRemovalChanges).
+	// Instead, every surviving reference is reported as a SkippedSite so the
+	// caller can fix it up manually.
 	if op.Force {
-		references, err := resolver.FindReferences(symbol)
+		actualReferences, err := op.BlockingReferences(ws)
 		if err != nil {
 			return nil, err
 		}
 
-		scopedReferences := op.filterReferencesByScope(references, sourcePackage, ws)
-		actualReferences := op.filterOutDefinition(scopedReferences, symbol)
-
 		for _, ref := range actualReferences {
-			refChanges := op.generateReferenceRemovalChanges(ref, ws)
-			plan.Changes = append(plan.Changes, refChanges...)
-			
-			if !contains(plan.AffectedFiles, ref.File) {
-				plan.AffectedFiles = append(plan.AffectedFiles, ref.File)
-			}
+			plan.SkippedSites = append(plan.SkippedSites, pkgtypes.SkippedSite{
+				File:    ref.File,
+				Line:    ref.Line,
+				Reason:  fmt.Sprintf("%s was force-deleted; this call site still references the deleted symbol and must be updated manually", op.SymbolName),
+				Snippet: ref.Context,
+			})
 		}
 	}
 
@@ -206,7 +224,7 @@ func (op *SafeDeleteOperation) filterReferencesByScope(references []*pkgtypes.Re
 		}
 		return filtered
 	}
-	
+
 	// WorkspaceScope - return all references
 	return references
 }
@@ -267,7 +285,7 @@ func (op *SafeDeleteOperation) findDeclaration(file *pkgtypes.File, symbol *pkgt
 func (op *SafeDeleteOperation) generateRemovalChange(file *pkgtypes.File, declaration ast.Node, symbol *pkgtypes.Symbol) pkgtypes.Change {
 	// Calculate the range to remove (including comments and whitespace)
 	start, end := op.calculateRemovalRange(file, declaration)
-	
+
 	// Extract the text to be removed
 	oldText := ""
 	if start < len(file.OriginalContent) && end <= len(file.OriginalContent) {
@@ -292,8 +310,8 @@ func (op *SafeDeleteOperation) calculateRemovalRange(file *pkgtypes.File, declar
 	if file.AST != nil {
 		for _, commentGroup := range file.AST.Comments {
 			// Check if this comment is associated with our declaration
-			if commentGroup.End() < declaration.Pos() && 
-			   int(declaration.Pos()) - int(commentGroup.End()) < 100 { // Within reasonable distance
+			if commentGroup.End() < declaration.Pos() &&
+				int(declaration.Pos())-int(commentGroup.End()) < 100 { // Within reasonable distance
 				start = int(commentGroup.Pos())
 				break
 			}
@@ -317,78 +335,6 @@ func (op *SafeDeleteOperation) calculateRemovalRange(file *pkgtypes.File, declar
 	}
 
 	return start, end
-}
-
-func (op *SafeDeleteOperation) generateReferenceRemovalChanges(ref *pkgtypes.Reference, ws *pkgtypes.Workspace) []pkgtypes.Change {
-	// Find the file containing the reference
-	var refFile *pkgtypes.File
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[ref.File]; exists {
-			refFile = file
-			break
-		}
-	}
-	if refFile == nil || refFile.AST == nil {
-		return nil
-	}
-
-	var changes []pkgtypes.Change
-
-	// This is a simplified implementation
-	// In practice, we would need more sophisticated analysis to determine
-	// how to safely remove each reference (remove entire statement, expression, etc.)
-	ast.Inspect(refFile.AST, func(n ast.Node) bool {
-		if n == nil {
-			return false
-		}
-
-		// Check if this node contains our reference
-		if n.Pos() <= ref.Position && ref.Position <= n.End() {
-			// Try to remove the entire statement containing the reference
-			if stmt := op.findContainingStatement(n, refFile.AST); stmt != nil {
-				oldText := op.extractNodeText(stmt, refFile)
-				changes = append(changes, pkgtypes.Change{
-					File:        ref.File,
-					Start:       int(stmt.Pos()),
-					End:         int(stmt.End()),
-					OldText:     oldText,
-					NewText:     "",
-					Description: fmt.Sprintf("Remove reference to deleted symbol %s", op.SymbolName),
-				})
-				return false
-			}
-		}
-		return true
-	})
-
-	return changes
-}
-
-func (op *SafeDeleteOperation) findContainingStatement(node ast.Node, fileAST *ast.File) ast.Stmt {
-	// Find the statement that contains this node
-	var containingStmt ast.Stmt
-	
-	ast.Inspect(fileAST, func(n ast.Node) bool {
-		if stmt, ok := n.(ast.Stmt); ok {
-			if stmt.Pos() <= node.Pos() && node.End() <= stmt.End() {
-				containingStmt = stmt
-			}
-		}
-		return true
-	})
-	
-	return containingStmt
-}
-
-func (op *SafeDeleteOperation) extractNodeText(node ast.Node, file *pkgtypes.File) string {
-	start := int(node.Pos())
-	end := int(node.End())
-	
-	if start < 0 || end > len(file.OriginalContent) || start >= end {
-		return ""
-	}
-	
-	return string(file.OriginalContent[start:end])
 }
 
 func (op *SafeDeleteOperation) getAffectedPackages(ws *pkgtypes.Workspace, affectedFiles []string) []string {
