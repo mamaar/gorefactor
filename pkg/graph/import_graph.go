@@ -8,25 +8,25 @@ import (
 
 // ImportGraph represents import relationships in a Go workspace
 type ImportGraph struct {
-	Nodes        map[string]*ImportNode  // import path -> node
+	Nodes        map[string]*ImportNode   // import path -> node
 	Edges        map[string][]*ImportEdge // source -> edges
-	ExternalDeps map[string]bool         // external dependencies
+	ExternalDeps map[string]bool          // external dependencies
 }
 
 // ImportNode represents a single import in the dependency graph
 type ImportNode struct {
-	Path         string
-	IsExternal   bool
-	Package      *types.Package  // nil for external packages
-	ImportedBy   []*ImportNode
-	Imports      []*ImportNode
+	Path       string
+	IsExternal bool
+	Package    *types.Package // nil for external packages
+	ImportedBy []*ImportNode
+	Imports    []*ImportNode
 }
 
 // ImportEdge represents an import relationship
 type ImportEdge struct {
-	From     *ImportNode
-	To       *ImportNode
-	IsTest   bool  // true if this is a test-only import
+	From   *ImportNode
+	To     *ImportNode
+	IsTest bool // true if this is a test-only import
 }
 
 // NewImportGraph creates a new import dependency graph
@@ -170,10 +170,11 @@ func (ig *ImportGraph) DetectImportCycles() [][]string {
 	}
 
 	for pkg, node := range ig.Nodes {
-		if !node.IsExternal && !visited[pkg] {
-			if cycle := dfs(pkg, []string{}); cycle != nil {
-				cycles = append(cycles, cycle)
-			}
+		if node.IsExternal || visited[pkg] {
+			continue
+		}
+		if cycle := dfs(pkg, []string{}); cycle != nil {
+			cycles = append(cycles, cycle)
 		}
 	}
 
@@ -208,11 +209,12 @@ func (ig *ImportGraph) GetPackageImportLevel() map[string]int {
 		maxImportLevel := -1
 		if node, exists := ig.Nodes[pkg]; exists {
 			for _, imp := range node.Imports {
-				if !imp.IsExternal {
-					impLevel := calculateLevel(imp.Path)
-					if impLevel > maxImportLevel {
-						maxImportLevel = impLevel
-					}
+				if imp.IsExternal {
+					continue
+				}
+				impLevel := calculateLevel(imp.Path)
+				if impLevel > maxImportLevel {
+					maxImportLevel = impLevel
 				}
 			}
 		}
@@ -255,12 +257,12 @@ func (ig *ImportGraph) FindUnusedImports(pkg *types.Package) []string {
 // GetImportMetrics returns metrics about imports
 func (ig *ImportGraph) GetImportMetrics() ImportMetrics {
 	metrics := ImportMetrics{
-		TotalPackages:       0,
-		ExternalPackages:    len(ig.ExternalDeps),
-		TotalImports:        0,
-		AverageImports:      0,
-		MaxImports:          0,
-		CyclicalImports:     0,
+		TotalPackages:    0,
+		ExternalPackages: len(ig.ExternalDeps),
+		TotalImports:     0,
+		AverageImports:   0,
+		MaxImports:       0,
+		CyclicalImports:  0,
 	}
 
 	var totalImports int
@@ -268,13 +270,14 @@ func (ig *ImportGraph) GetImportMetrics() ImportMetrics {
 	maxImports := 0
 
 	for _, node := range ig.Nodes {
-		if !node.IsExternal {
-			internalPackages++
-			imports := len(node.Imports)
-			totalImports += imports
-			if imports > maxImports {
-				maxImports = imports
-			}
+		if node.IsExternal {
+			continue
+		}
+		internalPackages++
+		imports := len(node.Imports)
+		totalImports += imports
+		if imports > maxImports {
+			maxImports = imports
 		}
 	}
 
@@ -285,7 +288,7 @@ func (ig *ImportGraph) GetImportMetrics() ImportMetrics {
 
 	metrics.TotalPackages = internalPackages
 	metrics.MaxImports = maxImports
-	
+
 	if internalPackages > 0 {
 		metrics.AverageImports = float64(totalImports) / float64(internalPackages)
 	}
@@ -346,19 +349,19 @@ func (ig *ImportGraph) isExternalPackage(path string) bool {
 	if strings.HasPrefix(path, ".") || strings.HasPrefix(path, "/") {
 		return false
 	}
-	
+
 	// Check for standard library packages
 	if !strings.Contains(path, ".") {
 		return true
 	}
-	
+
 	// Check for common external patterns
-	if strings.Contains(path, "github.com") || 
-	   strings.Contains(path, "golang.org") ||
-	   strings.Contains(path, "google.golang.org") {
+	if strings.Contains(path, "github.com") ||
+		strings.Contains(path, "golang.org") ||
+		strings.Contains(path, "google.golang.org") {
 		return true
 	}
-	
+
 	return false
 }
 
