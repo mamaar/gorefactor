@@ -154,12 +154,29 @@ func TestInvertCondition(t *testing.T) {
 		{"greater", "a > b", "a <= b"},
 		{"less equal", "a <= b", "a > b"},
 		{"greater equal", "a >= b", "a < b"},
-		{"conjunction", "a == b && c == d", "!(a == b && c == d)"},
-		{"disjunction", "a == b || c == d", "!(a == b || c == d)"},
+		// Conjunction/disjunction now distribute via De Morgan instead of
+		// falling back to a blanket !(...) wrap: NOT(a==b && c==d) becomes
+		// NOT(a==b) || NOT(c==d), and each comparison flips in place.
+		{"conjunction", "a == b && c == d", "a != b || c != d"},
+		{"disjunction", "a == b || c == d", "a != b && c != d"},
 		{"identifier", "ok", "!ok"},
 		{"negation drops the not", "!ok", "ok"},
-		{"call expression", "check(a)", "!(check(a))"},
+		// A call expression is opaque to PushNeg, so it falls back to a bare
+		// `!` wrap - but unlike the old behaviour, no redundant parentheses:
+		// `!` already binds tighter than anything a call's own syntax needs
+		// protecting from.
+		{"call expression", "check(a)", "!check(a)"},
 		{"parenthesised", "(a == b)", "a != b"},
+		// Regression for bug 4: a call is never wrapped in redundant parens.
+		{"selector call expression", "strings.HasPrefix(x, y)", "!strings.HasPrefix(x, y)"},
+		// Regression for bug 4: De Morgan distributes through a conjunction of
+		// a comparison and a negated selector, rather than blanket-wrapping
+		// the whole condition.
+		{
+			"conjunction of comparison and negated selector",
+			"stream.Filter != nil && !stream.Filter.MatchAll",
+			"stream.Filter == nil || stream.Filter.MatchAll",
+		},
 	}
 
 	for _, tt := range tests {

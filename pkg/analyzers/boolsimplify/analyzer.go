@@ -1,14 +1,16 @@
-// Package boolsimplify pushes `!` inwards with De Morgan's laws to remove
-// redundant negations from boolean expressions, but only where doing so
-// strictly reduces the number of `!` operators.
+// Package boolsimplify walks the `!` operators already written in source and
+// removes the ones srctext.PushNeg can push inward with De Morgan's laws,
+// where doing so strictly reduces the number of `!` operators.
 //
-// It exists as a separate cleanup pass because the flattening analyzers
-// deliberately produce blunt negations: srctext.InvertCondition wraps an
-// `&&`/`||` condition in `!(...)` rather than trying to be clever, which keeps
-// each operation simple and composable. Running this pass afterwards turns
-// `if !(!node.IsExternal && !visited[pkg])` into `if node.IsExternal ||
-// visited[pkg]`, so no single operation has to be both a flattener and a
-// simplifier.
+// The negation-pushing engine itself - De Morgan distribution, operator
+// flips, double-negation cancellation, and the NaN-safety guard on ordering
+// operators - lives in srctext.PushNeg, shared with the flattening analyzers
+// that invert conditions (earlyreturn, deepifelse, via
+// srctext.InvertCondition). This package supplies what PushNeg deliberately
+// leaves out: the walk over existing negations, the "strictly fewer
+// negations" policy gate, splice-site parenthesisation for a result landing
+// mid-expression rather than as a whole condition, and the diagnostic/
+// SuggestedFix plumbing.
 //
 // The "strictly fewer negations" rule is what makes the pass objective: there
 // is no taste call about whether `!(a && b)` reads better as `!a || !b`, only
@@ -162,9 +164,9 @@ func (w *walker) walkNode(root ast.Node, fnName string) {
 
 // trySimplify reports whether a fix was emitted for unary.
 func (w *walker) trySimplify(unary *ast.UnaryExpr, stack []ast.Node, fnName string) bool {
-	before := countNegations(unary)
+	before := srctext.CountNegations(unary)
 
-	text, after, prec, ok := w.pushNeg(unary.X)
+	text, after, prec, ok := srctext.PushNeg(w.pass.Fset, w.content, w.pass.TypesInfo, unary.X)
 	if !ok || before-after < w.cfg.minReduction {
 		return false
 	}
@@ -212,137 +214,6 @@ func (w *walker) trySimplify(unary *ast.UnaryExpr, stack []ast.Node, fnName stri
 // Validator.validateCompilation treats as marking a code fragment and skips
 // syntax checking for.
 const fixMessage = "Replace negation with an equivalent expression using fewer negations"
-
-// pushNeg returns source text for the logical negation of e, the number of `!`
-// operators that text contains, and the precedence of its top-level operator
-// (token.UnaryPrec when the text is a single operand and so binds as tightly
-// as a negation would).
-//
-// ok is false when the source text of some sub-expression could not be
-// recovered. Callers must then emit nothing at all: half a rewrite spliced
-// over a working expression is worse than no rewrite.
-func (w *walker) pushNeg(e ast.Expr) (text string, negations int, prec int, ok bool) {
-	switch e := e.(type) {
-	case *ast.ParenExpr:
-		// Parentheses are dropped here and re-added by precedence wherever the
-		// result actually needs them, so pushing through them is safe.
-		return w.pushNeg(e.X)
-
-	case *ast.UnaryExpr:
-		if e.Op == token.NOT {
-			// The two negations cancel, leaving the operand as it stands.
-			return w.verbatim(ast.Unparen(e.X))
-		}
-
-	case *ast.BinaryExpr:
-		switch e.Op {
-		case token.LAND:
-			return w.pushNegBinary(e, token.LOR)
-		case token.LOR:
-			return w.pushNegBinary(e, token.LAND)
-		case token.EQL:
-			return w.flip(e, "!=")
-		case token.NEQ:
-			return w.flip(e, "==")
-		case token.LSS:
-			if !srctext.IsFloatComparison(w.pass.TypesInfo, e) {
-				return w.flip(e, ">=")
-			}
-		case token.GTR:
-			if !srctext.IsFloatComparison(w.pass.TypesInfo, e) {
-				return w.flip(e, "<=")
-			}
-		case token.LEQ:
-			if !srctext.IsFloatComparison(w.pass.TypesInfo, e) {
-				return w.flip(e, ">")
-			}
-		case token.GEQ:
-			if !srctext.IsFloatComparison(w.pass.TypesInfo, e) {
-				return w.flip(e, "<")
-			}
-		}
-	}
-
-	// Anything else — including a float ordering comparison, which falls
-	// through the switch above — keeps its `!`. That leaves the negation count
-	// unchanged for this operand, which is exactly what should stop a rewrite
-	// that buys nothing.
-	return w.wrapNot(e)
-}
-
-// pushNegBinary negates `X op Y` by negating both operands and joining them
-// with op's De Morgan dual.
-func (w *walker) pushNegBinary(e *ast.BinaryExpr, op token.Token) (string, int, int, bool) {
-	lhs, lhsNeg, lhsPrec, ok := w.pushNeg(e.X)
-	if !ok {
-		return "", 0, 0, false
-	}
-	rhs, rhsNeg, rhsPrec, ok := w.pushNeg(e.Y)
-	if !ok {
-		return "", 0, 0, false
-	}
-
-	prec := op.Precedence()
-
-	// A negated operand can come back looser than the operator now joining it:
-	// negating `(!a && !b) || c` turns the left operand into `a || b` under an
-	// `&&`. Equal precedence needs no parentheses — `&&` and `||` are both
-	// associative and Go parses them left to right, so re-associating changes
-	// neither the value nor the short-circuit order.
-	if lhsPrec < prec {
-		lhs = "(" + lhs + ")"
-	}
-	if rhsPrec < prec {
-		rhs = "(" + rhs + ")"
-	}
-
-	return lhs + " " + op.String() + " " + rhs, lhsNeg + rhsNeg, prec, true
-}
-
-// flip negates a comparison by replacing its operator, carrying both operands
-// over verbatim so their own structure is untouched. The flipped operator has
-// the same precedence as the original, so the result slots into e's old place.
-func (w *walker) flip(e *ast.BinaryExpr, op string) (string, int, int, bool) {
-	lhs := srctext.ExprText(w.pass.Fset, w.content, e.X)
-	rhs := srctext.ExprText(w.pass.Fset, w.content, e.Y)
-	if lhs == "" || rhs == "" {
-		return "", 0, 0, false
-	}
-	return lhs + " " + op + " " + rhs, countNegations(e), e.Op.Precedence(), true
-}
-
-// wrapNot negates e the blunt way, by putting a `!` in front of it.
-func (w *walker) wrapNot(e ast.Expr) (string, int, int, bool) {
-	text, negations, _, ok := w.verbatim(e)
-	if !ok {
-		return "", 0, 0, false
-	}
-	if _, isBinary := e.(*ast.BinaryExpr); isBinary {
-		// `!` binds tighter than every binary operator.
-		text = "(" + text + ")"
-	}
-	return "!" + text, negations + 1, token.UnaryPrec, true
-}
-
-// verbatim lifts e's source text unchanged, reporting the negations it already
-// contains and how tightly its top-level operator binds.
-func (w *walker) verbatim(e ast.Expr) (string, int, int, bool) {
-	text := srctext.ExprText(w.pass.Fset, w.content, e)
-	if text == "" {
-		return "", 0, 0, false
-	}
-	return text, countNegations(e), exprPrec(e), true
-}
-
-// exprPrec reports how tightly e's top-level operator binds. Everything that
-// is not a binary expression — an identifier, a call, an index, a parenthesised
-// group — binds at least as tightly as a unary operator.
-func exprPrec(e ast.Expr) int {
-	if binary, ok := e.(*ast.BinaryExpr); ok {
-		return binary.Op.Precedence()
-	}
-	return token.UnaryPrec
-}
 
 // needsParens reports whether a replacement whose top-level operator has the
 // given precedence must be parenthesised to keep its meaning where the node on
@@ -400,18 +271,4 @@ func needsParens(prec int, stack []ast.Node) bool {
 	}
 
 	return false
-}
-
-// countNegations counts the `!` operators anywhere under e, including those
-// inside operands that a rewrite would carry over verbatim. Counting the whole
-// subtree on both sides is what makes the before/after comparison honest.
-func countNegations(e ast.Expr) int {
-	count := 0
-	ast.Inspect(e, func(n ast.Node) bool {
-		if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.NOT {
-			count++
-		}
-		return true
-	})
-	return count
 }

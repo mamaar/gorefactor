@@ -28,15 +28,21 @@ func funcBody(src, decl string) string {
 }
 
 // TestComposeFlattenThenSimplify pins the guarantee the operation design rests
-// on: each fixer stays deliberately blunt, and a later pass cleans up after it.
-// fix_early_returns emits `!(...)` wrappers on purpose rather than duplicating
-// negation logic into every fixer that inverts a condition.
-//
-// That only works if an operation observes the previous one's output, which in
-// turn requires executePlan's post-apply SyncWorkspaceChanges to have re-parsed
-// the files it just wrote. If that sync ever regresses to a no-op, stage 2 here
+// on: an operation can observe what a previous one wrote, which in turn
+// requires executePlan's post-apply SyncWorkspaceChanges to have re-parsed the
+// files it just wrote. If that sync ever regresses to a no-op, stage 2 here
 // analyses stale ASTs and finds nothing - so this test fails loudly rather than
 // letting the composition quietly stop composing.
+//
+// fix_early_returns inverts the guard's condition with srctext.PushNeg, which
+// distributes De Morgan on the spot rather than emitting a blunt `!(...)`
+// wrapper - so most of this fixture's condition is already simplified by
+// stage 1 alone. The one thing PushNeg cannot see through is a double
+// negation nested inside an opaque call argument: it treats the call as a
+// single unit and puts one `!` in front of it, leaving the `!!` inside
+// untouched. That residual `!!` is what stage 2 (fix_redundant_negations)
+// still has to clean up, so the composition still does real work even though
+// neither fixer is "blunt" anymore.
 func TestComposeFlattenThenSimplify(t *testing.T) {
 	dir := copyFixture(t, "compose_flatten_then_simplify")
 	path := filepath.Join(dir, "main.go")
@@ -61,28 +67,30 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 		return decoded
 	}
 
-	// Stage 1: flatten. The happy path dedents, at the cost of a blunt wrapper.
+	// Stage 1: flatten. De Morgan already simplifies the negated selector away;
+	// only the `!!` buried inside the opaque call argument survives.
 	call("fix_early_returns", map[string]any{"apply": true})
 
 	afterFlatten := readFile(t, path)
-	if !strings.Contains(afterFlatten, "!(!n.isExternal && !visited[pkg])") {
-		t.Fatalf("stage 1 did not produce the expected wrapper:\n%s", afterFlatten)
+	if !strings.Contains(afterFlatten, "n.isExternal || !hasCycle(!!visited[pkg])") {
+		t.Fatalf("stage 1 did not produce the expected condition:\n%s", afterFlatten)
 	}
 	if !strings.Contains(afterFlatten, "continue") {
 		t.Fatalf("stage 1 did not emit an early continue:\n%s", afterFlatten)
 	}
 
-	// Stage 2: clean up what stage 1 wrote. This is the assertion that matters.
+	// Stage 2: clean up the double negation stage 1 left behind. This is the
+	// assertion that matters.
 	call("fix_redundant_negations", map[string]any{"apply": true})
 
 	afterSimplify := readFile(t, path)
-	if !strings.Contains(afterSimplify, "if n.isExternal || visited[pkg] {") {
-		t.Errorf("stage 2 did not collapse the wrapper stage 1 emitted:\n%s", afterSimplify)
+	if !strings.Contains(afterSimplify, "if n.isExternal || !hasCycle(visited[pkg]) {") {
+		t.Errorf("stage 2 did not collapse the double negation stage 1 left behind:\n%s", afterSimplify)
 	}
-	// Scoped to the rewritten function: the fixture's package doc quotes the
-	// `!(!a && !b)` shape verbatim, so a whole-file scan would match the prose.
-	if body := funcBody(afterSimplify, "func detectCycles"); strings.Contains(body, "!(") {
-		t.Errorf("a negation wrapper survived the cleanup pass:\n%s", body)
+	// Scoped to the rewritten function: the fixture's package doc quotes `!!`
+	// in prose, so a whole-file scan would match that instead.
+	if body := funcBody(afterSimplify, "func detectCycles"); strings.Contains(body, "!!") {
+		t.Errorf("the double negation survived the cleanup pass:\n%s", body)
 	}
 	if !strings.Contains(afterSimplify, "continue") {
 		t.Errorf("stage 1's early continue was lost by stage 2:\n%s", afterSimplify)

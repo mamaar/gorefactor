@@ -131,6 +131,41 @@ func handle(enabled bool) {
 	}
 }
 
+// TestGuardClause_InvertedConditionAppliesDeMorgan is the earlyreturn-level
+// regression for bug 4: srctext.InvertCondition (called here to build the
+// guard clause) must distribute De Morgan through a conjunction rather than
+// emitting a blunt `!(...)` wrapper. Verified through fix_early_returns
+// itself, not just at the srctext unit-test level, since that is the path
+// the reported bug was actually observed on.
+func TestGuardClause_InvertedConditionAppliesDeMorgan(t *testing.T) {
+	src := `package testpkg
+
+type streamFilter struct {
+	MatchAll bool
+}
+
+type stream struct {
+	Filter *streamFilter
+}
+
+func handle(s stream) {
+	if s.Filter != nil && !s.Filter.MatchAll {
+		a := 1
+		b := 2
+		println(a + b)
+	}
+}
+`
+	_, diags := run(t, src)
+
+	text := fixedText(t, diags)
+	assertParses(t, text)
+	want := "if s.Filter == nil || s.Filter.MatchAll {\nreturn\n}\n"
+	if !strings.HasPrefix(text, want) {
+		t.Errorf("guard text = %q, want prefix %q", text, want)
+	}
+}
+
 func TestGuardClause_PreservesComments(t *testing.T) {
 	src := `package testpkg
 

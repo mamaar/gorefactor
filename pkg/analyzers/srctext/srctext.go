@@ -7,6 +7,18 @@
 // tree, and these analyzers rewrite code that is full of explanatory comments.
 // Slicing the original bytes keeps every comment, blank line, and raw string
 // literal exactly as the author wrote it.
+//
+// PushNeg is the shared negation-pushing engine: it applies De Morgan's laws
+// and operator flips to compute the logical negation of an expression as
+// source text, with the NaN-safety guard on ordering operators and the
+// bookkeeping (negation count, operator precedence) a splicing caller needs
+// to parenthesise its result correctly. InvertCondition is a thin wrapper
+// over it for callers - the flattening analyzers earlyreturn and deepifelse -
+// that only ever splice the result in as a whole `if` condition and so don't
+// need that bookkeeping. Package boolsimplify builds on PushNeg too: it walks
+// existing `!` operators in already-written code and decides, per negation,
+// whether pushing it inward actually reduces the operator count enough to be
+// worth reporting - a policy question PushNeg itself has no opinion on.
 package srctext
 
 import (
@@ -62,72 +74,185 @@ func ExprText(fset *token.FileSet, content []byte, expr ast.Expr) string {
 	return NodeText(fset, content, expr)
 }
 
-// InvertCondition returns source text for the logical negation of expr,
-// preferring an operator flip (`a == b` -> `a != b`) over a blanket `!(...)`
-// wrapper. It returns "" when the expression's text cannot be recovered.
+// InvertCondition returns source text for the logical negation of expr. It is
+// a thin wrapper over PushNeg that discards the negation-count and precedence
+// bookkeeping callers of PushNeg itself (boolsimplify) need but the
+// flattening analyzers do not - they always splice the result in as a whole
+// `if` condition, never mid-expression, so there is nothing for them to
+// parenthesise against. It returns "" when the expression's text cannot be
+// recovered.
+func InvertCondition(fset *token.FileSet, content []byte, info *types.Info, expr ast.Expr) string {
+	text, _, _, ok := PushNeg(fset, content, info, expr)
+	if !ok {
+		return ""
+	}
+	return text
+}
+
+// PushNeg returns source text for the logical negation of e, pushing the `!`
+// inward with De Morgan's laws (`!(a && b)` -> `!a || !b`) and canceling
+// double negations and comparison operators along the way, rather than
+// emitting a blanket `!(...)` wrapper. `!(check(a))`-style redundant
+// parentheses never appear: the one case that does fall back to a bare `!`
+// wrap - an operand PushNeg cannot see through, such as a call - only adds
+// parentheses when the operand is itself a *ast.BinaryExpr, since that is the
+// only shape where `!` would otherwise bind wrong.
+//
+// It also returns the number of `!` operators the resulting text contains and
+// the precedence of its top-level operator (token.UnaryPrec when the result
+// binds at least as tightly as a negation would - a bare identifier, a call,
+// or the outcome of an operator flip). Callers that splice the result into an
+// existing expression, rather than using it as a whole condition, use prec to
+// decide whether the splice site needs parentheses.
+//
+// ok is false when the source text of some sub-expression could not be
+// recovered from content. Callers must then treat the whole rewrite as
+// unavailable - splicing a working expression together with a broken
+// fragment is worse than leaving it alone.
 //
 // The ordering operators (<, >, <=, >=) are not flipped when either operand
 // is a floating-point type, since flipping changes behavior for NaN operands
-// (`!(x < y)` is not equivalent to `x >= y` when x or y is NaN). info is used
-// to detect this; when info is nil, or the package was not type-checked so
-// TypeOf returns nil for the operands, the guard cannot see the float type
-// and this function falls back to flipping the operator exactly as before -
-// callers relying on the NaN guard must supply type information.
-func InvertCondition(fset *token.FileSet, content []byte, info *types.Info, expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.BinaryExpr:
-		lhs := ExprText(fset, content, e.X)
-		rhs := ExprText(fset, content, e.Y)
-		if lhs == "" || rhs == "" {
-			return ""
-		}
-		switch e.Op {
-		case token.EQL:
-			return lhs + " != " + rhs
-		case token.NEQ:
-			return lhs + " == " + rhs
-		case token.LSS:
-			if IsFloatComparison(info, e) {
-				return "!(" + ExprText(fset, content, expr) + ")"
-			}
-			return lhs + " >= " + rhs
-		case token.GTR:
-			if IsFloatComparison(info, e) {
-				return "!(" + ExprText(fset, content, expr) + ")"
-			}
-			return lhs + " <= " + rhs
-		case token.LEQ:
-			if IsFloatComparison(info, e) {
-				return "!(" + ExprText(fset, content, expr) + ")"
-			}
-			return lhs + " > " + rhs
-		case token.GEQ:
-			if IsFloatComparison(info, e) {
-				return "!(" + ExprText(fset, content, expr) + ")"
-			}
-			return lhs + " < " + rhs
-		case token.LAND, token.LOR:
-			return "!(" + ExprText(fset, content, expr) + ")"
-		}
+// (`!(x < y)` is not equivalent to `x >= y` when x or y is NaN). info drives
+// this guard via IsFloatComparison; when info is nil, or the package was not
+// type-checked so TypeOf returns nil for the operands, the guard cannot see
+// the float type and conservatively keeps the blanket wrap rather than
+// risking a NaN-unsafe flip.
+func PushNeg(fset *token.FileSet, content []byte, info *types.Info, e ast.Expr) (text string, negations, prec int, ok bool) {
+	switch e := e.(type) {
+	case *ast.ParenExpr:
+		// Parentheses are dropped here and re-added by precedence wherever the
+		// result actually needs them, so pushing through them is safe.
+		return PushNeg(fset, content, info, e.X)
+
 	case *ast.UnaryExpr:
 		if e.Op == token.NOT {
-			return ExprText(fset, content, e.X)
+			// The two negations cancel, leaving the operand as it stands.
+			return negVerbatim(fset, content, ast.Unparen(e.X))
 		}
-	case *ast.Ident:
-		return "!" + e.Name
-	case *ast.ParenExpr:
-		inner := InvertCondition(fset, content, info, e.X)
-		if inner == "" {
-			return ""
+
+	case *ast.BinaryExpr:
+		switch e.Op {
+		case token.LAND:
+			return negBinary(fset, content, info, e, token.LOR)
+		case token.LOR:
+			return negBinary(fset, content, info, e, token.LAND)
+		case token.EQL:
+			return negFlip(fset, content, e, "!=")
+		case token.NEQ:
+			return negFlip(fset, content, e, "==")
+		case token.LSS:
+			if !IsFloatComparison(info, e) {
+				return negFlip(fset, content, e, ">=")
+			}
+		case token.GTR:
+			if !IsFloatComparison(info, e) {
+				return negFlip(fset, content, e, "<=")
+			}
+		case token.LEQ:
+			if !IsFloatComparison(info, e) {
+				return negFlip(fset, content, e, ">")
+			}
+		case token.GEQ:
+			if !IsFloatComparison(info, e) {
+				return negFlip(fset, content, e, "<")
+			}
 		}
-		return inner
 	}
 
-	text := ExprText(fset, content, expr)
-	if text == "" {
-		return ""
+	// Anything else - including a float ordering comparison, which falls
+	// through the switch above - keeps its `!`. That leaves the negation count
+	// unchanged for this operand, which is exactly what should stop a rewrite
+	// that buys nothing.
+	return negWrapNot(fset, content, e)
+}
+
+// negBinary negates `X op Y` by negating both operands and joining them with
+// op's De Morgan dual.
+func negBinary(fset *token.FileSet, content []byte, info *types.Info, e *ast.BinaryExpr, op token.Token) (string, int, int, bool) {
+	lhs, lhsNeg, lhsPrec, ok := PushNeg(fset, content, info, e.X)
+	if !ok {
+		return "", 0, 0, false
 	}
-	return "!(" + text + ")"
+	rhs, rhsNeg, rhsPrec, ok := PushNeg(fset, content, info, e.Y)
+	if !ok {
+		return "", 0, 0, false
+	}
+
+	prec := op.Precedence()
+
+	// A negated operand can come back looser than the operator now joining it:
+	// negating `(!a && !b) || c` turns the left operand into `a || b` under an
+	// `&&`. Equal precedence needs no parentheses - `&&` and `||` are both
+	// associative and Go parses them left to right, so re-associating changes
+	// neither the value nor the short-circuit order.
+	if lhsPrec < prec {
+		lhs = "(" + lhs + ")"
+	}
+	if rhsPrec < prec {
+		rhs = "(" + rhs + ")"
+	}
+
+	return lhs + " " + op.String() + " " + rhs, lhsNeg + rhsNeg, prec, true
+}
+
+// negFlip negates a comparison by replacing its operator, carrying both
+// operands over verbatim so their own structure is untouched. The flipped
+// operator has the same precedence as the original, so the result slots into
+// e's old place.
+func negFlip(fset *token.FileSet, content []byte, e *ast.BinaryExpr, op string) (string, int, int, bool) {
+	lhs := ExprText(fset, content, e.X)
+	rhs := ExprText(fset, content, e.Y)
+	if lhs == "" || rhs == "" {
+		return "", 0, 0, false
+	}
+	return lhs + " " + op + " " + rhs, CountNegations(e), e.Op.Precedence(), true
+}
+
+// negWrapNot negates e the blunt way, by putting a `!` in front of it.
+func negWrapNot(fset *token.FileSet, content []byte, e ast.Expr) (string, int, int, bool) {
+	text, negations, _, ok := negVerbatim(fset, content, e)
+	if !ok {
+		return "", 0, 0, false
+	}
+	if _, isBinary := e.(*ast.BinaryExpr); isBinary {
+		// `!` binds tighter than every binary operator.
+		text = "(" + text + ")"
+	}
+	return "!" + text, negations + 1, token.UnaryPrec, true
+}
+
+// negVerbatim lifts e's source text unchanged, reporting the negations it
+// already contains and how tightly its top-level operator binds.
+func negVerbatim(fset *token.FileSet, content []byte, e ast.Expr) (string, int, int, bool) {
+	text := ExprText(fset, content, e)
+	if text == "" {
+		return "", 0, 0, false
+	}
+	return text, CountNegations(e), exprPrec(e), true
+}
+
+// exprPrec reports how tightly e's top-level operator binds. Everything that
+// is not a binary expression - an identifier, a call, an index, a
+// parenthesised group - binds at least as tightly as a unary operator.
+func exprPrec(e ast.Expr) int {
+	if binary, ok := e.(*ast.BinaryExpr); ok {
+		return binary.Op.Precedence()
+	}
+	return token.UnaryPrec
+}
+
+// CountNegations counts the `!` operators anywhere under e, including those
+// inside operands that a rewrite would carry over verbatim. Counting the
+// whole subtree on both sides is what makes a before/after comparison honest.
+func CountNegations(e ast.Expr) int {
+	count := 0
+	ast.Inspect(e, func(n ast.Node) bool {
+		if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.NOT {
+			count++
+		}
+		return true
+	})
+	return count
 }
 
 // IsFloatComparison reports whether either operand of e has a floating-point
