@@ -485,11 +485,21 @@ func (e *DefaultEngine) ExtractMethod(ws *types.Workspace, req types.ExtractMeth
 
 // ExtractFunction implements function extraction from code blocks
 func (e *DefaultEngine) ExtractFunction(ws *types.Workspace, req types.ExtractFunctionRequest) (*types.RefactoringPlan, error) {
+	logger := e.logger
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
+	// Parser is required, not optional: extract_function is type-aware now and
+	// type-checking is lazy, so without it the source package carries no
+	// TypesInfo and the operation refuses.
 	operation := &ExtractFunctionOperation{
 		SourceFile:      req.SourceFile,
 		StartLine:       req.StartLine,
 		EndLine:         req.EndLine,
 		NewFunctionName: req.NewFunctionName,
+		Logger:          logger,
+		Parser:          e.parser,
 	}
 
 	// Validate the operation

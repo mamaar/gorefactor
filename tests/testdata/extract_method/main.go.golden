@@ -8,14 +8,14 @@ type Calculator struct {
 	result int
 }
 
-func (c *Calculator) computeResult(sum int) {
-	c.result = sum * 2
-	fmt.Println(c.result)
-}
-
 func (c *Calculator) Process(a, b int) {
 	sum := a + b
 	c.computeResult(sum)
+}
+
+func (c *Calculator) computeResult(sum int) {
+	c.result = sum * 2
+	fmt.Println(c.result)
 }
 
 func main() {

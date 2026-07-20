@@ -5,15 +5,15 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
+	"github.com/mamaar/gorefactor/pkg/refactor/extractsig"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -26,304 +26,6 @@ type ExtractMethodOperation struct {
 	TargetStruct  string
 	Logger        *slog.Logger
 	Parser        *analysis.GoParser
-}
-
-func (op *ExtractMethodOperation) buildImportedPackagesMap(astFile *ast.File, logger *slog.Logger) map[string]bool {
-	importedPackages := make(map[string]bool)
-	if astFile != nil {
-		for _, imp := range astFile.Imports {
-			importPath := strings.Trim(imp.Path.Value, "\"")
-			if imp.Name != nil {
-				importedPackages[imp.Name.Name] = true
-				logger.Debug("found imported package with alias", "alias", imp.Name.Name, "path", importPath)
-			} else {
-				parts := strings.Split(importPath, "/")
-				pkgName := parts[len(parts)-1]
-				importedPackages[pkgName] = true
-				logger.Debug("found imported package", "name", pkgName, "path", importPath)
-			}
-		}
-	}
-	logger.Info("imported packages", "count", len(importedPackages))
-	return importedPackages
-}
-
-func findPackageQualifiers(codeWithoutStrings string, importedPackages map[string]bool) map[string]bool {
-	packageQualifiers := make(map[string]bool)
-	packagePattern := regexp.MustCompile(`\b([a-z][a-zA-Z0-9_]*)\s*\.`)
-	pkgMatches := packagePattern.FindAllStringSubmatch(codeWithoutStrings, -1)
-	for _, match := range pkgMatches {
-		if len(match) > 1 {
-			identifier := match[1]
-			if importedPackages[identifier] {
-				packageQualifiers[identifier] = true
-			}
-		}
-	}
-	return packageQualifiers
-}
-
-func findDotAccessedIdentifiers(codeWithoutStrings string) map[string]bool {
-	dotAccessed := make(map[string]bool)
-	dotAccessPattern := regexp.MustCompile(`\.\s*([a-zA-Z_][a-zA-Z0-9_]*)`)
-	dotMatches := dotAccessPattern.FindAllStringSubmatch(codeWithoutStrings, -1)
-	for _, match := range dotMatches {
-		if len(match) > 1 {
-			dotAccessed[match[1]] = true
-		}
-	}
-	return dotAccessed
-}
-func (op *ExtractMethodOperation) extractIdentifiers(codeWithoutStrings string, dotAccessed map[string]bool, logger *slog.Logger, packageQualifiers map[string]bool, usedVars map[string]bool) {
-	// Simple regex-based identifier extraction (more reliable than parsing broken code)
-	identifierPattern := regexp.MustCompile(`\b([a-z][a-zA-Z0-9_]*)\b`)
-	matches := identifierPattern.FindAllString(codeWithoutStrings, -1)
-
-	logger.Info("identifier extraction", "total_matches", len(matches))
-	logger.Debug("all matches", "matches", matches)
-
-	knownBuiltins := map[string]bool{
-		"len": true, "cap": true, "make": true, "new": true,
-		"append": true, "copy": true, "delete": true, "close": true,
-		"panic": true, "recover": true, "print": true, "println": true,
-		"complex": true, "real": true, "imag": true,
-		"true": true, "false": true, "nil": true,
-	}
-	// Go builtin type names should not be treated as variables
-	goBuiltinTypes := map[string]bool{
-		"bool": true, "byte": true, "rune": true, "string": true,
-		"int": true, "int8": true, "int16": true, "int32": true, "int64": true,
-		"uint": true, "uint8": true, "uint16": true, "uint32": true, "uint64": true,
-		"uintptr": true, "float32": true, "float64": true,
-		"complex64": true, "complex128": true, "error": true, "any": true,
-	}
-	// Identifiers that appear as function calls (followed by '(') are functions, not variables.
-	// They should be excluded unless they are also used as standalone values.
-	functionCalls := make(map[string]bool)
-	funcCallPattern := regexp.MustCompile(`\b([a-z][a-zA-Z0-9_]*)\s*\(`)
-	funcCallMatches := funcCallPattern.FindAllStringSubmatch(codeWithoutStrings, -1)
-	for _, m := range funcCallMatches {
-		if len(m) > 1 && !knownBuiltins[m[1]] && !isGoKeyword(m[1]) {
-			functionCalls[m[1]] = true
-		}
-	}
-	logger.Info("function calls detected", "count", len(functionCalls))
-	for name := range functionCalls {
-		logger.Debug("function call", "name", name)
-	}
-
-	op.filterUsedVariables(codeWithoutStrings, dotAccessed, functionCalls, goBuiltinTypes, knownBuiltins, logger, matches, packageQualifiers, usedVars)
-}
-
-func (op *ExtractMethodOperation) filterUsedVariables(codeWithoutStrings string, dotAccessed map[string]bool, functionCalls map[string]bool, goBuiltinTypes map[string]bool, knownBuiltins map[string]bool, logger *slog.Logger, matches []string, packageQualifiers map[string]bool, usedVars map[string]bool) {
-	for _, match := range matches {
-		// Filter out keywords, package qualifiers, builtins, types, and dot-accessed identifiers
-		if isGoKeyword(match) || packageQualifiers[match] || knownBuiltins[match] || goBuiltinTypes[match] {
-			continue
-		}
-		// Skip identifiers that ONLY appear after a dot (method/field names)
-		// but keep those that also appear as standalone variables
-		if dotAccessed[match] {
-			standalonePattern := regexp.MustCompile(`(?:^|[^.])\b` + regexp.QuoteMeta(match) + `\b`)
-			if !standalonePattern.MatchString(codeWithoutStrings) {
-				logger.Debug("skipping dot-only identifier", "name", match)
-				continue
-			}
-		}
-		// Skip identifiers that ONLY appear as function calls (e.g., contains(...))
-		// These are package-level or local functions, not variables
-		if functionCalls[match] {
-			// Count total occurrences vs call occurrences
-			// If every occurrence is a function call, skip it
-			totalPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(match) + `\b`)
-			callPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(match) + `\s*\(`)
-			totalCount := len(totalPattern.FindAllString(codeWithoutStrings, -1))
-			callCount := len(callPattern.FindAllString(codeWithoutStrings, -1))
-			if totalCount == callCount {
-				logger.Debug("skipping function-call-only identifier", "name", match)
-				continue
-			}
-		}
-		usedVars[match] = true
-	}
-
-	logger.Info("used variables after filtering", "count", len(usedVars))
-	for varName := range usedVars {
-		logger.Debug("used var", "name", varName)
-	}
-}
-
-func (op *ExtractMethodOperation) analyzeDeclarations(code string, logger *slog.Logger, declaredVars, loopDeclaredVars, varDeclaredVars map[string]bool, varDeclaredTypes map[string]string, assignedVars map[string]bool) {
-	logger.Info("analyzing variable declarations")
-	lines := strings.SplitSeq(code, "\n")
-	for line := range lines {
-		line = strings.TrimSpace(line)
-
-		// Check for var declarations: var foo *Type
-		if strings.HasPrefix(line, "var ") {
-			logger.Debug("found var declaration", "line", line)
-			varPart := strings.TrimPrefix(line, "var ")
-			varPart = strings.TrimSpace(varPart)
-			parts := strings.Fields(varPart)
-			if len(parts) > 0 {
-				varName := parts[0]
-				if varName != "" && varName != "_" {
-					declaredVars[varName] = true
-					varDeclaredVars[varName] = true
-					// Capture the type (everything after the variable name)
-					if len(parts) > 1 {
-						varType := strings.Join(parts[1:], " ")
-						varDeclaredTypes[varName] = varType
-						logger.Debug("declared var from var statement", "name", varName, "type", varType)
-					} else {
-						logger.Debug("declared var from var statement (no type)", "name", varName)
-					}
-				}
-			}
-		}
-
-		// Check for for-range loop declarations: for i, v := range ...
-		if strings.HasPrefix(line, "for ") && strings.Contains(line, ":=") && strings.Contains(line, " range ") {
-			logger.Debug("found for-range loop", "line", line)
-			forPart := strings.Split(line, ":=")[0]
-			forPart = strings.TrimPrefix(forPart, "for")
-			forPart = strings.TrimSpace(forPart)
-			varNames := strings.SplitSeq(forPart, ",")
-			for varName := range varNames {
-				varName = strings.TrimSpace(varName)
-				if varName != "" && varName != "_" {
-					declaredVars[varName] = true
-					loopDeclaredVars[varName] = true
-				}
-			}
-		}
-
-		// Check for := declarations
-		if strings.Contains(line, ":=") && !strings.HasPrefix(line, "for ") {
-			parts := strings.Split(line, ":=")
-			if len(parts) > 0 {
-				declPart := strings.TrimSpace(parts[0])
-				declPart = strings.TrimPrefix(declPart, "for ")
-				varNames := strings.SplitSeq(declPart, ",")
-				for varName := range varNames {
-					varName = strings.TrimSpace(varName)
-					varName = strings.Trim(varName, "()[]")
-					if varName != "" && varName != "_" {
-						declaredVars[varName] = true
-					}
-				}
-			}
-		}
-		// Check for assignments (=, +=, -=, etc.)
-		if strings.Contains(line, "=") && !strings.Contains(line, "==") && !strings.Contains(line, "!=") && !strings.Contains(line, ":=") {
-			parts := strings.Split(line, "=")
-			if len(parts) > 0 {
-				assignPart := strings.TrimSpace(parts[0])
-				assignPart = strings.TrimRight(assignPart, "+-*/%&|^<>")
-				assignPart = strings.TrimSpace(assignPart)
-				varNames := strings.SplitSeq(assignPart, ",")
-				for varName := range varNames {
-					varName = strings.TrimSpace(varName)
-					isFieldOrIndex := strings.ContainsAny(varName, ".[")
-					if idx := strings.IndexAny(varName, ".["); idx > 0 {
-						varName = varName[:idx]
-					}
-					if varName != "" && varName != "_" && !isFieldOrIndex {
-						assignedVars[varName] = true
-					}
-				}
-			}
-		}
-	}
-
-	logger.Info("declared variables summary", "count", len(declaredVars))
-	for varName := range declaredVars {
-		logger.Debug("declared var", "name", varName)
-	}
-}
-
-func (op *ExtractMethodOperation) buildParameterList(declaredVars map[string]bool, logger *slog.Logger, usedVars map[string]bool, varTypes map[string]string) []string {
-	// Build parameter list (used but not declared in extracted block)
-	var params []string
-	for varName := range usedVars {
-		if !declaredVars[varName] && varName != "receiver" {
-			varType := varTypes[varName]
-			if varType == "" {
-				varType = "interface{}"
-			}
-			paramStr := fmt.Sprintf("%s %s", varName, varType)
-			params = append(params, paramStr)
-			logger.Debug("adding parameter", "param", paramStr)
-		} else if declaredVars[varName] {
-			logger.Debug("skipping declared var", "name", varName)
-		}
-	}
-	return params
-}
-
-func (op *ExtractMethodOperation) buildReturnList(afterCode string, assignedVars map[string]bool, declaredVars map[string]bool, logger *slog.Logger, loopDeclaredVars map[string]bool, varDeclaredTypes map[string]string, varDeclaredVars map[string]bool, varTypes map[string]string) []string {
-	// Build return list:
-	// 1. Variables assigned but not declared in the block (modified outer variables)
-	// 2. Variables declared with 'var' and assigned (output values meant for the caller)
-	// 3. Variables declared in the block (:= or var) that are used after the block
-	var returns []string
-	returnedVars := make(map[string]bool)
-	for varName := range assignedVars {
-		if !declaredVars[varName] {
-			varType := varTypes[varName]
-			if varType == "" {
-				varType = "interface{}"
-			}
-			// Always encode as "name:type" so downstream can fix types
-			returns = append(returns, varName+":"+varType)
-			returnedVars[varName] = true
-			logger.Debug("adding return (assigned outer)", "var", varName, "type", varType)
-		}
-	}
-	// Add var-declared variables that are assigned as returns
-	// Use actual types from var declarations, and encode name with "name:type" for downstream use
-	for varName := range varDeclaredVars {
-		if assignedVars[varName] && !returnedVars[varName] {
-			varType := varDeclaredTypes[varName]
-			if varType == "" {
-				varType = varTypes[varName]
-			}
-			if varType == "" {
-				varType = "interface{}"
-			}
-			// Encode as "name:type" so generators can extract both
-			returns = append(returns, varName+":"+varType)
-			returnedVars[varName] = true
-			logger.Debug("adding return (var-declared)", "var", varName, "type", varType)
-		}
-	}
-
-	// "Used after" analysis: variables declared inside the extracted block
-	// that are referenced in code after the block need to be returned
-	// Skip loop-scoped variables (for/for-range) as they can't escape their loop
-	if afterCode != "" {
-		afterCodeClean := stripStringLiterals(stripComments(afterCode))
-		for varName := range declaredVars {
-			if returnedVars[varName] || loopDeclaredVars[varName] {
-				continue
-			}
-			// Check if this variable name appears as a standalone identifier in afterCode
-			varPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(varName) + `\b`)
-			if varPattern.MatchString(afterCodeClean) {
-				varType := varDeclaredTypes[varName]
-				if varType == "" {
-					varType = varTypes[varName]
-				}
-				if varType == "" {
-					varType = "interface{}"
-				}
-				returns = append(returns, varName+":"+varType)
-				returnedVars[varName] = true
-				logger.Debug("adding return (used after block)", "var", varName, "type", varType)
-			}
-		}
-	}
-	return returns
 }
 
 func (op *ExtractMethodOperation) Type() types.OperationType {
@@ -393,13 +95,6 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
-// enclosingContext holds information about the function/method enclosing the extraction range.
-type enclosingContext struct {
-	funcDecl     *ast.FuncDecl
-	receiverName string
-	varTypes     map[string]string
-}
-
 func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
 	for _, pkg := range ws.Packages {
 		if file, exists := pkg.Files[op.SourceFile]; exists {
@@ -417,252 +112,53 @@ func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types
 	}
 }
 
-func (op *ExtractMethodOperation) getOrParseAST(ws *types.Workspace, sourceFile *types.File) (*token.FileSet, *ast.File, error) {
-	if sourceFile.AST != nil {
-		return ws.FileSet, sourceFile.AST, nil
-	}
-	fset := token.NewFileSet()
-	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
-	if err != nil {
-		return nil, nil, &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to parse source file: %v", err),
+// resolveReceiver decides what the extracted method's receiver is.
+//
+// Preferred: one of the captured variables already has the target struct's
+// type, so it becomes the receiver instead of a parameter. Passing it both
+// ways — which the old implementation did — produced a method whose parameter
+// shadowed its own receiver.
+//
+// Otherwise the receiver has to be synthesized, and the only value of that
+// type reachable from the call site is the enclosing method's own receiver.
+// When there is no such value the extraction is refused rather than emitting
+// a call on an identifier that does not exist.
+func (op *ExtractMethodOperation) resolveReceiver(an *extractsig.Analysis) (*extractReceiver, error) {
+	for i, p := range an.Params {
+		if p.Type == op.TargetStruct || p.Type == "*"+op.TargetStruct {
+			return &extractReceiver{decl: p.Name + " " + p.Type, name: p.Name, paramIdx: i}, nil
 		}
 	}
-	return fset, astFile, nil
+
+	fn := an.EnclosingFunc
+	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 || fn.Recv.List[0].Names[0].Name == "_" {
+		return nil, fmt.Errorf("no value of type %s is available at the call site: the block captures none and the enclosing function has no named receiver", op.TargetStruct)
+	}
+	if base := receiverBaseTypeName(fn.Recv.List[0].Type); base != op.TargetStruct {
+		return nil, fmt.Errorf("the enclosing function's receiver has type %s, not %s, so the new method could not be called there", base, op.TargetStruct)
+	}
+	recvName := fn.Recv.List[0].Names[0].Name
+	return &extractReceiver{decl: recvName + " *" + op.TargetStruct, name: recvName, paramIdx: -1}, nil
 }
 
-func (op *ExtractMethodOperation) collectEnclosingVarTypes(
-	astFile *ast.File, fset *token.FileSet, sourcePackage *types.Package,
-) enclosingContext {
-	ctx := enclosingContext{
-		funcDecl:     op.findEnclosingFunction(astFile, fset, op.StartLine),
-		receiverName: "receiver",
-		varTypes:     make(map[string]string),
-	}
-	if ctx.funcDecl == nil {
-		return ctx
-	}
-
-	if ctx.funcDecl.Recv != nil && len(ctx.funcDecl.Recv.List) > 0 {
-		if names := ctx.funcDecl.Recv.List[0].Names; len(names) > 0 {
-			ctx.receiverName = names[0].Name
+// receiverBaseTypeName returns the bare type name of a receiver expression,
+// unwrapping the pointer and any generic type parameter list.
+func receiverBaseTypeName(expr ast.Expr) string {
+	for {
+		switch t := expr.(type) {
+		case *ast.StarExpr:
+			expr = t.X
+		case *ast.IndexExpr:
+			expr = t.X
+		case *ast.IndexListExpr:
+			expr = t.X
+		case *ast.ParenExpr:
+			expr = t.X
+		case *ast.Ident:
+			return t.Name
+		default:
+			return ""
 		}
-	}
-
-	op.collectSignatureTypes(ctx.funcDecl, ctx.varTypes)
-
-	importAliases := buildImportAliasMap(astFile)
-	op.collectLocalVarTypes(ctx.funcDecl, sourcePackage, importAliases, ctx.varTypes)
-
-	if op.Logger != nil {
-		op.Logger.Info("enclosing function", "name", ctx.funcDecl.Name.Name, "receiver", ctx.receiverName, "varTypes", ctx.varTypes)
-	}
-	return ctx
-}
-
-func (op *ExtractMethodOperation) collectSignatureTypes(funcDecl *ast.FuncDecl, varTypes map[string]string) {
-	if funcDecl.Type.Params != nil {
-		for _, field := range funcDecl.Type.Params.List {
-			typeStr := extractTypeStringFromExpr(field.Type)
-			for _, name := range field.Names {
-				varTypes[name.Name] = typeStr
-			}
-		}
-	}
-	if funcDecl.Type.Results != nil {
-		for _, field := range funcDecl.Type.Results.List {
-			typeStr := extractTypeStringFromExpr(field.Type)
-			for _, name := range field.Names {
-				varTypes[name.Name] = typeStr
-			}
-		}
-	}
-}
-
-func (op *ExtractMethodOperation) collectLocalVarTypes(
-	funcDecl *ast.FuncDecl, sourcePackage *types.Package, importAliases map[string]string, varTypes map[string]string,
-) {
-	if funcDecl.Body == nil {
-		return
-	}
-	ast.Inspect(funcDecl.Body, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.AssignStmt:
-			if node.Tok == token.DEFINE {
-				for i, lhs := range node.Lhs {
-					ident, ok := lhs.(*ast.Ident)
-					if !ok || ident.Name == "_" {
-						continue
-					}
-					if sourcePackage.TypesInfo != nil {
-						if obj, ok := sourcePackage.TypesInfo.Defs[ident]; ok && obj != nil {
-							varTypes[ident.Name] = shortenTypeStringWithAliases(obj.Type().String(), sourcePackage.ImportPath, importAliases)
-							continue
-						}
-					}
-					if i < len(node.Rhs) {
-						if typeStr := inferTypeFromExpr(node.Rhs[i]); typeStr != "" {
-							varTypes[ident.Name] = typeStr
-						}
-					}
-				}
-			}
-		case *ast.GenDecl:
-			if node.Tok == token.VAR {
-				for _, spec := range node.Specs {
-					valueSpec, ok := spec.(*ast.ValueSpec)
-					if !ok || valueSpec.Type == nil {
-						continue
-					}
-					typeStr := extractTypeStringFromExpr(valueSpec.Type)
-					for _, name := range valueSpec.Names {
-						varTypes[name.Name] = typeStr
-					}
-				}
-			}
-		case *ast.RangeStmt:
-			if sourcePackage.TypesInfo != nil {
-				if key, ok := node.Key.(*ast.Ident); ok && key.Name != "_" {
-					if obj := sourcePackage.TypesInfo.Defs[key]; obj != nil {
-						varTypes[key.Name] = shortenTypeStringWithAliases(obj.Type().String(), sourcePackage.ImportPath, importAliases)
-					}
-				}
-				if val, ok := node.Value.(*ast.Ident); ok && val.Name != "_" {
-					if obj := sourcePackage.TypesInfo.Defs[val]; obj != nil {
-						varTypes[val.Name] = shortenTypeStringWithAliases(obj.Type().String(), sourcePackage.ImportPath, importAliases)
-					}
-				}
-			}
-		}
-		return true
-	})
-}
-
-func (op *ExtractMethodOperation) extractAfterCode(
-	content string, fset *token.FileSet, enclosingFunc *ast.FuncDecl,
-) string {
-	if enclosingFunc == nil {
-		return ""
-	}
-	enclosingEnd := fset.Position(enclosingFunc.End()).Line
-	if op.EndLine >= enclosingEnd {
-		return ""
-	}
-	allLines := strings.Split(content, "\n")
-	if op.EndLine >= len(allLines) {
-		return ""
-	}
-	end := min(enclosingEnd, len(allLines))
-	return strings.Join(allLines[op.EndLine:end], "\n")
-}
-
-func (op *ExtractMethodOperation) filterAndFixSignature(
-	params, returns []string, receiverName string, enclosingVarTypes map[string]string,
-) ([]string, []string) {
-	var filteredParams []string
-	for _, param := range params {
-		parts := strings.Fields(param)
-		if len(parts) == 0 {
-			continue
-		}
-		if parts[0] == receiverName {
-			continue
-		}
-		filteredParams = append(filteredParams, param)
-	}
-
-	var fixedReturns []string
-	for _, ret := range returns {
-		name, typeName := parseReturnSpec(ret)
-		if typeName == "interface{}" && name != "" {
-			if actualType, ok := enclosingVarTypes[name]; ok {
-				typeName = actualType
-			}
-		}
-		if name != "" {
-			fixedReturns = append(fixedReturns, name+":"+typeName)
-		} else {
-			fixedReturns = append(fixedReturns, typeName)
-		}
-	}
-	return filteredParams, fixedReturns
-}
-
-func (op *ExtractMethodOperation) handleEarlyReturns(
-	extractedCode string, returns []string, enclosingFunc *ast.FuncDecl, hasEarlyReturns bool,
-) (string, []string) {
-	if !hasEarlyReturns || enclosingFunc == nil || enclosingFunc.Type.Results == nil {
-		return extractedCode, nil
-	}
-
-	var enclosingReturnTypes []string
-	for _, field := range enclosingFunc.Type.Results.List {
-		typeStr := extractTypeStringFromExpr(field.Type)
-		count := len(field.Names)
-		if count == 0 {
-			count = 1
-		}
-		for i := 0; i < count; i++ {
-			enclosingReturnTypes = append(enclosingReturnTypes, typeStr)
-		}
-	}
-
-	var varReturnZeroVals []string
-	for _, ret := range returns {
-		_, typeName := parseReturnSpec(ret)
-		varReturnZeroVals = append(varReturnZeroVals, zeroValueForType(typeName))
-	}
-
-	methodBody := rewriteEarlyReturns(extractedCode, varReturnZeroVals, len(enclosingReturnTypes))
-
-	if op.Logger != nil {
-		op.Logger.Info("early return handling", "enclosingReturnTypes", enclosingReturnTypes, "varReturnZeroVals", varReturnZeroVals)
-	}
-	return methodBody, enclosingReturnTypes
-}
-
-func (op *ExtractMethodOperation) buildChanges(
-	sourceFile *types.File, sourcePackage *types.Package, astFile *ast.File, fset *token.FileSet,
-	extractedCode, callText, newMethod string,
-) *types.RefactoringPlan {
-	content := string(sourceFile.OriginalContent)
-	startOffset := op.getLineOffset(content, op.StartLine)
-	endOffset := op.getLineOffset(content, op.EndLine+1) - 1
-	insertionPoint := findInsertionPointWithFset(astFile, op.TargetStruct, fset)
-
-	if op.Logger != nil {
-		op.Logger.Info("offsets", "start", startOffset, "end", endOffset, "insertion", insertionPoint)
-	}
-
-	changes := []types.Change{
-		{
-			File:        op.SourceFile,
-			Start:       startOffset,
-			End:         endOffset,
-			OldText:     extractedCode,
-			NewText:     callText,
-			Description: fmt.Sprintf("Replace extracted code with call to %s", op.NewMethodName),
-		},
-		{
-			File:        op.SourceFile,
-			Start:       insertionPoint,
-			End:         insertionPoint,
-			OldText:     "",
-			NewText:     "\n" + newMethod + "\n",
-			Description: fmt.Sprintf("Add extracted method %s", op.NewMethodName),
-		},
-	}
-
-	return &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       changes,
-		AffectedFiles: []string{op.SourceFile},
-		Impact: &types.ImpactAnalysis{
-			AffectedFiles:    []string{op.SourceFile},
-			AffectedPackages: []string{sourcePackage.Path},
-		},
-		Reversible: true,
 	}
 }
 
@@ -687,53 +183,48 @@ func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.Refactori
 		return nil, err
 	}
 
-	// Lazy type-check: only type-check the package we're extracting from
+	// Type-checking is lazy in this project: without this call the package
+	// carries no TypesInfo and extractsig refuses outright.
 	if op.Parser != nil {
 		op.Parser.EnsureTypeChecked(ws, sourcePackage)
 	}
 
-	fset, astFile, err := op.getOrParseAST(ws, sourceFile)
+	an, err := extractsig.Analyze(ws, sourcePackage, sourceFile, op.StartLine, op.EndLine)
 	if err != nil {
-		return nil, err
+		return nil, refuseExtraction("method", op.NewMethodName, err)
+	}
+	if selectionHasDefer(an.Stmts) {
+		return nil, refuseExtraction("method", op.NewMethodName, errDeferInSelection)
 	}
 
-	extractedCode, err := op.extractCodeBlock(string(sourceFile.OriginalContent), op.StartLine, op.EndLine)
+	recv, err := op.resolveReceiver(an)
 	if err != nil {
-		return nil, err
+		return nil, refuseExtraction("method", op.NewMethodName, err)
 	}
 
-	ctx := op.collectEnclosingVarTypes(astFile, fset, sourcePackage)
-	afterCode := op.extractAfterCode(string(sourceFile.OriginalContent), fset, ctx.funcDecl)
-
-	params, returns, hasEarlyReturns, err := op.analyzeExtractedCode(extractedCode, astFile, fset, ctx.varTypes, afterCode)
+	decl, call, err := renderExtraction(an, op.NewMethodName, recv)
 	if err != nil {
-		return nil, err
+		return nil, refuseExtraction("method", op.NewMethodName, err)
 	}
 
 	if op.Logger != nil {
-		op.Logger.Info("post-analysis", "params", params, "returns", returns, "receiverName", ctx.receiverName, "hasEarlyReturns", hasEarlyReturns)
+		op.Logger.Info("extract method",
+			"name", op.NewMethodName, "params", len(an.Params),
+			"results", len(an.Results), "tail_returns", an.TailReturns)
 	}
 
-	params, returns = op.filterAndFixSignature(params, returns, ctx.receiverName, ctx.varTypes)
-
-	if op.Logger != nil {
-		op.Logger.Info("after filtering", "params", params, "returns", returns)
+	// Reuse op.Parser's importer for verification, if there is one: it is
+	// the same importer (see EnsureTypeChecked above) that already
+	// type-checked ws, so package identity for anything it memoized stays
+	// consistent with what verification sees. See buildVerifiedExtractPlan's
+	// doc comment.
+	var importer gotypes.Importer
+	if op.Parser != nil {
+		importer = op.Parser.Importer()
 	}
 
-	methodBody, enclosingReturnTypes := op.handleEarlyReturns(extractedCode, returns, ctx.funcDecl, hasEarlyReturns)
-
-	newMethod := op.generateMethod(ctx.receiverName, params, returns, methodBody, enclosingReturnTypes)
-	if op.Logger != nil {
-		op.Logger.Info("generated method", "method_length", len(newMethod))
-		op.Logger.Debug("generated method content", "method", newMethod)
-	}
-
-	callText := op.generateMethodCall(ctx.receiverName, params, returns, enclosingReturnTypes)
-	if op.Logger != nil {
-		op.Logger.Info("generated call", "callText", callText)
-	}
-
-	return op.buildChanges(sourceFile, sourcePackage, astFile, fset, extractedCode, callText, newMethod), nil
+	return buildVerifiedExtractPlan(ws, op, sourceFile, sourcePackage, an,
+		op.StartLine, op.EndLine, "method", op.NewMethodName, decl, call, importer)
 }
 
 func (op *ExtractMethodOperation) Description() string {
@@ -741,714 +232,18 @@ func (op *ExtractMethodOperation) Description() string {
 		op.NewMethodName, op.StartLine, op.EndLine, op.SourceFile, op.TargetStruct)
 }
 
-func (op *ExtractMethodOperation) extractCodeBlock(content string, startLine, endLine int) (string, error) {
-	lines := strings.Split(content, "\n")
-	if startLine < 1 || endLine > len(lines) || startLine > endLine {
-		return "", &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("invalid line range: %d-%d (file has %d lines)", startLine, endLine, len(lines)),
-		}
-	}
-
-	// Extract lines (convert from 1-based to 0-based indexing)
-	extractedLines := lines[startLine-1 : endLine]
-	return strings.Join(extractedLines, "\n"), nil
-}
-
-func (op *ExtractMethodOperation) analyzeExtractedCode(code string, astFile *ast.File, fset *token.FileSet, enclosingVarTypes map[string]string, afterCode string) ([]string, []string, bool, error) {
-	// Use context-based analysis instead of parsing wrapped code
-	// The context-based approach is more reliable for complex code blocks
-	// because it analyzes the original file's AST directly
-	return op.analyzeVariablesFromContext(code, astFile, fset, enclosingVarTypes, afterCode)
-}
-
-// analyzeVariablesFromContext analyzes variables by looking at the context in the original file.
-// It returns params, returns, hasEarlyReturns (whether the block contains return statements
-// that would exit the enclosing function), and an error.
-func (op *ExtractMethodOperation) analyzeVariablesFromContext(code string, astFile *ast.File, fset *token.FileSet, enclosingVarTypes map[string]string, afterCode string) ([]string, []string, bool, error) {
-	logger := op.Logger
-	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
-
-	logger.Info("=== Starting analyzeVariablesFromContext ===")
-	logger.Debug("code to analyze", "code", code)
-
-	importedPackages := op.buildImportedPackagesMap(astFile, logger)
-
-	// Use enclosingVarTypes (from caller) as the authoritative type source
-	// This map was built from the enclosing function's AST: params, named returns, local vars
-	varTypes := enclosingVarTypes
-
-	// Find all identifiers used in the extracted code
-	usedVars := make(map[string]bool)
-	declaredVars := make(map[string]bool)
-	loopDeclaredVars := make(map[string]bool)   // Variables declared in for/for-range loops (loop-scoped)
-	varDeclaredVars := make(map[string]bool)    // Variables declared with 'var' (potential return values)
-	varDeclaredTypes := make(map[string]string) // Actual types from 'var' declarations
-	assignedVars := make(map[string]bool)
-
-	// Strip comments and string literals from code before extracting identifiers
-	codeWithoutComments := stripComments(code)
-	codeWithoutStrings := stripStringLiterals(codeWithoutComments)
-
-	logger.Debug("code after stripping comments and strings", "code", codeWithoutStrings)
-
-	packageQualifiers := findPackageQualifiers(codeWithoutStrings, importedPackages)
-
-	dotAccessed := findDotAccessedIdentifiers(codeWithoutStrings)
-	logger.Info("dot-accessed identifiers", "count", len(dotAccessed))
-
-	op.extractIdentifiers(codeWithoutStrings, dotAccessed, logger, packageQualifiers, usedVars)
-
-	op.analyzeDeclarations(code, logger, declaredVars, loopDeclaredVars, varDeclaredVars, varDeclaredTypes, assignedVars)
-
-	params := op.buildParameterList(declaredVars, logger, usedVars, varTypes)
-
-	returns := op.buildReturnList(afterCode, assignedVars, declaredVars, logger, loopDeclaredVars, varDeclaredTypes, varDeclaredVars, varTypes)
-
-	// Sort for consistency
-	sort.Strings(params)
-	sort.Strings(returns)
-
-	// Detect early returns (return statements at top-level brace depth)
-	hasEarlyReturns := detectEarlyReturns(code)
-
-	logger.Info("=== analyzeVariablesFromContext complete ===", "params_count", len(params), "returns_count", len(returns), "hasEarlyReturns", hasEarlyReturns)
-	logger.Info("final parameters", "params", params)
-	logger.Info("final returns", "returns", returns)
-
-	return params, returns, hasEarlyReturns, nil
-}
-
-func isBuiltinOrImported(name string) bool {
-	builtins := map[string]bool{
-		"true": true, "false": true, "nil": true,
-		"len": true, "cap": true, "make": true, "new": true,
-		"append": true, "copy": true, "delete": true,
-		"fmt": true, "strings": true, "strconv": true,
-		"err": false, // err is commonly used variable
-	}
-
-	if builtin, exists := builtins[name]; exists {
-		return builtin
-	}
-
-	// Check if it starts with uppercase (likely imported)
-	return len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z'
-}
-
-// stripComments removes both single-line (//) and multi-line (/* */) comments from Go code
-func stripComments(code string) string {
-	var result strings.Builder
-	inMultiLineComment := false
-	lines := strings.SplitSeq(code, "\n")
-
-	for line := range lines {
-		lineWithoutComment := line
-
-		// Handle multi-line comments
-		if inMultiLineComment {
-			if _, after, ok := strings.Cut(line, "*/"); ok {
-				inMultiLineComment = false
-				lineWithoutComment = after
-			} else {
-				// Entire line is within multi-line comment
-				result.WriteString("\n")
-				continue
-			}
-		}
-
-		// Check for start of multi-line comment
-		if startIdx := strings.Index(lineWithoutComment, "/*"); startIdx != -1 {
-			if endIdx := strings.Index(lineWithoutComment[startIdx:], "*/"); endIdx != -1 {
-				// Complete multi-line comment on same line
-				lineWithoutComment = lineWithoutComment[:startIdx] + lineWithoutComment[startIdx+endIdx+2:]
-			} else {
-				// Multi-line comment starts but doesn't end
-				inMultiLineComment = true
-				lineWithoutComment = lineWithoutComment[:startIdx]
-			}
-		}
-
-		// Handle single-line comments
-		if idx := strings.Index(lineWithoutComment, "//"); idx != -1 {
-			lineWithoutComment = lineWithoutComment[:idx]
-		}
-
-		result.WriteString(lineWithoutComment)
-		result.WriteString("\n")
-	}
-
-	return result.String()
-}
-
-// stripStringLiterals removes string literals (both raw and interpreted) from Go code
-func stripStringLiterals(code string) string {
-	var result strings.Builder
-	inString := false
-	inRawString := false
-	escaped := false
-
-	for i := 0; i < len(code); i++ {
-		ch := code[i]
-
-		if inRawString {
-			// In raw string literal (backtick)
-			if ch == '`' {
-				inRawString = false
-			}
-			// Skip all characters in raw string
-			continue
-		}
-
-		if inString {
-			// In interpreted string literal (double quote)
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' {
-				escaped = true
-				continue
-			}
-			if ch == '"' {
-				inString = false
-			}
-			// Skip all characters in string
-			continue
-		}
-
-		// Not in any string
-		if ch == '`' {
-			inRawString = true
-			continue
-		}
-		if ch == '"' {
-			inString = true
-			continue
-		}
-
-		result.WriteByte(ch)
-	}
-
-	return result.String()
-}
-
-func isGoKeyword(word string) bool {
-	keywords := map[string]bool{
-		"break": true, "case": true, "chan": true, "const": true,
-		"continue": true, "default": true, "defer": true, "else": true,
-		"fallthrough": true, "for": true, "func": true, "go": true,
-		"goto": true, "if": true, "import": true, "interface": true,
-		"map": true, "package": true, "range": true, "return": true,
-		"select": true, "struct": true, "switch": true, "type": true,
-		"var": true,
-	}
-	return keywords[word]
-}
-
-// parseReturnSpec decodes a return entry which may be "name:type" or just "type"
-func parseReturnSpec(spec string) (name, typeName string) {
-	if idx := strings.Index(spec, ":"); idx > 0 {
-		return spec[:idx], spec[idx+1:]
-	}
-	return "", spec
-}
-
-// detectEarlyReturns checks whether the code block contains return statements
-// outside of nested func literals. Returns inside if/for/switch blocks ARE early
-// returns (they exit the enclosing function); only returns inside anonymous func
-// literals are NOT early returns.
-func detectEarlyReturns(code string) bool {
-	clean := stripStringLiterals(stripComments(code))
-
-	// Track func-literal nesting depth using a simple state machine.
-	// funcLitDepth counts how many nested func literals we're inside.
-	funcLitDepth := 0
-	// braceStack tracks whether each '{' belongs to a func literal (true) or not (false)
-	var braceStack []bool
-	// pendingFuncLit is set when we see "func" keyword and are waiting for the opening '{'
-	pendingFuncLit := false
-
-	funcKeywordPattern := regexp.MustCompile(`\bfunc\b`)
-
-	lines := strings.SplitSeq(clean, "\n")
-	for line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Check for return statement when we're NOT inside a func literal
-		if funcLitDepth == 0 && (strings.HasPrefix(trimmed, "return ") || trimmed == "return") {
-			return true
-		}
-
-		// Check if this line contains a func keyword (potential func literal start)
-		if funcKeywordPattern.MatchString(trimmed) {
-			pendingFuncLit = true
-		}
-
-		// Process braces character by character
-		for _, ch := range trimmed {
-			switch ch {
-			case '{':
-				if pendingFuncLit {
-					braceStack = append(braceStack, true)
-					funcLitDepth++
-					pendingFuncLit = false
-				} else {
-					braceStack = append(braceStack, false)
-				}
-			case '}':
-				if len(braceStack) > 0 {
-					if braceStack[len(braceStack)-1] {
-						funcLitDepth--
-					}
-					braceStack = braceStack[:len(braceStack)-1]
-				}
-			}
-		}
-	}
-	return false
-}
-
-// rewriteEarlyReturns rewrites top-level return statements in the extracted body
-// so that they prepend zero values for the extracted variable returns.
-// For example, if the extracted method returns (items []Item, err error) and the
-// enclosing function returns (*Plan, error), then "return nil, err" (which was
-// an early return from the enclosing function) becomes "return nil, nil, err"
-// (zero for items, then the original enclosing return values).
-func rewriteEarlyReturns(body string, varReturnZeroVals []string, numEnclosingReturns int) string {
-	if numEnclosingReturns == 0 {
-		return body
-	}
-	prefix := strings.Join(varReturnZeroVals, ", ")
-
-	lines := strings.Split(body, "\n")
-	// Track func-literal depth — only rewrite returns outside func literals
-	funcLitDepth := 0
-	var braceStack []bool
-	pendingFuncLit := false
-	funcKeywordPattern := regexp.MustCompile(`\bfunc\b`)
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// Rewrite return statements that are NOT inside a func literal
-		if funcLitDepth == 0 {
-			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-			if after, ok := strings.CutPrefix(trimmed, "return "); ok {
-				retVals := after
-				if prefix != "" {
-					lines[i] = indent + "return " + prefix + ", " + retVals
-				}
-			} else if trimmed == "return" {
-				if prefix != "" {
-					lines[i] = indent + "return " + prefix
-				}
-			}
-		}
-
-		// Track func literal nesting
-		lineClean := stripStringLiterals(stripComments(trimmed))
-		if funcKeywordPattern.MatchString(lineClean) {
-			pendingFuncLit = true
-		}
-		for _, ch := range lineClean {
-			switch ch {
-			case '{':
-				if pendingFuncLit {
-					braceStack = append(braceStack, true)
-					funcLitDepth++
-					pendingFuncLit = false
-				} else {
-					braceStack = append(braceStack, false)
-				}
-			case '}':
-				if len(braceStack) > 0 {
-					if braceStack[len(braceStack)-1] {
-						funcLitDepth--
-					}
-					braceStack = braceStack[:len(braceStack)-1]
-				}
-			}
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (op *ExtractMethodOperation) generateMethod(receiverName string, params, returns []string, body string, enclosingReturns []string) string {
-	method := fmt.Sprintf("func (%s *%s) %s(", receiverName, op.TargetStruct, op.NewMethodName)
-
-	// Add parameters
-	method += strings.Join(params, ", ")
-	method += ")"
-
-	// Decode return specs to get types and names
-	var returnTypes []string
-	var returnNames []string
-	for _, ret := range returns {
-		name, typeName := parseReturnSpec(ret)
-		returnTypes = append(returnTypes, typeName)
-		if name != "" {
-			returnNames = append(returnNames, name)
-		}
-	}
-
-	// When enclosingReturns are present, the method returns (varReturns..., enclosingReturns...)
-	allReturnTypes := append([]string{}, returnTypes...)
-	allReturnTypes = append(allReturnTypes, enclosingReturns...)
-
-	// Add return types
-	if len(allReturnTypes) > 0 {
-		if len(allReturnTypes) == 1 {
-			method += " " + allReturnTypes[0]
-		} else {
-			method += " (" + strings.Join(allReturnTypes, ", ") + ")"
-		}
-	}
-
-	method += " {\n"
-	// Indent the body
-	indentedBody := op.indentCode(body, "\t")
-	method += indentedBody
-
-	// Add trailing return statement
-	if len(enclosingReturns) > 0 && len(returnNames) > 0 {
-		// With early returns: return varNames..., zeroVals for enclosing...
-		var trailingVals []string
-		trailingVals = append(trailingVals, returnNames...)
-		for _, t := range enclosingReturns {
-			trailingVals = append(trailingVals, zeroValueForType(t))
-		}
-		method += "\n\treturn " + strings.Join(trailingVals, ", ")
-	} else if len(returnNames) > 0 {
-		// No early returns: just return the variable names
-		method += "\n\treturn " + strings.Join(returnNames, ", ")
-	}
-
-	method += "\n}"
-
-	return method
-}
-
-// findEnclosingFunction finds the FuncDecl that contains the given line number
-func (op *ExtractMethodOperation) findEnclosingFunction(astFile *ast.File, fset *token.FileSet, line int) *ast.FuncDecl {
-	var enclosing *ast.FuncDecl
-	ast.Inspect(astFile, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			startLine := fset.Position(funcDecl.Pos()).Line
-			endLine := fset.Position(funcDecl.End()).Line
-			if line >= startLine && line <= endLine {
-				enclosing = funcDecl
-				return false
-			}
-		}
-		return true
-	})
-	return enclosing
-}
-
-// extractTypeStringFromExpr converts an ast.Expr to a Go type string
-func extractTypeStringFromExpr(expr ast.Expr) string {
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return "*" + extractTypeStringFromExpr(t.X)
-	case *ast.ArrayType:
-		if t.Len == nil {
-			return "[]" + extractTypeStringFromExpr(t.Elt)
-		}
-		return "[...]" + extractTypeStringFromExpr(t.Elt)
-	case *ast.SelectorExpr:
-		return extractTypeStringFromExpr(t.X) + "." + t.Sel.Name
-	case *ast.MapType:
-		return "map[" + extractTypeStringFromExpr(t.Key) + "]" + extractTypeStringFromExpr(t.Value)
-	case *ast.InterfaceType:
-		return "interface{}"
-	case *ast.FuncType:
-		return "func(...)"
-	case *ast.ChanType:
-		return "chan " + extractTypeStringFromExpr(t.Value)
-	case *ast.Ellipsis:
-		return "..." + extractTypeStringFromExpr(t.Elt)
-	default:
-		return "interface{}"
-	}
-}
-
-// inferTypeFromExpr attempts to infer a type string from a RHS expression in an assignment.
-// Returns empty string if the type cannot be determined.
-func inferTypeFromExpr(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.BasicLit:
-		// Literal values: 0, "hello", 3.14, etc.
-		switch e.Kind {
-		case token.INT:
-			return "int"
-		case token.FLOAT:
-			return "float64"
-		case token.STRING:
-			return "string"
-		case token.CHAR:
-			return "rune"
-		}
-	case *ast.CompositeLit:
-		// e.g. make([]string, 0) won't hit here, but MyStruct{} will
-		if e.Type != nil {
-			return extractTypeStringFromExpr(e.Type)
-		}
-	case *ast.UnaryExpr:
-		// &MyStruct{} → *MyStruct
-		if e.Op == token.AND {
-			if cl, ok := e.X.(*ast.CompositeLit); ok && cl.Type != nil {
-				return "*" + extractTypeStringFromExpr(cl.Type)
-			}
-		}
-	case *ast.CallExpr:
-		// Type conversions and builtin calls
-		if ident, ok := e.Fun.(*ast.Ident); ok {
-			name := ident.Name
-			switch name {
-			case "make":
-				// make([]T, ...) or make(map[K]V, ...)
-				if len(e.Args) > 0 {
-					return extractTypeStringFromExpr(e.Args[0])
-				}
-			case "new":
-				// new(T) → *T
-				if len(e.Args) > 0 {
-					return "*" + extractTypeStringFromExpr(e.Args[0])
-				}
-			case "len", "cap":
-				return "int"
-			case "append":
-				// append(slice, ...) returns same type as first arg
-				if len(e.Args) > 0 {
-					return inferTypeFromExpr(e.Args[0])
-				}
-			default:
-				// Type conversions: string(x), int(x), etc.
-				if isGoBuiltinType(name) {
-					return name
-				}
-			}
-		}
-	case *ast.Ident:
-		// true/false → bool, nil stays unknown
-		if e.Name == "true" || e.Name == "false" {
-			return "bool"
-		}
-	case *ast.FuncLit:
-		return extractTypeStringFromExpr(e.Type)
-	case *ast.SliceExpr:
-		// Slicing preserves type
-		return inferTypeFromExpr(e.X)
-	}
-	return ""
-}
-
-// buildImportAliasMap builds a map from import path to the alias used in the file.
-// For unaliased imports, the alias is the last path segment.
-func buildImportAliasMap(astFile *ast.File) map[string]string {
-	aliases := make(map[string]string)
-	if astFile == nil {
-		return aliases
-	}
-	for _, imp := range astFile.Imports {
-		importPath := strings.Trim(imp.Path.Value, "\"")
-		if imp.Name != nil && imp.Name.Name != "." && imp.Name.Name != "_" {
-			aliases[importPath] = imp.Name.Name
-		} else {
-			// Default: last path segment
-			parts := strings.Split(importPath, "/")
-			aliases[importPath] = parts[len(parts)-1]
-		}
-	}
-	return aliases
-}
-
-// shortenTypeStringWithAliases converts a fully-qualified go/types type string
-// to a shorter form, respecting import aliases from the source file.
-func shortenTypeStringWithAliases(typeStr string, currentPkgPath string, importAliases map[string]string) string {
-	if typeStr == "" {
-		return typeStr
-	}
-
-	// Handle pointer, slice, map prefixes by processing the inner type
-	if strings.HasPrefix(typeStr, "*") {
-		return "*" + shortenTypeStringWithAliases(typeStr[1:], currentPkgPath, importAliases)
-	}
-	if strings.HasPrefix(typeStr, "[]") {
-		return "[]" + shortenTypeStringWithAliases(typeStr[2:], currentPkgPath, importAliases)
-	}
-	if strings.HasPrefix(typeStr, "map[") {
-		// Find the matching ] for the key type
-		depth := 1
-		i := 4
-		for i < len(typeStr) && depth > 0 {
-			switch typeStr[i] {
-			case '[':
-				depth++
-			case ']':
-				depth--
-			}
-			i++
-		}
-		if i < len(typeStr) {
-			key := typeStr[4 : i-1]
-			val := typeStr[i:]
-			return "map[" + shortenTypeStringWithAliases(key, currentPkgPath, importAliases) + "]" + shortenTypeStringWithAliases(val, currentPkgPath, importAliases)
-		}
-	}
-
-	// Handle tuple types from go/types (e.g., "(Type1, Type2)")
-	if strings.HasPrefix(typeStr, "(") && strings.HasSuffix(typeStr, ")") {
-		inner := typeStr[1 : len(typeStr)-1]
-		parts := strings.Split(inner, ", ")
-		for i, part := range parts {
-			parts[i] = shortenTypeStringWithAliases(part, currentPkgPath, importAliases)
-		}
-		return "(" + strings.Join(parts, ", ") + ")"
-	}
-
-	// Strip current package path prefix
-	if currentPkgPath != "" && strings.HasPrefix(typeStr, currentPkgPath+".") {
-		return typeStr[len(currentPkgPath)+1:]
-	}
-
-	// For other qualified types, use import alias if available
-	if dotIdx := strings.LastIndex(typeStr, "."); dotIdx >= 0 {
-		pkgPath := typeStr[:dotIdx]
-		typeName := typeStr[dotIdx+1:]
-		if importAliases != nil {
-			if alias, ok := importAliases[pkgPath]; ok {
-				return alias + "." + typeName
-			}
-		}
-		// Fallback: keep only "pkg.Name"
-		if lastSlash := strings.LastIndex(pkgPath, "/"); lastSlash >= 0 {
-			return pkgPath[lastSlash+1:] + "." + typeName
-		}
-	}
-
-	return typeStr
-}
-
-// isGoBuiltinType returns true for Go builtin type names
-func isGoBuiltinType(name string) bool {
-	switch name {
-	case "bool", "byte", "rune", "string",
-		"int", "int8", "int16", "int32", "int64",
-		"uint", "uint8", "uint16", "uint32", "uint64",
-		"uintptr", "float32", "float64",
-		"complex64", "complex128", "error", "any":
-		return true
-	}
-	return false
-}
-
-func (op *ExtractMethodOperation) generateMethodCall(receiverName string, params []string, returns []string, enclosingReturns []string) string {
-	// Build the call expression
-	var paramNames []string
-	for _, param := range params {
-		parts := strings.Fields(param)
-		if len(parts) > 0 {
-			paramNames = append(paramNames, parts[0])
-		}
-	}
-	callExpr := fmt.Sprintf("%s.%s(%s)", receiverName, op.NewMethodName, strings.Join(paramNames, ", "))
-
-	// If there are named return values, add assignment
-	var returnNames []string
-	for _, ret := range returns {
-		name, _ := parseReturnSpec(ret)
-		if name != "" {
-			returnNames = append(returnNames, name)
-		}
-	}
-
-	if len(enclosingReturns) > 0 {
-		// Generate synthetic names for enclosing return values
-		var encRetNames []string
-		for i, t := range enclosingReturns {
-			if t == "error" {
-				encRetNames = append(encRetNames, "_retErr")
-			} else {
-				encRetNames = append(encRetNames, fmt.Sprintf("_retVal%d", i))
-			}
-		}
-
-		allLHS := append([]string{}, returnNames...)
-		allLHS = append(allLHS, encRetNames...)
-
-		var result string
-		if len(allLHS) > 0 {
-			result = strings.Join(allLHS, ", ") + " := " + callExpr
-		} else {
-			result = callExpr
-		}
-
-		// If the last enclosing return type is error, add error check
-		if enclosingReturns[len(enclosingReturns)-1] == "error" {
-			errName := encRetNames[len(encRetNames)-1]
-			result += "\n\tif " + errName + " != nil {\n\t\treturn " + strings.Join(encRetNames, ", ") + "\n\t}"
-		}
-
-		return result
-	}
-
-	if len(returnNames) > 0 {
-		return strings.Join(returnNames, ", ") + " := " + callExpr
-	}
-
-	return callExpr
-}
-
-func (op *ExtractMethodOperation) indentCode(code, indent string) string {
-	lines := strings.Split(code, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			lines[i] = indent + line
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (op *ExtractMethodOperation) getLineOffset(content string, line int) int {
-	return getLineOffset(content, line)
-}
-
-// findInsertionPointWithFset finds the byte offset in the file where a new method
-// should be inserted (after the struct definition). It uses the FileSet to convert
-// token.Pos to file byte offsets, which is essential when using a shared FileSet.
-func findInsertionPointWithFset(astFile *ast.File, structName string, fset *token.FileSet) int {
-	for _, decl := range astFile.Decls {
-		if genDecl, ok := decl.(*ast.GenDecl); ok && genDecl.Tok == token.TYPE {
-			for _, spec := range genDecl.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.Name.Name == structName {
-					if fset != nil {
-						return fset.Position(genDecl.End()).Offset
-					}
-					return int(genDecl.End())
-				}
-			}
-		}
-	}
-
-	// If struct not found, insert at end of file
-	if fset != nil {
-		return fset.Position(astFile.End()).Offset
-	}
-	return int(astFile.End())
-}
-
-// ExtractFunctionOperation implements extracting a function from a code block
+// ExtractFunctionOperation implements extracting a function from a code block.
+//
+// Parser and Logger mirror ExtractMethodOperation: the parser is needed to
+// type-check the source package on demand (type-checking is lazy, and
+// extractsig refuses without type information).
 type ExtractFunctionOperation struct {
 	SourceFile      string
 	StartLine       int
 	EndLine         int
 	NewFunctionName string
+	Logger          *slog.Logger
+	Parser          *analysis.GoParser
 }
 
 func (op *ExtractFunctionOperation) Type() types.OperationType {
@@ -1481,68 +276,10 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	// Check if source file exists - prioritize root package
-	var sourceFile *types.File
-
-	// First, try to find in the root package
-	if rootPkg, exists := ws.Packages[ws.RootPath]; exists {
-		if file, exists := rootPkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-		} else {
-			// Try filepath base match in root package
-			for filename, file := range rootPkg.Files {
-				if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-					sourceFile = file
-					break
-				}
-			}
-		}
+	if _, _, err := op.resolveSourceFile(ws); err != nil {
+		return err
 	}
 
-	// If not found in root package, search all packages
-	if sourceFile == nil {
-		for _, pkg := range ws.Packages {
-			// Try exact match first
-			if file, exists := pkg.Files[op.SourceFile]; exists {
-				sourceFile = file
-				break
-			}
-			// Try filepath base match
-			for filename, file := range pkg.Files {
-				if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-					sourceFile = file
-					break
-				}
-			}
-			// Try relative path match from workspace root
-			for _, file := range pkg.Files {
-				if relPath, err := filepath.Rel(ws.RootPath, file.Path); err == nil {
-					if relPath == op.SourceFile || relPath == filepath.Clean(op.SourceFile) {
-						sourceFile = file
-						break
-					}
-				}
-			}
-			// Try absolute path match
-			for _, file := range pkg.Files {
-				if file.Path == op.SourceFile || file.Path == filepath.Clean(op.SourceFile) {
-					sourceFile = file
-					break
-				}
-			}
-			if sourceFile != nil {
-				break
-			}
-		}
-	}
-	if sourceFile == nil {
-		return &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-		}
-	}
-
-	// Validate function name is a valid Go identifier
 	if !isValidGoIdentifierExtract(op.NewFunctionName) {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -1553,519 +290,94 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
-func (op *ExtractFunctionOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	// Find the source file - prioritize root package
-	var sourceFile *types.File
-	var sourcePackage *types.Package
+// resolveSourceFile locates op.SourceFile in the workspace, preferring the
+// root package and accepting an exact key, a base name, a workspace-relative
+// path or an absolute path.
+func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
+	match := func(pkg *types.Package) (*types.File, bool) {
+		if file, exists := pkg.Files[op.SourceFile]; exists {
+			return file, true
+		}
+		for filename, file := range pkg.Files {
+			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
+				return file, true
+			}
+			if file.Path == filepath.Clean(op.SourceFile) {
+				return file, true
+			}
+			if rel, err := filepath.Rel(ws.RootPath, file.Path); err == nil {
+				if rel == op.SourceFile || rel == filepath.Clean(op.SourceFile) {
+					return file, true
+				}
+			}
+		}
+		return nil, false
+	}
 
-	// First, try to find in the root package
 	if rootPkg, exists := ws.Packages[ws.RootPath]; exists {
-		if file, exists := rootPkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			sourcePackage = rootPkg
-		} else {
-			// Try filepath base match in root package
-			for filename, file := range rootPkg.Files {
-				if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-					sourceFile = file
-					sourcePackage = rootPkg
-					break
-				}
-			}
+		if file, ok := match(rootPkg); ok {
+			return file, rootPkg, nil
 		}
 	}
-
-	// If not found in root package, search all packages
-	if sourceFile == nil {
-		for _, pkg := range ws.Packages {
-			// Try exact match first
-			if file, exists := pkg.Files[op.SourceFile]; exists {
-				sourceFile = file
-				sourcePackage = pkg
-				break
-			}
-			// Try filepath base match
-			for filename, file := range pkg.Files {
-				if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-					sourceFile = file
-					sourcePackage = pkg
-					break
-				}
-			}
-			// Try relative path match from workspace root
-			for _, file := range pkg.Files {
-				if relPath, err := filepath.Rel(ws.RootPath, file.Path); err == nil {
-					if relPath == op.SourceFile || relPath == filepath.Clean(op.SourceFile) {
-						sourceFile = file
-						sourcePackage = pkg
-						break
-					}
-				}
-			}
-			// Try absolute path match
-			for _, file := range pkg.Files {
-				if file.Path == op.SourceFile || file.Path == filepath.Clean(op.SourceFile) {
-					sourceFile = file
-					sourcePackage = pkg
-					break
-				}
-			}
-			if sourceFile != nil {
-				break
-			}
+	for _, pkg := range ws.Packages {
+		if file, ok := match(pkg); ok {
+			return file, pkg, nil
 		}
 	}
-
-	if sourceFile == nil {
-		return nil, &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-		}
+	return nil, nil, &types.RefactorError{
+		Type:    types.FileSystemError,
+		Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 	}
+}
 
-	// Parse the file to get the AST
-	fset := token.NewFileSet()
-	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
-	if err != nil {
-		return nil, &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to parse source file: %v", err),
-		}
-	}
-
-	// Extract the code block
-	extractedCode, err := op.extractCodeBlock(string(sourceFile.OriginalContent), op.StartLine, op.EndLine)
+func (op *ExtractFunctionOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	sourceFile, sourcePackage, err := op.resolveSourceFile(ws)
 	if err != nil {
 		return nil, err
 	}
 
-	// Analyze the extracted code to determine parameters and return values
-	params, returns, err := op.analyzeExtractedCode(extractedCode, astFile, fset)
+	// Type-checking is lazy in this project: without this call the package
+	// carries no TypesInfo and extractsig refuses outright.
+	if op.Parser != nil {
+		op.Parser.EnsureTypeChecked(ws, sourcePackage)
+	}
+
+	an, err := extractsig.Analyze(ws, sourcePackage, sourceFile, op.StartLine, op.EndLine)
 	if err != nil {
-		return nil, err
+		return nil, refuseExtraction("function", op.NewFunctionName, err)
 	}
-	sort.Strings(params)
-	sort.Strings(returns)
-
-	// Generate the new function
-	newFunction := op.generateFunction(params, returns, extractedCode)
-
-	// Create changes
-	changes := []types.Change{
-		// Replace extracted code with function call
-		{
-			File:        op.SourceFile,
-			Start:       op.getLineOffset(string(sourceFile.OriginalContent), op.StartLine),
-			End:         op.getLineOffset(string(sourceFile.OriginalContent), op.EndLine+1) - 1,
-			OldText:     extractedCode,
-			NewText:     op.generateFunctionCall(params),
-			Description: fmt.Sprintf("Replace extracted code with call to %s", op.NewFunctionName),
-		},
-		// Add new function to the package
-		{
-			File:        op.SourceFile,
-			Start:       op.findFunctionInsertionPoint(astFile),
-			End:         op.findFunctionInsertionPoint(astFile),
-			OldText:     "",
-			NewText:     "\n" + newFunction + "\n",
-			Description: fmt.Sprintf("Add extracted function %s", op.NewFunctionName),
-		},
+	if selectionHasDefer(an.Stmts) {
+		return nil, refuseExtraction("function", op.NewFunctionName, errDeferInSelection)
 	}
 
-	return &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       changes,
-		AffectedFiles: []string{op.SourceFile},
-		Impact: &types.ImpactAnalysis{
-			AffectedFiles:    []string{op.SourceFile},
-			AffectedPackages: []string{sourcePackage.Path},
-		},
-		Reversible: true,
-	}, nil
+	decl, call, err := renderExtraction(an, op.NewFunctionName, nil)
+	if err != nil {
+		return nil, refuseExtraction("function", op.NewFunctionName, err)
+	}
+
+	if op.Logger != nil {
+		op.Logger.Info("extract function",
+			"name", op.NewFunctionName, "params", len(an.Params),
+			"results", len(an.Results), "tail_returns", an.TailReturns)
+	}
+
+	// Reuse op.Parser's importer for verification, if there is one: it is
+	// the same importer (see EnsureTypeChecked above) that already
+	// type-checked ws, so package identity for anything it memoized stays
+	// consistent with what verification sees. See buildVerifiedExtractPlan's
+	// doc comment.
+	var importer gotypes.Importer
+	if op.Parser != nil {
+		importer = op.Parser.Importer()
+	}
+
+	return buildVerifiedExtractPlan(ws, op, sourceFile, sourcePackage, an,
+		op.StartLine, op.EndLine, "function", op.NewFunctionName, decl, call, importer)
 }
 
 func (op *ExtractFunctionOperation) Description() string {
 	return fmt.Sprintf("Extract function '%s' from lines %d-%d in %s",
 		op.NewFunctionName, op.StartLine, op.EndLine, op.SourceFile)
-}
-
-func (op *ExtractFunctionOperation) extractCodeBlock(content string, startLine, endLine int) (string, error) {
-	lines := strings.Split(content, "\n")
-	if startLine < 1 || endLine > len(lines) || startLine > endLine {
-		return "", &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("invalid line range: %d-%d (file has %d lines)", startLine, endLine, len(lines)),
-		}
-	}
-
-	// Extract lines (convert from 1-based to 0-based indexing)
-	extractedLines := lines[startLine-1 : endLine]
-	return strings.Join(extractedLines, "\n"), nil
-}
-
-func (op *ExtractFunctionOperation) analyzeExtractedCode(code string, astFile *ast.File, fset *token.FileSet) ([]string, []string, error) {
-	// Parse the extracted code to analyze variable usage
-	// Add proper indentation to the extracted code
-	indentedCode := "\t" + strings.ReplaceAll(code, "\n", "\n\t")
-	wrapperCode := "package main\nfunc dummy() {\n" + indentedCode + "\n}"
-
-	extractedAST, err := parser.ParseFile(fset, "", wrapperCode, parser.ParseComments)
-	if err != nil {
-		// If parsing fails, return basic analysis
-		return op.basicVariableAnalysis(code)
-	}
-
-	// Find variables used but not declared in the extracted block
-	usedVars := make(map[string]string)     // name -> type
-	declaredVars := make(map[string]bool)   // variables declared in extracted block
-	assignedVars := make(map[string]string) // variables assigned in block
-
-	// First, build a map of variable types from the original file context
-	varTypes := op.extractVariableTypesFromFile(astFile)
-
-	// Walk the AST to find variable usage
-	ast.Inspect(extractedAST, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.Ident:
-			// Check if this is a variable reference
-			if node.Obj == nil && node.Name != "_" {
-				// Skip built-in functions, packages, and wrapper artifacts
-				if !isBuiltinOrImported(node.Name) && !isGoKeyword(node.Name) && node.Name != "main" && node.Name != "dummy" {
-					// Include all identifier names (remove single-character restriction)
-					// Use the actual type from the file context if available
-					if actualType, exists := varTypes[node.Name]; exists {
-						usedVars[node.Name] = actualType
-					} else {
-						usedVars[node.Name] = "interface{}" // Default to interface{} for flexibility
-					}
-				}
-			}
-		case *ast.AssignStmt:
-			// Variables being assigned
-			for _, expr := range node.Lhs {
-				if ident, ok := expr.(*ast.Ident); ok {
-					if node.Tok == token.DEFINE {
-						declaredVars[ident.Name] = true
-					} else {
-						// Use actual type if available
-						if actualType, exists := varTypes[ident.Name]; exists {
-							assignedVars[ident.Name] = actualType
-						} else {
-							assignedVars[ident.Name] = "interface{}" // Default type
-						}
-					}
-				}
-			}
-		case *ast.GenDecl:
-			// Variable declarations
-			if node.Tok == token.VAR {
-				for _, spec := range node.Specs {
-					if valueSpec, ok := spec.(*ast.ValueSpec); ok {
-						for _, name := range valueSpec.Names {
-							declaredVars[name.Name] = true
-						}
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	// Build parameter list (used but not declared)
-	var params []string
-	for varName, varType := range usedVars {
-		if !declaredVars[varName] && !isBuiltinOrImported(varName) {
-			params = append(params, fmt.Sprintf("%s %s", varName, varType))
-		}
-	}
-
-	// Build return list (assigned and potentially used after)
-	var returns []string
-	for varName, varType := range assignedVars {
-		if !declaredVars[varName] {
-			returns = append(returns, varType)
-		}
-	}
-
-	return params, returns, nil
-}
-
-// extractVariableTypesFromFile extracts variable types from the original file context
-func (op *ExtractFunctionOperation) extractVariableTypesFromFile(astFile *ast.File) map[string]string {
-	varTypes := make(map[string]string)
-
-	// Walk the AST to find variable declarations
-	ast.Inspect(astFile, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.GenDecl:
-			// Variable declarations with 'var'
-			if node.Tok == token.VAR {
-				for _, spec := range node.Specs {
-					if valueSpec, ok := spec.(*ast.ValueSpec); ok {
-						// Extract type from specification
-						var typeStr string
-						switch {
-						case valueSpec.Type != nil:
-							typeStr = op.extractTypeString(valueSpec.Type)
-						case len(valueSpec.Values) > 0:
-							// Infer type from initial value
-							typeStr = op.inferTypeFromValue(valueSpec.Values[0])
-						default:
-							typeStr = "interface{}" // Default
-						}
-
-						// Apply type to all names in this declaration
-						for _, name := range valueSpec.Names {
-							varTypes[name.Name] = typeStr
-						}
-					}
-				}
-			}
-		case *ast.AssignStmt:
-			// Short variable declarations with ':='
-			if node.Tok == token.DEFINE {
-				for i, expr := range node.Lhs {
-					if ident, ok := expr.(*ast.Ident); ok {
-						var typeStr string
-						if i < len(node.Rhs) {
-							typeStr = op.inferTypeFromValue(node.Rhs[i])
-						} else {
-							typeStr = "interface{}"
-						}
-						varTypes[ident.Name] = typeStr
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	return varTypes
-}
-
-// extractTypeString converts an AST type expression to a string
-func (op *ExtractFunctionOperation) extractTypeString(typeExpr ast.Expr) string {
-	switch t := typeExpr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return "*" + op.extractTypeString(t.X)
-	case *ast.ArrayType:
-		if t.Len == nil {
-			return "[]" + op.extractTypeString(t.Elt)
-		}
-		return fmt.Sprintf("[%s]%s", op.extractExprString(t.Len), op.extractTypeString(t.Elt))
-	case *ast.MapType:
-		return fmt.Sprintf("map[%s]%s", op.extractTypeString(t.Key), op.extractTypeString(t.Value))
-	case *ast.ChanType:
-		var dir string
-		switch t.Dir {
-		case ast.SEND:
-			dir = "chan<- "
-		case ast.RECV:
-			dir = "<-chan "
-		default:
-			dir = "chan "
-		}
-		return dir + op.extractTypeString(t.Value)
-	case *ast.InterfaceType:
-		return "interface{}"
-	case *ast.StructType:
-		return "struct{}"
-	case *ast.FuncType:
-		return "func(...)"
-	case *ast.SelectorExpr:
-		return fmt.Sprintf("%s.%s", op.extractExprString(t.X), t.Sel.Name)
-	default:
-		return "interface{}"
-	}
-}
-
-// extractExprString converts an AST expression to a string (simplified)
-func (op *ExtractFunctionOperation) extractExprString(expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name
-	case *ast.BasicLit:
-		return e.Value
-	case *ast.SelectorExpr:
-		return fmt.Sprintf("%s.%s", op.extractExprString(e.X), e.Sel.Name)
-	default:
-		return "..."
-	}
-}
-
-// inferTypeFromValue infers type from an initial value expression
-func (op *ExtractFunctionOperation) inferTypeFromValue(valueExpr ast.Expr) string {
-	switch v := valueExpr.(type) {
-	case *ast.BasicLit:
-		switch v.Kind {
-		case token.INT:
-			return "int"
-		case token.FLOAT:
-			return "float64"
-		case token.STRING:
-			return "string"
-		case token.CHAR:
-			return "rune"
-		default:
-			return "interface{}"
-		}
-	case *ast.Ident:
-		// Could be a boolean literal or variable reference
-		if v.Name == "true" || v.Name == "false" {
-			return "bool"
-		}
-		return "interface{}" // Unknown
-	case *ast.CompositeLit:
-		if v.Type != nil {
-			return op.extractTypeString(v.Type)
-		}
-		return "interface{}"
-	case *ast.CallExpr:
-		// Function call - try to infer from function name
-		if ident, ok := v.Fun.(*ast.Ident); ok {
-			switch ident.Name {
-			case "make":
-				if len(v.Args) > 0 {
-					return op.extractTypeString(v.Args[0])
-				}
-			case "new":
-				if len(v.Args) > 0 {
-					return "*" + op.extractTypeString(v.Args[0])
-				}
-			}
-		}
-		return "interface{}"
-	default:
-		return "interface{}"
-	}
-}
-
-func (op *ExtractFunctionOperation) basicVariableAnalysis(code string) ([]string, []string, error) {
-	// Fallback analysis using string parsing
-	usedVars := make(map[string]bool)
-
-	// Look for simple identifiers in the code
-	// For the specific case of "for k := range i { fmt.Println(i, j, k) }"
-	// We want to detect i and j as parameters
-
-	// More targeted analysis - look for identifiers that appear to be used
-	// Split on word boundaries and look for lowercase identifiers
-	tokens := strings.FieldsFunc(code, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_'
-	})
-
-	for _, token := range tokens {
-		token = strings.TrimSpace(token)
-		// Skip empty, keywords, builtins, and uppercase names
-		if token == "" || isGoKeyword(token) || isBuiltinOrImported(token) {
-			continue
-		}
-		// Skip if it contains numbers (likely not a simple variable)
-		if strings.ContainsAny(token, "0123456789") {
-			continue
-		}
-		// Check if it's a simple lowercase identifier
-		if len(token) > 0 && token[0] >= 'a' && token[0] <= 'z' {
-			// Special filtering: only include single character variables or common names
-			// This avoids picking up parts of keywords or function names
-			if len(token) == 1 || token == "err" || token == "ctx" {
-				usedVars[token] = true
-			}
-		}
-	}
-
-	// Convert to parameter list - use interface{} as safer fallback
-	var params []string
-	for varName := range usedVars {
-		params = append(params, fmt.Sprintf("%s interface{}", varName))
-	}
-
-	return params, []string{}, nil
-}
-
-func (op *ExtractFunctionOperation) generateFunction(params, returns []string, body string) string {
-	function := fmt.Sprintf("func %s(", op.NewFunctionName)
-
-	// Add parameters
-	function += strings.Join(params, ", ")
-	function += ")"
-
-	// Add return types
-	if len(returns) > 0 {
-		if len(returns) == 1 {
-			function += " " + returns[0]
-		} else {
-			function += " (" + strings.Join(returns, ", ") + ")"
-		}
-	}
-
-	function += " {\n"
-	// Indent the body
-	indentedBody := op.indentCode(body, "\t")
-	function += indentedBody
-	function += "\n}"
-
-	return function
-}
-
-func (op *ExtractFunctionOperation) generateFunctionCall(params []string) string {
-	call := fmt.Sprintf("%s(", op.NewFunctionName)
-	// Add parameter names (without types)
-	var paramNames []string
-	for _, param := range params {
-		// Extract just the parameter name (before the type)
-		parts := strings.Fields(param)
-		if len(parts) > 0 {
-			paramNames = append(paramNames, parts[0])
-		}
-	}
-	call += strings.Join(paramNames, ", ")
-	call += ")"
-	return call
-}
-
-func (op *ExtractFunctionOperation) indentCode(code, indent string) string {
-	lines := strings.Split(code, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) != "" {
-			lines[i] = indent + line
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (op *ExtractFunctionOperation) getLineOffset(content string, line int) int {
-	return getLineOffset(content, line)
-}
-
-func (op *ExtractFunctionOperation) findFunctionInsertionPoint(astFile *ast.File) int {
-	// Insert function at package level, after all imports and type declarations
-	// but before the main function or other functions
-
-	var lastImport ast.Node
-	var firstFunc ast.Node
-
-	for _, decl := range astFile.Decls {
-		if genDecl, ok := decl.(*ast.GenDecl); ok {
-			if genDecl.Tok == token.IMPORT {
-				lastImport = genDecl
-			}
-		} else if funcDecl, ok := decl.(*ast.FuncDecl); ok && firstFunc == nil {
-			firstFunc = funcDecl
-		}
-	}
-
-	// Insert after imports but before first function
-	if firstFunc != nil {
-		return int(firstFunc.Pos()) - 1
-	} else if lastImport != nil {
-		return int(lastImport.End())
-	}
-
-	// If no imports or functions, insert at end of file
-	return int(astFile.End())
 }
 
 // ExtractInterfaceOperation implements extracting an interface from a struct
@@ -2497,6 +809,11 @@ type ExtractBlockOperation struct {
 	SourceFile      string
 	Position        int // Line or character position within the target block
 	NewFunctionName string
+	// Logger and Parser are forwarded to the ExtractFunctionOperation this
+	// delegates to; without the parser that operation cannot type-check the
+	// source package and refuses.
+	Logger *slog.Logger
+	Parser *analysis.GoParser
 }
 
 func (op *ExtractBlockOperation) Type() types.OperationType {
@@ -2616,6 +933,8 @@ func (op *ExtractBlockOperation) Execute(ws *types.Workspace) (*types.Refactorin
 		StartLine:       blockInfo.StartLine,
 		EndLine:         blockInfo.EndLine,
 		NewFunctionName: op.NewFunctionName,
+		Logger:          op.Logger,
+		Parser:          op.Parser,
 	}
 
 	// Validate the function operation
