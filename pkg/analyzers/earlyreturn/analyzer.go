@@ -19,13 +19,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"go/types"
-	"sort"
 
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
 	"github.com/mamaar/gorefactor/pkg/analyzers/srctext"
+	"github.com/mamaar/gorefactor/pkg/analyzers/stmtfacts"
 )
 
 // Pattern names the shape of conditional a finding describes.
@@ -175,7 +174,7 @@ func (w *walker) walkFile(file *ast.File) {
 			continue
 		}
 
-		w.walkStmts(fn.Body.List, blockFuncBody, fn.Name.Name, fn.Type, signatureNames(fn.Recv, fn.Type))
+		w.walkStmts(fn.Body.List, blockFuncBody, fn.Name.Name, fn.Type, stmtfacts.SignatureNames(fn.Recv, fn.Type))
 
 		// Function literals open their own function scope, so their bodies are
 		// roots in their own right. The structural walk never descends into
@@ -186,7 +185,7 @@ func (w *walker) walkFile(file *ast.File) {
 				return true
 			}
 			name := fn.Name.Name + ".func"
-			w.walkStmts(lit.Body.List, blockFuncBody, name, lit.Type, signatureNames(nil, lit.Type))
+			w.walkStmts(lit.Body.List, blockFuncBody, name, lit.Type, stmtfacts.SignatureNames(nil, lit.Type))
 			return true
 		})
 	}
@@ -196,7 +195,7 @@ func (w *walker) walkFile(file *ast.File) {
 // already declared in the scope this list belongs to, which is what decides
 // whether a nested block can be safely dedented into it.
 func (w *walker) walkStmts(list []ast.Stmt, kind blockKind, fnName string, fnType *ast.FuncType, scopeNames map[string]bool) {
-	names := declaredNames(list)
+	names := stmtfacts.DeclaredNames(list)
 	for n := range scopeNames {
 		names[n] = true
 	}
@@ -281,7 +280,7 @@ func assignedNames(stmt ast.Stmt) map[string]bool {
 
 	names := make(map[string]bool)
 	for _, lhs := range assign.Lhs {
-		addName(names, lhs)
+		stmtfacts.AddName(names, lhs)
 	}
 	return names
 }
@@ -327,7 +326,7 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 		}
 	}
 
-	if clash := firstClash(declaredNames(ifStmt.Body.List), scopeNames); clash != "" {
+	if clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(ifStmt.Body.List), scopeNames); clash != "" {
 		w.record(ifStmt, pattern, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the body would redeclare %q in the enclosing scope", clash))
 		return false
@@ -363,13 +362,13 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 		return false
 	}
 
-	if !w.terminates(ifStmt.Body.List[len(ifStmt.Body.List)-1]) {
+	if !stmtfacts.Terminates(w.pass.TypesInfo, ifStmt.Body.List[len(ifStmt.Body.List)-1]) {
 		return false
 	}
 
 	bodyLines := w.blockLines(elseBlock)
 
-	if clash := firstClash(declaredNames(elseBlock.List), scopeNames); clash != "" {
+	if clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(elseBlock.List), scopeNames); clash != "" {
 		w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the else branch would redeclare %q in the enclosing scope", clash))
 		return false
@@ -454,45 +453,6 @@ func (w *walker) blockLines(block *ast.BlockStmt) int {
 	return 0
 }
 
-// terminates reports whether stmt hands control away unconditionally, which is
-// what makes a following else branch redundant.
-func (w *walker) terminates(stmt ast.Stmt) bool {
-	switch s := stmt.(type) {
-	case *ast.ReturnStmt:
-		return true
-	case *ast.BranchStmt:
-		// The original code compiles, so a branch statement present here is
-		// valid for whatever encloses it, and control leaves this block.
-		return s.Tok == token.CONTINUE || s.Tok == token.BREAK || s.Tok == token.GOTO
-	case *ast.ExprStmt:
-		return w.isPanicCall(s.X)
-	}
-	return false
-}
-
-func (w *walker) isPanicCall(expr ast.Expr) bool {
-	call, ok := expr.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	ident, ok := call.Fun.(*ast.Ident)
-	if !ok || ident.Name != "panic" {
-		return false
-	}
-
-	// Prefer type information: a local declaration named panic would shadow the
-	// builtin, and treating it as terminating would drop an else branch that
-	// still needs to run. Fall back to the name when the package was not
-	// type-checked.
-	if w.pass.TypesInfo != nil && w.pass.TypesInfo.Uses != nil {
-		if obj, found := w.pass.TypesInfo.Uses[ident]; found {
-			_, isBuiltin := obj.(*types.Builtin)
-			return isBuiltin
-		}
-	}
-	return true
-}
-
 // bareReturn returns the early-exit statement for a function with the given
 // signature, and whether one can be written without inventing values.
 //
@@ -510,81 +470,4 @@ func bareReturn(fnType *ast.FuncType) (string, bool) {
 		}
 	}
 	return "return", true
-}
-
-// declaredNames collects the identifiers a statement list declares directly in
-// its own scope. Declarations inside nested blocks are excluded: they travel
-// with their block and cannot collide.
-func declaredNames(list []ast.Stmt) map[string]bool {
-	names := make(map[string]bool)
-
-	for _, stmt := range list {
-		switch s := stmt.(type) {
-		case *ast.AssignStmt:
-			if s.Tok != token.DEFINE {
-				continue
-			}
-			for _, lhs := range s.Lhs {
-				addName(names, lhs)
-			}
-		case *ast.DeclStmt:
-			decl, ok := s.Decl.(*ast.GenDecl)
-			if !ok {
-				continue
-			}
-			for _, spec := range decl.Specs {
-				switch sp := spec.(type) {
-				case *ast.ValueSpec:
-					for _, ident := range sp.Names {
-						addName(names, ident)
-					}
-				case *ast.TypeSpec:
-					addName(names, sp.Name)
-				}
-			}
-		}
-	}
-
-	return names
-}
-
-// signatureNames collects receiver, parameter, and result names, which share
-// the function body's scope and so can collide with a dedented declaration.
-func signatureNames(recv *ast.FieldList, fnType *ast.FuncType) map[string]bool {
-	names := make(map[string]bool)
-
-	for _, list := range []*ast.FieldList{recv, fnType.Params, fnType.Results} {
-		if list == nil {
-			continue
-		}
-		for _, field := range list.List {
-			for _, ident := range field.Names {
-				addName(names, ident)
-			}
-		}
-	}
-
-	return names
-}
-
-func addName(names map[string]bool, expr ast.Expr) {
-	if ident, ok := expr.(*ast.Ident); ok && ident.Name != "_" {
-		names[ident.Name] = true
-	}
-}
-
-// firstClash returns a name declared in both maps, or "" when they are
-// disjoint. Candidates are sorted so the reported reason is stable across runs.
-func firstClash(moved, destination map[string]bool) string {
-	var clashes []string
-	for name := range moved {
-		if destination[name] {
-			clashes = append(clashes, name)
-		}
-	}
-	if len(clashes) == 0 {
-		return ""
-	}
-	sort.Strings(clashes)
-	return clashes[0]
 }

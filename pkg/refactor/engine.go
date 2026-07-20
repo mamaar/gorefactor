@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"fmt"
+	gotypes "go/types"
 	"io"
 	"log/slog"
 	"os/exec"
@@ -929,6 +930,20 @@ func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath st
 	if pkg, ok := ws.Packages[resolved]; ok {
 		e.parser.EnsureTypeChecked(ws, pkg)
 	}
+}
+
+// Importer exposes the go/types.Importer that type-checked ws, so a caller
+// verifying a plan with VerifyPlanTypesWithImporter can reuse the exact
+// *go/types.Package instances the workspace was already checked with — see
+// that function's doc comment for why a second, independently-built importer
+// produces spurious type errors on cross-package references. Returns nil if
+// e has no parser (e.g. a test double), which VerifyPlanTypesWithImporter
+// treats the same as VerifyPlanTypes: it builds its own throwaway importer.
+func (e *DefaultEngine) Importer() gotypes.Importer {
+	if e.parser == nil {
+		return nil
+	}
+	return e.parser.Importer()
 }
 
 // ExecutePlan applies a refactoring plan to the workspace

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	goanalysis "golang.org/x/tools/go/analysis"
@@ -18,6 +19,7 @@ import (
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
 	"github.com/mamaar/gorefactor/pkg/analyzers/missingctx"
+	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -737,7 +739,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "detect_deep_if_else_chains",
-		Description: "Detect nested if-else chains that should use early returns (guard clauses). Reports nesting depth, happy path depth, error branch count, and complexity reduction estimate.",
+		Description: "Detect nested if-else chains that should use early returns (guard clauses). Reports nesting depth, happy path depth, error branch count, and complexity reduction estimate. `fixable` means fix_deep_if_else_chains would produce some rewrite for this chain, not that it flattens all the way to depth 0 — check `reason` for whether (and why) the rewrite would still leave some nesting behind.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectDeepIfElseInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -795,7 +797,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_deep_if_else_chains",
-		Description: "Automatically invert conditions and use early returns to flatten deep if-else chains. Conservative mode only fixes simple patterns where each else branch contains a return statement.",
+		Description: "Flatten deep if/else-if/else chains into early returns. Drops the `else` after any branch that hands control away (return, continue, break, panic, ...), and inverts the chain's last condition into a guard clause when that pays off. Each rewrite is verified against go/types before being applied; one that would not type-check is left alone and reported in `unfixable` with the type error as the reason, and a chain flattened only partway is reported in `partial` with the reason flattening stopped there. Does not hoist an `if init; cond` header — run fix_if_init_assignments first on chains that declare variables in their if headers, then run this.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixDeepIfElseInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -828,11 +830,19 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		// Only chains that actually carried a rewrite count as fixed. The
-		// detector fires on any chain past the depth threshold, but
-		// extractChain rewrites a much narrower shape, so the two sets differ.
-		var functionsFixed []string
+		// detector fires on any chain past the depth threshold, but the
+		// rewriter handles a narrower shape, so the two sets differ.
+		//
+		// results and rr.Diagnostics are produced in lockstep, one diagnostic
+		// per result, in the same order, both within a single package
+		// (makeRun reports then appends for every chain it visits) and across
+		// packages (Run concatenates both slices per package in the same
+		// order) — see deepifelse.walker.tryChain. Filtering both to their
+		// Fixable/has-a-fix subsequence therefore keeps them aligned index for
+		// index, which is what lets fixableResults[i] below be paired with
+		// changes[i].
 		var unfixable []DeepIfElseUnfixableItem
-		totalEarlyReturns := 0
+		var fixableResults []*deepifelse.Result
 		if results, ok := rr.Result.([]*deepifelse.Result); ok {
 			for _, r := range results {
 				if !r.Fixable {
@@ -845,8 +855,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 					})
 					continue
 				}
-				functionsFixed = append(functionsFixed, r.Function)
-				totalEarlyReturns += r.EarlyReturns
+				fixableResults = append(fixableResults, r)
 			}
 		}
 
@@ -863,11 +872,115 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				"functions_fixed": []string{},
 				"early_returns":   0,
 				"unfixable":       unfixable,
+				"partial":         []DeepIfElseUnfixableItem{},
 				"message":         message,
 			}), nil, nil
 		}
 
+		if len(changes) != len(fixableResults) {
+			// Should not happen (see the invariant above); refuse rather than
+			// guess which change belongs to which finding.
+			state.RUnlock()
+			state.logger.Error("fix_deep_if_else_chains: diagnostics/results count mismatch, refusing to apply",
+				"changes", len(changes), "fixable_results", len(fixableResults))
+			return errResult(fmt.Errorf("internal error: could not correlate %d rewrite(s) with %d fixable finding(s)", len(changes), len(fixableResults))), nil, nil
+		}
+
+		// Every rewrite this fixer proposes is verified against go/types
+		// before it is applied, since the rewriter dedents blocks into
+		// enclosing scopes and the only other pre-apply check
+		// (Validator.validateCompilation) merely parses the new text for
+		// syntax. The importer must be the one that type-checked ws — see
+		// VerifyPlanTypesWithImporter's doc comment — which is why
+		// EnsureTypeCheckedPackage above and this share state.GetEngine().
+		importer := state.GetEngine().Importer()
 		plan := analyzers.ChangesToPlan(changes)
+		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, importer)
+
+		if verification.Skipped != "" {
+			// TypeCheckResult.OK() says nothing about skipped packages, so an
+			// unverified plan must not be treated as clean. Nothing is
+			// applied; the caller is told why.
+			state.RUnlock()
+			return textResult(map[string]any{
+				"files_modified":  []string{},
+				"changes_count":   0,
+				"functions_fixed": []string{},
+				"early_returns":   0,
+				"unfixable":       unfixable,
+				"partial":         []DeepIfElseUnfixableItem{},
+				"message": fmt.Sprintf(
+					"Found %d rewrite(s) but could not verify them against go/types, so nothing was applied: %s",
+					len(changes), verification.Skipped),
+			}), nil, nil
+		}
+
+		var appliedResults []*deepifelse.Result
+		var appliedChanges []types.Change
+
+		if verification.OK() {
+			appliedResults = fixableResults
+			appliedChanges = changes
+		} else {
+			// The plan as a whole would not type-check. Re-verify each
+			// rewrite on its own so the ones that are actually safe still get
+			// applied, instead of refusing the entire batch over one bad
+			// chain.
+			for i, c := range changes {
+				r := fixableResults[i]
+				single := refactor.VerifyPlanTypesWithImporter(ws, analyzers.ChangesToPlan([]types.Change{c}), importer)
+				switch {
+				case single.Skipped != "":
+					unfixable = append(unfixable, DeepIfElseUnfixableItem{
+						File: r.File, Line: r.Line, Function: r.Function, NestingDepth: r.NestingDepth,
+						Reason: fmt.Sprintf("could not verify this rewrite against go/types: %s", single.Skipped),
+					})
+				case !single.OK():
+					unfixable = append(unfixable, DeepIfElseUnfixableItem{
+						File: r.File, Line: r.Line, Function: r.Function, NestingDepth: r.NestingDepth,
+						Reason: fmt.Sprintf("applying this rewrite would not type-check: %s", strings.Join(single.NewErrors, "; ")),
+					})
+				default:
+					appliedResults = append(appliedResults, r)
+					appliedChanges = append(appliedChanges, c)
+				}
+			}
+		}
+
+		if len(appliedChanges) == 0 {
+			state.RUnlock()
+			return textResult(map[string]any{
+				"files_modified":  []string{},
+				"changes_count":   0,
+				"functions_fixed": []string{},
+				"early_returns":   0,
+				"unfixable":       unfixable,
+				"partial":         []DeepIfElseUnfixableItem{},
+				"message":         fmt.Sprintf("Found %d deep if-else chain(s), none of a shape this fixer could safely apply", len(unfixable)),
+			}), nil, nil
+		}
+
+		// functions_fixed/early_returns/partial only ever describe what was
+		// actually applied: a fixable finding dropped above for failing
+		// verification is reported in unfixable, not counted here.
+		var functionsFixed []string
+		var partial []DeepIfElseUnfixableItem
+		totalEarlyReturns := 0
+		for _, r := range appliedResults {
+			functionsFixed = append(functionsFixed, r.Function)
+			totalEarlyReturns += r.EarlyReturns
+			if r.Reason != "" {
+				partial = append(partial, DeepIfElseUnfixableItem{
+					File:         r.File,
+					Line:         r.Line,
+					Function:     r.Function,
+					NestingDepth: r.NestingDepth,
+					Reason:       r.Reason,
+				})
+			}
+		}
+
+		plan = analyzers.ChangesToPlan(appliedChanges)
 		result, err := executePlanWithUnlock(state, plan, "Fix deep if-else chains", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -879,6 +992,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"functions_fixed": functionsFixed,
 			"early_returns":   totalEarlyReturns,
 			"unfixable":       unfixable,
+			"partial":         partial,
 		}
 		return textResult(withDryRun(out, result)), nil, nil
 	})

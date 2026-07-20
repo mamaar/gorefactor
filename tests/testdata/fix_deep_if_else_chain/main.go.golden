@@ -1,0 +1,54 @@
+package main
+
+import (
+	"fmt"
+	"slices"
+)
+
+// cfg describes how to resolve a type string for an attribute set, either
+// from a fixed value or by mapping one of the attributes through TypeMapping.
+type cfg struct {
+	Type        string
+	TypeField   string
+	TypeMapping map[string]string
+	IgnoreTypes []string
+}
+
+// Depth 5, using `else if` and two `if x, ok := ...; ok` headers, with every
+// branch returning. This is the real-world shape that motivated flattening
+// else-if chains and bodies that hand control away through something other
+// than a bare return: deepifelse alone flattens it to depth 2, with both
+// `; ok` headers still intact - reaching depth 1 needs fix_if_init_assignments
+// first, to hoist those inits out of the way.
+func findTypeString(c cfg, attributes map[string]string) (*string, error) {
+	if len(c.Type) > 0 {
+		return &c.Type, nil
+	}
+	if len(c.TypeField) <= 0 {
+		return nil, fmt.Errorf("no type configured")
+	}
+	if typeKey, ok := attributes[c.TypeField]; ok {
+		if typeValue, ok := c.TypeMapping[typeKey]; ok {
+			return &typeValue, nil
+		}
+		if slices.Contains(c.IgnoreTypes, typeKey) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("no mapping for %q", typeKey)
+	}
+	return nil, fmt.Errorf("attribute %q missing", c.TypeField)
+}
+
+func main() {
+	c := cfg{
+		TypeField:   "kind",
+		TypeMapping: map[string]string{"a": "alpha"},
+		IgnoreTypes: []string{"skip"},
+	}
+	s, err := findTypeString(c, map[string]string{"kind": "a"})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(*s)
+}

@@ -808,6 +808,29 @@ func TestFixDeepIfElse(t *testing.T) {
 	compareGoldenFiles(t, "fix_deep_if_else", tmpDir)
 }
 
+// TestFixDeepIfElseChain reproduces the real-world shape that motivated
+// flattening else-if chains at all: five levels deep, using `else if`, with
+// two `if x, ok := ...; ok` headers along the way. deepifelse alone cannot
+// hoist those inits - that is fix_if_init_assignments' job - so this fixture
+// pins the partial result: flattened to depth 2, both `; ok` headers left
+// intact.
+func TestFixDeepIfElseChain(t *testing.T) {
+	tmpDir := copyFixture(t, "fix_deep_if_else_chain")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "fix_deep_if_else_chain", tmpDir)
+}
+
 func TestFixErrorWrapping(t *testing.T) {
 	tmpDir := copyFixture(t, "fix_error_wrapping")
 	eng := createEngine(t)

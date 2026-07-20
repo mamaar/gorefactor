@@ -21,8 +21,11 @@ func process(x int) string {
 	}
 }
 
-// Depth 3, but the outer else is an `else if` rather than a block, which
-// extractChain refuses. Detected, reported unfixable, and left alone.
+// Depth 3, using `else if` rather than a block at the outer level - the shape
+// the old rewriter refused outright. Every branch already returns, so every
+// link elides and no else survives. The nesting inside the first branch is not
+// a chain of its own to lift: it is that branch's own body, flattened in
+// place.
 func categorize(x int) string {
 	if x < 0 {
 		if x < -100 {

@@ -8,47 +8,54 @@ import (
 // TestFixDeepIfElse_CountsOnlyWhatItRewrote covers the counting bug: the tool
 // used to list every detected function in functions_fixed and derive
 // early_returns from nesting depth, so it claimed credit for chains it never
-// touched. The fixture holds one rewritable chain, one detected-but-unfixable
-// chain, and one below the depth threshold.
+// touched. The fixture's chains (process, an else-if chain in categorize, and
+// one below the depth threshold in describe) still exercise that distinction
+// even though the rewriter now flattens else-if chains too: process and
+// categorize both get applied, describe is never detected at all, and
+// functions_fixed/early_returns must reflect exactly the two that were
+// actually rewritten - not an estimate derived from nesting depth.
 func TestFixDeepIfElse_CountsOnlyWhatItRewrote(t *testing.T) {
 	_, result := callToolOnFixture(t, "fix_deep_if_else", "fix_deep_if_else_chains", map[string]any{})
 
 	fixed, _ := result["functions_fixed"].([]any)
-	if len(fixed) != 1 {
-		t.Fatalf("expected exactly 1 rewritten function, got %d: %v", len(fixed), fixed)
+	if len(fixed) != 2 {
+		t.Fatalf("expected exactly 2 rewritten functions, got %d: %v", len(fixed), fixed)
 	}
-	if fn, _ := fixed[0].(string); fn != "process" {
-		t.Errorf("functions_fixed = %v, want [process]", fixed)
-	}
-
-	// process yields three guards, one per else branch. The old code summed
-	// NestingDepth over every finding including the unfixable one, so on this
-	// fixture it reported 6 early returns across 2 functions.
-	if got, _ := result["early_returns"].(float64); got != 3 {
-		t.Errorf("early_returns = %v, want 3", got)
-	}
-
-	unfixable, _ := result["unfixable"].([]any)
-	if len(unfixable) != 1 {
-		t.Fatalf("expected categorize to be reported unfixable, got %v", unfixable)
-	}
-	item := unfixable[0].(map[string]any)
-	if fn, _ := item["function_name"].(string); fn != "categorize" {
-		t.Errorf("unfixable = %q, want categorize", fn)
-	}
-	if reason, _ := item["reason"].(string); reason == "" {
-		t.Error("an unfixable finding must explain why")
-	}
-
+	fixedSet := make(map[string]bool, len(fixed))
 	for _, f := range fixed {
-		if fn, _ := f.(string); fn == "categorize" {
-			t.Error("categorize was reported as fixed despite being left untouched")
-		}
+		fn, _ := f.(string)
+		fixedSet[fn] = true
+	}
+	if !fixedSet["process"] || !fixedSet["categorize"] {
+		t.Errorf("functions_fixed = %v, want [process categorize]", fixed)
+	}
+	if fixedSet["describe"] {
+		t.Error("describe is below the depth threshold and must not be reported as fixed")
+	}
+
+	// process yields three guards, one per else branch; categorize yields four
+	// (its else-if chain elides three links and terminates in a return, no
+	// leftover reason). The old code summed NestingDepth over every finding
+	// including the one it declined to touch, so on this fixture it reported
+	// 6 early returns across 2 functions by coincidence rather than by
+	// counting what the rewrite actually emitted.
+	if got, _ := result["early_returns"].(float64); got != 7 {
+		t.Errorf("early_returns = %v, want 7 (3 from process + 4 from categorize)", got)
+	}
+
+	if unfixable, _ := result["unfixable"].([]any); len(unfixable) != 0 {
+		t.Errorf("expected no unfixable findings on this fixture, got %v", unfixable)
+	}
+	if partial, _ := result["partial"].([]any); len(partial) != 0 {
+		t.Errorf("expected no partial findings on this fixture (both chains flatten fully), got %v", partial)
 	}
 }
 
-// The detector reports chains the fixer cannot rewrite, so callers need the
-// fixable flag to tell which findings need flattening by hand.
+// The detector reports every chain past the depth threshold, fixable or not,
+// so callers need the fixable flag to tell which findings need flattening by
+// hand. Both chains in this fixture are fixable now that else-if chains
+// flatten too; describe stays the control that keeps the depth threshold
+// honest.
 func TestDetectDeepIfElse_MarksUnfixableChains(t *testing.T) {
 	_, result := callToolOnFixture(t, "fix_deep_if_else", "detect_deep_if_else_chains", map[string]any{})
 
@@ -68,8 +75,8 @@ func TestDetectDeepIfElse_MarksUnfixableChains(t *testing.T) {
 	if !fixable["process"] {
 		t.Error("process is a flattenable chain and should be marked fixable")
 	}
-	if fixable["categorize"] {
-		t.Error("categorize is an else-if chain and should be marked unfixable")
+	if !fixable["categorize"] {
+		t.Error("categorize's else-if chain flattens fully too and should be marked fixable")
 	}
 	// describe nests only two deep, below the default threshold.
 	if _, found := fixable["describe"]; found {
