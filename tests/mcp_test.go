@@ -250,6 +250,15 @@ func TestMCPTools(t *testing.T) {
 			},
 		},
 		{
+			// apply=true is required: this tool previews by default, and a
+			// preview writes nothing, which would make the golden pass
+			// without the fixer having done anything.
+			name: "fix_early_returns", fixture: "fix_early_returns", tool: "fix_early_returns",
+			args: func(dir string) map[string]any {
+				return map[string]any{"apply": true}
+			},
+		},
+		{
 			name: "fix_error_wrapping", fixture: "fix_error_wrapping", tool: "fix_error_wrapping",
 			args: func(dir string) map[string]any {
 				return map[string]any{}

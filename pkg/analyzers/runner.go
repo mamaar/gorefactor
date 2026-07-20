@@ -181,6 +181,45 @@ func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []ws
 	return changes
 }
 
+// FillOldText populates each change's OldText from the workspace's copy of the
+// file it applies to.
+//
+// This serves two purposes. A dry run renders OldText as the "before" side of
+// its diff, so without it the caller reviews a preview that only shows what the
+// code would become. And on apply, Serializer.applyChange verifies OldText
+// against the bytes actually at those offsets, turning a stale-offset bug into
+// a clean error instead of a corrupted file.
+//
+// Changes whose file or offsets are not found in the workspace are left as-is.
+func FillOldText(ws *wstypes.Workspace, changes []wstypes.Change) []wstypes.Change {
+	contents := make(map[string][]byte)
+	for _, pkg := range ws.Packages {
+		for _, file := range pkg.Files {
+			contents[file.Path] = file.OriginalContent
+		}
+		for _, file := range pkg.TestFiles {
+			contents[file.Path] = file.OriginalContent
+		}
+	}
+
+	for i := range changes {
+		c := &changes[i]
+		if c.Delete || c.OldText != "" {
+			continue
+		}
+		content, ok := contents[c.File]
+		if !ok {
+			continue
+		}
+		if c.Start < 0 || c.End > len(content) || c.Start >= c.End {
+			continue
+		}
+		c.OldText = string(content[c.Start:c.End])
+	}
+
+	return changes
+}
+
 // ChangesToPlan creates a RefactoringPlan from a set of changes.
 func ChangesToPlan(changes []wstypes.Change) *wstypes.RefactoringPlan {
 	affectedSet := make(map[string]bool)

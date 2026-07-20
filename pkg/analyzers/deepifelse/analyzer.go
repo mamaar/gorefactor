@@ -1,7 +1,6 @@
 package deepifelse
 
 import (
-	"bytes"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -10,6 +9,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
+	"github.com/mamaar/gorefactor/pkg/analyzers/srctext"
 )
 
 // Result is the typed result returned for MCP consumption.
@@ -23,14 +23,17 @@ type Result struct {
 	ErrorBranches              int    `json:"error_branches"`
 	ComplexityReductionPercent int    `json:"complexity_reduction_estimate"`
 	Suggestion                 string `json:"suggestion"`
-}
 
-// FixResult holds per-violation fix metadata.
-type FixResult struct {
-	Function           string `json:"function"`
-	NestingDepthBefore int    `json:"nesting_depth_before"`
-	NestingDepthAfter  int    `json:"nesting_depth_after"`
-	EarlyReturnsAdded  int    `json:"early_returns_added"`
+	// Fixable reports whether a rewrite was attached to this finding. The
+	// detector fires on any chain past the depth threshold, but extractChain
+	// only rewrites a narrow shape, so a violation is routinely reported with
+	// no fix behind it. Reason explains what blocked it.
+	Fixable bool   `json:"fixable"`
+	Reason  string `json:"reason,omitempty"`
+	// EarlyReturns is how many guard clauses the rewrite emits — the real
+	// count from the extracted chain, not an estimate from nesting depth.
+	// Zero when Fixable is false.
+	EarlyReturns int `json:"early_returns"`
 }
 
 type config struct {
@@ -134,22 +137,35 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, content []byte, fn *as
 
 		pos := pass.Fset.Position(ifStmt.Pos())
 
-		// Build suggested fix.
+		// Build suggested fix. Detection is broader than rewriting: a chain
+		// deep enough to report is often not a shape extractChain can flatten,
+		// so track whether a fix was actually produced.
 		var fixes []analysis.SuggestedFix
+		fixable := false
+		reason := ""
+		earlyReturns := 0
+
 		guards, happyPath, ok2 := extractChain(pass.Fset, content, ifStmt)
-		if ok2 {
+		switch {
+		case !ok2:
+			reason = "chain shape is not a simple guard sequence: every else must be a block ending in return, and each body a single nested if-else"
+		default:
 			startOffset := pass.Fset.Position(ifStmt.Pos()).Offset
 			endOffset := pass.Fset.Position(ifStmt.End()).Offset
-			if startOffset >= 0 && endOffset <= len(content) && startOffset < endOffset {
-				indent := extractIndentation(content, startOffset)
-				newText := buildReplacementText(guards, happyPath, indent)
-				fixes = append(fixes, analysis.SuggestedFix{
-					Message: "Flatten deep if-else chain with early returns",
-					TextEdits: []analysis.TextEdit{
-						{Pos: ifStmt.Pos(), End: ifStmt.End(), NewText: []byte(newText)},
-					},
-				})
+			if startOffset < 0 || endOffset > len(content) || startOffset >= endOffset {
+				reason = "source text for the chain is unavailable"
+				break
 			}
+			indent := srctext.Indentation(content, startOffset)
+			newText := buildReplacementText(guards, happyPath, indent)
+			fixes = append(fixes, analysis.SuggestedFix{
+				Message: "Flatten deep if-else chain with early returns",
+				TextEdits: []analysis.TextEdit{
+					{Pos: ifStmt.Pos(), End: ifStmt.End(), NewText: []byte(newText)},
+				},
+			})
+			fixable = true
+			earlyReturns = len(guards)
 		}
 
 		pass.Report(analysis.Diagnostic{
@@ -169,6 +185,9 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, content []byte, fn *as
 			ErrorBranches:              errorBranches,
 			ComplexityReductionPercent: reductionPercent,
 			Suggestion:                 fmt.Sprintf("Invert conditions and use early returns for error cases (depth %d -> 0)", depth),
+			Fixable:                    fixable,
+			Reason:                     reason,
+			EarlyReturns:               earlyReturns,
 		})
 
 		return false
@@ -315,12 +334,12 @@ func extractChain(fset *token.FileSet, content []byte, ifStmt *ast.IfStmt) ([]gu
 			return nil, "", false
 		}
 
-		inverted := invertCondition(fset, content, current.Cond)
+		inverted := srctext.InvertCondition(fset, content, current.Cond)
 		if inverted == "" {
 			return nil, "", false
 		}
 
-		elseBody := blockStatementsText(fset, content, elseBlock)
+		elseBody := srctext.BlockText(fset, content, elseBlock)
 		guards = append(guards, guardClause{
 			invertedCond: inverted,
 			body:         elseBody,
@@ -332,7 +351,7 @@ func extractChain(fset *token.FileSet, content []byte, ifStmt *ast.IfStmt) ([]gu
 			continue
 		}
 
-		happyPath := blockStatementsText(fset, content, current.Body)
+		happyPath := srctext.BlockText(fset, content, current.Body)
 		return guards, happyPath, true
 	}
 }
@@ -355,51 +374,6 @@ func blockHasReturn(block *ast.BlockStmt) bool {
 		}
 	}
 	return false
-}
-
-func invertCondition(fset *token.FileSet, content []byte, expr ast.Expr) string {
-	switch e := expr.(type) {
-	case *ast.BinaryExpr:
-		lhs := exprText(fset, content, e.X)
-		rhs := exprText(fset, content, e.Y)
-		if lhs == "" || rhs == "" {
-			return ""
-		}
-		switch e.Op {
-		case token.EQL:
-			return lhs + " != " + rhs
-		case token.NEQ:
-			return lhs + " == " + rhs
-		case token.LSS:
-			return lhs + " >= " + rhs
-		case token.GTR:
-			return lhs + " <= " + rhs
-		case token.LEQ:
-			return lhs + " > " + rhs
-		case token.GEQ:
-			return lhs + " < " + rhs
-		case token.LAND, token.LOR:
-			return "!(" + exprText(fset, content, expr) + ")"
-		}
-	case *ast.UnaryExpr:
-		if e.Op == token.NOT {
-			return exprText(fset, content, e.X)
-		}
-	case *ast.Ident:
-		return "!" + e.Name
-	case *ast.ParenExpr:
-		inner := invertCondition(fset, content, e.X)
-		if inner == "" {
-			return ""
-		}
-		return inner
-	}
-
-	text := exprText(fset, content, expr)
-	if text == "" {
-		return ""
-	}
-	return "!(" + text + ")"
 }
 
 func buildReplacementText(guards []guardClause, happyPath, indent string) string {
@@ -443,47 +417,4 @@ func buildReplacementText(guards []guardClause, happyPath, indent string) string
 	}
 
 	return sb.String()
-}
-
-func blockStatementsText(fset *token.FileSet, content []byte, block *ast.BlockStmt) string {
-	if len(content) == 0 || len(block.List) == 0 {
-		return ""
-	}
-
-	firstPos := fset.Position(block.List[0].Pos()).Offset
-	lastEnd := fset.Position(block.List[len(block.List)-1].End()).Offset
-
-	if firstPos < 0 || lastEnd > len(content) || firstPos >= lastEnd {
-		return ""
-	}
-
-	return string(content[firstPos:lastEnd])
-}
-
-func exprText(fset *token.FileSet, content []byte, expr ast.Expr) string {
-	if len(content) == 0 {
-		return ""
-	}
-	start := fset.Position(expr.Pos()).Offset
-	end := fset.Position(expr.End()).Offset
-	if start < 0 || end < 0 || start >= len(content) || end > len(content) || start >= end {
-		return ""
-	}
-	return string(content[start:end])
-}
-
-func extractIndentation(content []byte, offset int) string {
-	lineStart := offset
-	for lineStart > 0 && content[lineStart-1] != '\n' {
-		lineStart--
-	}
-	var buf bytes.Buffer
-	for i := lineStart; i < len(content); i++ {
-		if content[i] == ' ' || content[i] == '\t' {
-			buf.WriteByte(content[i])
-		} else {
-			break
-		}
-	}
-	return buf.String()
 }

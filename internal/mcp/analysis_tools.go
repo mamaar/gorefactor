@@ -5,12 +5,14 @@ import (
 	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	goanalysis "golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/analyzers"
 	"github.com/mamaar/gorefactor/pkg/analyzers/booleanbranch"
 	"github.com/mamaar/gorefactor/pkg/analyzers/complexity"
 	"github.com/mamaar/gorefactor/pkg/analyzers/deepifelse"
+	"github.com/mamaar/gorefactor/pkg/analyzers/earlyreturn"
 	"github.com/mamaar/gorefactor/pkg/analyzers/envbool"
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
@@ -178,6 +180,21 @@ type DeepIfElseViolationItem struct {
 	ErrorBranches              int    `json:"error_branches"`
 	ComplexityReductionPercent int    `json:"complexity_reduction_estimate"`
 	Suggestion                 string `json:"suggestion"`
+	// Fixable reports whether fix_deep_if_else_chains would actually rewrite
+	// this chain. Detection is broader than rewriting, so a violation with
+	// fixable=false needs to be flattened by hand.
+	Fixable bool   `json:"fixable"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// DeepIfElseUnfixableItem is a detected chain the fixer left alone, with the
+// reason it could not be rewritten.
+type DeepIfElseUnfixableItem struct {
+	File         string `json:"file"`
+	Line         int    `json:"line"`
+	Function     string `json:"function_name"`
+	NestingDepth int    `json:"nesting_depth"`
+	Reason       string `json:"reason"`
 }
 
 // --- fix_deep_if_else_chains ---
@@ -187,6 +204,50 @@ type FixDeepIfElseInput struct {
 	MaxNestingDepth int    `json:"max_nesting_depth,omitempty" jsonschema:"maximum acceptable nesting depth (default 2)"`
 	MinElseLines    int    `json:"min_else_lines,omitempty" jsonschema:"minimum lines in else to trigger fix (default 3)"`
 	DryRun          bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+}
+
+// --- detect_early_returns / fix_early_returns ---
+
+type DetectEarlyReturnsInput struct {
+	Package      string   `json:"package,omitempty" jsonschema:"specific package to analyze"`
+	MinBodyLines int      `json:"min_body_lines,omitempty" jsonschema:"minimum lines a body must span before inverting is suggested (default 3); does not apply to else_after_return"`
+	Patterns     []string `json:"patterns,omitempty" jsonschema:"restrict to these patterns: guard_clause, loop_continue, else_after_return (default all)"`
+}
+
+type FixEarlyReturnsInput struct {
+	Package      string   `json:"package,omitempty" jsonschema:"specific package to fix"`
+	MinBodyLines int      `json:"min_body_lines,omitempty" jsonschema:"minimum lines a body must span before inverting is suggested (default 3); does not apply to else_after_return"`
+	Patterns     []string `json:"patterns,omitempty" jsonschema:"restrict to these patterns: guard_clause, loop_continue, else_after_return (default all)"`
+	// Apply inverts the usual dry_run convention: this tool previews by
+	// default, because it rewrites control flow across every matching function
+	// in the workspace at once.
+	Apply bool `json:"apply,omitempty" jsonschema:"write the changes to disk; defaults to false, which previews the full before/after diff without touching any file"`
+}
+
+type EarlyReturnViolationItem struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Column     int    `json:"column"`
+	Function   string `json:"function_name"`
+	Pattern    string `json:"pattern"`
+	BodyLines  int    `json:"body_lines"`
+	Fixable    bool   `json:"fixable"`
+	Reason     string `json:"reason,omitempty"`
+	Suggestion string `json:"suggestion"`
+}
+
+// EarlyReturnFixResult reports what the fix tool did. Fixed and Unfixable are
+// derived from whether a finding actually carried a rewrite, so the counts
+// describe the changes made rather than the violations seen.
+type EarlyReturnFixResult struct {
+	Applied       bool                       `json:"applied"`
+	ChangesCount  int                        `json:"changes_count"`
+	FilesModified []string                   `json:"files_modified,omitempty"`
+	Fixed         []EarlyReturnViolationItem `json:"fixed"`
+	Unfixable     []EarlyReturnViolationItem `json:"unfixable,omitempty"`
+	Diffs         []FileDiff                 `json:"diffs,omitempty"`
+	BlockingIssue string                     `json:"blocking_issue,omitempty"`
+	Message       string                     `json:"message,omitempty"`
 }
 
 // --- detect_improper_error_wrapping ---
@@ -688,6 +749,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 					ErrorBranches:              v.ErrorBranches,
 					ComplexityReductionPercent: v.ComplexityReductionPercent,
 					Suggestion:                 v.Suggestion,
+					Fixable:                    v.Fixable,
+					Reason:                     v.Reason,
 				}
 			}
 		}
@@ -727,25 +790,44 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		// Only chains that actually carried a rewrite count as fixed. The
+		// detector fires on any chain past the depth threshold, but
+		// extractChain rewrites a much narrower shape, so the two sets differ.
+		var functionsFixed []string
+		var unfixable []DeepIfElseUnfixableItem
+		totalEarlyReturns := 0
+		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+			for _, r := range results {
+				if !r.Fixable {
+					unfixable = append(unfixable, DeepIfElseUnfixableItem{
+						File:         r.File,
+						Line:         r.Line,
+						Function:     r.Function,
+						NestingDepth: r.NestingDepth,
+						Reason:       r.Reason,
+					})
+					continue
+				}
+				functionsFixed = append(functionsFixed, r.Function)
+				totalEarlyReturns += r.EarlyReturns
+			}
+		}
+
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
+			message := "No deep if-else chain violations found"
+			if len(unfixable) > 0 {
+				message = fmt.Sprintf("Found %d deep if-else chain(s), none of a shape this fixer can rewrite", len(unfixable))
+			}
 			return textResult(map[string]any{
 				"files_modified":  []string{},
 				"changes_count":   0,
 				"functions_fixed": []string{},
 				"early_returns":   0,
-				"message":         "No deep if-else chain violations found",
+				"unfixable":       unfixable,
+				"message":         message,
 			}), nil, nil
-		}
-
-		var functionsFixed []string
-		totalEarlyReturns := 0
-		if results, ok := rr.Result.([]*deepifelse.Result); ok {
-			for _, r := range results {
-				functionsFixed = append(functionsFixed, r.Function)
-				totalEarlyReturns += r.NestingDepth // approximate early returns from depth
-			}
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
@@ -753,11 +835,123 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		return textResult(map[string]any{
+
+		out := map[string]any{
 			"files_modified":  result.ModifiedFiles,
 			"changes_count":   result.ChangeCount,
 			"functions_fixed": functionsFixed,
 			"early_returns":   totalEarlyReturns,
+			"unfixable":       unfixable,
+		}
+		// Say so when nothing was written, rather than returning an empty
+		// files_modified that reads like a no-op apply.
+		if result.DryRun {
+			out["dry_run"] = true
+			out["diffs"] = result.Diffs
+			out["message"] = result.Description
+			if result.BlockingIssue != "" {
+				out["blocking_issue"] = result.BlockingIssue
+			}
+		}
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "detect_early_returns",
+		Description: "Detect conditionals that keep the happy path indented and could be inverted into early-return guard clauses. Covers `if cond { body }` at the end of a function (guard_clause) or of a loop body (loop_continue), and `if cond { ...; return } else { body }` (else_after_return). Reports which findings can be rewritten safely and why the rest cannot.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectEarlyReturnsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		a, err := earlyReturnAnalyzer(in.MinBodyLines, in.Patterns)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := earlyReturnItems(rr.Result)
+		fixable := 0
+		for _, item := range items {
+			if item.Fixable {
+				fixable++
+			}
+		}
+
+		return textResult(map[string]any{
+			"violations":    items,
+			"total_count":   len(items),
+			"fixable_count": fixable,
+		}), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "fix_early_returns",
+		Description: "Invert conditionals into early-return guard clauses so the happy path is no longer nested. Previews by default: call with apply=true to write the changes. Skips any rewrite that would redeclare a name in the scope it dedents into, or that would require inventing return values.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixEarlyReturnsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		a, err := earlyReturnAnalyzer(in.MinBodyLines, in.Patterns)
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		var fixed, unfixable []EarlyReturnViolationItem
+		for _, item := range earlyReturnItems(rr.Result) {
+			if item.Fixable {
+				fixed = append(fixed, item)
+				continue
+			}
+			unfixable = append(unfixable, item)
+		}
+
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		if len(changes) == 0 {
+			state.RUnlock()
+			return textResult(&EarlyReturnFixResult{
+				Applied:   in.Apply,
+				Fixed:     []EarlyReturnViolationItem{},
+				Unfixable: unfixable,
+				Message:   "No rewritable early-return opportunities found",
+			}), nil, nil
+		}
+
+		plan := analyzers.ChangesToPlan(changes)
+		result, err := executePlanWithUnlock(state, plan, "Invert conditionals into early returns", !in.Apply)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		return textResult(&EarlyReturnFixResult{
+			Applied:       in.Apply,
+			ChangesCount:  result.ChangeCount,
+			FilesModified: result.ModifiedFiles,
+			Fixed:         fixed,
+			Unfixable:     unfixable,
+			Diffs:         result.Diffs,
+			BlockingIssue: result.BlockingIssue,
+			Message:       result.Description,
 		}), nil, nil
 	})
 
@@ -944,4 +1138,51 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"dependency_graph": ws.Dependencies,
 		}), nil, nil
 	})
+}
+
+// earlyReturnAnalyzer builds a configured earlyreturn analyzer, rejecting
+// unknown pattern names rather than silently analysing more than was asked for.
+func earlyReturnAnalyzer(minBodyLines int, patternNames []string) (*goanalysis.Analyzer, error) {
+	var opts []earlyreturn.Option
+	if minBodyLines > 0 {
+		opts = append(opts, earlyreturn.WithMinBodyLines(minBodyLines))
+	}
+
+	if len(patternNames) > 0 {
+		patterns := make([]earlyreturn.Pattern, 0, len(patternNames))
+		for _, name := range patternNames {
+			p, ok := earlyreturn.ParsePattern(name)
+			if !ok {
+				return nil, fmt.Errorf("unknown pattern %q: want one of guard_clause, loop_continue, else_after_return", name)
+			}
+			patterns = append(patterns, p)
+		}
+		opts = append(opts, earlyreturn.WithPatterns(patterns...))
+	}
+
+	return earlyreturn.NewAnalyzer(opts...), nil
+}
+
+// earlyReturnItems converts analyzer results into their MCP representation.
+func earlyReturnItems(result any) []EarlyReturnViolationItem {
+	results, ok := result.([]*earlyreturn.Result)
+	if !ok {
+		return nil
+	}
+
+	items := make([]EarlyReturnViolationItem, len(results))
+	for i, v := range results {
+		items[i] = EarlyReturnViolationItem{
+			File:       v.File,
+			Line:       v.Line,
+			Column:     v.Column,
+			Function:   v.Function,
+			Pattern:    string(v.Pattern),
+			BodyLines:  v.BodyLines,
+			Fixable:    v.Fixable,
+			Reason:     v.Reason,
+			Suggestion: v.Suggestion,
+		}
+	}
+	return items
 }

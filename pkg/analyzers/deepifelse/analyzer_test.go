@@ -159,3 +159,99 @@ func process(a, b, c bool) error {
 		t.Errorf("Expected ComplexityReductionPercent > 0, got %d", v.ComplexityReductionPercent)
 	}
 }
+
+// TestDeepIfElse_FixableChainReportsRealEarlyReturnCount covers the counting
+// bug: EarlyReturns must be the number of guards the rewrite actually emits,
+// not an estimate derived from nesting depth.
+func TestDeepIfElse_FixableChainReportsRealEarlyReturnCount(t *testing.T) {
+	src := `package testpkg
+
+func process(x int) string {
+	if x > 0 {
+		if x < 100 {
+			if x%2 == 0 {
+				return "even"
+			} else {
+				return "odd"
+			}
+		} else {
+			return "too large"
+		}
+	} else {
+		return "negative"
+	}
+}
+`
+	ws := createTestWorkspace(t, src)
+	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, _ := rr.Result.([]*deepifelse.Result)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(results))
+	}
+
+	got := results[0]
+	if !got.Fixable {
+		t.Fatalf("expected a fixable chain, reason: %s", got.Reason)
+	}
+	if got.EarlyReturns != 3 {
+		t.Errorf("EarlyReturns = %d, want 3 (one guard per else branch)", got.EarlyReturns)
+	}
+	if got.Reason != "" {
+		t.Errorf("a fixable finding should carry no reason, got %q", got.Reason)
+	}
+}
+
+// A chain deep enough to detect but shaped so extractChain refuses must be
+// reported unfixable and carry no suggested fix, so the MCP layer cannot count
+// it as fixed.
+func TestDeepIfElse_ElseIfChainReportedUnfixable(t *testing.T) {
+	src := `package testpkg
+
+func categorize(x int) string {
+	if x < 0 {
+		if x < -100 {
+			if x < -1000 {
+				return "extremely negative"
+			} else {
+				return "very negative"
+			}
+		} else {
+			return "negative"
+		}
+	} else if x == 0 {
+		return "zero"
+	} else {
+		return "positive"
+	}
+}
+`
+	ws := createTestWorkspace(t, src)
+	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, _ := rr.Result.([]*deepifelse.Result)
+	if len(results) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(results))
+	}
+	if results[0].Fixable {
+		t.Error("an else-if chain is not a shape extractChain can rewrite")
+	}
+	if results[0].Reason == "" {
+		t.Error("an unfixable finding must explain why")
+	}
+	if results[0].EarlyReturns != 0 {
+		t.Errorf("EarlyReturns = %d, want 0 for an unfixable finding", results[0].EarlyReturns)
+	}
+
+	for _, d := range rr.Diagnostics {
+		if len(d.SuggestedFixes) != 0 {
+			t.Error("an unfixable finding must not carry a suggested fix")
+		}
+	}
+}

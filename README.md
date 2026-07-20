@@ -83,6 +83,8 @@ The server communicates over stdio using the MCP protocol.
 | `fix_boolean_branching` | Auto-fix boolean branching issues |
 | `detect_deep_if_else_chains` | Find deeply nested if-else chains |
 | `fix_deep_if_else_chains` | Flatten deep if-else chains |
+| `detect_early_returns` | Find conditionals that could be inverted into early-return guard clauses |
+| `fix_early_returns` | Invert those conditionals so the happy path is no longer nested; previews by default |
 | `detect_improper_error_wrapping` | Find improperly wrapped errors |
 | `fix_error_wrapping` | Auto-fix error wrapping |
 | `detect_missing_context_params` | Find functions that should accept `context.Context` |
@@ -119,6 +121,10 @@ GoRefactor validates all transformations before applying them:
 - Reference tracking across the workspace
 
 A file watcher keeps the workspace state current as files change on disk.
+
+`fix_early_returns` covers three shapes that `fix_deep_if_else_chains` does not, since that one only fires when an `else` is present and nesting already exceeds a depth threshold. `guard_clause` is `if cond { body }` as the last statement of a function, rewritten to `if !cond { return }` followed by the body. `loop_continue` is the same shape as the last statement of a `for` or `range` body, rewritten with `continue`. `else_after_return` is `if cond { …; return } else { body }`, rewritten by dropping the `else` and dedenting its body. Unlike every other mutating tool here, it takes `apply` rather than `dry_run` and **previews by default**: a call with no arguments returns the full before/after diff and writes nothing, because a single call rewrites control flow across every matching function in the workspace at once.
+
+Its restraint is deliberate and worth understanding, because it explains most findings reported as `fixable: false`. It never invents return values: a guard needs a terminating statement, and rather than synthesizing `return nil, 0, ""` from the result types — which would turn an `error` result into a silent nil-error success path — it refuses. In practice this costs nothing, since Go already requires a function with results to end in a terminating statement, so a trailing bare `if` only ever occurs in a result-less function. It also refuses any rewrite where dedenting a block would redeclare a name that already exists in the scope the block lands in (including parameters and named results, which share the function body's scope), since `x := 1` twice in one scope does not compile. Conditionals carrying an init statement (`if v, err := f(); err != nil`) are skipped entirely: those names are scoped to the if statement, and hoisting the body out would move references out of the scope that declares them. `else if` ladders are left alone — only a plain `else` block is collapsed. Nested matches never both fire; the outermost wins, because two overlapping rewrites of the same region cannot be applied together. One incidental effect: any file the tool touches also gets its imports regrouped and gofmt'd, which is the serializer's standard behaviour for every mutating tool, not something specific to this one.
 
 `rename_field` has a couple of limitations worth knowing about. If the field being renamed has no struct tag, its `encoding/json` (and yaml/db) key is derived from the field name, so the rename silently changes the wire format; a field with an explicit tag like `json:"name"` is unaffected, since existing struct tags are never rewritten. Reflection-based and string-literal field access, such as `reflect`'s `FieldByName("Name")`, can't be detected by static analysis and won't be updated. Renaming an embedded field is also not supported, since that's really a type rename — use `rename_symbol` on the embedded type instead.
 
