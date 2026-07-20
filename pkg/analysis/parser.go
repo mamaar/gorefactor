@@ -24,6 +24,45 @@ type GoParser struct {
 	fileSet  *token.FileSet
 	logger   *slog.Logger
 	importer *workspaceImporter
+
+	// checkMu serializes whole type-checking sessions. It is acquired by the
+	// exported entry points (EnsureTypeChecked, TypeCheckPackage) and held for
+	// the entire recursive check, including the go/types.Config.Check call. The
+	// nested path — workspaceImporter.Import reaching a dependency — calls
+	// typeCheckLocked directly and must NOT re-acquire it, which is what keeps
+	// the recursion from deadlocking on a non-reentrant mutex.
+	//
+	// Serializing whole sessions is deliberate. Type-checking is expensive but
+	// memoized, so contention is paid once per package; the alternative (letting
+	// two goroutines check overlapping dependency closures at once) cannot
+	// distinguish "this package is on my own call stack" — a real cycle, which
+	// must be broken with a placeholder — from "another goroutine is checking
+	// it", where a placeholder would be silently wrong. MCP handlers only take a
+	// read lock on the surrounding workspace state, so concurrent requests do
+	// reach here. Handing back a placeholder in that case would let a dependent
+	// type-check against an empty package and then memoize that degraded result
+	// permanently.
+	checkMu sync.Mutex
+
+	// typeCheckInProgress marks the packages on the current check session's call
+	// stack, so Import can break an in-progress cycle. Guarded by checkMu rather
+	// than mu: only the single goroutine holding a session ever touches it, so
+	// membership now means exactly "on my own stack" and nothing else.
+	typeCheckInProgress map[*types.Package]bool
+
+	// mu guards reads and writes of the per-package type-check result fields
+	// (TypesChecked/TypesPkg/TypesInfo/TypesErr). These are read by callers that
+	// hold no session — the EnsureTypeChecked fast path, and consumers walking
+	// ws.Packages — so the writes at the end of a session must still synchronize
+	// with them. It is only ever held for those short field accesses; a session
+	// may acquire mu while holding checkMu, never the reverse.
+	mu sync.Mutex
+
+	// typeCheckHook, if set, is invoked once per package each time
+	// TypeCheckPackage actually performs a check (i.e. passes both the
+	// TypesChecked memo guard and the in-progress/cycle guard). Used by tests
+	// to count real check attempts without adding public API surface.
+	typeCheckHook func(pkg *types.Package)
 }
 
 func NewParser(logger *slog.Logger) *GoParser {
@@ -393,18 +432,77 @@ func contains(slice []string, item string) bool {
 
 // EnsureTypeChecked runs type-checking on a package if it hasn't been done yet.
 // This enables lazy/on-demand type-checking instead of eager upfront checking.
+//
+// Guards on TypesChecked, not TypesPkg != nil: go/types.Config.Check returns a
+// populated package even when checking fails (see TypeCheckPackage), so
+// TypesPkg is normally non-nil after a completed attempt regardless of
+// success. Guarding on TypesPkg would treat "checked and failed" the same as
+// "never checked" and re-run — and recursively re-run every dependency of —
+// the check on every single call.
 func (p *GoParser) EnsureTypeChecked(ws *types.Workspace, pkg *types.Package) {
-	if pkg.TypesPkg != nil {
+	p.mu.Lock()
+	checked := pkg.TypesChecked
+	p.mu.Unlock()
+	if checked {
 		return
 	}
 	p.TypeCheckPackage(ws, pkg)
 }
 
 // TypeCheckPackage runs go/types type-checking on a package.
-// Results are stored in pkg.TypesInfo and pkg.TypesPkg.
-// Errors are silently ignored — packages that fail type-checking
-// will have nil TypesInfo and fall back to AST-based inference.
+// Results are stored in pkg.TypesInfo, pkg.TypesPkg and pkg.TypesErr, and
+// pkg.TypesChecked is set once the attempt completes — on success AND on
+// failure. Errors are logged but not returned — packages that fail
+// type-checking still get their (partial) TypesInfo/TypesPkg stored so
+// dependents can use best-effort results instead of falling back to nothing.
+//
+// Memoisation and re-entrancy: the check recurses into itself through
+// workspaceImporter.Import for every workspace-local import encountered by
+// go/types.Config.Check. Two guards make that safe:
+//   - pkg.TypesChecked (set at the very end) stops a package from ever being
+//     checked twice.
+//   - p.typeCheckInProgress (set for the duration of one call) closes an
+//     in-progress cycle: the check folds in-package _test.go files into the
+//     same pass (see below), so "A_test.go imports B, B imports A" is
+//     reachable even though Go forbids import cycles outside tests. When that
+//     happens, Import (not this function) breaks the cycle by handing
+//     go/types a placeholder package instead of recursing back in here.
+//
+// TypeCheckPackage is the exported entry point and takes the session lock.
+// Callers already inside a session (Import) use typeCheckLocked instead.
 func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
+	p.checkMu.Lock()
+	defer p.checkMu.Unlock()
+	p.typeCheckLocked(ws, pkg)
+}
+
+// typeCheckLocked performs the actual check. It requires p.checkMu to be held,
+// which makes p.typeCheckInProgress private to this goroutine and lets the
+// in-progress marker mean precisely "on my own call stack".
+func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
+	p.mu.Lock()
+	checked := pkg.TypesChecked
+	p.mu.Unlock()
+	if checked {
+		return
+	}
+
+	if p.typeCheckInProgress == nil {
+		p.typeCheckInProgress = make(map[*types.Package]bool)
+	}
+	if p.typeCheckInProgress[pkg] {
+		// Already being checked further up this same call stack (a cycle
+		// reached through in-package test files). Import's placeholder
+		// handles the recursive import; there is nothing more to do here.
+		return
+	}
+	p.typeCheckInProgress[pkg] = true
+	defer delete(p.typeCheckInProgress, pkg)
+
+	if p.typeCheckHook != nil {
+		p.typeCheckHook(pkg)
+	}
+
 	var files []*ast.File
 	for _, f := range pkg.Files {
 		if f.AST != nil {
@@ -412,6 +510,13 @@ func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
 		}
 	}
 	if len(files) == 0 {
+		// Nothing to check (e.g. every file in the package failed to parse).
+		// Still mark it checked: leaving TypesChecked false would make every
+		// future import of this package re-enter here on the (cheap, but
+		// pointless) chance that files might appear.
+		p.mu.Lock()
+		pkg.TypesChecked = true
+		p.mu.Unlock()
 		return
 	}
 
@@ -430,18 +535,25 @@ func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
 	typesPkg, info, err := p.checkFiles(ws, pkg, withTests)
 	if err != nil && len(withTests) > len(files) {
 		// A test file that fails to type-check must not cost the whole package its
-		// type info, so retry without them.
+		// type info, so retry without them. The retry's result — success or
+		// failure — is what gets recorded below.
 		p.logger.Debug("type-checking with test files failed, retrying without", "package", pkg.ImportPath, "err", err)
 		typesPkg, info, err = p.checkFiles(ws, pkg, files)
 	}
 	if err != nil {
 		p.logger.Debug("type-checking failed (falling back to AST inference)", "package", pkg.ImportPath, "err", err)
-		// Still store partial results — go/types populates info even on errors
-		pkg.TypesInfo = info
-		return
 	}
-	pkg.TypesInfo = info
+
+	p.mu.Lock()
+	// go/types.Config.Check returns a non-nil, Complete() package even on
+	// error (partial results from whatever it managed to resolve), so store
+	// it unconditionally — dependents can use best-effort info instead of
+	// nothing at all.
 	pkg.TypesPkg = typesPkg
+	pkg.TypesInfo = info
+	pkg.TypesErr = err
+	pkg.TypesChecked = true
+	p.mu.Unlock()
 }
 
 // checkFiles runs go/types over the given file set, returning the populated Info
@@ -473,13 +585,40 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// Check if this is a workspace-local package
 	if fsPath, ok := imp.ws.ImportToPath[path]; ok {
 		if pkg, ok := imp.ws.Packages[fsPath]; ok {
-			if pkg.TypesPkg != nil {
-				return pkg.TypesPkg, nil
+			// Import is only ever reached from inside go/types.Config.Check,
+			// which runs under a type-check session, so p.checkMu is already
+			// held by this goroutine and typeCheckInProgress belongs to this
+			// call stack alone.
+			if imp.parser.typeCheckInProgress[pkg] {
+				// This package is being type-checked further up our own call
+				// stack (a cycle reached through in-package _test.go files —
+				// those are folded into the same check, so "A_test.go imports
+				// B, B imports A" is reachable despite Go forbidding import
+				// cycles outside tests). Recursing would not terminate, so
+				// hand go/types a placeholder: it records a resolution error
+				// for this import and unwinds normally.
+				return gotypes.NewPackage(path, pkg.Name), nil
 			}
-			// Type-check this dependency first (lazy/recursive)
-			imp.parser.TypeCheckPackage(imp.ws, pkg)
-			if pkg.TypesPkg != nil {
-				return pkg.TypesPkg, nil
+
+			// Type-check this dependency first (lazy/recursive). Call the
+			// locked variant: re-entering TypeCheckPackage would try to take
+			// checkMu a second time on this goroutine and deadlock.
+			imp.parser.typeCheckLocked(imp.ws, pkg)
+
+			imp.parser.mu.Lock()
+			typesPkg := pkg.TypesPkg
+			imp.parser.mu.Unlock()
+
+			// Whenever a check attempt has completed — success or failure —
+			// use whatever it produced. go/types.Config.Check returns a
+			// populated package even on error, so re-checking a failed
+			// package would not improve on this and would re-trigger the
+			// same cascade of dependency re-checks the memoisation exists to
+			// prevent. typesPkg is nil here only if the package had zero
+			// parseable files, in which case there is nothing useful
+			// to hand back and the stdlib fallback below is the last resort.
+			if typesPkg != nil {
+				return typesPkg, nil
 			}
 		}
 	}

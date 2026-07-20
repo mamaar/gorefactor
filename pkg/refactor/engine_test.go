@@ -164,3 +164,54 @@ func TestDefaultEngine_findOperationConflicts(t *testing.T) {
 		t.Error("Expected conflicts with overlapping changes")
 	}
 }
+
+// TestDefaultEngine_EnsureTypeCheckedPackage_ScopedToTarget verifies that
+// EnsureTypeCheckedPackage only type-checks the requested package and the
+// dependencies it transitively pulls in through the importer, leaving
+// unrelated packages untouched. This is the whole point of the scoped
+// method: on a workspace with many packages, callers that only care about
+// one package should not pay to type-check the rest.
+func TestDefaultEngine_EnsureTypeCheckedPackage_ScopedToTarget(t *testing.T) {
+	engine, ws := writeRenameFieldWorkspace(t, map[string]string{
+		"dep/dep.go": `package dep
+
+func Helper() int {
+	return 42
+}
+`,
+		"user/user.go": `package user
+
+import "example.com/m/dep"
+
+func Use() int {
+	return dep.Helper()
+}
+`,
+		"unrelated/unrelated.go": `package unrelated
+
+func Standalone() int {
+	return 1
+}
+`,
+	})
+	de, ok := engine.(*DefaultEngine)
+	if !ok {
+		t.Fatalf("engine is not *DefaultEngine")
+	}
+
+	de.EnsureTypeCheckedPackage(ws, "example.com/m/user")
+
+	userPkg := findPackageByName(t, ws, "user")
+	depPkg := findPackageByName(t, ws, "dep")
+	unrelatedPkg := findPackageByName(t, ws, "unrelated")
+
+	if !userPkg.TypesChecked {
+		t.Error("expected target package user to be type-checked")
+	}
+	if !depPkg.TypesChecked {
+		t.Error("expected transitive dependency dep to be type-checked (importer pulls it in lazily)")
+	}
+	if unrelatedPkg.TypesChecked {
+		t.Error("expected unrelated package to NOT be type-checked when only user is requested")
+	}
+}

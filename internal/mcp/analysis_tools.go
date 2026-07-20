@@ -498,7 +498,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		rr, err := analyzers.Run(ws, ifinit.Analyzer, in.Package)
 		if err != nil {
@@ -542,7 +542,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		rr, err := analyzers.Run(ws, ifinit.Analyzer, in.Package)
 		if err != nil {
@@ -749,7 +749,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// InvertCondition only skips unsafe float comparison flips when it can
 		// see operand types, and type-checking is lazy.
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		maxNesting := in.MaxNestingDepth
 		if maxNesting <= 0 {
@@ -807,7 +807,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// InvertCondition only skips unsafe float comparison flips when it can
 		// see operand types, and type-checking is lazy.
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		maxNesting := in.MaxNestingDepth
 		if maxNesting <= 0 {
@@ -897,7 +897,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// InvertCondition only skips unsafe float comparison flips when it can
 		// see operand types, and type-checking is lazy.
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a, err := earlyReturnAnalyzer(in.MinBodyLines, in.Patterns)
 		if err != nil {
@@ -938,7 +938,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// InvertCondition only skips unsafe float comparison flips when it can
 		// see operand types, and type-checking is lazy.
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a, err := earlyReturnAnalyzer(in.MinBodyLines, in.Patterns)
 		if err != nil {
@@ -1004,7 +1004,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// The float/NaN guard in pushNeg needs operand types to skip unsafe
 		// ordering-operator flips, and type-checking is lazy.
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a := redundantNegationsAnalyzer(in.MinReduction)
 		rr, err := analyzers.Run(ws, a, in.Package)
@@ -1034,7 +1034,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// The float/NaN guard in pushNeg needs operand types to skip unsafe
 		// ordering-operator flips, and type-checking is lazy.
-		state.GetEngine().EnsureTypeChecked(ws)
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a := redundantNegationsAnalyzer(in.MinReduction)
 		rr, err := analyzers.Run(ws, a, in.Package)
