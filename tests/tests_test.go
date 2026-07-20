@@ -676,6 +676,103 @@ func TestFixIfInit(t *testing.T) {
 	compareGoldenFiles(t, "fix_if_init", tmpDir)
 }
 
+// runFixIfInit copies fixtureDir, type-checks it (the ifinit analyzer's
+// collision-downgrade and type-incompatible-skip decisions read
+// pass.TypesInfo, and loadWorkspace alone does not type-check), runs the
+// ifinit analyzer, and applies every resulting fix. It returns the temp
+// dir so callers can compare golden files and/or verify compilation.
+func runFixIfInit(t *testing.T, fixtureDir string) string {
+	t.Helper()
+	tmpDir := copyFixture(t, fixtureDir)
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+	eng.EnsureTypeChecked(ws)
+
+	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	return tmpDir
+}
+
+// TestFixIfInitElseIf covers de-sugaring of `else if init; cond { ... }`
+// into a nested block: a single else-if with no trailing else, and a
+// chain of two else-ifs (each with its own init) ending in a plain else.
+func TestFixIfInitElseIf(t *testing.T) {
+	tmpDir := runFixIfInit(t, "fix_if_init_elseif")
+	compareGoldenFiles(t, "fix_if_init_elseif", tmpDir)
+}
+
+// TestFixIfInitCollision covers the ':=' -> '=' downgrade when every
+// non-blank LHS name in the hoisted init already exists in the landing
+// block (siblings, chained siblings, a partial collision that must stay
+// ':=', and a collision against a function parameter).
+func TestFixIfInitCollision(t *testing.T) {
+	tmpDir := runFixIfInit(t, "fix_if_init_collision")
+	compareGoldenFiles(t, "fix_if_init_collision", tmpDir)
+}
+
+// TestFixIfInitSwitch covers switch-init hoisting: a tagged switch, a
+// nil-tag switch, and a type switch (where only Init is hoisted, never
+// Assign).
+func TestFixIfInitSwitch(t *testing.T) {
+	tmpDir := runFixIfInit(t, "fix_if_init_switch")
+	compareGoldenFiles(t, "fix_if_init_switch", tmpDir)
+}
+
+// TestFixIfInitSkip covers sites that must never be hoisted: a for-loop
+// init, an if that is the direct Stmt of a LabeledStmt, and a collision
+// where the RHS type is not assignable to the pre-existing name's type.
+// The golden file is byte-identical to the input.
+func TestFixIfInitSkip(t *testing.T) {
+	tmpDir := runFixIfInit(t, "fix_if_init_skip")
+	compareGoldenFiles(t, "fix_if_init_skip", tmpDir)
+}
+
+// TestFixIfInit_Compiles is the ifinit analogue of
+// TestThreadContext_Compiles: createEngine sets SkipCompilation: true, so
+// every golden test above compares text but never proves the result
+// actually compiles. This test applies the ifinit fix for every ifinit
+// fixture and then runs `go build ./...` in the temp module directory —
+// an independent, non-engine check that the rendered output is real,
+// compiling Go.
+func TestFixIfInit_Compiles(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go binary not found on PATH")
+	}
+
+	fixtures := []string{
+		"fix_if_init",
+		"fix_if_init_elseif",
+		"fix_if_init_collision",
+		"fix_if_init_switch",
+		"fix_if_init_skip",
+	}
+
+	for _, fixture := range fixtures {
+		t.Run(fixture, func(t *testing.T) {
+			tmpDir := runFixIfInit(t, fixture)
+
+			buildCmd := exec.Command("go", "build", "./...")
+			buildCmd.Dir = tmpDir
+			if out, err := buildCmd.CombinedOutput(); err != nil {
+				t.Fatalf("go build ./... failed after ifinit fix:\n%s", out)
+			}
+
+			vetCmd := exec.Command("go", "vet", "./...")
+			vetCmd.Dir = tmpDir
+			if out, err := vetCmd.CombinedOutput(); err != nil {
+				t.Fatalf("go vet ./... failed after ifinit fix:\n%s", out)
+			}
+		})
+	}
+}
+
 func TestFixBooleanBranching(t *testing.T) {
 	tmpDir := copyFixture(t, "fix_boolean_branching")
 	eng := createEngine(t)

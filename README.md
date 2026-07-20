@@ -77,8 +77,8 @@ The server communicates over stdio using the MCP protocol.
 
 | Tool | Description |
 |------|-------------|
-| `detect_if_init_assignments` | Find assignments that could use if-init statements |
-| `fix_if_init_assignments` | Auto-fix if-init assignments |
+| `detect_if_init_assignments` | Find if/switch/type-switch init assignments (`:=` or `=`) that should be split into a separate assignment and check |
+| `fix_if_init_assignments` | Split if/switch/type-switch init assignments into separate assignment and check statements |
 | `detect_boolean_branching` | Find boolean parameters that control branching |
 | `fix_boolean_branching` | Auto-fix boolean branching issues |
 | `detect_deep_if_else_chains` | Find deeply nested if-else chains |

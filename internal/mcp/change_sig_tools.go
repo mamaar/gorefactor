@@ -18,14 +18,15 @@ type ParamSpec struct {
 }
 
 type ChangeSignatureInput struct {
-	FunctionName string     `json:"function_name" jsonschema:"function or method name (use Type.Method for methods)"`
-	SourceFile   string     `json:"source_file" jsonschema:"file containing the function"`
-	Subcommand   string     `json:"subcommand" jsonschema:"operation: add_param, remove_param, add_return, or remove_return"`
+	FunctionName string      `json:"function_name" jsonschema:"function or method name (use Type.Method for methods)"`
+	SourceFile   string      `json:"source_file" jsonschema:"file containing the function"`
+	Subcommand   string      `json:"subcommand" jsonschema:"operation: add_param, remove_param, add_return, or remove_return"`
 	Params       []ParamSpec `json:"params,omitempty" jsonschema:"full new parameter list (for add_param/remove_param)"`
-	Returns      []string   `json:"returns,omitempty" jsonschema:"full new return type list (for add_return/remove_return)"`
-	DefaultValue string     `json:"default_value,omitempty" jsonschema:"default value for new parameter at call sites"`
-	Position     int        `json:"position,omitempty" jsonschema:"position index of the new parameter (for add_param)"`
-	Propagate    bool       `json:"propagate,omitempty" jsonschema:"propagate changes to interface declarations and sibling implementations"`
+	Returns      []string    `json:"returns,omitempty" jsonschema:"full new return type list (for add_return/remove_return)"`
+	DefaultValue string      `json:"default_value,omitempty" jsonschema:"default value for new parameter at call sites"`
+	Position     int         `json:"position,omitempty" jsonschema:"position index of the new parameter (for add_param)"`
+	Propagate    bool        `json:"propagate,omitempty" jsonschema:"propagate changes to interface declarations and sibling implementations"`
+	DryRun       bool        `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerChangeSignatureTools(s *mcpsdk.Server, state *MCPServer) {
@@ -76,7 +77,7 @@ All call sites are updated automatically.`,
 
 		state.RUnlock()
 
-		result, err := executePlan(state, plan, fmt.Sprintf("change signature: %s %s", in.Subcommand, in.FunctionName))
+		result, err := executePlan(state, plan, fmt.Sprintf("change signature: %s %s", in.Subcommand, in.FunctionName), in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

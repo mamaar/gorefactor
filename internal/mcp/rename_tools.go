@@ -14,6 +14,7 @@ type RenameSymbolInput struct {
 	Symbol  string `json:"symbol" jsonschema:"current symbol name"`
 	NewName string `json:"new_name" jsonschema:"new name for the symbol"`
 	Package string `json:"package,omitempty" jsonschema:"package path (empty for workspace-wide)"`
+	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- rename_package ---
@@ -21,6 +22,7 @@ type RenameSymbolInput struct {
 type RenamePackageInput struct {
 	PackagePath    string `json:"package_path" jsonschema:"path to the package directory"`
 	NewPackageName string `json:"new_package_name" jsonschema:"new package name"`
+	DryRun         bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- rename_method ---
@@ -30,6 +32,7 @@ type RenameMethodInput struct {
 	MethodName    string `json:"method_name" jsonschema:"current method name"`
 	NewMethodName string `json:"new_method_name" jsonschema:"new method name"`
 	PackagePath   string `json:"package_path,omitempty" jsonschema:"package path (empty for workspace-wide)"`
+	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- rename_field ---
@@ -39,6 +42,7 @@ type RenameFieldInput struct {
 	FieldName    string `json:"field_name" jsonschema:"current field name"`
 	NewFieldName string `json:"new_field_name" jsonschema:"new field name"`
 	PackagePath  string `json:"package_path,omitempty" jsonschema:"package path (empty for workspace-wide)"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
@@ -69,7 +73,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "rename "+in.Symbol+" → "+in.NewName)
+		result, err := executePlanWithUnlock(state, plan, "rename "+in.Symbol+" → "+in.NewName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -103,7 +107,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "rename package → "+in.NewPackageName)
+		result, err := executePlanWithUnlock(state, plan, "rename package → "+in.NewPackageName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -135,7 +139,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "rename method "+in.TypeName+"."+in.MethodName+" → "+in.NewMethodName)
+		result, err := executePlanWithUnlock(state, plan, "rename method "+in.TypeName+"."+in.MethodName+" → "+in.NewMethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -179,7 +183,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "rename field "+in.TypeName+"."+in.FieldName+" → "+in.NewFieldName)
+		result, err := executePlanWithUnlock(state, plan, "rename field "+in.TypeName+"."+in.FieldName+" → "+in.NewFieldName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

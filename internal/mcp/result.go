@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -11,14 +12,129 @@ import (
 
 // PlanResult is the structured output returned by mutating refactoring tools.
 type PlanResult struct {
-	Description   string              `json:"description"`
-	AffectedFiles []string            `json:"affected_files"`
-	ChangeCount   int                 `json:"change_count"`
-	ModifiedFiles []string            `json:"modified_files"`
-	Success       bool                `json:"success"`
+	Description   string   `json:"description"`
+	AffectedFiles []string `json:"affected_files"`
+	ChangeCount   int      `json:"change_count"`
+	ModifiedFiles []string `json:"modified_files"`
+	Success       bool     `json:"success"`
 	// SkippedSites lists call sites that could not be automatically rewritten.
 	// Each entry must be updated manually before the build will succeed.
-	SkippedSites  []types.SkippedSite `json:"skipped_sites,omitempty"`
+	SkippedSites []types.SkippedSite `json:"skipped_sites,omitempty"`
+
+	// DryRun is true when the plan was previewed rather than applied. Nothing
+	// was written to disk and ModifiedFiles is empty.
+	DryRun bool `json:"dry_run,omitempty"`
+	// Diffs holds the full before/after text of every change the plan would
+	// make. Populated only on a dry run - it is the artifact the caller
+	// reviews before re-running with dry_run=false.
+	Diffs []FileDiff `json:"diffs,omitempty"`
+	// BlockingIssue is set on a dry run when the plan would be rejected at
+	// apply time (validation failure or a critical impact issue). A dry run
+	// reports this instead of returning an error so the caller can still see
+	// the diffs that led to it.
+	BlockingIssue string `json:"blocking_issue,omitempty"`
+}
+
+// FileDiff groups every planned change to a single file.
+type FileDiff struct {
+	File string `json:"file"`
+	// Action is "modify" or "delete".
+	Action string     `json:"action"`
+	Hunks  []DiffHunk `json:"hunks,omitempty"`
+}
+
+// DiffHunk is one planned edit, with its text untruncated so the reviewer sees
+// the actual code rather than a summary.
+type DiffHunk struct {
+	Description string `json:"description,omitempty"`
+	Start       int    `json:"start"`
+	End         int    `json:"end"`
+	Old         string `json:"old,omitempty"`
+	New         string `json:"new,omitempty"`
+}
+
+// maxHunkText caps a single hunk's before/after text. Generous enough to show
+// a whole function, bounded so a package-wide rewrite cannot blow up the
+// caller's context. Truncation is marked inline so it is never mistaken for
+// the real content.
+const maxHunkText = 8000
+
+func truncateHunk(s string) string {
+	if len(s) <= maxHunkText {
+		return s
+	}
+	return s[:maxHunkText] + fmt.Sprintf("\n... [truncated, %d more bytes]", len(s)-maxHunkText)
+}
+
+// buildDiffs groups changes by file and sorts them into apply order.
+func buildDiffs(changes []types.Change) []FileDiff {
+	byFile := make(map[string][]types.Change)
+	for _, c := range changes {
+		byFile[c.File] = append(byFile[c.File], c)
+	}
+
+	files := make([]string, 0, len(byFile))
+	for f := range byFile {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+
+	diffs := make([]FileDiff, 0, len(files))
+	for _, f := range files {
+		fileChanges := byFile[f]
+		sort.SliceStable(fileChanges, func(i, j int) bool {
+			return fileChanges[i].Start < fileChanges[j].Start
+		})
+
+		fd := FileDiff{File: f, Action: "modify"}
+		for _, c := range fileChanges {
+			if c.Delete {
+				fd.Action = "delete"
+				fd.Hunks = nil
+				break
+			}
+			fd.Hunks = append(fd.Hunks, DiffHunk{
+				Description: c.Description,
+				Start:       c.Start,
+				End:         c.End,
+				Old:         truncateHunk(c.OldText),
+				New:         truncateHunk(c.NewText),
+			})
+		}
+		diffs = append(diffs, fd)
+	}
+	return diffs
+}
+
+// previewPlan renders a plan without touching the filesystem. It runs the same
+// validation ExecutePlan would run, but reports a failure as BlockingIssue
+// rather than an error so the diffs are still returned for review.
+func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *PlanResult {
+	res := &PlanResult{
+		Description:   desc + " (dry run - nothing was written)",
+		AffectedFiles: plan.AffectedFiles,
+		ChangeCount:   len(plan.Changes),
+		Success:       true,
+		DryRun:        true,
+		SkippedSites:  plan.SkippedSites,
+		Diffs:         buildDiffs(plan.Changes),
+	}
+
+	if err := state.GetEngine().ValidateRefactoring(plan); err != nil {
+		res.Success = false
+		res.BlockingIssue = err.Error()
+		return res
+	}
+	if plan.Impact != nil {
+		for _, issue := range plan.Impact.PotentialIssues {
+			if issue.Severity == types.Error {
+				res.Success = false
+				res.BlockingIssue = fmt.Sprintf("critical issue: %s", issue.Description)
+				return res
+			}
+		}
+	}
+	return res
 }
 
 // AnalysisResult is the structured output returned by read-only analysis tools.
@@ -28,7 +144,13 @@ type AnalysisResult struct {
 }
 
 // executePlan validates, executes, and returns a PlanResult for the given plan.
-func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string) (*PlanResult, error) {
+// When dryRun is true it returns the preview instead: no file is written and no
+// workspace sync happens.
+func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dryRun bool) (*PlanResult, error) {
+	if dryRun {
+		return previewPlan(state, plan, desc), nil
+	}
+
 	if err := state.GetEngine().ExecutePlan(plan); err != nil {
 		return nil, fmt.Errorf("execute plan: %w", err)
 	}
@@ -52,9 +174,9 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string) (*P
 // executePlanWithUnlock releases the read lock before calling executePlan.
 // This prevents deadlock when executePlan calls SyncWorkspaceChanges which needs a write lock.
 // Use this when the caller holds a read lock with defer RUnlock().
-func executePlanWithUnlock(state *MCPServer, plan *types.RefactoringPlan, desc string) (*PlanResult, error) {
+func executePlanWithUnlock(state *MCPServer, plan *types.RefactoringPlan, desc string, dryRun bool) (*PlanResult, error) {
 	state.RUnlock()
-	return executePlan(state, plan, desc)
+	return executePlan(state, plan, desc, dryRun)
 }
 
 // textResult is a convenience that marshals v to JSON and wraps it in a

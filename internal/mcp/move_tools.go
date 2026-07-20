@@ -16,6 +16,7 @@ type MoveSymbolInput struct {
 	Symbol      string `json:"symbol" jsonschema:"symbol name to move"`
 	FromPackage string `json:"from_package" jsonschema:"source package path (relative to workspace root)"`
 	ToPackage   string `json:"to_package" jsonschema:"target package path (relative to workspace root)"`
+	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- move_package ---
@@ -23,6 +24,7 @@ type MoveSymbolInput struct {
 type MovePackageInput struct {
 	SourcePackage string `json:"source_package" jsonschema:"source package path"`
 	TargetPackage string `json:"target_package" jsonschema:"target package path"`
+	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- move_dir ---
@@ -30,6 +32,7 @@ type MovePackageInput struct {
 type MoveDirInput struct {
 	SourceDir string `json:"source_dir" jsonschema:"source directory"`
 	TargetDir string `json:"target_dir" jsonschema:"target directory"`
+	DryRun    bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- move_packages ---
@@ -42,6 +45,7 @@ type PackageMappingInput struct {
 type MovePackagesInput struct {
 	Packages  []PackageMappingInput `json:"packages" jsonschema:"list of source→target package mappings"`
 	TargetDir string                `json:"target_dir,omitempty" jsonschema:"common target directory (used when packages list uses relative targets)"`
+	DryRun    bool                  `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
@@ -88,7 +92,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 		locked = false // executePlanWithUnlock releases the lock
-		planResult, err := executePlanWithUnlock(state, plan, "move symbol "+in.Symbol)
+		planResult, err := executePlanWithUnlock(state, plan, "move symbol "+in.Symbol, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -116,7 +120,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "move package")
+		result, err := executePlanWithUnlock(state, plan, "move package", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -142,7 +146,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "move directory")
+		result, err := executePlanWithUnlock(state, plan, "move directory", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -175,7 +179,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "move packages")
+		result, err := executePlanWithUnlock(state, plan, "move packages", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

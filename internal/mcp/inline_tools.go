@@ -14,6 +14,7 @@ type InlineMethodInput struct {
 	MethodName   string `json:"method_name" jsonschema:"name of the method to inline"`
 	SourceStruct string `json:"source_struct" jsonschema:"name of the struct the method belongs to"`
 	TargetFile   string `json:"target_file,omitempty" jsonschema:"specific file to inline in (empty for all call sites)"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- inline_variable ---
@@ -21,6 +22,7 @@ type InlineMethodInput struct {
 type InlineVariableInput struct {
 	VariableName string `json:"variable_name" jsonschema:"name of the variable to inline"`
 	SourceFile   string `json:"source_file" jsonschema:"file containing the variable declaration"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- inline_function ---
@@ -28,6 +30,7 @@ type InlineVariableInput struct {
 type InlineFunctionInput struct {
 	FunctionName string `json:"function_name" jsonschema:"name of the function to inline"`
 	SourceFile   string `json:"source_file" jsonschema:"file containing the function definition"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
@@ -55,7 +58,7 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "inline method "+in.SourceStruct+"."+in.MethodName)
+		result, err := executePlanWithUnlock(state, plan, "inline method "+in.SourceStruct+"."+in.MethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -81,7 +84,7 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "inline variable "+in.VariableName)
+		result, err := executePlanWithUnlock(state, plan, "inline variable "+in.VariableName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -115,7 +118,7 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "inline function "+in.FunctionName)
+		result, err := executePlanWithUnlock(state, plan, "inline function "+in.FunctionName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

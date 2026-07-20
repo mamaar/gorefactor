@@ -19,6 +19,7 @@ type AddContextParameterInput struct {
 	DefaultValue string `json:"default_value,omitempty" jsonschema:"value at call sites, defaults to context.TODO()"`
 	Propagate    bool   `json:"propagate,omitempty" jsonschema:"propagate changes to interface declarations and sibling implementations"`
 	Thread       bool   `json:"thread,omitempty" jsonschema:"thread ctx transitively through all callers up to entrypoints, instead of injecting context.TODO() at each call site"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerContextTools(s *mcpsdk.Server, state *MCPServer) {
@@ -68,7 +69,7 @@ Set thread: true to thread a real context.Context transitively through every cal
 
 			state.RUnlock()
 
-			result, err := executePlan(state, plan, fmt.Sprintf("thread context through: %s", in.FunctionName))
+			result, err := executePlan(state, plan, fmt.Sprintf("thread context through: %s", in.FunctionName), in.DryRun)
 			if err != nil {
 				return errResult(err), nil, nil
 			}
@@ -152,7 +153,7 @@ Set thread: true to thread a real context.Context transitively through every cal
 
 		state.RUnlock()
 
-		result, err := executePlan(state, plan, fmt.Sprintf("add context parameter: %s", in.FunctionName))
+		result, err := executePlan(state, plan, fmt.Sprintf("add context parameter: %s", in.FunctionName), in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

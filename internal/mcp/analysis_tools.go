@@ -95,12 +95,28 @@ type IfInitViolationItem struct {
 	Expression string   `json:"expression"`
 	Snippet    string   `json:"snippet"`
 	Function   string   `json:"function"`
+	Kind       string   `json:"kind"`
+	IsElseIf   bool     `json:"is_else_if"`
+	Skipped    bool     `json:"skipped"`
+	SkipReason string   `json:"skip_reason,omitempty"`
 }
 
 // --- fix_if_init_assignments ---
 
 type FixIfInitInput struct {
 	Package string `json:"package,omitempty" jsonschema:"specific package to fix"`
+	DryRun  bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+}
+
+// IfInitSkippedItem describes a site the detector reported but could not
+// rewrite safely (Result.Skipped == true, and therefore no SuggestedFix /
+// types.Change was produced for it).
+type IfInitSkippedItem struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Function   string `json:"function"`
+	Snippet    string `json:"snippet"`
+	SkipReason string `json:"skip_reason"`
 }
 
 // --- detect_missing_context_params ---
@@ -141,6 +157,7 @@ type BooleanBranchingViolationItem struct {
 type FixBooleanBranchingInput struct {
 	Package     string `json:"package,omitempty" jsonschema:"specific package to fix"`
 	MinBranches int    `json:"min_branches,omitempty" jsonschema:"minimum number of boolean branches from the same source to fix (default 2)"`
+	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- detect_deep_if_else_chains ---
@@ -169,6 +186,7 @@ type FixDeepIfElseInput struct {
 	Package         string `json:"package,omitempty" jsonschema:"specific package to fix"`
 	MaxNestingDepth int    `json:"max_nesting_depth,omitempty" jsonschema:"maximum acceptable nesting depth (default 2)"`
 	MinElseLines    int    `json:"min_else_lines,omitempty" jsonschema:"minimum lines in else to trigger fix (default 3)"`
+	DryRun          bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- detect_improper_error_wrapping ---
@@ -194,6 +212,7 @@ type ErrorWrappingViolationItem struct {
 type FixErrorWrappingInput struct {
 	Package       string `json:"package,omitempty" jsonschema:"specific package to fix"`
 	SeverityLevel string `json:"severity_level,omitempty" jsonschema:"fix violations at this severity or higher: critical, warning, or info (default critical)"`
+	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- detect_environment_booleans ---
@@ -381,7 +400,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "detect_if_init_assignments",
-		Description: "Detect if-init assignment statements (e.g., `if x, err := f(); err != nil {}`) that violate coding conventions requiring separate assignment and error check.",
+		Description: "Detect if/switch/type-switch init assignments (both `:=` and `=`, e.g. `if x, err := f(); err != nil {}` or `if err = f(); err != nil {}`) that should be split into a separate assignment and check. Each result reports its kind, whether it's part of an else-if chain, and whether the site was skipped as unsafe to rewrite (with skip_reason); for-loop and range inits are never flagged.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectIfInitInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -390,6 +409,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
+		state.GetEngine().EnsureTypeChecked(ws)
 
 		rr, err := analyzers.Run(ws, ifinit.Analyzer, in.Package)
 		if err != nil {
@@ -408,6 +429,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 					Expression: v.Expression,
 					Snippet:    v.Snippet,
 					Function:   v.Function,
+					Kind:       v.Kind,
+					IsElseIf:   v.IsElseIf,
+					Skipped:    v.Skipped,
+					SkipReason: v.SkipReason,
 				}
 			}
 		}
@@ -419,7 +444,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_if_init_assignments",
-		Description: "Automatically fix if-init assignment statements by splitting them into separate assignment and if-check statements.",
+		Description: "Split if/switch/type-switch init assignments into a separate assignment and check statement. Else-if inits are de-sugared into a nested block, and a `:=` is downgraded to `=` when every declared name already exists in the target scope. Sites the analyzer judges unsafe to rewrite are left unmodified and reported in `skipped` rather than silently dropped; for loops and range statements are never touched.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixIfInitInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -429,30 +454,55 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
+		state.GetEngine().EnsureTypeChecked(ws)
+
 		rr, err := analyzers.Run(ws, ifinit.Analyzer, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
+		var skipped []IfInitSkippedItem
+		if results, ok := rr.Result.([]*ifinit.Result); ok {
+			for _, v := range results {
+				if v.Skipped {
+					skipped = append(skipped, IfInitSkippedItem{
+						File:       v.File,
+						Line:       v.Line,
+						Function:   v.Function,
+						Snippet:    v.Snippet,
+						SkipReason: v.SkipReason,
+					})
+				}
+			}
+		}
+
 		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 		if len(changes) == 0 {
 			state.RUnlock()
+			message := "No if-init assignment violations found"
+			if len(skipped) > 0 {
+				message = "All if-init assignment sites found were skipped as unsafe to rewrite; see skipped"
+			}
 			return textResult(map[string]any{
 				"files_modified": []string{},
 				"changes_count":  0,
-				"message":        "No if-init assignment violations found",
+				"skipped":        skipped,
+				"skipped_count":  len(skipped),
+				"message":        message,
 			}), nil, nil
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
-		result, err := executePlanWithUnlock(state, plan, "Fix if-init assignments")
+		result, err := executePlanWithUnlock(state, plan, "Fix if-init assignments", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 		return textResult(map[string]any{
 			"files_modified": result.ModifiedFiles,
 			"changes_count":  result.ChangeCount,
+			"skipped":        skipped,
+			"skipped_count":  len(skipped),
 		}), nil, nil
 	})
 
@@ -583,7 +633,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
-		result, err := executePlanWithUnlock(state, plan, "Fix boolean branching")
+		result, err := executePlanWithUnlock(state, plan, "Fix boolean branching", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -699,7 +749,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
-		result, err := executePlanWithUnlock(state, plan, "Fix deep if-else chains")
+		result, err := executePlanWithUnlock(state, plan, "Fix deep if-else chains", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -809,7 +859,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
-		result, err := executePlanWithUnlock(state, plan, "Fix error wrapping")
+		result, err := executePlanWithUnlock(state, plan, "Fix error wrapping", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

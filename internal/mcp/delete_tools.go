@@ -14,6 +14,7 @@ type SafeDeleteInput struct {
 	Symbol     string `json:"symbol" jsonschema:"name of the symbol to delete"`
 	SourceFile string `json:"source_file" jsonschema:"file containing the symbol declaration"`
 	Force      bool   `json:"force,omitempty" jsonschema:"delete even if references exist (removes references too)"`
+	DryRun     bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
@@ -38,7 +39,7 @@ func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "safe delete "+in.Symbol)
+		result, err := executePlanWithUnlock(state, plan, "safe delete "+in.Symbol, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

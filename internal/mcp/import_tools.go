@@ -12,6 +12,7 @@ import (
 
 type CleanAliasesInput struct {
 	PreserveConflicts bool `json:"preserve_conflicts,omitempty" jsonschema:"keep aliases only where needed to resolve naming conflicts"`
+	DryRun            bool `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- standardize_imports ---
@@ -22,13 +23,15 @@ type AliasRuleInput struct {
 }
 
 type StandardizeImportsInput struct {
-	Rules []AliasRuleInput `json:"rules" jsonschema:"list of alias rules to apply"`
+	Rules  []AliasRuleInput `json:"rules" jsonschema:"list of alias rules to apply"`
+	DryRun bool             `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- resolve_alias_conflicts ---
 
 type ResolveAliasConflictsInput struct {
 	Strategy string `json:"strategy,omitempty" jsonschema:"conflict resolution strategy: full_names, shortest_unique, or custom_alias (default: full_names)"`
+	DryRun   bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- convert_aliases ---
@@ -36,6 +39,7 @@ type ResolveAliasConflictsInput struct {
 type ConvertAliasesInput struct {
 	ToFullNames   bool `json:"to_full_names,omitempty" jsonschema:"convert short imports to fully-qualified alias names"`
 	FromFullNames bool `json:"from_full_names,omitempty" jsonschema:"convert fully-qualified alias names back to short imports"`
+	DryRun        bool `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
@@ -58,7 +62,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "clean aliases")
+		result, err := executePlanWithUnlock(state, plan, "clean aliases", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -91,7 +95,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "standardize imports")
+		result, err := executePlanWithUnlock(state, plan, "standardize imports", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -124,7 +128,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "resolve alias conflicts")
+		result, err := executePlanWithUnlock(state, plan, "resolve alias conflicts", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -151,7 +155,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "convert aliases")
+		result, err := executePlanWithUnlock(state, plan, "convert aliases", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

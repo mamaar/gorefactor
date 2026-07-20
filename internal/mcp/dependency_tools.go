@@ -14,6 +14,7 @@ type MoveByDependenciesInput struct {
 	MoveSharedTo string   `json:"move_shared_to,omitempty" jsonschema:"target directory for shared symbols (e.g. pkg/)"`
 	KeepInternal []string `json:"keep_internal,omitempty" jsonschema:"packages that should stay internal"`
 	AnalyzeOnly  bool     `json:"analyze_only,omitempty" jsonschema:"if true, only analyze and suggest moves without applying"`
+	DryRun       bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- organize_by_layers ---
@@ -23,12 +24,14 @@ type OrganizeByLayersInput struct {
 	InfrastructureLayer string `json:"infrastructure_layer,omitempty" jsonschema:"directory for infrastructure layer (e.g. pkg/)"`
 	ApplicationLayer    string `json:"application_layer,omitempty" jsonschema:"directory for application layer (e.g. internal/)"`
 	ReorderImports      bool   `json:"reorder_imports,omitempty" jsonschema:"whether to reorder imports according to layers"`
+	DryRun              bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- fix_cycles ---
 
 type FixCyclesInput struct {
 	AutoFix bool `json:"auto_fix,omitempty" jsonschema:"attempt to automatically fix detected cycles"`
+	DryRun  bool `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
@@ -62,7 +65,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 				"impact":         plan.Impact,
 			}), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "move by dependencies")
+		result, err := executePlanWithUnlock(state, plan, "move by dependencies", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -91,7 +94,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "organize by layers")
+		result, err := executePlanWithUnlock(state, plan, "organize by layers", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -125,7 +128,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 				"impact":       plan.Impact,
 			}), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "fix cycles")
+		result, err := executePlanWithUnlock(state, plan, "fix cycles", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

@@ -17,6 +17,7 @@ type ExtractMethodInput struct {
 	EndLine       int    `json:"end_line" jsonschema:"last line of the code block to extract"`
 	NewMethodName string `json:"new_method_name" jsonschema:"name for the new method"`
 	TargetStruct  string `json:"target_struct" jsonschema:"name of the struct to attach the method to"`
+	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- extract_function ---
@@ -26,6 +27,7 @@ type ExtractFunctionInput struct {
 	StartLine       int    `json:"start_line" jsonschema:"first line of the code block to extract"`
 	EndLine         int    `json:"end_line" jsonschema:"last line of the code block to extract"`
 	NewFunctionName string `json:"new_function_name" jsonschema:"name for the new function"`
+	DryRun          bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- extract_interface ---
@@ -35,6 +37,7 @@ type ExtractInterfaceInput struct {
 	InterfaceName string   `json:"interface_name" jsonschema:"name for the new interface"`
 	Methods       []string `json:"methods" jsonschema:"list of method names to include in the interface"`
 	TargetPackage string   `json:"target_package,omitempty" jsonschema:"package to place the new interface in (empty for same package)"`
+	DryRun        bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- extract_variable ---
@@ -45,6 +48,7 @@ type ExtractVariableInput struct {
 	EndLine      int    `json:"end_line" jsonschema:"end line of the expression"`
 	VariableName string `json:"variable_name" jsonschema:"name for the new variable"`
 	Expression   string `json:"expression,omitempty" jsonschema:"the expression text to extract (helps disambiguation)"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func resolveFile(ws *types.Workspace, path string) string {
@@ -78,7 +82,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 		// executePlanWithUnlock releases the read lock, so no defer RUnlock needed
-		result, err := executePlanWithUnlock(state, plan, "extract method "+in.NewMethodName)
+		result, err := executePlanWithUnlock(state, plan, "extract method "+in.NewMethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -106,7 +110,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "extract function "+in.NewFunctionName)
+		result, err := executePlanWithUnlock(state, plan, "extract function "+in.NewFunctionName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -138,7 +142,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "extract interface "+in.InterfaceName)
+		result, err := executePlanWithUnlock(state, plan, "extract interface "+in.InterfaceName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -167,7 +171,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "extract variable "+in.VariableName)
+		result, err := executePlanWithUnlock(state, plan, "extract variable "+in.VariableName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

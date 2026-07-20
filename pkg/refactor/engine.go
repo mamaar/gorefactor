@@ -67,6 +67,7 @@ type RefactorEngine interface {
 	// Analysis
 	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
 	ValidateRefactoring(plan *types.RefactoringPlan) error
+	EnsureTypeChecked(ws *types.Workspace)
 
 	// Execution
 	ExecutePlan(plan *types.RefactoringPlan) error
@@ -360,11 +361,7 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 	// requires a type-checked workspace. Type-checking is lazy (LoadWorkspace does
 	// not perform it), so ensure every package is checked before the operation
 	// builds its reference index — otherwise FindFieldReferences fails closed.
-	if e.parser != nil {
-		for _, pkg := range ws.Packages {
-			e.parser.EnsureTypeChecked(ws, pkg)
-		}
-	}
+	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -410,11 +407,7 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 	// before the operation builds its reference index — otherwise CallSitesOf
 	// would silently find nothing and the operation would "succeed" having
 	// changed nothing. Mirrors RenameField above.
-	if e.parser != nil {
-		for _, pkg := range ws.Packages {
-			e.parser.EnsureTypeChecked(ws, pkg)
-		}
-	}
+	e.EnsureTypeChecked(ws)
 
 	// The operation type-checks packages itself when it needs to build its own
 	// reference index (CachedIndex nil), and doing that requires a parser with
@@ -872,6 +865,18 @@ func (e *DefaultEngine) AnalyzeImpact(ws *types.Workspace, op types.Operation) (
 // ValidateRefactoring validates a complete refactoring plan
 func (e *DefaultEngine) ValidateRefactoring(plan *types.RefactoringPlan) error {
 	return e.validator.ValidatePlanWithConfig(plan, e.config)
+}
+
+// EnsureTypeChecked type-checks every package in the workspace. Type-checking
+// is lazy (LoadWorkspace does not perform it) and (*analysis.GoParser).EnsureTypeChecked
+// is a no-op once a package has already been checked, so calling this
+// repeatedly across operations is cheap.
+func (e *DefaultEngine) EnsureTypeChecked(ws *types.Workspace) {
+	if e.parser != nil {
+		for _, pkg := range ws.Packages {
+			e.parser.EnsureTypeChecked(ws, pkg)
+		}
+	}
 }
 
 // ExecutePlan applies a refactoring plan to the workspace
@@ -1425,11 +1430,7 @@ func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOper
 	// A batch may contain operations that resolve references by go/types object
 	// identity (rename_field), which fail closed without type info. Type-checking
 	// is lazy, and EnsureTypeChecked is a no-op once a package is checked.
-	if e.parser != nil {
-		for _, pkg := range ws.Packages {
-			e.parser.EnsureTypeChecked(ws, pkg)
-		}
-	}
+	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {

@@ -19,6 +19,7 @@ type ExportSpecInput struct {
 type CreateFacadeInput struct {
 	TargetPackage string            `json:"target_package" jsonschema:"package path where the facade will be created"`
 	Exports       []ExportSpecInput `json:"exports" jsonschema:"list of symbols to re-export through the facade"`
+	DryRun        bool              `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- generate_facades ---
@@ -27,6 +28,7 @@ type GenerateFacadesInput struct {
 	ModulesDir  string   `json:"modules_dir" jsonschema:"directory containing the modules to generate facades for"`
 	TargetDir   string   `json:"target_dir" jsonschema:"directory where facade packages will be created"`
 	ExportTypes []string `json:"export_types,omitempty" jsonschema:"types of symbols to export (e.g. commands, models, events)"`
+	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- update_facades ---
@@ -34,6 +36,7 @@ type GenerateFacadesInput struct {
 type UpdateFacadesInput struct {
 	FacadePackages []string `json:"facade_packages,omitempty" jsonschema:"list of facade package paths to update"`
 	AutoDetect     bool     `json:"auto_detect,omitempty" jsonschema:"automatically detect facade packages to update"`
+	DryRun         bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
@@ -64,7 +67,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "create facade")
+		result, err := executePlanWithUnlock(state, plan, "create facade", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -91,7 +94,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "generate facades")
+		result, err := executePlanWithUnlock(state, plan, "generate facades", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -117,7 +120,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "update facades")
+		result, err := executePlanWithUnlock(state, plan, "update facades", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

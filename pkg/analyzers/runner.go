@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"reflect"
+	"sort"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ast/inspector"
@@ -34,6 +36,9 @@ func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunRes
 		for _, pkg := range ws.Packages {
 			packages = append(packages, pkg)
 		}
+		sort.Slice(packages, func(i, j int) bool {
+			return packages[i].ImportPath < packages[j].ImportPath
+		})
 	}
 
 	combined := &RunResult{}
@@ -44,10 +49,37 @@ func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunRes
 			return nil, err
 		}
 		combined.Diagnostics = append(combined.Diagnostics, rr.Diagnostics...)
-		combined.Result = rr.Result
+		combined.Result = mergeResults(combined.Result, rr.Result)
 	}
 
 	return combined, nil
+}
+
+// mergeResults accumulates per-package analyzer results into a single value.
+//
+// Callers of Run type-assert the returned RunResult.Result to the analyzer's
+// own concrete slice type (e.g. rr.Result.([]*ifinit.Result)), so we cannot
+// simply collect results into a []any — that would break every existing
+// assertion. Instead we use reflection to append same-typed slices together,
+// preserving the concrete element type across the merge. Non-slice results
+// (or slices of mismatched types, which should not occur in practice) fall
+// back to last-write-wins, matching the pre-existing behaviour.
+func mergeResults(acc, next any) any {
+	if acc == nil {
+		return next
+	}
+	if next == nil {
+		return acc
+	}
+
+	accVal := reflect.ValueOf(acc)
+	nextVal := reflect.ValueOf(next)
+	if accVal.Kind() == reflect.Slice && nextVal.Kind() == reflect.Slice &&
+		reflect.TypeOf(acc) == reflect.TypeOf(next) {
+		return reflect.AppendSlice(accVal, nextVal).Interface()
+	}
+
+	return next
 }
 
 // RunPackage executes an analyzer against a single workspace package.
