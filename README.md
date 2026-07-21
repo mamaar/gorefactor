@@ -83,6 +83,8 @@ The server communicates over stdio using the MCP protocol.
 | `fix_boolean_branching` | Auto-fix boolean branching issues |
 | `detect_deep_if_else_chains` | Find deeply nested if-else chains |
 | `fix_deep_if_else_chains` | Flatten deep if-else chains into sequential guard clauses |
+| `detect_switchable_if_chains` | Find if/else-if chains that map onto a tagged, tagless, or type switch |
+| `fix_switchable_if_chains` | Convert those chains into switch statements; complements `fix_deep_if_else_chains` |
 | `detect_early_returns` | Find conditionals that could be inverted into early-return guard clauses |
 | `fix_early_returns` | Invert those conditionals so the happy path is no longer nested; previews by default |
 | `detect_redundant_negations` | Find negated boolean expressions that De Morgan's laws would simplify |

@@ -14,6 +14,7 @@ import (
 	"github.com/mamaar/gorefactor/pkg/analyzers/deepifelse"
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
+	"github.com/mamaar/gorefactor/pkg/analyzers/switchchain"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -829,6 +830,28 @@ func TestFixDeepIfElseChain(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	compareGoldenFiles(t, "fix_deep_if_else_chain", tmpDir)
+}
+
+// TestFixSwitchableIfChains covers the golden path for fix_switchable_if_chains:
+// the tagged, tagless and type-switch chains all convert, the chain
+// fix_deep_if_else_chains already owns is left untouched, and the chain with a
+// later-link init produces no rewrite at all (its SuggestedFix is never
+// attached, so it yields no Change and no diff to apply).
+func TestFixSwitchableIfChains(t *testing.T) {
+	tmpDir := copyFixture(t, "switch_chains")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+	plan := analyzers.ChangesToPlan(changes)
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "switch_chains", tmpDir)
 }
 
 func TestFixErrorWrapping(t *testing.T) {

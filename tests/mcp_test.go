@@ -250,6 +250,12 @@ func TestMCPTools(t *testing.T) {
 			},
 		},
 		{
+			name: "fix_switchable_if_chains", fixture: "switch_chains", tool: "fix_switchable_if_chains",
+			args: func(dir string) map[string]any {
+				return map[string]any{}
+			},
+		},
+		{
 			// apply=true is required: this tool previews by default, and a
 			// preview writes nothing, which would make the golden pass
 			// without the fixer having done anything.

@@ -19,6 +19,7 @@ import (
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
 	"github.com/mamaar/gorefactor/pkg/analyzers/missingctx"
+	"github.com/mamaar/gorefactor/pkg/analyzers/switchchain"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -207,6 +208,51 @@ type FixDeepIfElseInput struct {
 	MaxNestingDepth int    `json:"max_nesting_depth,omitempty" jsonschema:"maximum acceptable nesting depth (default 2)"`
 	MinElseLines    int    `json:"min_else_lines,omitempty" jsonschema:"minimum lines in else to trigger fix (default 3)"`
 	DryRun          bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+}
+
+// --- detect_switchable_if_chains ---
+
+type DetectSwitchableIfChainsInput struct {
+	Package     string   `json:"package,omitempty" jsonschema:"specific package to analyze"`
+	MinBranches int      `json:"min_branches,omitempty" jsonschema:"minimum number of branches (case clauses) a chain must have (default 3)"`
+	Kinds       []string `json:"kinds,omitempty" jsonschema:"restrict to these switch forms: tagged, tagless, type_switch (default all)"`
+}
+
+type SwitchableIfChainViolationItem struct {
+	File       string   `json:"file"`
+	Line       int      `json:"line"`
+	Column     int      `json:"column"`
+	Function   string   `json:"function_name"`
+	Kind       string   `json:"kind"`
+	Branches   int      `json:"branches"`
+	Tag        string   `json:"tag,omitempty"`
+	Cases      []string `json:"cases,omitempty"`
+	HasDefault bool     `json:"has_default"`
+	// Fixable reports whether fix_switchable_if_chains would actually rewrite
+	// this chain. Detection is broader than rewriting, so a violation with
+	// fixable=false needs to be converted by hand.
+	Fixable bool   `json:"fixable"`
+	Reason  string `json:"reason,omitempty"`
+}
+
+// SwitchableIfChainUnfixableItem is a detected chain the fixer left alone,
+// with the reason it could not be rewritten.
+type SwitchableIfChainUnfixableItem struct {
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Function string `json:"function_name"`
+	Kind     string `json:"kind"`
+	Branches int    `json:"branches"`
+	Reason   string `json:"reason"`
+}
+
+// --- fix_switchable_if_chains ---
+
+type FixSwitchableIfChainsInput struct {
+	Package     string   `json:"package,omitempty" jsonschema:"specific package to fix"`
+	MinBranches int      `json:"min_branches,omitempty" jsonschema:"minimum number of branches (case clauses) a chain must have (default 3)"`
+	Kinds       []string `json:"kinds,omitempty" jsonschema:"restrict to these switch forms: tagged, tagless, type_switch (default all)"`
+	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // --- detect_early_returns / fix_early_returns ---
@@ -993,6 +1039,251 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"early_returns":   totalEarlyReturns,
 			"unfixable":       unfixable,
 			"partial":         partial,
+		}
+		return textResult(withDryRun(out, result)), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "detect_switchable_if_chains",
+		Description: "Detect if/else-if/else chains that map onto a switch statement, in three forms: tagged (`switch x { case a, b: }`, when every branch compares the same operand against values), type switch (`switch v := x.(type)`, when every branch is a `v, ok := x.(T)` assertion), and tagless (`switch { case cond: }`, the general form used when neither of the other two applies). A chain whose branches all hand control away and whose `if` headers declare nothing is left entirely to fix_deep_if_else_chains instead, since guard clauses are the better idiom there — this tool only reports the dispatch-shaped chains that one refuses. `fixable` means fix_switchable_if_chains would actually rewrite this chain; check `reason` for why a violation was left unconverted, including chains where a later `else if` header declares variables (reason names fix_if_init_assignments — run that first).",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectSwitchableIfChainsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		// The analyzer's stmtfacts.Terminates panic detection, its
+		// constant-duplicate detection, and its type-identity comparisons all
+		// need real type information to fire, and type-checking is lazy.
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
+
+		minBranches := in.MinBranches
+		if minBranches <= 0 {
+			minBranches = 3
+		}
+		opts := []switchchain.Option{switchchain.WithMinBranches(minBranches)}
+		if len(in.Kinds) > 0 {
+			opts = append(opts, switchchain.WithKinds(in.Kinds...))
+		}
+		a := switchchain.NewAnalyzer(opts...)
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		var items []SwitchableIfChainViolationItem
+		if results, ok := rr.Result.([]*switchchain.Result); ok {
+			items = make([]SwitchableIfChainViolationItem, len(results))
+			for i, v := range results {
+				items[i] = SwitchableIfChainViolationItem{
+					File:       v.File,
+					Line:       v.Line,
+					Column:     v.Column,
+					Function:   v.Function,
+					Kind:       v.Kind,
+					Branches:   v.Branches,
+					Tag:        v.Tag,
+					Cases:      v.Cases,
+					HasDefault: v.HasDefault,
+					Fixable:    v.Fixable,
+					Reason:     v.Reason,
+				}
+			}
+		}
+		return textResult(map[string]any{
+			"violations":  items,
+			"total_count": len(items),
+		}), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "fix_switchable_if_chains",
+		Description: "Convert if/else-if/else chains into switch statements, in three forms — tagged, type switch, and tagless (see detect_switchable_if_chains for what each form requires). This is the deliberate complement of fix_deep_if_else_chains: a chain whose branches all hand control away and whose `if` headers declare nothing is left entirely to that tool, since guard clauses are the better idiom there; this tool converts the dispatch-shaped chains that one refuses. A chain that declares variables in a later `else if` header is refused with a reason naming fix_if_init_assignments — run that first and this second to convert roughly a third more chains. Every rewrite is verified against go/types before being applied; one that would not type-check is left alone and reported in `unfixable` with the type error as the reason.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixSwitchableIfChainsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		// The analyzer's stmtfacts.Terminates panic detection, its
+		// constant-duplicate detection, and its type-identity comparisons all
+		// need real type information to fire, and type-checking is lazy.
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
+
+		minBranches := in.MinBranches
+		if minBranches <= 0 {
+			minBranches = 3
+		}
+		opts := []switchchain.Option{switchchain.WithMinBranches(minBranches)}
+		if len(in.Kinds) > 0 {
+			opts = append(opts, switchchain.WithKinds(in.Kinds...))
+		}
+		a := switchchain.NewAnalyzer(opts...)
+		rr, err := analyzers.Run(ws, a, in.Package)
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+
+		// Only chains that actually carried a rewrite count as fixed. The
+		// detector fires on any chain that maps onto one of the requested
+		// switch forms, but the rewriter handles a narrower shape (a pure
+		// tag, no declarations in a later else-if header, ...), so the two
+		// sets differ.
+		//
+		// results and rr.Diagnostics are produced in lockstep, one diagnostic
+		// per result, in the same order, both within a single package and
+		// across packages (Run concatenates both slices per package in the
+		// same order) — the analyzer reports a diagnostic and appends a
+		// Result together, one per chain, and attaches a SuggestedFix only
+		// when Fixable. Filtering both to their Fixable subsequence therefore
+		// keeps them aligned index for index, which is what lets
+		// fixableResults[i] below be paired with changes[i].
+		var unfixable []SwitchableIfChainUnfixableItem
+		var fixableResults []*switchchain.Result
+		if results, ok := rr.Result.([]*switchchain.Result); ok {
+			for _, r := range results {
+				if !r.Fixable {
+					unfixable = append(unfixable, SwitchableIfChainUnfixableItem{
+						File:     r.File,
+						Line:     r.Line,
+						Function: r.Function,
+						Kind:     r.Kind,
+						Branches: r.Branches,
+						Reason:   r.Reason,
+					})
+					continue
+				}
+				fixableResults = append(fixableResults, r)
+			}
+		}
+
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		if len(changes) == 0 {
+			state.RUnlock()
+			message := "No switchable if-else chains found"
+			if len(unfixable) > 0 {
+				message = fmt.Sprintf("Found %d if-else chain(s) that map onto a switch, none of a shape this fixer can rewrite", len(unfixable))
+			}
+			return textResult(map[string]any{
+				"files_modified":   []string{},
+				"changes_count":    0,
+				"functions_fixed":  []string{},
+				"chains_converted": 0,
+				"unfixable":        unfixable,
+				"message":          message,
+			}), nil, nil
+		}
+
+		if len(changes) != len(fixableResults) {
+			// Should not happen (see the invariant above); refuse rather than
+			// guess which change belongs to which finding.
+			state.RUnlock()
+			state.logger.Error("fix_switchable_if_chains: diagnostics/results count mismatch, refusing to apply",
+				"changes", len(changes), "fixable_results", len(fixableResults))
+			return errResult(fmt.Errorf("internal error: could not correlate %d rewrite(s) with %d fixable finding(s)", len(changes), len(fixableResults))), nil, nil
+		}
+
+		// Every rewrite this fixer proposes is verified against go/types
+		// before it is applied, since duplicate case values or a tag whose
+		// evaluation order or side effects differ from the chain's are the
+		// kind of mistake only the type checker (not
+		// Validator.validateCompilation, which merely parses the new text for
+		// syntax) will catch. The importer must be the one that type-checked
+		// ws — see VerifyPlanTypesWithImporter's doc comment — which is why
+		// EnsureTypeCheckedPackage above and this share state.GetEngine().
+		importer := state.GetEngine().Importer()
+		plan := analyzers.ChangesToPlan(changes)
+		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, importer)
+
+		if verification.Skipped != "" {
+			// TypeCheckResult.OK() says nothing about skipped packages, so an
+			// unverified plan must not be treated as clean. Nothing is
+			// applied; the caller is told why.
+			state.RUnlock()
+			return textResult(map[string]any{
+				"files_modified":   []string{},
+				"changes_count":    0,
+				"functions_fixed":  []string{},
+				"chains_converted": 0,
+				"unfixable":        unfixable,
+				"message": fmt.Sprintf(
+					"Found %d rewrite(s) but could not verify them against go/types, so nothing was applied: %s",
+					len(changes), verification.Skipped),
+			}), nil, nil
+		}
+
+		var appliedResults []*switchchain.Result
+		var appliedChanges []types.Change
+
+		if verification.OK() {
+			appliedResults = fixableResults
+			appliedChanges = changes
+		} else {
+			// The plan as a whole would not type-check. Re-verify each
+			// rewrite on its own so the ones that are actually safe still get
+			// applied, instead of refusing the entire batch over one bad
+			// chain (e.g. one with duplicate case values that only the type
+			// checker can see).
+			for i, c := range changes {
+				r := fixableResults[i]
+				single := refactor.VerifyPlanTypesWithImporter(ws, analyzers.ChangesToPlan([]types.Change{c}), importer)
+				switch {
+				case single.Skipped != "":
+					unfixable = append(unfixable, SwitchableIfChainUnfixableItem{
+						File: r.File, Line: r.Line, Function: r.Function, Kind: r.Kind, Branches: r.Branches,
+						Reason: fmt.Sprintf("could not verify this rewrite against go/types: %s", single.Skipped),
+					})
+				case !single.OK():
+					unfixable = append(unfixable, SwitchableIfChainUnfixableItem{
+						File: r.File, Line: r.Line, Function: r.Function, Kind: r.Kind, Branches: r.Branches,
+						Reason: fmt.Sprintf("applying this rewrite would not type-check: %s", strings.Join(single.NewErrors, "; ")),
+					})
+				default:
+					appliedResults = append(appliedResults, r)
+					appliedChanges = append(appliedChanges, c)
+				}
+			}
+		}
+
+		if len(appliedChanges) == 0 {
+			state.RUnlock()
+			return textResult(map[string]any{
+				"files_modified":   []string{},
+				"changes_count":    0,
+				"functions_fixed":  []string{},
+				"chains_converted": 0,
+				"unfixable":        unfixable,
+				"message":          fmt.Sprintf("Found %d switchable if-else chain(s), none of a shape this fixer could safely apply", len(unfixable)),
+			}), nil, nil
+		}
+
+		// functions_fixed/chains_converted only ever describe what was
+		// actually applied: a fixable finding dropped above for failing
+		// verification is reported in unfixable, not counted here.
+		var functionsFixed []string
+		for _, r := range appliedResults {
+			functionsFixed = append(functionsFixed, r.Function)
+		}
+
+		plan = analyzers.ChangesToPlan(appliedChanges)
+		result, err := executePlanWithUnlock(state, plan, "Convert if-else chains to switch statements", in.DryRun)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		out := map[string]any{
+			"files_modified":   result.ModifiedFiles,
+			"changes_count":    result.ChangeCount,
+			"functions_fixed":  functionsFixed,
+			"chains_converted": len(appliedResults),
+			"unfixable":        unfixable,
 		}
 		return textResult(withDryRun(out, result)), nil, nil
 	})

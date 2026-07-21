@@ -92,7 +92,7 @@ func terminates(info *types.Info, stmt ast.Stmt, label string, breakExits bool) 
 	case *ast.ForStmt:
 		// `for {}` never finishes on its own, so only a break aimed at it can
 		// let control past. A `for` with a condition can always fail it.
-		return s.Cond == nil && !breaksOutList(s.Body.List, label)
+		return s.Cond == nil && !BreaksOut(s.Body.List, label)
 
 	case *ast.RangeStmt:
 		// A range loop ends when the operand is exhausted.
@@ -129,13 +129,13 @@ func lastTerminates(info *types.Info, list []ast.Stmt, breakExits bool) bool {
 //
 // The clause bodies are checked with breakExits false: a break in a clause
 // lands immediately after the switch, so a clause ending in one does not hand
-// control away. The separate breaksOutList scan is still needed because a break
+// control away. The separate BreaksOut scan is still needed because a break
 // in any position, not just the last, gives control that same way out.
 func clausesTerminate(info *types.Info, body *ast.BlockStmt, label string, needDefault bool) bool {
 	if body == nil || len(body.List) == 0 {
 		return false
 	}
-	if breaksOutList(body.List, label) {
+	if BreaksOut(body.List, label) {
 		return false
 	}
 
@@ -164,10 +164,28 @@ func clausesTerminate(info *types.Info, body *ast.BlockStmt, label string, needD
 	return hasDefault || !needDefault
 }
 
-// breaksOutList reports whether any break inside a statement list targets the
-// construct enclosing that list — a bare break that no nested breakable
+// BreaksOut reports whether a break inside this statement list targets the
+// construct that encloses the list — a bare break that no nested breakable
 // construct has already captured, or a break naming label.
-func breaksOutList(list []ast.Stmt, label string) bool {
+//
+// terminates asks this of a for/switch body to decide whether the loop or
+// switch is itself a terminating statement: if nothing inside can break out
+// of it, and it has no other way to fall through, control never reaches past
+// it. A second caller lives outside this function's original purpose: code
+// about to wrap a statement list in a new switch — turning an if/else-if
+// chain into a switch statement — asks BreaksOut(list, "") first. A bare
+// break in that list currently targets whatever loop or switch already
+// encloses it; wrapping the list in a fresh switch would make the switch
+// intercept that break instead, silently changing where control goes. If
+// BreaksOut reports true, the conversion has to be refused rather than
+// performed.
+//
+// label distinguishes the two callers' questions: "" asks only whether a bare
+// break escapes, which is what the switch-wrapping caller needs, since the
+// new switch has no label of its own to be aimed at. A non-empty label also
+// counts `break label` as escaping, which is what terminates needs when the
+// for/switch under test is itself labeled.
+func BreaksOut(list []ast.Stmt, label string) bool {
 	for _, stmt := range list {
 		if breaksOut(stmt, label) {
 			return true
@@ -188,10 +206,10 @@ func breaksOut(stmt ast.Stmt, label string) bool {
 		return label != "" && s.Label.Name == label
 
 	case *ast.BlockStmt:
-		return breaksOutList(s.List, label)
+		return BreaksOut(s.List, label)
 
 	case *ast.IfStmt:
-		if breaksOutList(s.Body.List, label) {
+		if BreaksOut(s.Body.List, label) {
 			return true
 		}
 		if s.Else != nil {
@@ -203,10 +221,10 @@ func breaksOut(stmt ast.Stmt, label string) bool {
 		return breaksOut(s.Stmt, label)
 
 	case *ast.CaseClause:
-		return breaksOutList(s.Body, label)
+		return BreaksOut(s.Body, label)
 
 	case *ast.CommClause:
-		return breaksOutList(s.Body, label)
+		return BreaksOut(s.Body, label)
 
 	case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt:
 		// A nested breakable construct swallows every bare break beneath it.

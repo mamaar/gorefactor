@@ -316,7 +316,7 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 	}
 
 	res := w.flattenChain(ifStmt, d)
-	if res.lifted > 0 && spansRawString(ifStmt) {
+	if res.lifted > 0 && srctext.SpansRawString(ifStmt) {
 		res = flattened{reason: "the chain contains a multi-line raw string literal, whose indentation is part of its value"}
 	}
 
@@ -327,7 +327,7 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 		fixes = append(fixes, analysis.SuggestedFix{
 			Message: fixMessage,
 			TextEdits: []analysis.TextEdit{
-				{Pos: ifStmt.Pos(), End: ifStmt.End(), NewText: []byte(applyIndent(res.text, indent))},
+				{Pos: ifStmt.Pos(), End: ifStmt.End(), NewText: []byte(srctext.ApplyIndent(res.text, indent))},
 			},
 		})
 	}
@@ -362,34 +362,6 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 
 	w.reported = append(w.reported, span{ifStmt.Pos(), ifStmt.End()})
 	return true
-}
-
-// spansRawString reports whether n contains a raw string literal that runs over
-// more than one line.
-//
-// Flattening moves statements between nesting levels, and every level costs a
-// tab. Inside a back-quoted literal that leading whitespace is not layout, it is
-// the value: re-indenting `foo\n\tbar` changes what the program computes, and
-// gofmt will not put it back afterwards because gofmt never touches string
-// contents either. There is no correct amount of indentation to apply to such a
-// chain, so it is left exactly as written.
-func spansRawString(n ast.Node) bool {
-	found := false
-	ast.Inspect(n, func(node ast.Node) bool {
-		if found {
-			return false
-		}
-		lit, ok := node.(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			return true
-		}
-		if strings.HasPrefix(lit.Value, "`") && strings.Contains(lit.Value, "\n") {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
 }
 
 func (w *walker) alreadyReported(n ast.Node) bool {
@@ -598,7 +570,7 @@ func (w *walker) flattenChain(root *ast.IfStmt, d dest) flattened {
 			return stop(link, reasonNoText)
 		}
 
-		stmts = append(stmts, header+" {\n"+indentLines(body.text, "\t")+"\n}")
+		stmts = append(stmts, header+" {\n"+srctext.IndentLines(body.text, "\t")+"\n}")
 		lifted += 1 + body.lifted
 		reason = firstReason(reason, body.reason)
 	}
@@ -660,7 +632,7 @@ func (w *walker) invert(link *ast.IfStmt, final *ast.BlockStmt, d dest, read map
 		return flattened{}, false, reasonNoText
 	}
 
-	text := "if " + inverted + " {\n" + indentLines(guard.text, "\t") + "\n}\n" + body.text
+	text := "if " + inverted + " {\n" + srctext.IndentLines(guard.text, "\t") + "\n}\n" + body.text
 	return flattened{
 		text:   text,
 		lifted: 1 + guard.lifted + body.lifted,
@@ -729,12 +701,12 @@ func (w *walker) flattenBlock(block *ast.BlockStmt, d dest) flattened {
 		edits = append(edits, splice{
 			start: w.offset(ifStmt.Pos()),
 			end:   w.offset(ifStmt.End()),
-			text:  applyIndent(res.text, indent),
+			text:  srctext.ApplyIndent(res.text, indent),
 		})
 		lifted += res.lifted
 	}
 
-	return flattened{normalize(applySplices(base, start, edits)), lifted, reason}
+	return flattened{srctext.Normalize(applySplices(base, start, edits)), lifted, reason}
 }
 
 // dedentBlocked reports why block's own declarations cannot be merged into the
@@ -923,7 +895,7 @@ func (w *walker) stmtText(n ast.Node) string {
 	if text == "" {
 		return ""
 	}
-	return normalize(srctext.Indentation(w.content, w.offset(n.Pos())) + text)
+	return srctext.Normalize(srctext.Indentation(w.content, w.offset(n.Pos())) + text)
 }
 
 func (w *walker) blockLines(block *ast.BlockStmt) int {
@@ -970,94 +942,6 @@ func applySplices(base string, base0 int, edits []splice) string {
 	sb.WriteString(base[cursor:])
 
 	return sb.String()
-}
-
-// normalize drops whitespace-only lines from both ends of text and removes the
-// indentation every remaining line shares, leaving the text at column zero with
-// its internal structure intact. Interior blank lines are kept: they carry the
-// author's grouping.
-func normalize(text string) string {
-	lines := strings.Split(text, "\n")
-
-	start := 0
-	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
-		start++
-	}
-	end := len(lines)
-	for end > start && strings.TrimSpace(lines[end-1]) == "" {
-		end--
-	}
-	if start >= end {
-		return ""
-	}
-	lines = lines[start:end]
-
-	prefix := ""
-	first := true
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
-		if first {
-			prefix = indent
-			first = false
-			continue
-		}
-		prefix = commonPrefix(prefix, indent)
-	}
-
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			lines[i] = ""
-			continue
-		}
-		lines[i] = strings.TrimPrefix(line, prefix)
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func commonPrefix(a, b string) string {
-	n := min(len(a), len(b))
-	for i := range n {
-		if a[i] != b[i] {
-			return a[:i]
-		}
-	}
-	return a[:n]
-}
-
-// indentLines prefixes every non-blank line, which is what nesting a rendered
-// block one level deeper amounts to.
-func indentLines(text, prefix string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			lines[i] = ""
-			continue
-		}
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, "\n")
-}
-
-// applyIndent prepares rendered text for splicing into a file at a position
-// that already carries indent. Every line but the first needs it added; the
-// first is written where the old statement began.
-func applyIndent(text, indent string) string {
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if i == 0 {
-			continue
-		}
-		if strings.TrimSpace(line) == "" {
-			lines[i] = ""
-			continue
-		}
-		lines[i] = indent + line
-	}
-	return strings.Join(lines, "\n")
 }
 
 // --- small helpers ---

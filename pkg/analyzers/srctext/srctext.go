@@ -321,3 +321,119 @@ func trimBlankEdgeLines(text string) string {
 	}
 	return strings.Join(lines[start:end], "\n")
 }
+
+// SpansRawString reports whether n contains a raw string literal that runs over
+// more than one line.
+//
+// Flattening moves statements between nesting levels, and every level costs a
+// tab. Inside a back-quoted literal that leading whitespace is not layout, it is
+// the value: re-indenting `foo\n\tbar` changes what the program computes, and
+// gofmt will not put it back afterwards because gofmt never touches string
+// contents either. There is no correct amount of indentation to apply to such a
+// chain, so it is left exactly as written.
+func SpansRawString(n ast.Node) bool {
+	found := false
+	ast.Inspect(n, func(node ast.Node) bool {
+		if found {
+			return false
+		}
+		lit, ok := node.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		if strings.HasPrefix(lit.Value, "`") && strings.Contains(lit.Value, "\n") {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// Normalize drops whitespace-only lines from both ends of text and removes the
+// indentation every remaining line shares, leaving the text at column zero with
+// its internal structure intact. Interior blank lines are kept: they carry the
+// author's grouping.
+func Normalize(text string) string {
+	lines := strings.Split(text, "\n")
+
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+	if start >= end {
+		return ""
+	}
+	lines = lines[start:end]
+
+	prefix := ""
+	first := true
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		if first {
+			prefix = indent
+			first = false
+			continue
+		}
+		prefix = commonPrefix(prefix, indent)
+	}
+
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = strings.TrimPrefix(line, prefix)
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func commonPrefix(a, b string) string {
+	n := min(len(a), len(b))
+	for i := range n {
+		if a[i] != b[i] {
+			return a[:i]
+		}
+	}
+	return a[:n]
+}
+
+// IndentLines prefixes every non-blank line, which is what nesting a rendered
+// block one level deeper amounts to.
+func IndentLines(text, prefix string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
+}
+
+// ApplyIndent prepares rendered text for splicing into a file at a position
+// that already carries indent. Every line but the first needs it added; the
+// first is written where the old statement began.
+func ApplyIndent(text, indent string) string {
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = indent + line
+	}
+	return strings.Join(lines, "\n")
+}

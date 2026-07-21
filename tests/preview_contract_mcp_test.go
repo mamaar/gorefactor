@@ -48,6 +48,10 @@ func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 			name: "fix_deep_if_else_chains", fixture: "fix_deep_if_else",
 			tool: "fix_deep_if_else_chains", args: map[string]any{"dry_run": true},
 		},
+		{
+			name: "fix_switchable_if_chains", fixture: "switch_chains",
+			tool: "fix_switchable_if_chains", args: map[string]any{"dry_run": true},
+		},
 	}
 
 	for _, tc := range cases {
