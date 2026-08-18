@@ -380,6 +380,134 @@ func caller() { seed(1, context.Background()) }
 	}
 }
 
+// TestRenderThreadPlan_InternalFabricatedCtx covers the shape
+// detect_missing_context_params actually reports: the seed takes no context
+// and fabricates one inline as an argument to the I/O call below it. Adding
+// the parameter without rewriting that argument would leave the seed with an
+// unused ctx and the caller's real context still not reaching the I/O — the
+// threading would compile and do nothing.
+func TestRenderThreadPlan_InternalFabricatedCtx(t *testing.T) {
+	path := "p/foo.go"
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		path: `package p
+
+import "context"
+
+func fetch(ctx context.Context, key string) string { return key }
+
+func seed(key string) string {
+	return fetch(context.TODO(), key)
+}
+
+func caller(c context.Context) string { return seed("k") }
+`,
+	}, path, "seed")
+
+	changes, err := renderThreadPlan(ws, plan)
+	if err != nil {
+		t.Fatalf("renderThreadPlan: %v", err)
+	}
+	assertNoOverlaps(t, changes)
+
+	full := wsPath(ws, path)
+	got := renderedContent(t, ws, full, changes)
+	assertParses(t, path, got)
+
+	if !strings.Contains(got, "func seed(ctx context.Context, key string) string {") {
+		t.Fatalf("expected seed to gain a ctx parameter, got:\n%s", got)
+	}
+	if !strings.Contains(got, "return fetch(ctx, key)") {
+		t.Fatalf("expected the fabricated context.TODO() to become ctx, got:\n%s", got)
+	}
+	if strings.Contains(got, "context.TODO()") {
+		t.Fatalf("fabricated context.TODO() must be gone, got:\n%s", got)
+	}
+	// The caller already holds a real context, so threading stops there and
+	// passes it straight through.
+	if !strings.Contains(got, `return seed(c, "k")`) {
+		t.Fatalf("expected the caller's real ctx to be passed to seed, got:\n%s", got)
+	}
+}
+
+// TestRenderThreadPlan_InternalFabricatedCtxNotInClosure pins the boundary
+// renderInternalCtxUses draws: a context fabricated inside a nested closure is
+// left alone. The closure may outlive the call that built it, so its
+// context.Background() can be a deliberate detachment rather than a stand-in
+// for a parameter that did not exist.
+func TestRenderThreadPlan_InternalFabricatedCtxNotInClosure(t *testing.T) {
+	path := "p/foo.go"
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		path: `package p
+
+import "context"
+
+func fetch(ctx context.Context, key string) string { return key }
+
+func seed(key string) string {
+	go func() {
+		_ = fetch(context.Background(), key)
+	}()
+	return fetch(context.TODO(), key)
+}
+
+func caller(c context.Context) string { return seed("k") }
+`,
+	}, path, "seed")
+
+	changes, err := renderThreadPlan(ws, plan)
+	if err != nil {
+		t.Fatalf("renderThreadPlan: %v", err)
+	}
+	assertNoOverlaps(t, changes)
+
+	full := wsPath(ws, path)
+	got := renderedContent(t, ws, full, changes)
+	assertParses(t, path, got)
+
+	if !strings.Contains(got, "_ = fetch(context.Background(), key)") {
+		t.Fatalf("closure's own context.Background() must survive, got:\n%s", got)
+	}
+	if !strings.Contains(got, "return fetch(ctx, key)") {
+		t.Fatalf("expected the non-closure context.TODO() to become ctx, got:\n%s", got)
+	}
+}
+
+// TestRenderThreadPlan_InternalCtxDoesNotDoubleEdit guards the overlap the new
+// step could otherwise cause: renderCallEdit's case (b) already replaces the
+// fabricated argument at a call to a function that kept its own ctx parameter,
+// and that call site can sit inside a body this step also scans. Only one
+// change may be emitted for those bytes.
+func TestRenderThreadPlan_InternalCtxDoesNotDoubleEdit(t *testing.T) {
+	path := "p/foo.go"
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		path: `package p
+
+import "context"
+
+func seed(a int, ctx context.Context) {
+	_ = a
+	_ = ctx
+}
+
+func caller() { seed(1, context.Background()) }
+`,
+	}, path, "seed")
+
+	changes, err := renderThreadPlan(ws, plan)
+	if err != nil {
+		t.Fatalf("renderThreadPlan: %v", err)
+	}
+	assertNoOverlaps(t, changes)
+
+	full := wsPath(ws, path)
+	got := renderedContent(t, ws, full, changes)
+	assertParses(t, path, got)
+
+	if !strings.Contains(got, "func caller(ctx context.Context) { seed(1, ctx) }") {
+		t.Fatalf("expected exactly one rewrite of the fabricated root, got:\n%s", got)
+	}
+}
+
 // TestRenderThreadPlan_NoChangeForRealCtx is the negative twin of the above:
 // when the caller already passes a real ctx (not a fabricated root), nothing
 // must be emitted for that call site — and since that also means the caller

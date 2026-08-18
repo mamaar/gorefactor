@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	gotypes "go/types"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -41,10 +42,14 @@ import (
 //     insertions with no notion of "outermost call" or substring splicing:
 //     applying both yields Save(ctx, Load(ctx, id)) for free.
 //
-// The one non-zero-width edit this file emits is the call-site REPLACEMENT
-// case (renderCallEdit's case b, and renderFakeDeletion). Both are bounded
-// tightly enough that they can never contain another edit's offset: see
-// their doc comments.
+// The non-zero-width edits this file emits are the call-site REPLACEMENT case
+// (renderCallEdit's case b), renderFakeDeletion, and renderInternalCtxUses.
+// The first two are bounded tightly enough that they can never contain another
+// edit's offset: see their doc comments. renderInternalCtxUses is the one that
+// cannot argue that from its own shape — it replaces a context.TODO() call
+// expression that a case (b) replacement or a fake deletion may have claimed
+// already — so it is rendered last and drops any candidate overlapping a
+// change already decided.
 
 // RenderChanges converts the plan built by Validate/Execute into the
 // concrete Changes that apply context threading. It is the seam
@@ -137,10 +142,25 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		changes = append(changes, del)
 	}
 
-	// 4. Imports: add "context" to every file that needs it and doesn't
+	// 4. Internal fabricated contexts: a function that GAINS a ctx parameter
+	// has no reason left to fabricate one in its own body. Step 3 above
+	// handles the `ctx := context.TODO()` statement shape; this handles the
+	// other one — an inline context.TODO()/context.Background() passed
+	// straight to a downstream call, which is precisely what
+	// detect_missing_context_params reports as the reason the function needed
+	// a parameter in the first place. Without this the threading is inert
+	// exactly where it was aimed: the seed would gain an unused ctx parameter
+	// while the caller's real context still never reached the I/O below it.
+	changes = append(changes, renderInternalCtxUses(ws, plan, changes)...)
+
+	// 5. Imports: add "context" to every file that needs it and doesn't
 	// already have it. Two changes at the same insertion offset would
 	// overlap, so this is done once per file, after every other change has
 	// been decided.
+	//
+	// Step 4 never removes the need for the import in a file it edits: it only
+	// rewrites bodies of functions that are gaining `ctx context.Context` in
+	// step 1, so the declaring file still mentions "context." afterwards.
 	for path, needed := range needsContext {
 		if !needed || hasImport(ws, path, "context") {
 			continue
@@ -151,6 +171,98 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 	}
 
 	return changes, nil
+}
+
+// renderInternalCtxUses rewrites the fabricated root contexts left inside the
+// bodies of the functions that are gaining a ctx parameter, replacing each
+// with that parameter's name. This is the one place the renderer looks
+// DOWNWARD out of a threaded function rather than upward at its callers.
+//
+// The scope is deliberately narrow:
+//
+//   - Only functions in plan.Funcs, i.e. only those actually gaining a
+//     parameter. A root — main, a test, any caller that keeps its own
+//     context — is left alone: its context.Background() is the real base of
+//     the tree, not a stand-in for one.
+//   - Only ordinary declarations with a body. An interface method has none,
+//     and fd.Decl is nil for it.
+//   - Never inside a nested *ast.FuncLit. A closure may outlive the call that
+//     built it (`go func() { work(context.Background()) }()` is plausibly
+//     detached on purpose), and it may bind its own ctx that shadows the new
+//     parameter. This is the same boundary RemoveInternalCtxCreation draws.
+//
+// emitted is every change decided so far. A candidate overlapping one of them
+// is dropped, and that is not hypothetical: renderCallEdit's case (b) already
+// replaces a fabricated argument at a call site that can sit inside one of
+// these very bodies, and step 3 deletes a whole `ctx := context.TODO()`
+// statement whose right-hand side is itself a root context call. In both cases
+// the already-emitted change is the more specific one, so it wins.
+func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []pkgtypes.Change) []pkgtypes.Change {
+	var changes []pkgtypes.Change
+
+	for f, name := range plan.Funcs {
+		fd, ok := plan.Decls[f]
+		if !ok || fd.Decl == nil || fd.Decl.Body == nil || fd.File == nil {
+			continue
+		}
+
+		ast.Inspect(fd.Decl.Body, func(n ast.Node) bool {
+			if _, isLit := n.(*ast.FuncLit); isLit {
+				return false
+			}
+			call, ok := n.(*ast.CallExpr)
+			if !ok || !isRootContextCall(call) {
+				return true
+			}
+
+			start := ws.FileSet.Position(call.Pos()).Offset
+			end := ws.FileSet.Position(call.End()).Offset
+			old := string(fd.File.OriginalContent[start:end])
+			changes = append(changes, pkgtypes.Change{
+				File:    fd.File.Path,
+				Start:   start,
+				End:     end,
+				OldText: old,
+				NewText: name,
+				Description: fmt.Sprintf(
+					"Replace fabricated %s with the new %s parameter in %s", old, name, funcLabel(f)),
+			})
+			// context.TODO()/context.Background() take no arguments, so there
+			// is nothing nested inside to visit.
+			return false
+		})
+	}
+
+	kept := changes[:0]
+	for _, c := range changes {
+		if !overlapsAny(c, emitted) {
+			kept = append(kept, c)
+		}
+	}
+
+	// plan.Funcs is a map, so the order candidates were discovered in is not
+	// stable across runs. Sort so the emitted change list — and the preview
+	// diff built from it — is deterministic.
+	slices.SortFunc(kept, func(a, b pkgtypes.Change) int {
+		if a.File != b.File {
+			return strings.Compare(a.File, b.File)
+		}
+		return a.Start - b.Start
+	})
+
+	return kept
+}
+
+// overlapsAny reports whether c intersects any change in others, using the
+// same definition of overlap as assertNoOverlappingChanges and
+// Serializer.changesOverlap.
+func overlapsAny(c pkgtypes.Change, others []pkgtypes.Change) bool {
+	for _, o := range others {
+		if o.File == c.File && c.Start < o.End && o.Start < c.End {
+			return true
+		}
+	}
+	return false
 }
 
 // insertCtxParam builds the zero-width Change that adds `<name> context.Context`
