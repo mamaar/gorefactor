@@ -1082,10 +1082,12 @@ func (op *MoveSymbolOperation) generateImportChanges(ws *types.Workspace, refere
 			// Convert absolute path to module-relative import path
 			importPath := packagePathToImportPath(ws, targetPackagePath)
 
-			// Check if import already exists
-			hasImport := slices.Contains(refPackage.Imports, importPath)
-
-			if !hasImport {
+			// Check if import already exists. This must be a per-file check:
+			// Package.Imports is the union over every file in the package, so a
+			// package-level check silently skips the import for a file that does
+			// not have it yet whenever a sibling file does — leaving the rewritten
+			// reference (skip.Foo) with no import and the package uncompilable.
+			if !hasImport(ws, ref.File, importPath) {
 				// Generate import change (handles both single-line and multi-line imports)
 				change := generateAddImportChange(ws, ref.File, importPath)
 				if change != nil {
@@ -1257,9 +1259,24 @@ func findFileContainingSymbol(pkg *types.Package, symbol *types.Symbol) *types.F
 	return nil
 }
 
+// findPackageForFile locates the package containing filePath, searching both
+// Files and TestFiles.
+//
+// Package keeps test files in a separate map (see findParsedFile above), so
+// scanning only Files silently misses every _test.go. That miss cascades
+// into generateImportChanges treating a _test.go reference site as if it
+// belonged to no package at all, which skips adding the target package's
+// import there — references get rewritten to a qualified name but the
+// import that qualifier depends on is never added, leaving the file
+// non-compiling.
 func findPackageForFile(ws *types.Workspace, filePath string) *types.Package {
 	for _, pkg := range ws.Packages {
 		for _, file := range pkg.Files {
+			if file.Path == filePath {
+				return pkg
+			}
+		}
+		for _, file := range pkg.TestFiles {
 			if file.Path == filePath {
 				return pkg
 			}

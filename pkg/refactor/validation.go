@@ -626,9 +626,19 @@ func (v *Validator) filterCriticalIssues(issues []refactorTypes.Issue) []refacto
 	return critical
 }
 
+// findPackageForFile locates the package containing filePath, searching both
+// Files and TestFiles. See the package-level findPackageForFile in
+// operations.go for why TestFiles must be included: skipping it makes
+// _test.go reference sites look like they belong to no package, which is
+// silently misread downstream as "nothing to check" rather than "unknown".
 func (v *Validator) findPackageForFile(ws *refactorTypes.Workspace, filePath string) *refactorTypes.Package {
 	for _, pkg := range ws.Packages {
 		for _, file := range pkg.Files {
+			if file.Path == filePath {
+				return pkg
+			}
+		}
+		for _, file := range pkg.TestFiles {
 			if file.Path == filePath {
 				return pkg
 			}
