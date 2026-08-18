@@ -40,6 +40,20 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 		return nil // No changes to apply
 	}
 
+	// Every Change.File must be an absolute path. A relative one is always an
+	// operation that failed to resolve its target against the workspace root,
+	// and os.WriteFile would resolve it against the server process's working
+	// directory instead — writing real files somewhere nobody asked for, with
+	// no error to show for it.
+	//
+	// This runs before anything is touched, and that ordering is the point: the
+	// loop below iterates a map, so a deletion can otherwise be applied before
+	// the bad write is reached, turning a rejected plan into a half-applied one
+	// that has already destroyed the sources.
+	if err := validateChangePathsAbsolute(changes); err != nil {
+		return err
+	}
+
 	// Group changes by file
 	fileChanges := make(map[string][]refactorTypes.Change)
 	for _, change := range changes {
@@ -66,6 +80,31 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 		}
 	}
 
+	return nil
+}
+
+// validateChangePathsAbsolute rejects a change set containing any non-absolute
+// file path. See ApplyChanges for why this is checked up front.
+func validateChangePathsAbsolute(changes []refactorTypes.Change) error {
+	for _, change := range changes {
+		if change.File == "" {
+			return &refactorTypes.RefactorError{
+				Type:    refactorTypes.FileSystemError,
+				Message: fmt.Sprintf("refusing to apply a change with no file path (%s)", change.Description),
+			}
+		}
+		if !filepath.IsAbs(change.File) {
+			return &refactorTypes.RefactorError{
+				Type: refactorTypes.FileSystemError,
+				Message: fmt.Sprintf(
+					"refusing to apply a change to the relative path %q (%s): "+
+						"change paths must be absolute, or they resolve against the server's working directory "+
+						"instead of the workspace",
+					change.File, change.Description),
+				File: change.File,
+			}
+		}
+	}
 	return nil
 }
 

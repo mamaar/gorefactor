@@ -687,3 +687,69 @@ line 5
 		}
 	}
 }
+
+// TestApplyChanges_RejectsRelativePaths is the backstop against the whole
+// class of bug where an operation fails to resolve its destination against the
+// workspace root. A relative Change.File is never intentional: os.WriteFile
+// resolves it against the server process's working directory, so the write
+// succeeds somewhere nobody asked for and no error is ever reported.
+func TestApplyChanges_RejectsRelativePaths(t *testing.T) {
+	serializer := NewSerializer()
+
+	err := serializer.ApplyChanges(nil, []refactorTypes.Change{
+		{
+			File:        filepath.Join("scratch", "pkg", "wms", "wms.go"),
+			NewText:     "package wms\n",
+			Description: "Move file",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected ApplyChanges to reject a relative change path")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error should explain the absolute-path requirement, got: %v", err)
+	}
+}
+
+// TestApplyChanges_RejectsBeforeMutating pins the ordering that turned the
+// move_package bug into a half-move rather than a rejected plan. ApplyChanges
+// iterates a map, so without an up-front check a deletion can be applied
+// before the unresolvable write is ever reached — destroying the sources for a
+// move that then fails to land.
+func TestApplyChanges_RejectsBeforeMutating(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "source.go")
+	if err := os.WriteFile(source, []byte("package p\n"), 0644); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+
+	// The shape of a move: write the destination, delete the source. The
+	// destination path is relative (the bug), the deletion is not.
+	err := serializerApplyBoth(t, []refactorTypes.Change{
+		{
+			File:        filepath.Join("elsewhere", "source.go"),
+			NewText:     "package p\n",
+			Description: "Move file to elsewhere",
+		},
+		{
+			File:        source,
+			Delete:      true,
+			Description: "Remove file (moved)",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected the batch to be rejected")
+	}
+
+	if _, statErr := os.Stat(source); statErr != nil {
+		t.Errorf("source was deleted despite the batch being rejected: %v", statErr)
+	}
+	if _, statErr := os.Stat("elsewhere"); statErr == nil {
+		t.Error(`a relative "elsewhere" directory was created in the test's working directory`)
+	}
+}
+
+func serializerApplyBoth(t *testing.T, changes []refactorTypes.Change) error {
+	t.Helper()
+	return NewSerializer().ApplyChanges(nil, changes)
+}
