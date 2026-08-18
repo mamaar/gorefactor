@@ -230,7 +230,10 @@ func TestThing(t *testing.T) {
 
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
-	// Absolute target so the move is workspace-rooted regardless of CWD.
+	// An absolute target used to be the only form that worked: every other one
+	// was written relative to the process's working directory. That is fixed
+	// (see TestMovePackageTargetPathForms, which covers all three forms); this
+	// stays absolute so the absolute path remains covered here too.
 	plan, err := eng.MovePackage(ws, types.MovePackageRequest{
 		SourcePackage: "old",
 		TargetPackage: filepath.Join(dir, "new"),

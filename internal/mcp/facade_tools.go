@@ -17,7 +17,7 @@ type ExportSpecInput struct {
 }
 
 type CreateFacadeInput struct {
-	TargetPackage string            `json:"target_package" jsonschema:"package path where the facade will be created"`
+	TargetPackage string            `json:"target_package" jsonschema:"package path where the facade will be created - absolute, relative to the workspace root, or a module import path"`
 	Exports       []ExportSpecInput `json:"exports" jsonschema:"list of symbols to re-export through the facade"`
 	DryRun        bool              `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
@@ -60,7 +60,9 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			}
 		}
 		plan, err := state.GetEngine().CreateFacade(ws, types.CreateFacadeRequest{
-			TargetPackage: types.ResolvePackagePath(ws, in.TargetPackage),
+			// Raw: a facade package is new, so it cannot resolve against the
+			// existing package set. CreateFacadeOperation resolves it as a path.
+			TargetPackage: in.TargetPackage,
 			Exports:       exports,
 		})
 		if err != nil {

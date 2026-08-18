@@ -95,6 +95,57 @@ func NewMemCache() *MemCache {
 	}
 }
 
+// TestMoveSymbolToNewPackageByImportPath covers the destination form that
+// getOrCreateTargetFile's original ad-hoc fix did not handle. That fix
+// anchored a non-absolute target at the workspace root, which is right for
+// "pkg/memcache" but wrong for the module import path "reprotest/pkg/memcache":
+// joining that onto the root creates a directory named after the module,
+// inside the module. It now resolves through types.ResolveNewPackagePath,
+// which strips the module prefix first.
+func TestMoveSymbolToNewPackageByImportPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	mustWrite(t, filepath.Join(tmpDir, "go.mod"), "module reprotest\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(tmpDir, "common", "memcache.go"), `package common
+
+type MemCache struct {
+	data map[string][]byte
+}
+`)
+
+	ctx := context.Background()
+	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
+	defer sess.Close()
+
+	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "move_symbol",
+		Arguments: map[string]any{
+			"symbol":       "MemCache",
+			"from_package": "common",
+			"to_package":   "reprotest/pkg/memcache",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool transport error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
+	}
+
+	targetPath := filepath.Join(tmpDir, "pkg", "memcache", "memcache.go")
+	got, err := os.ReadFile(targetPath)
+	if err != nil {
+		t.Fatalf("expected %s to have been created: %v", targetPath, err)
+	}
+	if !strings.Contains(string(got), "type MemCache struct") {
+		t.Errorf("expected MemCache in the new package, got:\n%s", got)
+	}
+
+	// The failure mode this guards against: a directory named after the module.
+	if _, err := os.Stat(filepath.Join(tmpDir, "reprotest")); !os.IsNotExist(err) {
+		t.Errorf("a directory named after the module was created inside the module, stat err=%v", err)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

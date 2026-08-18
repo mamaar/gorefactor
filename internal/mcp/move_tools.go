@@ -23,7 +23,7 @@ type MoveSymbolInput struct {
 
 type MovePackageInput struct {
 	SourcePackage string `json:"source_package" jsonschema:"source package path"`
-	TargetPackage string `json:"target_package" jsonschema:"target package path"`
+	TargetPackage string `json:"target_package" jsonschema:"target package path - absolute, relative to the workspace root, or a module import path; need not exist yet"`
 	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
@@ -39,7 +39,7 @@ type MoveDirInput struct {
 
 type PackageMappingInput struct {
 	Source string `json:"source" jsonschema:"source package path"`
-	Target string `json:"target" jsonschema:"target package path"`
+	Target string `json:"target" jsonschema:"target package path - absolute, relative to the workspace root, or a module import path; need not exist yet"`
 }
 
 type MovePackagesInput struct {
@@ -110,11 +110,13 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+		// Only the source is resolved here: ResolvePackagePath looks up packages
+		// that already exist, which a move destination does not. The operation
+		// resolves TargetPackage itself, as a path.
 		src := types.ResolvePackagePath(ws, in.SourcePackage)
-		tgt := types.ResolvePackagePath(ws, in.TargetPackage)
 		plan, err := state.GetEngine().MovePackage(ws, types.MovePackageRequest{
 			SourcePackage: src,
-			TargetPackage: tgt,
+			TargetPackage: in.TargetPackage,
 		})
 		if err != nil {
 			state.RUnlock()
@@ -168,7 +170,8 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		for i, m := range in.Packages {
 			mappings[i] = types.PackageMapping{
 				SourcePackage: types.ResolvePackagePath(ws, m.Source),
-				TargetPackage: types.ResolvePackagePath(ws, m.Target),
+				// Destination left raw; see the move_package handler above.
+				TargetPackage: m.Target,
 			}
 		}
 		plan, err := state.GetEngine().MovePackages(ws, types.MovePackagesRequest{

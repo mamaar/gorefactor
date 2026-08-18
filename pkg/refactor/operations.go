@@ -1131,13 +1131,16 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	} else {
 		// Create new file (simplified)
 		filename := targetPackage.Name + ".go"
-		// targetPackagePath may be a relative user-supplied path; resolve it to an
-		// absolute filesystem path anchored at the workspace root so that
-		// MkdirAll/WriteFile land inside the actual project, not relative to the
-		// MCP server's working directory.
-		absPackageDir := targetPackagePath
-		if !filepath.IsAbs(absPackageDir) {
-			absPackageDir = filepath.Join(ws.RootPath, absPackageDir)
+		// targetPackagePath is whatever the caller supplied: reaching this branch
+		// means it named a package that does not exist, so ResolvePackagePath
+		// had nothing to match it against and passed it through untouched. It
+		// has to be resolved as a path so MkdirAll/WriteFile land inside the
+		// project rather than relative to the MCP server's working directory —
+		// and so the module import path form ("mod/pkg/thing") doesn't create a
+		// directory named after the module inside the module.
+		absPackageDir, resolveErr := types.ResolveNewPackagePath(ws, targetPackagePath)
+		if resolveErr != nil {
+			return nil, nil, resolveErr
 		}
 		fullPath := filepath.Join(absPackageDir, filename)
 		initialContent := fmt.Sprintf("package %s\n", targetPackage.Name)
@@ -1696,8 +1699,15 @@ func packagePathToImportPath(ws *types.Workspace, packagePath string) string {
 		// Remove the workspace root prefix to get relative path
 		relPath, err := filepath.Rel(ws.RootPath, packagePath)
 		if err != nil {
-			// Can't compute relative path, use package path as-is
-			return packagePath
+			// Rel fails when packagePath is not an absolute path under
+			// ws.RootPath — i.e. when the caller passed something that is not a
+			// workspace filesystem path at all. Returning the input verbatim
+			// here used to make that mistake invisible: hand it a relative
+			// "pkg/wms" and it answers "pkg/wms", hand it the import path
+			// "mod/pkg/wms" and it answers with a correct-looking import path
+			// derived from nothing. Callers guard on "" and can report the
+			// failure instead of writing a fabricated import path into source.
+			return ""
 		}
 
 		// If this is the root package, return just the module path

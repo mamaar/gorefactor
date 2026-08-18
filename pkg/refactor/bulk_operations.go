@@ -57,6 +57,23 @@ func (op *MovePackageOperation) Validate(ws *types.Workspace) error {
 		return fmt.Errorf("source package %s not found in workspace", op.Request.SourcePackage)
 	}
 
+	// The destination is resolved here as well as in Execute so an unresolvable
+	// target (one escaping the workspace root, say) is refused before any
+	// change is generated rather than surfacing mid-plan.
+	targetPath, err := types.ResolveNewPackagePath(ws, op.Request.TargetPackage)
+	if err != nil {
+		return err
+	}
+	// Moving onto a package that already exists would merge two packages: files
+	// landing alongside each other, same-named ones silently overwritten, and
+	// duplicate declarations undetected until the build. Refuse and let the
+	// caller pick a target or do the merge deliberately.
+	if existing, ok := ws.Packages[targetPath]; ok {
+		return fmt.Errorf("target package %s already exists at %s (package %q); "+
+			"move_package will not merge into an existing package — choose a target that does not exist yet",
+			op.Request.TargetPackage, targetPath, existing.Name)
+	}
+
 	return nil
 }
 
@@ -81,9 +98,23 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		return nil, fmt.Errorf("source package %s not found", op.Request.SourcePackage)
 	}
 
+	// Resolve the destination here rather than trusting the caller to have done
+	// it. MovePackagesOperation.Execute builds MovePackageOperation values
+	// directly, bypassing the engine, so resolving at any outer layer would
+	// leave that path unresolved. Request.TargetPackage may be an absolute
+	// path, a module import path, or a workspace-relative path; everything
+	// below needs the absolute filesystem form.
+	targetPackagePath, err := types.ResolveNewPackagePath(ws, op.Request.TargetPackage)
+	if err != nil {
+		return nil, fmt.Errorf("resolving target package %q: %w", op.Request.TargetPackage, err)
+	}
+
 	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
-	targetImportPath := packagePathToImportPath(ws, op.Request.TargetPackage)
-	targetPkgName := filepath.Base(op.Request.TargetPackage)
+	targetImportPath := packagePathToImportPath(ws, targetPackagePath)
+	targetPkgName := filepath.Base(targetPackagePath)
+	if targetImportPath == "" {
+		return nil, fmt.Errorf("cannot determine the import path for target package %s", targetPackagePath)
+	}
 
 	// Generate file move changes for each file in the source package,
 	// including its _test.go files (which the parser stores separately in
@@ -105,7 +136,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		if op.Request.UpdateImports && sourceImportPath != "" && targetImportPath != "" {
 			newContent = strings.ReplaceAll(newContent, `"`+sourceImportPath+`"`, `"`+targetImportPath+`"`)
 		}
-		targetFilePath := filepath.Join(op.Request.TargetPackage, filepath.Base(file.Path))
+		targetFilePath := filepath.Join(targetPackagePath, filepath.Base(file.Path))
 
 		// Create file at target location
 		plan.Changes = append(plan.Changes, types.Change{
@@ -439,12 +470,15 @@ func (op *MovePackagesOperation) Execute(ws *types.Workspace) (*types.Refactorin
 			UpdateImports: op.Request.UpdateImports,
 		}
 		subOp := &MovePackageOperation{Request: subReq}
+		// A failed mapping must surface. Skipping it silently produces the
+		// worst possible outcome for an "atomic" move: a plan that reports
+		// success having quietly dropped part of what was asked for.
 		if err := subOp.Validate(ws); err != nil {
-			continue
+			return nil, fmt.Errorf("moving %s to %s: %w", mapping.SourcePackage, mapping.TargetPackage, err)
 		}
 		subPlan, err := subOp.Execute(ws)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("moving %s to %s: %w", mapping.SourcePackage, mapping.TargetPackage, err)
 		}
 		plan.Changes = append(plan.Changes, subPlan.Changes...)
 		for _, f := range subPlan.AffectedFiles {
@@ -492,6 +526,14 @@ func (op *CreateFacadeOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *CreateFacadeOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	// A facade package is new by definition, so its target can never resolve
+	// against the existing package set; it has to be resolved as a path.
+	facadeDir, err := types.ResolveNewPackagePath(ws, op.Request.TargetPackage)
+	if err != nil {
+		return nil, fmt.Errorf("resolving facade target package %q: %w", op.Request.TargetPackage, err)
+	}
+	facadePkgName := filepath.Base(facadeDir)
+
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -501,9 +543,9 @@ func (op *CreateFacadeOperation) Execute(ws *types.Workspace) (*types.Refactorin
 
 	// Generate facade package content
 	var facadeContent strings.Builder
-	facadeContent.WriteString(fmt.Sprintf("// Package %s provides a facade for accessing related functionality.\n", filepath.Base(op.Request.TargetPackage)))
+	facadeContent.WriteString(fmt.Sprintf("// Package %s provides a facade for accessing related functionality.\n", facadePkgName))
 	facadeContent.WriteString("// This file was generated by gorefactor.\n")
-	facadeContent.WriteString(fmt.Sprintf("package %s\n\n", filepath.Base(op.Request.TargetPackage)))
+	facadeContent.WriteString(fmt.Sprintf("package %s\n\n", facadePkgName))
 
 	// Collect unique source package imports
 	imports := make(map[string]bool)
@@ -538,7 +580,7 @@ func (op *CreateFacadeOperation) Execute(ws *types.Workspace) (*types.Refactorin
 		}
 	}
 
-	facadeFile := filepath.Join(op.Request.TargetPackage, "facade.go")
+	facadeFile := filepath.Join(facadeDir, "facade.go")
 	plan.Changes = append(plan.Changes, types.Change{
 		File:        facadeFile,
 		Start:       0,
