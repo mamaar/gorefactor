@@ -47,20 +47,20 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// TestFixEarlyReturns_PreviewsByDefault is the guarantee behind preview-first:
-// a call with no apply flag must leave every byte on disk untouched while
-// still returning the diff the caller is meant to review.
-func TestFixEarlyReturns_PreviewsByDefault(t *testing.T) {
+// TestFixEarlyReturns_PreviewsOnDryRun is the guarantee behind dry-run-first:
+// a call with dry_run set must leave every byte on disk untouched while still
+// returning the diff the caller is meant to review.
+func TestFixEarlyReturns_PreviewsOnDryRun(t *testing.T) {
 	before := readFile(t, filepath.Join("testdata", "fix_early_returns", "main.go"))
 
-	dir, result := callToolOnFixture(t, "fix_early_returns", "fix_early_returns", map[string]any{})
+	dir, result := callToolOnFixture(t, "fix_early_returns", "fix_early_returns", map[string]any{"dry_run": true})
 
 	if after := readFile(t, filepath.Join(dir, "main.go")); after != before {
 		t.Errorf("preview mode modified the file on disk:\n%s", after)
 	}
 
 	if applied, _ := result["applied"].(bool); applied {
-		t.Error("applied should be false when the apply flag is not set")
+		t.Error("applied should be false when dry_run is set")
 	}
 	if blocking, ok := result["blocking_issue"]; ok {
 		t.Errorf("preview reported a blocking issue: %v", blocking)
@@ -94,7 +94,7 @@ func TestFixEarlyReturns_PreviewsByDefault(t *testing.T) {
 // TestFixDeepIfElse_CountsOnlyWhatItRewrote for the same guarantee on the
 // deep-chain fixer.
 func TestFixEarlyReturns_ReportsUnfixableSeparately(t *testing.T) {
-	_, result := callToolOnFixture(t, "fix_early_returns", "fix_early_returns", map[string]any{})
+	_, result := callToolOnFixture(t, "fix_early_returns", "fix_early_returns", map[string]any{"dry_run": true})
 
 	fixed, _ := result["fixed"].([]any)
 	if len(fixed) != 3 {

@@ -18,7 +18,7 @@ import (
 // from reintroducing the gap.
 //
 // fix_early_returns is covered separately by
-// TestFixEarlyReturns_PreviewsByDefault. It was already correct and is
+// TestFixEarlyReturns_PreviewsOnDryRun. It was already correct and is
 // included here only so the contract is asserted uniformly across the family.
 func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 	cases := []struct {
@@ -40,9 +40,8 @@ func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 			tool: "fix_error_wrapping", args: map[string]any{"dry_run": true},
 		},
 		{
-			// Inverts the convention: previews unless apply is set.
 			name: "fix_early_returns", fixture: "fix_early_returns",
-			tool: "fix_early_returns", args: map[string]any{},
+			tool: "fix_early_returns", args: map[string]any{"dry_run": true},
 		},
 		{
 			name: "fix_deep_if_else_chains", fixture: "fix_deep_if_else",

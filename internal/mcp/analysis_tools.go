@@ -267,10 +267,7 @@ type FixEarlyReturnsInput struct {
 	Package      string   `json:"package,omitempty" jsonschema:"specific package to fix"`
 	MinBodyLines int      `json:"min_body_lines,omitempty" jsonschema:"minimum lines a body must span before inverting is suggested (default 3); does not apply to else_after_return"`
 	Patterns     []string `json:"patterns,omitempty" jsonschema:"restrict to these patterns: guard_clause, loop_continue, else_after_return (default all)"`
-	// Apply inverts the usual dry_run convention: this tool previews by
-	// default, because it rewrites control flow across every matching function
-	// in the workspace at once.
-	Apply bool `json:"apply,omitempty" jsonschema:"write the changes to disk; defaults to false, which previews the full before/after diff without touching any file"`
+	DryRun       bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 type EarlyReturnViolationItem struct {
@@ -309,9 +306,7 @@ type DetectRedundantNegationsInput struct {
 type FixRedundantNegationsInput struct {
 	Package      string `json:"package,omitempty" jsonschema:"specific package to fix"`
 	MinReduction int    `json:"min_reduction,omitempty" jsonschema:"minimum number of ! operators a rewrite must remove (default 1)"`
-	// Apply inverts the usual dry_run convention, matching fix_early_returns:
-	// this tool previews by default rather than writing on the first call.
-	Apply bool `json:"apply,omitempty" jsonschema:"write the changes to disk; defaults to false, which previews the full before/after diff without touching any file"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 type RedundantNegationViolationItem struct {
@@ -1331,7 +1326,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_early_returns",
-		Description: "Invert conditionals into early-return guard clauses so the happy path is no longer nested. Previews by default: call with apply=true to write the changes. Skips any rewrite that would redeclare a name in the scope it dedents into, or that would require inventing return values.",
+		Description: "Invert conditionals into early-return guard clauses so the happy path is no longer nested. Skips any rewrite that would redeclare a name in the scope it dedents into, or that would require inventing return values.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixEarlyReturnsInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -1370,7 +1365,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if len(changes) == 0 {
 			state.RUnlock()
 			return textResult(&EarlyReturnFixResult{
-				Applied:   in.Apply,
+				Applied:   !in.DryRun,
 				Fixed:     []EarlyReturnViolationItem{},
 				Unfixable: unfixable,
 				Message:   "No rewritable early-return opportunities found",
@@ -1378,13 +1373,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
-		result, err := executePlanWithUnlock(state, plan, "Invert conditionals into early returns", !in.Apply)
+		result, err := executePlanWithUnlock(state, plan, "Invert conditionals into early returns", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		return textResult(&EarlyReturnFixResult{
-			Applied:       in.Apply,
+			Applied:       !in.DryRun,
 			ChangesCount:  result.ChangeCount,
 			FilesModified: result.ModifiedFiles,
 			Fixed:         fixed,
@@ -1427,7 +1422,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_redundant_negations",
-		Description: "Simplify negated boolean expressions via De Morgan's laws where doing so strictly reduces the number of `!` operators. Previews by default: call with apply=true to write the changes. Safe to run after any other fixer as a cleanup pass, and safe to run repeatedly.",
+		Description: "Simplify negated boolean expressions via De Morgan's laws where doing so strictly reduces the number of `!` operators. Safe to run after any other fixer as a cleanup pass, and safe to run repeatedly.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixRedundantNegationsInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -1462,7 +1457,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
-		result, err := executePlanWithUnlock(state, plan, "Simplify redundant negations", !in.Apply)
+		result, err := executePlanWithUnlock(state, plan, "Simplify redundant negations", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

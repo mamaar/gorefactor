@@ -69,7 +69,7 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 
 	// Stage 1: flatten. De Morgan already simplifies the negated selector away;
 	// only the `!!` buried inside the opaque call argument survives.
-	call("fix_early_returns", map[string]any{"apply": true})
+	call("fix_early_returns", map[string]any{})
 
 	afterFlatten := readFile(t, path)
 	if !strings.Contains(afterFlatten, "n.isExternal || !hasCycle(!!visited[pkg])") {
@@ -81,7 +81,7 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 
 	// Stage 2: clean up the double negation stage 1 left behind. This is the
 	// assertion that matters.
-	call("fix_redundant_negations", map[string]any{"apply": true})
+	call("fix_redundant_negations", map[string]any{})
 
 	afterSimplify := readFile(t, path)
 	if !strings.Contains(afterSimplify, "if n.isExternal || !hasCycle(visited[pkg]) {") {
