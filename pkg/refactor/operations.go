@@ -916,12 +916,6 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 		return nil, fmt.Errorf("no symbols to add to %s", targetPackage.Path)
 	}
 
-	// sourcePackage.Path is a workspace-absolute filesystem path; use the
-	// Go import path instead so the "moved from" comment doesn't leak the
-	// local filesystem layout (e.g. the author's home directory) into
-	// checked-in source.
-	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
-
 	// Needed to strip self-qualification below: if the moved code already
 	// referenced something now living in targetPackage (e.g. a symbol moved
 	// there by an earlier call), extractSymbolSource copies that qualifier
@@ -966,7 +960,10 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 
 		symbolCode = unqualifySelfReferences(symbolFile, symbolCode, targetImportPath)
 
-		blocks = append(blocks, fmt.Sprintf("// %s was moved from %s\n%s", symbol.Name, sourceImportPath, symbolCode))
+		// No "was moved from" banner here: it's pure diff churn (every move
+		// adds a line no one reads) and review noise. git blame / git log on
+		// the target file already tells the same story.
+		blocks = append(blocks, symbolCode)
 
 		// Resolve which imports this symbol's code needs by inspecting the
 		// actual identifiers it references against its own source file's

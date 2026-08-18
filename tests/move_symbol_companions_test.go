@@ -219,13 +219,15 @@ func UseCache() {
 			t.Errorf("expected import %s in moved file %s, missing\ngot:\n%s", wantImport, targetPath, target)
 		}
 	}
-	// Bug 2 (comment leak): the "moved from" comment must not embed a raw
-	// filesystem path — it should read the module import path instead.
+	// Bug 2 (comment leak) no longer applies: the "was moved from" banner
+	// was removed entirely (it was pure diff churn) rather than fixed to
+	// read the import path instead of a raw filesystem path, so there is no
+	// banner left to leak a path through.
 	if strings.Contains(target, tmpDir) {
 		t.Errorf("moved file %s leaks the local filesystem path:\n%s", targetPath, target)
 	}
-	if !strings.Contains(target, "// MemCache was moved from reprotest/common") {
-		t.Errorf("expected a moved-from comment naming the import path, got:\n%s", target)
+	if strings.Contains(target, "was moved from") {
+		t.Errorf("expected no generated banner comment above the moved declaration, got:\n%s", target)
 	}
 
 	commonPath := filepath.Join(tmpDir, "common", "memcache.go")
