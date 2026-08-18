@@ -242,18 +242,26 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 	return offset
 }
 
-// generateNeededImportsChange returns a Change that inserts an import block
-// for everything neededImports lists (minus whatever targetFile already
-// imports) immediately after targetFile's package clause. Returns nil if
-// nothing needs to be added.
+// generateNeededImportsChange returns a Change that adds everything
+// neededImports lists (minus whatever targetFile already imports) to
+// targetFile. Returns nil if nothing needs to be added.
 //
-// The new block is always inserted right after the package clause, even if
-// targetFile already has its own import declaration(s) further down —
-// that's deliberate: the serializer runs OrganizeImports over every touched
-// .go file after changes are applied (see serializer.go), which collapses
-// *all* import declarations in a file into one grouped, sorted block. Having
-// two adjacent `import (...)` blocks briefly is harmless because that pass
-// always runs next.
+// When targetFile already has a parenthesized `import (...)` block, the new
+// lines are inserted into that existing block rather than appended as a
+// second, separate import declaration. A second block would be legal Go —
+// the serializer runs OrganizeImports over every touched .go file after
+// changes are applied (see serializer.go), which collapses multiple import
+// declarations into one grouped, sorted block — but that pass only runs at
+// apply time. A dry-run preview shows the change exactly as generated here,
+// so a caller reviewing the diff would see two adjacent blocks for no
+// visible reason. Merging into the existing block up front keeps the
+// preview itself gofmt/goimports-stable, not just the eventually-applied
+// file.
+//
+// Single-line `import "x"` form (no parentheses) falls through to the
+// new-block path below instead of being converted in place; that mirrors
+// generateAddImportChange's single-line handling being a separate code path
+// rather than something this helper duplicates.
 func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, needed []neededImport) *types.Change {
 	if len(needed) == 0 {
 		return nil
@@ -266,26 +274,34 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 		}
 	}
 
-	var b strings.Builder
-	wrote := false
+	var lines []string
 	for _, n := range needed {
 		if existing[n.path] {
 			continue
 		}
-		if !wrote {
-			b.WriteString("\nimport (\n")
-			wrote = true
-		}
 		if n.alias != "" {
-			fmt.Fprintf(&b, "\t%s %q\n", n.alias, n.path)
+			lines = append(lines, fmt.Sprintf("\t%s %q", n.alias, n.path))
 		} else {
-			fmt.Fprintf(&b, "\t%q\n", n.path)
+			lines = append(lines, fmt.Sprintf("\t%q", n.path))
 		}
 	}
-	if !wrote {
+	if len(lines) == 0 {
 		return nil
 	}
-	b.WriteString(")\n")
+
+	if targetFile.AST != nil && ws.FileSet != nil && len(targetFile.AST.Imports) > 0 &&
+		!isSingleLineImport(targetFile.AST, targetFile.OriginalContent) {
+		lastImport := targetFile.AST.Imports[len(targetFile.AST.Imports)-1]
+		_, insertAt := lineRange(ws, targetFile.OriginalContent, lastImport.End())
+		return &types.Change{
+			File:        targetFile.Path,
+			Start:       insertAt,
+			End:         insertAt,
+			OldText:     "",
+			NewText:     strings.Join(lines, "\n") + "\n",
+			Description: fmt.Sprintf("Add imports to %s", targetFile.Path),
+		}
+	}
 
 	offset := packageClauseEndOffset(ws, targetFile)
 	return &types.Change{
@@ -293,7 +309,7 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 		Start:       offset,
 		End:         offset,
 		OldText:     "",
-		NewText:     b.String(),
+		NewText:     "\nimport (\n" + strings.Join(lines, "\n") + "\n)\n",
 		Description: fmt.Sprintf("Add imports to %s", targetFile.Path),
 	}
 }
