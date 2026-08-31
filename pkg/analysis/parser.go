@@ -450,6 +450,22 @@ func (p *GoParser) EnsureTypeChecked(ws *types.Workspace, pkg *types.Package) {
 	p.TypeCheckPackage(ws, pkg)
 }
 
+// InvalidateTypeCheck drops semantic data keyed by a package's current AST.
+// Incremental workspace updates replace *ast.File nodes, so retaining the old
+// go/types maps would make every lookup on the reparsed identifiers miss while
+// TypesChecked incorrectly prevents a fresh check.
+func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
+	if pkg == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	pkg.TypesInfo = nil
+	pkg.TypesPkg = nil
+	pkg.TypesErr = nil
+	pkg.TypesChecked = false
+}
+
 // TypeCheckPackage runs go/types type-checking on a package.
 // Results are stored in pkg.TypesInfo, pkg.TypesPkg and pkg.TypesErr, and
 // pkg.TypesChecked is set once the attempt completes — on success AND on

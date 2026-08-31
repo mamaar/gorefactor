@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"go/ast"
 	"io"
 	"log/slog"
 	"os"
@@ -70,6 +71,41 @@ func TestUpdater_ModifyReParsesFile(t *testing.T) {
 
 	if len(pkg.Symbols.Functions) != 2 {
 		t.Fatalf("expected 2 functions after modify, got %d", len(pkg.Symbols.Functions))
+	}
+}
+
+func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "a")
+	filePath := filepath.Join(pkgDir, "a.go")
+	pkg := u.FindPackage(pkgDir)
+	if pkg == nil {
+		t.Fatal("expected package at pkg/a")
+	}
+
+	u.parser.EnsureTypeChecked(u.workspace, pkg)
+	if !pkg.TypesChecked || pkg.TypesInfo == nil {
+		t.Fatal("expected initial type information")
+	}
+
+	_ = os.WriteFile(filePath, []byte("package a\n\nfunc Hello() {}\nfunc World() int { return 1 }\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: filePath, Op: fsnotify.Write}})
+	if pkg.TypesChecked || pkg.TypesInfo != nil || pkg.TypesPkg != nil {
+		t.Fatal("reparsed package retained stale type information")
+	}
+
+	u.parser.EnsureTypeChecked(u.workspace, pkg)
+	var world *ast.FuncDecl
+	for _, file := range pkg.Files {
+		for _, decl := range file.AST.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Name.Name == "World" {
+				world = fn
+			}
+		}
+	}
+	if world == nil || pkg.TypesInfo.Defs[world.Name] == nil {
+		t.Fatal("fresh type information does not describe the reparsed World declaration")
 	}
 }
 

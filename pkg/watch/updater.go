@@ -187,6 +187,9 @@ func (u *WorkspaceUpdater) handleDelete(dir, path, base string, isTest bool) {
 // rebuildPackage invalidates caches, rebuilds the symbol table and dependency graph,
 // and logs the result.
 func (u *WorkspaceUpdater) rebuildPackage(pkg *types.Package, action, path string, start time.Time) {
+	// Re-parsing replaces AST node identities. go/types.Info is keyed by those
+	// identities, so it must never survive an incremental package rebuild.
+	u.parser.InvalidateTypeCheck(pkg)
 	u.resolver.InvalidateCacheForPackage(pkg.Path)
 
 	st, err := u.resolver.BuildSymbolTable(pkg)
