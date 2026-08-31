@@ -9,10 +9,9 @@
 //   - loop_continue:     if cond { body }   as the last statement of a loop body
 //   - else_after_return: if cond { ...; return } else { body }
 //
-// Every fix is a whole-statement replacement of the if statement, emitted as
-// verbatim source text. Layout is not this package's job: the serializer runs
-// format.Source over the file after applying changes, which regenerates all
-// indentation from the parsed structure.
+// Every fix is a whole-statement replacement of the if statement. The
+// replacement is rendered at column zero and then indented for its splice
+// point, so dry-run previews show the same layout that apply-time gofmt keeps.
 package earlyreturn
 
 import (
@@ -339,7 +338,9 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 		return false
 	}
 
-	newText := "if " + inverted + " {\n" + exit + "\n}\n" + bodyText
+	indent := srctext.Indentation(w.content, w.pass.Fset.Position(ifStmt.Pos()).Offset)
+	newText := "if " + inverted + " {\n\t" + exit + "\n}\n" + srctext.Normalize(bodyText)
+	newText = srctext.ApplyIndent(newText, indent)
 	w.record(ifStmt, pattern, fnName, bodyLines, true, "")
 	w.report(ifStmt, pattern, newText)
 	return true
@@ -382,7 +383,11 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 		return false
 	}
 
-	newText := "if " + condText + " {\n" + ifBodyText + "\n}\n" + elseBodyText
+	indent := srctext.Indentation(w.content, w.pass.Fset.Position(ifStmt.Pos()).Offset)
+	newText := "if " + condText + " {\n" +
+		srctext.IndentLines(srctext.Normalize(ifBodyText), "\t") + "\n}\n" +
+		srctext.Normalize(elseBodyText)
+	newText = srctext.ApplyIndent(newText, indent)
 	w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, true, "")
 	w.report(ifStmt, PatternElseAfterReturn, newText)
 	return true

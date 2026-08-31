@@ -123,7 +123,7 @@ func handle(enabled bool) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
-	if !strings.HasPrefix(text, "if !enabled {\nreturn\n}\n") {
+	if !strings.HasPrefix(text, "if !enabled {\n\t\treturn\n\t}\n") {
 		t.Errorf("unexpected guard text:\n%s", text)
 	}
 	if !strings.Contains(text, "println(a + b)") {
@@ -160,7 +160,7 @@ func handle(s stream) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
-	want := "if s.Filter == nil || s.Filter.MatchAll {\nreturn\n}\n"
+	want := "if s.Filter == nil || s.Filter.MatchAll {\n\t\treturn\n\t}\n"
 	if !strings.HasPrefix(text, want) {
 		t.Errorf("guard text = %q, want prefix %q", text, want)
 	}
@@ -334,7 +334,7 @@ func handle(enabled bool) (err error) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
-	if !strings.HasPrefix(text, "if !enabled {\nreturn\n}\n") {
+	if !strings.HasPrefix(text, "if !enabled {\n\t\treturn\n\t}\n") {
 		t.Errorf("expected a bare return for named results:\n%s", text)
 	}
 }
@@ -364,7 +364,7 @@ func handle(items []int) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
-	if !strings.HasPrefix(text, "if item <= 0 {\ncontinue\n}\n") {
+	if !strings.HasPrefix(text, "if item <= 0 {\n\t\t\tcontinue\n\t\t}\n") {
 		t.Errorf("unexpected continue guard:\n%s", text)
 	}
 }
@@ -436,6 +436,28 @@ func handle(enabled bool) int {
 	got := onlyResult(t, mustResults(t, src, earlyreturn.WithMinBodyLines(10)))
 	if !got.Fixable {
 		t.Errorf("expected fixable, reason: %s", got.Reason)
+	}
+}
+
+func TestElseAfterReturn_PreviewPreservesNestedIndentation(t *testing.T) {
+	src := `package testpkg
+
+func handle(enabled bool) {
+	for {
+		if !enabled {
+			return
+		} else {
+			println("ok")
+		}
+	}
+}
+`
+	_, diags := run(t, src)
+
+	text := fixedText(t, diags)
+	want := "if !enabled {\n\t\t\treturn\n\t\t}\n\t\tprintln(\"ok\")"
+	if text != want {
+		t.Errorf("replacement indentation mismatch\ngot:\n%s\nwant:\n%s", text, want)
 	}
 }
 

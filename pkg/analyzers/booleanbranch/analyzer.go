@@ -1,7 +1,6 @@
 package booleanbranch
 
 import (
-	"bytes"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -10,6 +9,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
+	"github.com/mamaar/gorefactor/pkg/analyzers/srctext"
 )
 
 // Result is the typed result returned for MCP consumption.
@@ -22,6 +22,8 @@ type Result struct {
 	BooleanVariables []string `json:"boolean_variables"`
 	BranchCount      int      `json:"branch_count"`
 	Suggestion       string   `json:"suggestion"`
+	booleansRemoved  []string
+	switchCases      int
 }
 
 // FixResult holds metadata about a boolean branching fix.
@@ -35,8 +37,8 @@ func CollectFixResults(results []*Result) []*FixResult {
 	var out []*FixResult
 	for _, r := range results {
 		out = append(out, &FixResult{
-			BooleansRemoved: r.BooleanVariables,
-			SwitchCases:     r.BranchCount,
+			BooleansRemoved: r.booleansRemoved,
+			SwitchCases:     r.switchCases,
 		})
 	}
 	return out
@@ -165,6 +167,8 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, cont
 			Message: fmt.Sprintf("boolean branching on %q should use a switch statement (%d branches)", sourceExpr, len(group)),
 		}
 
+		var removed []string
+		var switchCases int
 		// Attempt to build SuggestedFixes using detailed assign info.
 		if len(content) > 0 {
 			detailedAssigns := collectDetailedAssigns(pass.Fset, fn.Body, content)
@@ -181,14 +185,10 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, cont
 					detailVarSet[da.varName] = true
 				}
 
-				ifStmt := findIfChain(fn.Body, detailVarSet)
-				if ifStmt != nil {
-					cases := extractCases(ifStmt, varToDetail)
-					if len(cases) > 0 {
-						fixes := buildSuggestedFixes(pass.Fset, content, sourceExpr, detailedGroup, ifStmt, cases)
-						diag.SuggestedFixes = fixes
-					}
-				}
+				chains := findIfChains(fn.Body, detailVarSet)
+				diag.SuggestedFixes, removed, switchCases = buildSuggestedFixes(
+					pass.Fset, content, sourceExpr, detailedGroup, chains, fn.Body,
+				)
 			}
 		}
 
@@ -203,6 +203,8 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, cont
 			BooleanVariables: varNames,
 			BranchCount:      len(group),
 			Suggestion:       suggestion,
+			booleansRemoved:  removed,
+			switchCases:      switchCases,
 		})
 	}
 
@@ -254,34 +256,35 @@ func collectBoolAssigns(fset *token.FileSet, body *ast.BlockStmt, content []byte
 	return results
 }
 
-// collectDetailedAssigns finds all boolean comparison assignments at the top
-// level of the function body, capturing the comparison value for fix generation.
+// collectDetailedAssigns finds boolean comparison assignments throughout the
+// function body, capturing the comparison value for fix generation. Detection
+// has always walked nested blocks, so fix generation must see the same sites.
 func collectDetailedAssigns(fset *token.FileSet, body *ast.BlockStmt, content []byte) []boolAssignDetail {
 	var results []boolAssignDetail
 
-	for _, stmt := range body.List {
-		assign, ok := stmt.(*ast.AssignStmt)
+	ast.Inspect(body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
 		if !ok {
-			continue
+			return true
 		}
 		if assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN {
-			continue
+			return true
 		}
 		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
-			continue
+			return true
 		}
 
 		ident, ok := assign.Lhs[0].(*ast.Ident)
 		if !ok {
-			continue
+			return true
 		}
 
 		binExpr, ok := assign.Rhs[0].(*ast.BinaryExpr)
 		if !ok {
-			continue
+			return true
 		}
 		if binExpr.Op != token.EQL && binExpr.Op != token.NEQ {
-			continue
+			return true
 		}
 
 		src := exprText(fset, content, binExpr.X)
@@ -294,7 +297,8 @@ func collectDetailedAssigns(fset *token.FileSet, body *ast.BlockStmt, content []
 			negated:    binExpr.Op == token.NEQ,
 			assignNode: assign,
 		})
-	}
+		return true
+	})
 
 	return results
 }
@@ -338,19 +342,36 @@ func condUsesVar(expr ast.Expr, varSet map[string]bool) bool {
 	return false
 }
 
-// findIfChain finds the if/else-if chain in the block that directly uses the
-// given boolean variable names as its condition.
-func findIfChain(body *ast.BlockStmt, varSet map[string]bool) *ast.IfStmt {
-	for _, stmt := range body.List {
-		ifStmt, ok := stmt.(*ast.IfStmt)
+// findIfChains finds every root if/else-if chain that directly branches on
+// one of the derived booleans. Separate if statements remain separate switches;
+// this preserves intervening statements and comments.
+func findIfChains(body *ast.BlockStmt, varSet map[string]bool) []*ast.IfStmt {
+	children := make(map[*ast.IfStmt]bool)
+	ast.Inspect(body, func(n ast.Node) bool {
+		ifStmt, ok := n.(*ast.IfStmt)
 		if !ok {
-			continue
+			return true
 		}
 		if condDirectlyUsesVar(ifStmt.Cond, varSet) {
-			return ifStmt
+			if child, ok := ifStmt.Else.(*ast.IfStmt); ok && condDirectlyUsesVar(child.Cond, varSet) {
+				children[child] = true
+			}
 		}
-	}
-	return nil
+		return true
+	})
+
+	var roots []*ast.IfStmt
+	ast.Inspect(body, func(n ast.Node) bool {
+		ifStmt, ok := n.(*ast.IfStmt)
+		if !ok {
+			return true
+		}
+		if condDirectlyUsesVar(ifStmt.Cond, varSet) && !children[ifStmt] {
+			roots = append(roots, ifStmt)
+		}
+		return true
+	})
+	return roots
 }
 
 // condDirectlyUsesVar checks if a condition is directly a boolean variable reference.
@@ -407,24 +428,70 @@ func extractCases(ifStmt *ast.IfStmt, varToDetail map[string]boolAssignDetail) [
 	return cases
 }
 
-// buildSuggestedFixes creates the TextEdits for removing bool assignments and
-// replacing the if/else-if chain with a switch statement.
+// buildSuggestedFixes creates edits for every directly supported branch. A
+// derived boolean is removed only when all of its remaining uses are the
+// conditions being replaced; values retained for later data flow stay intact.
 func buildSuggestedFixes(
 	fset *token.FileSet,
 	content []byte,
 	sourceExpr string,
 	assigns []boolAssignDetail,
-	ifStmt *ast.IfStmt,
-	cases []switchCase,
-) []analysis.SuggestedFix {
+	chains []*ast.IfStmt,
+	body *ast.BlockStmt,
+) ([]analysis.SuggestedFix, []string, int) {
 	if len(content) == 0 {
-		return nil
+		return nil, nil, 0
 	}
 
 	var edits []analysis.TextEdit
+	convertedConditions := make(map[token.Pos]bool)
+	totalCases := 0
+	for _, chain := range chains {
+		cases := extractCases(chain, detailsByName(assigns))
+		if len(cases) == 0 {
+			continue
+		}
+		for current := chain; current != nil; {
+			convertedConditions[current.Cond.Pos()] = true
+			next, _ := current.Else.(*ast.IfStmt)
+			current = next
+		}
 
-	// 1. Remove each boolean assignment line.
+		start := fset.Position(chain.Pos()).Offset
+		endPos := endOfIfChain(chain)
+		end := fset.Position(endPos).Offset
+		if start < 0 || end > len(content) || start >= end {
+			return nil, nil, 0
+		}
+
+		indent := srctext.Indentation(content, start)
+		edits = append(edits, analysis.TextEdit{
+			Pos:     chain.Pos(),
+			End:     endPos,
+			NewText: []byte(buildSwitchText(fset, content, sourceExpr, cases, indent)),
+		})
+		totalCases += len(cases)
+	}
+
+	// Refuse a partial rewrite: leaving any derived boolean in an unsupported
+	// branch condition would make the detector/fixer disagreement persist.
+	branchUses := 0
+	ast.Inspect(body, func(n ast.Node) bool {
+		ifStmt, ok := n.(*ast.IfStmt)
+		if ok && condUsesVar(ifStmt.Cond, namesOf(assigns)) {
+			branchUses++
+		}
+		return true
+	})
+	if branchUses != len(convertedConditions) || totalCases == 0 {
+		return nil, nil, 0
+	}
+
+	var removed []string
 	for _, ba := range assigns {
+		if usedOutsideConditions(body, ba, convertedConditions) {
+			continue
+		}
 		startOffset := fset.Position(ba.assignNode.Pos()).Offset
 		endOffset := fset.Position(ba.assignNode.End()).Offset
 
@@ -441,7 +508,7 @@ func buildSuggestedFixes(
 		}
 
 		if lineStart < 0 || lineEnd > len(content) || lineStart >= lineEnd {
-			continue
+			return nil, nil, 0
 		}
 
 		edits = append(edits, analysis.TextEdit{
@@ -449,32 +516,69 @@ func buildSuggestedFixes(
 			End:     fset.File(ba.assignNode.End()).Pos(lineEnd),
 			NewText: nil,
 		})
+		removed = append(removed, ba.varName)
 	}
-
-	// 2. Replace the if/else-if chain with a switch statement.
-	ifStartOffset := fset.Position(ifStmt.Pos()).Offset
-	ifEndPos := endOfIfChain(ifStmt)
-	ifEndOffset := fset.Position(ifEndPos).Offset
-
-	if ifStartOffset < 0 || ifEndOffset > len(content) || ifStartOffset >= ifEndOffset {
-		return nil
-	}
-
-	indent := extractIndentation(content, ifStartOffset)
-	switchText := buildSwitchText(fset, content, sourceExpr, cases, indent)
-
-	edits = append(edits, analysis.TextEdit{
-		Pos:     ifStmt.Pos(),
-		End:     ifEndPos,
-		NewText: []byte(switchText),
-	})
 
 	return []analysis.SuggestedFix{
 		{
 			Message:   fmt.Sprintf("Replace boolean branching on %q with switch statement", sourceExpr),
 			TextEdits: edits,
 		},
+	}, removed, totalCases
+}
+
+func detailsByName(assigns []boolAssignDetail) map[string]boolAssignDetail {
+	out := make(map[string]boolAssignDetail, len(assigns))
+	for _, assign := range assigns {
+		out[assign.varName] = assign
 	}
+	return out
+}
+
+func namesOf(assigns []boolAssignDetail) map[string]bool {
+	out := make(map[string]bool, len(assigns))
+	for _, assign := range assigns {
+		out[assign.varName] = true
+	}
+	return out
+}
+
+func usedOutsideConditions(body *ast.BlockStmt, assign boolAssignDetail, converted map[token.Pos]bool) bool {
+	used := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if used {
+			return false
+		}
+		ident, ok := n.(*ast.Ident)
+		if !ok || ident.Name != assign.varName || ident.Pos() == assign.assignNode.Lhs[0].Pos() {
+			return true
+		}
+		for condPos := range converted {
+			ifStmt := findIfAt(body, condPos)
+			if ifStmt != nil && ident.Pos() >= ifStmt.Cond.Pos() && ident.Pos() < ifStmt.Cond.End() {
+				return true
+			}
+		}
+		used = true
+		return false
+	})
+	return used
+}
+
+func findIfAt(body *ast.BlockStmt, condPos token.Pos) *ast.IfStmt {
+	var found *ast.IfStmt
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found != nil {
+			return false
+		}
+		ifStmt, ok := n.(*ast.IfStmt)
+		if ok && ifStmt.Cond.Pos() == condPos {
+			found = ifStmt
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 // endOfIfChain returns the End position of the entire if/else-if chain.
@@ -500,53 +604,23 @@ func buildSwitchText(fset *token.FileSet, content []byte, sourceExpr string, cas
 
 	for _, c := range cases {
 		if c.cmpValue == "" {
-			sb.WriteString(indent)
 			sb.WriteString("default:\n")
 		} else {
-			sb.WriteString(indent)
 			sb.WriteString("case ")
 			sb.WriteString(c.cmpValue)
 			sb.WriteString(":\n")
 		}
 
-		bodyText := blockBodyText(fset, content, c.body, indent)
-		sb.WriteString(bodyText)
-	}
-
-	sb.WriteString(indent)
-	sb.WriteString("}")
-
-	return sb.String()
-}
-
-// blockBodyText extracts the statements inside a block, preserving indentation.
-func blockBodyText(fset *token.FileSet, content []byte, block *ast.BlockStmt, baseIndent string) string {
-	if len(content) == 0 || len(block.List) == 0 {
-		return ""
-	}
-
-	firstPos := fset.Position(block.List[0].Pos()).Offset
-	lastEnd := fset.Position(block.List[len(block.List)-1].End()).Offset
-
-	if firstPos < 0 || lastEnd > len(content) || firstPos >= lastEnd {
-		return ""
-	}
-
-	bodyBytes := content[firstPos:lastEnd]
-	lines := bytes.Split(bodyBytes, []byte("\n"))
-
-	var sb strings.Builder
-	for i, line := range lines {
-		sb.WriteString(baseIndent)
-		sb.WriteByte('\t')
-		sb.Write(line)
-		if i < len(lines)-1 {
+		bodyText := srctext.Normalize(srctext.BlockText(fset, content, c.body))
+		if bodyText != "" {
+			sb.WriteString(srctext.IndentLines(bodyText, "\t"))
 			sb.WriteByte('\n')
 		}
 	}
-	sb.WriteByte('\n')
 
-	return sb.String()
+	sb.WriteString("}")
+
+	return srctext.ApplyIndent(sb.String(), indent)
 }
 
 // exprText extracts the source text for an expression using the file set and
@@ -561,22 +635,4 @@ func exprText(fset *token.FileSet, content []byte, expr ast.Expr) string {
 		return ""
 	}
 	return string(content[start:end])
-}
-
-// extractIndentation returns the leading whitespace of the line containing
-// the given byte offset.
-func extractIndentation(content []byte, offset int) string {
-	lineStart := offset
-	for lineStart > 0 && content[lineStart-1] != '\n' {
-		lineStart--
-	}
-	var buf bytes.Buffer
-	for i := lineStart; i < len(content); i++ {
-		if content[i] == ' ' || content[i] == '\t' {
-			buf.WriteByte(content[i])
-		} else {
-			break
-		}
-	}
-	return buf.String()
 }

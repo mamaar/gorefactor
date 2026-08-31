@@ -758,9 +758,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		var allBooleansRemoved []string
 		totalCases := 0
 		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
-			for _, r := range results {
-				allBooleansRemoved = append(allBooleansRemoved, r.BooleanVariables...)
-				totalCases += r.BranchCount
+			for _, fix := range booleanbranch.CollectFixResults(results) {
+				allBooleansRemoved = append(allBooleansRemoved, fix.BooleansRemoved...)
+				totalCases += fix.SwitchCases
 			}
 		}
 

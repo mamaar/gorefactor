@@ -395,6 +395,12 @@ func g() int { return 0 }
 	if len(changes) != 3 {
 		t.Fatalf("Expected 3 text edits (1 head + 2 else-if), got %d", len(changes))
 	}
+	if changes[1].NewText != "{\n\t\tb := g()\n\t\tif b == 2 {" {
+		t.Errorf("else-if preview header is not splice-indented:\n%s", changes[1].NewText)
+	}
+	if changes[2].NewText != "\n\t}" {
+		t.Errorf("else-if preview closing brace is not splice-indented: %q", changes[2].NewText)
+	}
 
 	formatted := mustFormat(t, src, changes)
 

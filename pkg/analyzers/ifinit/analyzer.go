@@ -694,11 +694,16 @@ func (w *walker) buildElseIfFixes(node *ast.IfStmt, initText, condText string) [
 	if tailOffset < 0 || tailOffset > len(w.content) {
 		return nil
 	}
+	indent := extractIndentation(w.content, startOffset)
+	innerIndent := indent + "\t"
 
 	var sb strings.Builder
 	sb.WriteString("{\n")
+	sb.WriteString(innerIndent)
 	sb.WriteString(initText)
-	sb.WriteString("\nif ")
+	sb.WriteByte('\n')
+	sb.WriteString(innerIndent)
+	sb.WriteString("if ")
 	sb.WriteString(condText)
 	sb.WriteString(" {")
 
@@ -706,7 +711,7 @@ func (w *walker) buildElseIfFixes(node *ast.IfStmt, initText, condText string) [
 		Message: fixMessage,
 		TextEdits: []analysis.TextEdit{
 			{Pos: node.Pos(), End: node.Body.Lbrace + 1, NewText: []byte(sb.String())},
-			{Pos: node.End(), End: node.End(), NewText: []byte("\n}")},
+			{Pos: node.End(), End: node.End(), NewText: []byte("\n" + indent + "}")},
 		},
 	}}
 }
