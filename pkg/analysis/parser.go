@@ -463,6 +463,8 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesInfo = nil
 	pkg.TypesPkg = nil
 	pkg.TypesErr = nil
+	pkg.TestTypesExcluded = false
+	pkg.TestTypesExcludedErr = nil
 	pkg.TypesChecked = false
 }
 
@@ -550,11 +552,24 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	}
 
 	typesPkg, info, err := p.checkFiles(ws, pkg, withTests)
+	var testTypesExcluded bool
+	var testTypesExcludedErr error
 	if err != nil && len(withTests) > len(files) {
 		// A test file that fails to type-check must not cost the whole package its
 		// type info, so retry without them. The retry's result — success or
 		// failure — is what gets recorded below.
+		//
+		// This withTests failure is recorded on the package (TestTypesExcluded/
+		// TestTypesExcludedErr) regardless of whether the retry that follows
+		// succeeds: a successful retry reports a nil TypesErr, which would
+		// otherwise look identical to a package whose test files WERE included.
+		// Consumers that resolve references by go/types object identity
+		// (CallSitesOf, NonCallUsesOf, ...) need to be able to tell the two
+		// apart, because in the excluded case they are silently blind to every
+		// call site in this package's tests.
 		p.logger.Debug("type-checking with test files failed, retrying without", "package", pkg.ImportPath, "err", err)
+		testTypesExcluded = true
+		testTypesExcludedErr = err
 		typesPkg, info, err = p.checkFiles(ws, pkg, files)
 	}
 	if err != nil {
@@ -569,6 +584,8 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	pkg.TypesPkg = typesPkg
 	pkg.TypesInfo = info
 	pkg.TypesErr = err
+	pkg.TestTypesExcluded = testTypesExcluded
+	pkg.TestTypesExcludedErr = testTypesExcludedErr
 	pkg.TypesChecked = true
 	p.mu.Unlock()
 }
@@ -676,6 +693,25 @@ func (imp *workspaceImporter) loadExternal() {
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
 		Dir:  imp.ws.RootPath,
 		Fset: imp.fset,
+		// Tests: true adds each package's test-binary variants (and their
+		// Imports) to the load, which is the only way a third-party module
+		// that is imported EXCLUSIVELY from _test.go files anywhere in the
+		// workspace ever reaches imp.ext. Without it, walk below never sees
+		// that import edge at all — not even the workspace-local package that
+		// carries it — because a bare `packages.Load(cfg, "./...")` only
+		// resolves each package's non-test Imports. TypeCheckPackage then
+		// fails to resolve that import while checking the package WITH its
+		// test files, and its fallback (see the "retrying without" comment
+		// there) silently drops every test file in that package from
+		// TypesInfo — not just the one that imports the unresolvable module.
+		// That blinds CallSitesOf/NonCallUsesOf to every _test.go call site in
+		// the package, which is how this was first found: add_context_parameter
+		// threading a context through a function silently produced no edits
+		// for the test file that called it, even though the test file itself
+		// had nothing wrong with it — a sibling test file's go-sqlmock import
+		// (present only in tests, never in production code) was enough to
+		// take every test file in the package down with it.
+		Tests: true,
 		// GOPROXY=off is load-bearing, not a performance nicety: this runs
 		// inside an MCP request, potentially against a workspace whose module
 		// cache is cold. Without it, a missing module triggers a network
@@ -700,12 +736,28 @@ func (imp *workspaceImporter) loadExternal() {
 	// The import graph is a DAG with heavy sharing (many packages depend on
 	// the same handful of leaves), so without a seen-set this recursion is
 	// exponential rather than linear in the number of packages.
+	//
+	// Deduping on pkg.ID, not pkg.PkgPath, is load-bearing now that cfg.Tests
+	// is true: for a workspace-local package with tests, "./..." then returns
+	// TWO *packages.Package values sharing one PkgPath — the production
+	// variant and the "p [p.test]" in-package-test variant — distinguished
+	// only by ID. Their Imports sets differ (the test variant adds whatever
+	// its _test.go files import), and roots is unordered, so whichever
+	// variant walk visits first would, keyed on PkgPath, mark the PkgPath
+	// seen and make walk skip the other variant's edges entirely. That
+	// silently dropped any third-party module imported ONLY from _test.go
+	// files workspace-wide (nothing on the production side ever reaches it)
+	// from imp.ext, which made Import() fail for it — and that failure is
+	// exactly what made TypeCheckPackage's withTests attempt fail and fall
+	// back to checking the package without ANY of its test files (see the
+	// "retrying without" logic below), silently blinding CallSitesOf to
+	// every _test.go call site in that package.
 	var walk func(pkg *packages.Package)
 	walk = func(pkg *packages.Package) {
-		if pkg == nil || seen[pkg.PkgPath] {
+		if pkg == nil || seen[pkg.ID] {
 			return
 		}
-		seen[pkg.PkgPath] = true
+		seen[pkg.ID] = true
 
 		// Keep only non-workspace packages. Import resolves workspace-local
 		// paths from ws.Packages before it ever consults ext, so go/packages'

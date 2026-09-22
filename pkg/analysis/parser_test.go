@@ -792,6 +792,140 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 	}
 }
 
+// TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport is a regression
+// test for a silent gap in workspaceImporter.loadExternal: with cfg.Tests
+// true, packages.Load(cfg, "./...") returns TWO *packages.Package values for
+// a workspace-local package that has tests — the production variant and the
+// "p [p.test]" in-package-test variant — sharing one PkgPath but distinguished
+// only by ID. loadExternal's cycle-avoidance walk used to dedupe on PkgPath,
+// so whichever of the two variants it visited first marked the PkgPath seen
+// and the OTHER variant's extra import edges (anything only a _test.go file
+// imports) were never walked — so a third-party module imported EXCLUSIVELY
+// from _test.go files anywhere in the workspace never reached imp.ext.
+//
+// The consequence reached far past loadExternal: Import() then failed to
+// resolve that module, which failed the package's "with tests" type-check
+// attempt, and (*GoParser).TypeCheckPackage's fallback silently retried
+// WITHOUT any of that package's test files — dropping every _test.go
+// identifier from TypesInfo, in every package with such an import, not just
+// the one that has it. That is how a call site in an entirely unrelated
+// _test.go file (in the same package) went missing from CallSitesOf with no
+// error anywhere: this test's own case, ss_arcgis_tokens_test.go calling
+// GetTokenForService while a SIBLING test file in the same package imported
+// github.com/DATA-DOG/go-sqlmock.
+//
+// This loads a synthetic module (not this repo) whose only package, foo, has
+// a production call site (bar.go) and a _test.go call site guarded by a
+// real third-party import (golang.org/x/tools/go/ast/inspector, chosen
+// because it is already a direct dependency of this very tool and so is
+// already present in the local module cache — see the skip guard below,
+// mirrored from TestParser_WorkspaceImporter_ExternalModuleFallback).
+func TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport(t *testing.T) {
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "golang.org/x/tools")
+	cmd.Env = append(os.Environ(), "GOPROXY=off")
+	out, err := cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) == "" {
+		t.Skip("golang.org/x/tools not present in the local module cache; skipping")
+	}
+
+	tempDir := t.TempDir()
+	writeFile := func(rel, content string) {
+		full := filepath.Join(tempDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", rel, err)
+		}
+	}
+
+	writeFile("go.mod", "module example.com/testws\n\ngo 1.26.0\n\nrequire golang.org/x/tools v0.50.0\n")
+	writeFile("go.sum",
+		"golang.org/x/tools v0.50.0 h1:c2ifzfcuY7L90lZ2aKd8S4K2NpASF08SZx9ZuJkHmSU=\n"+
+			"golang.org/x/tools v0.50.0/go.mod h1:7ulVMw3831Mwi5EZD6RomGyffr4VFjuNYXf2BbCEAV0=\n")
+	writeFile("foo/foo.go", `package foo
+
+func Process(name string) string { return name }
+`)
+	// A normal production call site, so this test also confirms the fix does
+	// not somehow cost the package its non-test call sites.
+	writeFile("foo/bar.go", `package foo
+
+func Run() string { return Process("prod") }
+`)
+	// The test-only third-party import that triggers the bug: nothing in
+	// foo's production files imports golang.org/x/tools, only this file does.
+	writeFile("foo/foo_test.go", `package foo
+
+import (
+	"testing"
+
+	"golang.org/x/tools/go/ast/inspector"
+)
+
+func TestProcess(t *testing.T) {
+	_ = inspector.New(nil)
+	Process("test")
+}
+`)
+
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ws, err := parser.ParseWorkspace(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	fsPath, ok := ws.ImportToPath["example.com/testws/foo"]
+	if !ok {
+		t.Fatal("expected example.com/testws/foo to be in ImportToPath")
+	}
+	pkg, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatal("expected package foo to be parsed")
+	}
+
+	parser.EnsureTypeChecked(ws, pkg)
+	if pkg.TestTypesExcluded {
+		t.Fatalf("expected foo's test files to type-check together with the package, got excluded (cause: %v)",
+			pkg.TestTypesExcludedErr)
+	}
+	if pkg.TypesErr != nil {
+		t.Fatalf("expected foo to type-check cleanly, got: %v", pkg.TypesErr)
+	}
+
+	var seed *gotypes.Func
+	for ident, obj := range pkg.TypesInfo.Defs {
+		if ident.Name == "Process" {
+			seed, _ = obj.(*gotypes.Func)
+		}
+	}
+	if seed == nil {
+		t.Fatal("expected Process to resolve to a go/types object")
+	}
+
+	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
+	if !idx.HasTypeInfo() {
+		t.Fatal("expected the reference index to have type info")
+	}
+
+	sites := idx.CallSitesOf(seed)
+	var sawProd, sawTest bool
+	for _, site := range sites {
+		switch {
+		case strings.HasSuffix(site.File.Path, "bar.go"):
+			sawProd = true
+		case strings.HasSuffix(site.File.Path, "foo_test.go"):
+			sawTest = true
+		}
+	}
+	if !sawProd {
+		t.Errorf("expected a call site in bar.go, got sites: %+v", sites)
+	}
+	if !sawTest {
+		t.Errorf("expected a call site in foo_test.go (this is the bug: it used to go missing), got sites: %+v", sites)
+	}
+}
+
 // TestParser_WorkspaceImporter_HasExternalImports covers the check that
 // decides whether loading the module graph via go/packages is worth doing.
 // The interesting case is the third one: pkg.Imports is only accumulated from

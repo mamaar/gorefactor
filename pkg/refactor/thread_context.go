@@ -258,10 +258,61 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 	if err != nil {
 		return nil, err
 	}
+	if err := op.testTypesExcludedAbort(plan, visited); err != nil {
+		return nil, err
+	}
 	if err := op.resolve(idx, plan, visited); err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// testTypesExcludedAbort fails when any package the traversal actually
+// touched had its _test.go files excluded from type-checking (see
+// pkgtypes.Package.TestTypesExcluded). CallSitesOf/NonCallUsesOf resolve
+// references by go/types object identity, so a package in that state is
+// invisible to discover for exactly the call sites that matter most here: a
+// _test.go file in the SAME package as a threaded function very often calls
+// it directly. Proceeding anyway would silently thread past those call
+// sites — the seed's signature changes, but the test file that calls it does
+// not, which does not compile. That is the same "must never hand back a
+// half-threaded, uncompilable workspace" guarantee valueUseAbort and
+// externalInterfaceAbort already give for the cases they cover.
+func (op *ThreadContextOperation) testTypesExcludedAbort(plan *threadPlan, visited map[*gotypes.Func]bool) error {
+	seen := make(map[*pkgtypes.Package]bool)
+	var affected []*funcDecl
+	for f := range visited {
+		fd := plan.Decls[f]
+		if fd == nil || fd.Pkg == nil || seen[fd.Pkg] {
+			continue
+		}
+		seen[fd.Pkg] = true
+		if fd.Pkg.TestTypesExcluded && len(fd.Pkg.TestFiles) > 0 {
+			affected = append(affected, fd)
+		}
+	}
+	if len(affected) == 0 {
+		return nil
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b,
+		"cannot thread context: %d package(s) reached by this call chain have _test.go files that could "+
+			"not be type-checked together with the package, so their identifiers are absent from Defs/Uses "+
+			"and any call site in them is invisible to this operation — proceeding would silently miss those "+
+			"call sites and leave the affected test files uncompilable once the signature changes:\n",
+		len(affected))
+	for _, fd := range affected {
+		fmt.Fprintf(&b, "  - %s (%d test file(s) excluded): %v\n",
+			fd.Pkg.ImportPath, len(fd.Pkg.TestFiles), fd.Pkg.TestTypesExcludedErr)
+	}
+	b.WriteString("fix the underlying type-check failure (often an unresolvable import in one _test.go " +
+		"file, which currently costs the whole package's tests their type info) and re-run")
+
+	return &pkgtypes.RefactorError{
+		Type:    pkgtypes.InvalidOperation,
+		Message: b.String(),
+	}
 }
 
 // discover is phase 1: the worklist fixpoint that decides WHICH functions gain a

@@ -11,6 +11,26 @@ import (
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
+// packageForFile returns the workspace package that owns sourceFile (matched
+// the same way analysis.ExtractFuncParams matches it: by map key or by
+// File.Path), or nil if no package claims it. Mirrors the lookup pattern used
+// throughout pkg/analysis/funcparams.go, kept local here since only this
+// file's TestTypesExcluded guard needs the owning *pkgtypes.Package rather
+// than just the *pkgtypes.File.
+func packageForFile(ws *pkgtypes.Workspace, sourceFile string) *pkgtypes.Package {
+	for _, pkg := range ws.Packages {
+		if _, ok := pkg.Files[sourceFile]; ok {
+			return pkg
+		}
+		for filePath, f := range pkg.Files {
+			if filePath == sourceFile || f.Path == sourceFile {
+				return pkg
+			}
+		}
+	}
+	return nil
+}
+
 // --- add_context_parameter ---
 
 type AddContextParameterInput struct {
@@ -89,6 +109,28 @@ Set thread: true to thread a real context.Context transitively through every cal
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
+		}
+
+		// A signature change is only safe if every call site gets rewritten —
+		// a caller left with the old arity does not compile. idx (built above)
+		// resolves call sites by go/types object identity, which is blind to
+		// any _test.go file whose package had its test files excluded from
+		// type-checking (pkgtypes.Package.TestTypesExcluded — see
+		// (*analysis.GoParser).TypeCheckPackage's "retrying without" fallback).
+		// The seed's own package is where that risk is concentrated: an
+		// in-package test file calling the function directly is the single
+		// most common call-site shape this tool handles, and it is exactly
+		// what silently went unrewritten before this check existed.
+		if pkg := packageForFile(ws, sourceFile); pkg != nil && pkg.TestTypesExcluded && len(pkg.TestFiles) > 0 {
+			state.RUnlock()
+			return errResult(fmt.Errorf(
+				"cannot add context parameter: package %s has %d test file(s) that could not be "+
+					"type-checked together with the package (cause: %v), so call sites in them are "+
+					"invisible to this operation; proceeding would silently leave those test files "+
+					"uncompilable once the signature changes — fix the underlying type-check failure "+
+					"(often an unresolvable import in one _test.go file, which currently costs the whole "+
+					"package's tests their type info) and re-run",
+				pkg.ImportPath, len(pkg.TestFiles), pkg.TestTypesExcludedErr)), nil, nil
 		}
 
 		// Check if ctx context.Context already exists as first param
