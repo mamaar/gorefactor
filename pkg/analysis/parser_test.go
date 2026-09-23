@@ -621,6 +621,261 @@ func G() {
 	if !pkgA.TypesChecked {
 		t.Error("expected package a to be marked TypesChecked after the call returns")
 	}
+
+	// The stronger guarantee added alongside the production-only rescue in
+	// workspaceImporter.Import: terminating is not enough on its own if it
+	// terminates by falling back to an EMPTY placeholder for b (the old
+	// behavior), which fails b's use of a.F and, through that, fails a's own
+	// "with tests" check — silently costing a_test.go its identifiers via
+	// the "retrying without" fallback. With the rescue in place, b resolves
+	// a's real exported symbols instead, so a's own combined check should
+	// succeed on the first attempt and never need that fallback at all.
+	if pkgA.TestTypesExcluded {
+		t.Errorf("expected package a's test files to be included despite the cycle, got excluded (cause: %v)",
+			pkgA.TestTypesExcludedErr)
+	}
+	if pkgA.TypesErr != nil {
+		t.Errorf("expected package a to type-check cleanly despite the cycle, got: %v", pkgA.TypesErr)
+	}
+}
+
+// TestParser_TypeCheckPackage_DiamondRescueIsConsistentAcrossImporters is a
+// regression test for a correctness bug in an earlier version of the
+// production-only rescue used to break the FALSE "cycle" TypeCheckPackage's
+// always-fold-test-files design can manufacture even for entirely valid Go
+// (see TestParser_TypeCheckPackage_CycleThroughTestFiles for the genuine,
+// Go-forbidden case; this one is the other kind).
+//
+// Note the shape here is deliberately NOT "a_test.go imports b, b imports a"
+// — real Go itself rejects that outright ("import cycle not allowed in
+// test"), confirmed by running `go vet`/`go test` against exactly that
+// workspace shape while building this test. What real Go DOES allow, and
+// what this reproduces, is a longer chain where the package that closes the
+// loop is reached only via ANOTHER package's in-package test file being
+// folded in — which real Go never does for an ordinary dependency (it
+// compiles that package plain, ignoring its tests entirely), but
+// TypeCheckPackage does, unconditionally, every time it checks any package
+// for any reason. That is what turns a plain diamond into a false cycle:
+//
+//	dep         — has dep_test.go, which imports slow
+//	slow        — production imports mid
+//	mid         — has mid_test.go (folded in only because TypeCheckPackage
+//	              checks mid at all, not because slow's plain import needed
+//	              it), which imports bridge
+//	bridge      — production imports dep directly AND imports other,
+//	              passing a *dep.Thing between them
+//	other       — production imports dep too
+//
+// dep's own check (production + dep_test.go) reaches bridge through slow and
+// mid's test-fold, and bridge's own import of dep finds dep still on the
+// stack — the in-progress rescue fires for bridge. Before the consistency
+// fix, other (which ALSO imports dep, from its own, separate, non-nested
+// check) could receive dep's real, post-cycle view instead of that same
+// rescue, so bridge.Field's type and other.Use's parameter type failed to
+// match — a spurious "cannot use ... as ... value" error, exactly the
+// failure first observed against a real, large workspace.
+func TestParser_TypeCheckPackage_DiamondRescueIsConsistentAcrossImporters(t *testing.T) {
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tempDir := t.TempDir()
+
+	writeFile := func(rel, content string) {
+		full := filepath.Join(tempDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", rel, err)
+		}
+	}
+
+	writeFile("go.mod", "module test/diamond2\n\ngo 1.21\n")
+
+	writeFile("dep/dep.go", `package dep
+
+type Thing struct{}
+`)
+	writeFile("dep/dep_test.go", `package dep
+
+import (
+	"testing"
+
+	"test/diamond2/slow"
+)
+
+func TestDep(t *testing.T) {
+	slow.Ping()
+}
+`)
+	writeFile("slow/slow.go", `package slow
+
+import "test/diamond2/mid"
+
+func Ping() { mid.Noop() }
+`)
+	writeFile("mid/mid.go", `package mid
+
+func Noop() {}
+`)
+	writeFile("mid/mid_test.go", `package mid
+
+import (
+	"testing"
+
+	"test/diamond2/bridge"
+)
+
+func TestMid(t *testing.T) {
+	bridge.Run(&bridge.Bridge{})
+}
+`)
+	writeFile("bridge/bridge.go", `package bridge
+
+import (
+	"test/diamond2/dep"
+	"test/diamond2/other"
+)
+
+type Bridge struct {
+	Field *dep.Thing
+}
+
+func Run(b *Bridge) {
+	other.Use(b.Field)
+}
+`)
+	writeFile("other/other.go", `package other
+
+import "test/diamond2/dep"
+
+func Use(t *dep.Thing) {}
+`)
+	// entry never participates in the diamond at all — it is checked LAST,
+	// as an entirely separate top-level target, specifically so its own
+	// direct import of dep happens only after dep's combined check has
+	// fully returned (dep.TypesChecked is already true by then, so this
+	// import takes the "not currently in progress" branch of Import,
+	// exactly where the consistency check lives). If that branch ever
+	// forgets to prefer an existing rescue, entry.Field ends up typed via
+	// dep's real, post-cycle view while other.Use (resolved earlier,
+	// nested inside bridge's own check while dep was still in progress)
+	// keeps the rescue view — the two-views-of-dep mismatch.
+	writeFile("entry/entry.go", `package entry
+
+import (
+	"test/diamond2/dep"
+	"test/diamond2/other"
+)
+
+type Entry struct {
+	Field *dep.Thing
+}
+
+func Run(e *Entry) {
+	other.Use(e.Field)
+}
+`)
+
+	ws, err := parser.ParseWorkspace(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	fsPath, ok := ws.ImportToPath["test/diamond2/dep"]
+	if !ok {
+		t.Fatal("expected test/diamond2/dep to be in ImportToPath")
+	}
+	pkgDep, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatal("expected package dep to be parsed")
+	}
+
+	// dep is the entry point deliberately: its own combined check is what
+	// starts the chain that reaches bridge nested (via slow, then mid's
+	// folded-in test file), which is the exact ordering that exposed the
+	// inconsistency — other's own, separate, later resolution of dep used
+	// to receive the real view while bridge had already received the
+	// rescue.
+	done := make(chan struct{})
+	go func() {
+		parser.EnsureTypeChecked(ws, pkgDep)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("EnsureTypeChecked did not terminate — cycle guard is broken")
+	}
+
+	if pkgDep.TestTypesExcluded {
+		t.Errorf("expected dep's test files to be included, got excluded (cause: %v)", pkgDep.TestTypesExcludedErr)
+	}
+
+	fsPathBridge, ok := ws.ImportToPath["test/diamond2/bridge"]
+	if !ok {
+		t.Fatal("expected test/diamond2/bridge to be in ImportToPath")
+	}
+	pkgBridge, ok := ws.Packages[fsPathBridge]
+	if !ok {
+		t.Fatal("expected package bridge to be parsed")
+	}
+	if pkgBridge.TypesErr != nil {
+		t.Fatalf("expected bridge to type-check cleanly, got: %v (this is the two-views-of-dep "+
+			"inconsistency if it mentions dep.Thing / other.Use)", pkgBridge.TypesErr)
+	}
+
+	fsPathEntry, ok := ws.ImportToPath["test/diamond2/entry"]
+	if !ok {
+		t.Fatal("expected test/diamond2/entry to be in ImportToPath")
+	}
+	pkgEntry, ok := ws.Packages[fsPathEntry]
+	if !ok {
+		t.Fatal("expected package entry to be parsed")
+	}
+	// Checked as a separate, later EnsureTypeChecked call, deliberately: by
+	// now dep.TypesChecked is already true (dep's own check, above, has
+	// fully returned), so entry's own direct import of dep takes the
+	// "already checked" branch of Import rather than the in-progress one —
+	// exactly the branch that must still prefer an existing rescue over
+	// dep's real view for this test to mean anything.
+	parser.EnsureTypeChecked(ws, pkgEntry)
+	if pkgEntry.TypesErr != nil {
+		t.Fatalf("expected entry to type-check cleanly, got: %v (this is the two-views-of-dep "+
+			"inconsistency if it mentions dep.Thing / other.Use)", pkgEntry.TypesErr)
+	}
+
+	// And the primary feature this rescue exists to preserve: dep's own
+	// test file call to slow.Ping must still be findable via CallSitesOf,
+	// exactly like TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport
+	// checks for the unresolved-third-party-import trigger.
+	fsPathSlow, ok := ws.ImportToPath["test/diamond2/slow"]
+	if !ok {
+		t.Fatal("expected test/diamond2/slow to be in ImportToPath")
+	}
+	pkgSlow, ok := ws.Packages[fsPathSlow]
+	if !ok {
+		t.Fatal("expected package slow to be parsed")
+	}
+	parser.EnsureTypeChecked(ws, pkgSlow)
+
+	var seed *gotypes.Func
+	for ident, obj := range pkgSlow.TypesInfo.Defs {
+		if ident.Name == "Ping" {
+			seed, _ = obj.(*gotypes.Func)
+		}
+	}
+	if seed == nil {
+		t.Fatal("expected slow.Ping to resolve to a go/types object")
+	}
+	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
+	var sawTest bool
+	for _, site := range idx.CallSitesOf(seed) {
+		if strings.HasSuffix(site.File.Path, "dep_test.go") {
+			sawTest = true
+		}
+	}
+	if !sawTest {
+		t.Error("expected a call site in dep_test.go (this is the bug: it used to go missing)")
+	}
 }
 
 // TestParser_TypeCheckPackage_ConcurrentSharedDependency is a regression test
@@ -638,6 +893,94 @@ func G() {
 // dependency. Every dependent must end up with a clean type-check; a leaked
 // placeholder shows up as a non-nil TypesErr on whichever dependent lost the
 // race.
+
+// TestParser_TypeCheckPackage_ExternalTestPackage is a regression test for
+// checkExternalTestPackage: a _test.go file declaring `package foo_test`
+// (a different package name than foo's own, despite living in foo's
+// directory) is a SEPARATE compilation unit that TypeCheckPackage's
+// withTests fold cannot include — go/types.Checker requires every file
+// passed to one Check() call to declare the same package name. Before
+// checkExternalTestPackage existed, such a file was parsed (present in
+// pkg.TestFiles) but never type-checked at all: no Defs/Uses entries, so
+// CallSitesOf/NonCallUsesOf were blind to every identifier in it, silently,
+// as a permanent gap rather than something TestTypesExcluded could ever
+// report (TestTypesExcluded only tracks the withTests fold's own failures).
+func TestParser_TypeCheckPackage_ExternalTestPackage(t *testing.T) {
+	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tempDir := t.TempDir()
+
+	writeFile := func(rel, content string) {
+		full := filepath.Join(tempDir, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+			t.Fatalf("failed to create dir for %s: %v", rel, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+			t.Fatalf("failed to write %s: %v", rel, err)
+		}
+	}
+
+	writeFile("go.mod", "module test/externaltest\n\ngo 1.21\n")
+	writeFile("foo/foo.go", `package foo
+
+func Process(name string) string { return name }
+`)
+	// package foo_test, not foo — an external test package. It imports foo
+	// the same way any other, unrelated package would: by its import path.
+	writeFile("foo/foo_test.go", `package foo_test
+
+import (
+	"testing"
+
+	"test/externaltest/foo"
+)
+
+func TestProcess(t *testing.T) {
+	foo.Process("x")
+}
+`)
+
+	ws, err := parser.ParseWorkspace(tempDir)
+	if err != nil {
+		t.Fatalf("failed to parse workspace: %v", err)
+	}
+
+	fsPath, ok := ws.ImportToPath["test/externaltest/foo"]
+	if !ok {
+		t.Fatal("expected test/externaltest/foo to be in ImportToPath")
+	}
+	pkgFoo, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatal("expected package foo to be parsed")
+	}
+
+	parser.EnsureTypeChecked(ws, pkgFoo)
+	if pkgFoo.TypesErr != nil {
+		t.Fatalf("expected foo to type-check cleanly, got: %v", pkgFoo.TypesErr)
+	}
+
+	var seed *gotypes.Func
+	for ident, obj := range pkgFoo.TypesInfo.Defs {
+		if ident.Name == "Process" {
+			seed, _ = obj.(*gotypes.Func)
+		}
+	}
+	if seed == nil {
+		t.Fatal("expected Process to resolve to a go/types object")
+	}
+
+	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
+	var sawExternalTest bool
+	for _, site := range idx.CallSitesOf(seed) {
+		if strings.HasSuffix(site.File.Path, "foo_test.go") {
+			sawExternalTest = true
+		}
+	}
+	if !sawExternalTest {
+		t.Error("expected a call site in the external test package's foo_test.go " +
+			"(this is the bug: external test packages were never type-checked at all)")
+	}
+}
+
 func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
 	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	tempDir := t.TempDir()

@@ -588,6 +588,81 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	pkg.TestTypesExcludedErr = testTypesExcludedErr
 	pkg.TypesChecked = true
 	p.mu.Unlock()
+
+	// pkg's own combined (production + in-package test) check is complete.
+	// Clear typeCheckInProgress for it now, explicitly, rather than waiting
+	// for this function's own deferred delete: an external test package
+	// (package foo_test, checked next) almost always imports pkg itself —
+	// that is the whole reason such a file exists — and it must resolve to
+	// the real, just-completed check above. Left set, Import would wrongly
+	// treat pkg as still on the stack and hand back the narrower
+	// production-only rescue view (see Import's in-progress branch) for a
+	// plain, non-cyclic self-import. delete on an absent key is a no-op, so
+	// running this again via the deferred delete below is harmless.
+	delete(p.typeCheckInProgress, pkg)
+
+	p.checkExternalTestPackage(ws, pkg, pkgName)
+}
+
+// checkExternalTestPackage type-checks pkg's external test files — files
+// declaring `package <pkgName>_test`, which is a different package name
+// than pkg's own despite living in the same directory — as their own,
+// separate compilation unit, the way `go test` itself does: nothing ever
+// imports an external test package, so it is checked purely for its own
+// Defs/Uses, never stored as anything importable.
+//
+// Called only from typeCheckLocked, after pkg's own in-progress marker has
+// already been cleared (see that call site) so that this file set's own
+// import of pkg — the near-universal reason an external test package
+// exists — resolves to pkg's real, complete check rather than the
+// production-only rescue view Import hands to a genuinely in-progress
+// package.
+//
+// The resulting Defs/Uses are merged into pkg.TypesInfo so every consumer
+// that already reads pkg.TypesInfo for pkg.TestFiles (BuildReferenceIndex
+// chief among them, since it does not distinguish in-package from external
+// test files) sees these identifiers exactly the way it already sees
+// in-package ones. The merge is safe because the two Info maps are keyed by
+// *ast.Ident pointers drawn from disjoint file sets — nothing in pkg's own
+// combined check can share a key with a file checked here.
+func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Package, pkgName string) {
+	var files []*ast.File
+	for _, f := range pkg.TestFiles {
+		if f.AST != nil && f.AST.Name.Name != pkgName {
+			files = append(files, f.AST)
+		}
+	}
+	if len(files) == 0 {
+		return
+	}
+
+	// checkFiles uses pkg.ImportPath as the Check() path argument, which is
+	// harmless here: this call's resulting *types.Package is discarded
+	// (nothing ever imports an external test package, so there is nothing to
+	// store it as), and go/types.Checker verifies package-name consistency
+	// only among the files passed to ONE Check() call, never against that
+	// path string — it is purely a label on the (unused) result.
+	_, info, err := p.checkFiles(ws, pkg, files)
+	if err != nil {
+		p.logger.Debug("external test package type-checking failed", "package", pkg.ImportPath, "err", err)
+	}
+	if info == nil {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if pkg.TypesInfo == nil {
+		// pkg's own check had zero parseable files (or failed hard enough
+		// that checkFiles returned a nil Info there too) — nowhere to merge.
+		return
+	}
+	for ident, obj := range info.Defs {
+		pkg.TypesInfo.Defs[ident] = obj
+	}
+	for ident, obj := range info.Uses {
+		pkg.TypesInfo.Uses[ident] = obj
+	}
 }
 
 // BindWorkspace attaches p to ws as ws's workspace importer, without going
@@ -657,6 +732,15 @@ type workspaceImporter struct {
 	// for the Debug log below — a failure here is not fatal, it just means
 	// the importer.Default() fallback is all that's left.
 	extErr error
+
+	// productionOnly memoizes the production-files-only (no _test.go at all)
+	// check of a workspace-local package, computed on demand by Import when
+	// that package's own real check (production + in-package tests, owned by
+	// typeCheckLocked) is already in progress further up this call stack —
+	// see the comment at that call site for why. Guarded by checkMu like
+	// typeCheckInProgress: only the single goroutine holding a type-check
+	// session ever touches it.
+	productionOnly map[*types.Package]*gotypes.Package
 }
 
 // loadExternal populates imp.ext by loading the whole workspace module with
@@ -840,20 +924,87 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 			// held by this goroutine and typeCheckInProgress belongs to this
 			// call stack alone.
 			if imp.parser.typeCheckInProgress[pkg] {
-				// This package is being type-checked further up our own call
-				// stack (a cycle reached through in-package _test.go files —
-				// those are folded into the same check, so "A_test.go imports
-				// B, B imports A" is reachable despite Go forbidding import
-				// cycles outside tests). Recursing would not terminate, so
-				// hand go/types a placeholder: it records a resolution error
-				// for this import and unwinds normally.
-				return gotypes.NewPackage(path, pkg.Name), nil
+				// pkg's own real check — production files folded together
+				// with its in-package _test.go files, owned by
+				// typeCheckLocked — is already running further up this call
+				// stack. That combined graph can have cycles that would not
+				// exist in production code alone: "A_test.go imports B, B's
+				// own test files (folded into B's check the same way) import
+				// back to A" is reachable despite Go forbidding import
+				// cycles outside tests. Recursing into typeCheckLocked here
+				// would not terminate.
+				//
+				// Go itself resolves exactly this by never letting anything
+				// import a package's test-augmented compiled form: only that
+				// package's own test binary ever sees it, and every other
+				// importer — including another package's test files — links
+				// against the plain, non-test-augmented package. Mirror that
+				// here: hand back pkg's production-files-only view instead of
+				// an empty placeholder. A previous version of this function
+				// returned gotypes.NewPackage(path, pkg.Name) — a package
+				// with no symbols at all — which made every reference into
+				// pkg from here "undefined". When the caller was itself a
+				// PRODUCTION file (as in the case that motivated this fix:
+				// package server's production go_server.go uses a type from
+				// package syncdb, and syncdb's own in-package tests happen to
+				// import something that imports back to server), that
+				// undefined reference failed the caller's own "with tests"
+				// type-check attempt — which cost the caller's ENTIRE test
+				// suite its call-site visibility via the "retry without
+				// tests" fallback below, even though nothing about the
+				// caller's OWN test files was at fault.
+				//
+				// This rescue view is deliberately never written to
+				// pkg.TypesPkg/TypesInfo/TypesChecked: those remain owned
+				// exclusively by pkg's real, combined check, which still runs
+				// (once, normally, non-reentrantly) whenever the traversal
+				// reaches pkg directly rather than through this in-progress
+				// path — and that real check is what every OTHER, non-cyclic
+				// importer of pkg continues to see. Only a caller that hits
+				// pkg while it is genuinely on the stack gets this narrower,
+				// tests-excluded substitute, exactly mirroring the narrower
+				// (production-only) view Go itself hands to such a caller.
+				return imp.productionOnlyPackage(pkg)
 			}
 
 			// Type-check this dependency first (lazy/recursive). Call the
 			// locked variant: re-entering TypeCheckPackage would try to take
 			// checkMu a second time on this goroutine and deadlock.
 			imp.parser.typeCheckLocked(imp.ws, pkg)
+
+			// If, DURING that call, pkg was itself reached reentrantly —
+			// its own combined check was still on this very call stack when
+			// some OTHER import needed it, triggering the production-only
+			// rescue in the in-progress branch above — then pkg.TypesPkg
+			// (the real, combined check that just finished) and that rescue
+			// value are two INDEPENDENTLY type-checked *types.Package
+			// instances for the very same declarations: structurally
+			// identical but nominally distinct types to go/types, since
+			// Check() never reuses an Object across two separate
+			// invocations. Handing out pkg.TypesPkg here, to this caller,
+			// while some OTHER caller (reached earlier, nested inside this
+			// very check) already received the rescue view, would let both
+			// views collide the moment anything downstream tries to use a
+			// value that crossed both — this is not hypothetical: it is
+			// exactly how, before this guard, one package's own field
+			// (typed via the rescue view of a dependency) failed to
+			// type-check as an argument to a DIFFERENT package's function
+			// (typed via that same dependency's real, combined view),
+			// producing a spurious "cannot use ... as ... value" error that
+			// then cost pkg's own test files their coverage via the
+			// "retrying without" fallback below — the very failure mode
+			// this whole rescue mechanism exists to avoid.
+			//
+			// Once pkg has been rescued anywhere in this importer's
+			// lifetime, keep returning that SAME rescue value to every
+			// caller from here on, including this one, so nothing
+			// downstream ever sees both. pkg.TypesInfo (used for pkg's OWN
+			// reference index — finding call sites inside pkg's own test
+			// files) is unaffected: this only changes what OTHER packages
+			// see when THEY import pkg.
+			if rescued, ok := imp.productionOnly[pkg]; ok {
+				return rescued, nil
+			}
 
 			imp.parser.mu.Lock()
 			typesPkg := pkg.TypesPkg
@@ -890,4 +1041,52 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 		imp.std = importer.Default()
 	}
 	return imp.std.Import(path)
+}
+
+// productionOnlyPackage returns pkg's production-files-only *types.Package —
+// no _test.go files at all, in-package or external — computing and
+// memoizing it on first use. Called only from Import's in-progress branch
+// above; see that comment for why this exists and what it deliberately does
+// NOT touch (pkg.TypesPkg/TypesInfo/TypesChecked).
+//
+// This check can recurse into Import again for whatever pkg's production
+// files themselves import, and can therefore hit this same in-progress
+// rescue path for some OTHER package. That recursion is guaranteed to
+// terminate: Go requires the production (non-test) import graph to be
+// acyclic — a real cycle there would already be a compile error outside this
+// tool — so walking it can revisit a package already resolved (returned from
+// the memo map below) but can never re-enter one that is still being
+// resolved on the current call stack.
+func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotypes.Package, error) {
+	if cached, ok := imp.productionOnly[pkg]; ok {
+		return cached, nil
+	}
+
+	var files []*ast.File
+	for _, f := range pkg.Files {
+		if f.AST != nil {
+			files = append(files, f.AST)
+		}
+	}
+	if len(files) == 0 {
+		// Nothing to check — same "zero parseable files" case typeCheckLocked
+		// itself guards, just without anywhere to store the result.
+		return gotypes.NewPackage(pkg.ImportPath, pkg.Name), nil
+	}
+
+	// checkFiles routes back through imp (the same workspaceImporter) for
+	// whatever these files import, so a second in-progress package reached
+	// from here takes this same rescue path recursively. go/types.Config.Check
+	// returns a non-nil, Complete() package even when checking fails (partial
+	// results from whatever it managed to resolve) — see typeCheckLocked's
+	// own comment on the same guarantee — so the result is usable regardless
+	// of whether err is nil.
+	typesPkg, _, _ := imp.parser.checkFiles(imp.ws, pkg, files)
+
+	if imp.productionOnly == nil {
+		imp.productionOnly = make(map[*types.Package]*gotypes.Package)
+	}
+	imp.productionOnly[pkg] = typesPkg
+
+	return typesPkg, nil
 }

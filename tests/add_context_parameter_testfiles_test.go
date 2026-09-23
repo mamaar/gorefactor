@@ -210,3 +210,166 @@ func TestAddContextParameter_NoThread_AbortsWhenTestFilesExcluded(t *testing.T) 
 		t.Errorf("expected no changes to foo.go after an aborted non-threaded request, got:\n%s", content)
 	}
 }
+
+// TestAddContextParameter_Thread_TestOnlyImportDiamond is an end-to-end
+// regression test for the false "cycle" TypeCheckPackage's always-fold-
+// test-files design can manufacture even for entirely valid Go — see
+// pkg/analysis/parser_test.go's
+// TestParser_TypeCheckPackage_DiamondRescueIsConsistentAcrossImporters for
+// the full topology explanation and why it is NOT the (Go-forbidden)
+// "a_test.go imports b, b imports a" shape.
+//
+// This reproduces the exact failure mode first found against a real,
+// large workspace: dep.Seed is threaded, dep's own combined check reaches
+// bridge nested (through slow, then mid's folded-in test file), bridge's
+// own production import of dep finds dep still on the stack and receives
+// the production-only rescue, and — the part that used to fail — entry,
+// checked later and unrelated to the cycle itself, imports dep directly
+// AND imports other, passing a *dep.Thing between them. Before the
+// consistency fix, entry.Field (resolved once dep was no longer "in
+// progress") and other.Use's parameter (resolved earlier, nested, while
+// dep was still in progress) were two nominally distinct types, so
+// entry.go itself failed to type-check with a spurious "cannot use ... as
+// ... value" error — which, being a production file's error, cost dep's
+// entire test suite its call-site visibility via the "retrying without"
+// fallback, exactly as add_context_parameter first observed it.
+func TestAddContextParameter_Thread_TestOnlyImportDiamond(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"dep/dep.go": `package dep
+
+type Thing struct{}
+
+func Seed(name string) string { return name }
+`,
+		"dep/dep_test.go": `package dep
+
+import (
+	"testing"
+
+	"example.com/threadmcp/slow"
+)
+
+func TestDep(t *testing.T) {
+	Seed("x")
+	slow.Ping()
+}
+`,
+		"slow/slow.go": `package slow
+
+import "example.com/threadmcp/mid"
+
+func Ping() { mid.Noop() }
+`,
+		"mid/mid.go": `package mid
+
+func Noop() {}
+`,
+		// mid's OWN in-package test file is what reaches bridge — folded in
+		// only because TypeCheckPackage checks mid at all (triggered by
+		// slow's plain, production-only need for it), not because slow's
+		// import actually needed mid's tests. Real Go never compiles a
+		// dependency's test files for someone else's sake, so this shape is
+		// valid, ordinary Go with no cycle — confirmed against the real Go
+		// toolchain (go build/go vet/go test all succeed on it) while
+		// writing the topology this test is based on.
+		"mid/mid_test.go": `package mid
+
+import (
+	"testing"
+
+	"example.com/threadmcp/bridge"
+)
+
+func TestMid(t *testing.T) {
+	bridge.Run(&bridge.Bridge{})
+}
+`,
+		"bridge/bridge.go": `package bridge
+
+import (
+	"example.com/threadmcp/dep"
+	"example.com/threadmcp/other"
+)
+
+type Bridge struct {
+	Field *dep.Thing
+}
+
+func Run(b *Bridge) {
+	other.Use(b.Field)
+}
+`,
+		"other/other.go": `package other
+
+import "example.com/threadmcp/dep"
+
+func Use(t *dep.Thing) {}
+`,
+		"entry/entry.go": `package entry
+
+import (
+	"example.com/threadmcp/dep"
+	"example.com/threadmcp/other"
+)
+
+type Entry struct {
+	Field *dep.Thing
+}
+
+func Run(e *Entry) {
+	other.Use(e.Field)
+}
+`,
+	})
+
+	ctx := context.Background()
+	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
+	defer sess.Close()
+
+	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "add_context_parameter",
+		Arguments: map[string]any{
+			"function_name": "Seed",
+			"source_file":   "dep/dep.go",
+			"thread":        true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("CallTool returned error: %s", errText(result))
+	}
+
+	declContent, err := os.ReadFile(filepath.Join(dir, "dep", "dep.go"))
+	if err != nil {
+		t.Fatalf("reading dep.go: %v", err)
+	}
+	if !strings.Contains(string(declContent), "func Seed(ctx context.Context, name string) string") {
+		t.Errorf("expected Seed to gain a ctx context.Context parameter, got:\n%s", declContent)
+	}
+
+	testContent, err := os.ReadFile(filepath.Join(dir, "dep", "dep_test.go"))
+	if err != nil {
+		t.Fatalf("reading dep_test.go: %v", err)
+	}
+	got := string(testContent)
+	if !strings.Contains(got, `Seed(t.Context(), "x")`) {
+		t.Errorf("expected the _test.go call site to be rewritten with t.Context(), got:\n%s", got)
+	}
+
+	// entry.go, bridge.go and other.go never called Seed and must be left
+	// alone — this also implicitly confirms the workspace still type-checked
+	// cleanly enough for threading to run at all (a two-views-of-dep
+	// mismatch anywhere in this workspace would have aborted the whole
+	// operation before it got this far).
+	for _, untouched := range []string{"entry/entry.go", "bridge/bridge.go", "other/other.go"} {
+		content, err := os.ReadFile(filepath.Join(dir, untouched))
+		if err != nil {
+			t.Fatalf("reading %s: %v", untouched, err)
+		}
+		if strings.Contains(string(content), "context.Context") {
+			t.Errorf("expected %s to be untouched, got:\n%s", untouched, content)
+		}
+	}
+}
