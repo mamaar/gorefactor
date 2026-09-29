@@ -1,9 +1,13 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -173,6 +177,25 @@ func (s *MCPServer) EnsureReferenceIndex(ws *types.Workspace) (*analysis.Referen
 	return idx, nil
 }
 
+// EnsureTypedReferenceIndex type-checks every package and returns a reference
+// index that covers them all. An index cached before type-checking (or after
+// only a few packages were checked) has no object-identity data for the rest,
+// so it is discarded and rebuilt.
+func (s *MCPServer) EnsureTypedReferenceIndex(ws *types.Workspace) (*analysis.ReferenceIndex, error) {
+	unchecked := false
+	for _, pkg := range ws.Packages {
+		if pkg.TypesInfo == nil {
+			unchecked = true
+			break
+		}
+	}
+	if unchecked {
+		s.engine.EnsureTypeChecked(ws)
+		s.InvalidateReferenceIndex()
+	}
+	return s.EnsureReferenceIndex(ws)
+}
+
 // InvalidateReferenceIndex marks the cached reference index as stale.
 func (s *MCPServer) InvalidateReferenceIndex() {
 	s.refIndexMu.Lock()
@@ -235,6 +258,53 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
 	s.InvalidateReferenceIndex()
 
 	return nil
+}
+
+// RefreshStaleFiles re-syncs every workspace file whose on-disk content differs
+// from the parsed copy (edited, created or deleted outside the tool, or by an
+// apply the file watcher has not delivered yet). Tools plan from parsed byte
+// offsets, so they must call this before planning; otherwise hunks land at
+// stale offsets.
+func (s *MCPServer) RefreshStaleFiles() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.workspace == nil || s.updater == nil {
+		return
+	}
+
+	var events []watch.ChangeEvent
+	for _, pkg := range s.workspace.Packages {
+		known := make(map[string]bool)
+		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+			for base, f := range group {
+				path := filepath.Join(pkg.Dir, base)
+				known[base] = true
+				disk, err := os.ReadFile(path)
+				switch {
+				case os.IsNotExist(err):
+					events = append(events, watch.ChangeEvent{Path: path, Op: fsnotify.Remove})
+				case err == nil && (f == nil || !bytes.Equal(disk, f.OriginalContent)):
+					events = append(events, watch.ChangeEvent{Path: path, Op: fsnotify.Write})
+				}
+			}
+		}
+		entries, err := os.ReadDir(pkg.Dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || known[e.Name()] {
+				continue
+			}
+			events = append(events, watch.ChangeEvent{Path: filepath.Join(pkg.Dir, e.Name()), Op: fsnotify.Create})
+		}
+	}
+	if len(events) == 0 {
+		return
+	}
+	s.logger.Info("refreshing files changed outside the workspace", "files", len(events))
+	s.updater.HandleChanges(events)
+	s.InvalidateReferenceIndex()
 }
 
 // RLock acquires a read lock on the server state.

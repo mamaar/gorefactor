@@ -413,9 +413,19 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			Column:    symbol.Column,
 			Exported:  symbol.Exported,
 			Signature: symbol.Signature,
-			RefCount:  len(symbol.References),
 		}
-		for _, ref := range symbol.References {
+
+		idx, err := state.EnsureTypedReferenceIndex(ws)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+		resolver := analysis.NewSymbolResolver(ws, state.logger)
+		refs, err := resolver.FindReferencesIndexed(symbol, idx)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+		info.RefCount = len(refs)
+		for _, ref := range refs {
 			info.Refs = append(info.Refs, ReferenceInfo{
 				File:   ref.File,
 				Line:   ref.Line,

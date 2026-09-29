@@ -9,6 +9,7 @@ func RegisterAllTools(s *mcpsdk.Server, state *MCPServer) {
 	// server process and disconnecting every client session. See
 	// recoveryMiddleware's doc comment for the incident this covers.
 	s.AddReceivingMiddleware(recoveryMiddleware(state.logger))
+	s.AddReceivingMiddleware(refreshMiddleware(state))
 
 	registerWorkspaceTools(s, state)
 	registerMoveTools(s, state)

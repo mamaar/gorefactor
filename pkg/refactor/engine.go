@@ -697,6 +697,7 @@ func (e *DefaultEngine) SafeDeleteBlockingReferences(ws *types.Workspace, req ty
 		Force:      req.Force,
 	}
 
+	e.EnsureTypeChecked(ws)
 	return operation.BlockingReferences(ws)
 }
 
@@ -709,6 +710,7 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 		Force:      req.Force,
 	}
 
+	e.EnsureTypeChecked(ws)
 	if err := operation.Validate(ws); err != nil {
 		return nil, fmt.Errorf("safe delete operation validation failed: %w", err)
 	}
