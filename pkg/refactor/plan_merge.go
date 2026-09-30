@@ -262,7 +262,6 @@ func findStepConflict(steps []*types.RefactoringPlan) error {
 						Message: fmt.Sprintf(
 							"step %d and step %d conflict in %s: step %d proposes %q %s, step %d proposes %q %s",
 							i+1, j+1, ca.File, i+1, ca.Description, describeSpan(ca), j+1, cb.Description, describeSpan(cb)),
-						File: ca.File,
 					}
 				}
 			}
