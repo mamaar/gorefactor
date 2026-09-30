@@ -199,3 +199,61 @@ func TestViewIndexes_PrepareTypeChecksAndIndexesEveryView(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanAcrossViews_ReplansAViewOnlyForKeysItDeclares(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		declared types.SymbolKeySet
+		want     int
+	}{
+		{"new key not declared", linkedKeys(fnKey("a")), 1},
+		{"new key declared", linkedKeys(fnKey("a"), fnKey("b")), 2},
+		{"declarations unknown", nil, 2},
+	} {
+		primary, tagged := fakeViews()
+		planner := &fakePlanner{plan: func(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
+			if v == tagged {
+				return configResult{plan: planOf(ins("/ws/b.go", 2, "b", "b")), changed: linkedKeys(fnKey("a"), fnKey("b"))}, nil
+			}
+			return configResult{plan: planOf(ins("/ws/a.go", 1, "a", "a")), changed: linkedKeys(fnKey("a")), declared: tc.declared}, nil
+		}}
+		plan, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := len(planner.calls[primary]); got != tc.want {
+			t.Errorf("%s: primary planned %d times, want %d", tc.name, got, tc.want)
+		}
+		if len(plan.Changes) != 2 {
+			t.Errorf("%s: merged %d changes, want 2", tc.name, len(plan.Changes))
+		}
+	}
+}
+
+func TestThreadContextPlanner_ReportsTheKeysTheViewDeclares(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/p.go":      "package p\n\ntype S struct{}\n\nfunc (S) M() {}\n\nfunc leaf() {}\n",
+		"p/p_tagx.go": "//go:build tagx\n\npackage p\n\nfunc tagged() { leaf() }\n",
+	})
+	views, err := eng.WorkspaceSet().Views()
+	if err != nil {
+		t.Fatal(err)
+	}
+	planner := &threadContextPlanner{engine: eng, req: types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/p.go"}}
+	pkgPath := "example.com/threadtest/p"
+	for i, v := range views {
+		res, err := planner.planIn(v, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[types.SymbolKey]bool{
+			{PkgPath: pkgPath, Name: "leaf"}:         true,
+			{PkgPath: pkgPath, Recv: "S", Name: "M"}: true,
+			{PkgPath: pkgPath, Name: "tagged"}:       i == 1,
+		} {
+			if got := res.declared.Has(key); got != want {
+				t.Errorf("view %s: declares %s = %v, want %v", v.Config, key, got, want)
+			}
+		}
+	}
+}

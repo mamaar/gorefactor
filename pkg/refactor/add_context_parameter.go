@@ -44,8 +44,9 @@ func (p *addContextParameterPlanner) planIn(v *analysis.View, linked types.Symbo
 	if requested != nil {
 		targets = append([]ctxTarget{*requested}, targets...)
 	}
+	declared := declaredFuncKeys(ws)
 	if len(targets) == 0 {
-		return configResult{absent: notFound}, nil
+		return configResult{absent: notFound, declared: declared}, nil
 	}
 
 	run := &ctxRun{planner: p, ws: ws, idx: idx, covered: make(types.SymbolKeySet)}
@@ -55,7 +56,7 @@ func (p *addContextParameterPlanner) planIn(v *analysis.View, linked types.Symbo
 		}
 	}
 	run.addContextImports()
-	return configResult{plan: run.plan(), changed: run.covered, reach: run.reach()}, nil
+	return configResult{plan: run.plan(), changed: run.covered, reach: run.reach(), declared: declared}, nil
 }
 
 // requestedIn finds the requested function in ws. It is a SymbolNotFound error

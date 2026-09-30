@@ -22,6 +22,21 @@ type configResult struct {
 	// in the view and no linked key resolves there.
 	absent error
 	reach  reach
+	// declared holds the keys of the functions the view declares. Linking any
+	// other key cannot change the view's plan; nil when unknown.
+	declared types.SymbolKeySet
+}
+
+// declaredFuncKeys returns the keys of the functions and interface methods ws
+// declares, which are the declarations a linked key can name.
+func declaredFuncKeys(ws *types.Workspace) types.SymbolKeySet {
+	keys := make(types.SymbolKeySet)
+	for fn := range buildFuncDeclIndex(ws) {
+		if key, ok := types.SymbolKeyOf(fn); ok {
+			keys[key] = struct{}{}
+		}
+	}
+	return keys
 }
 
 // configPlanner plans one operation in one view, given the keys linked from
@@ -156,8 +171,19 @@ type configRun struct {
 	seen []types.SymbolKeySet
 }
 
+// stale reports whether view i has not been planned, or a key was linked since
+// that it may declare.
 func (r *configRun) stale(i int) bool {
-	return r.seen[i] == nil || !r.seen[i].ContainsAll(r.linked)
+	if r.seen[i] == nil {
+		return true
+	}
+	declared := r.results[i].declared
+	for key := range r.linked {
+		if !r.seen[i].Has(key) && (declared == nil || declared.Has(key)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *configRun) anyStale() bool {
