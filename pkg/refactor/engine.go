@@ -387,9 +387,44 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 // chains, stopping only at a caller that already has a context in scope or at
 // a root that cannot take one.
 func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
+	plan, _, err := e.threadContext(ws, req, nil)
+	return plan, err
+}
+
+// ThreadContextAcrossConfigs threads context like ThreadContext, under every
+// build configuration covering the workspace, and returns one merged plan. A
+// function that gains ctx under one configuration gains it under all of them.
+func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
+	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req})
+}
+
+// threadContextPlanner plans context threading in one view.
+type threadContextPlanner struct {
+	engine *DefaultEngine
+	req    types.ThreadContextRequest
+}
+
+func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
+	plan, gained, err := p.engine.threadContext(v.Workspace, p.req, linked)
+	if isSymbolNotFound(err) {
+		return configResult{absent: err}, nil
+	}
+	if err != nil {
+		return configResult{}, err
+	}
+	return configResult{plan: plan, changed: gained}, nil
+}
+
+// threadContext plans context threading in ws, seeding the functions linked
+// names next to the request's seed, and returns the keys of the functions that
+// gain a ctx.
+func (e *DefaultEngine) threadContext(
+	ws *types.Workspace, req types.ThreadContextRequest, linked types.SymbolKeySet,
+) (*types.RefactoringPlan, types.SymbolKeySet, error) {
 	operation := &ThreadContextOperation{
 		FunctionName: req.FunctionName,
 		SourceFile:   req.SourceFile,
+		Linked:       linked,
 	}
 	// The operation cannot reach EngineConfig through the Operation interface,
 	// so the engine hands it the AllowBreaking flag, mirroring RenameField.
@@ -415,25 +450,25 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
-		return nil, fmt.Errorf("thread context operation validation failed: %w", err)
+		return nil, nil, fmt.Errorf("thread context operation validation failed: %w", err)
 	}
 
 	// Execute the operation to generate the plan
 	plan, err := operation.Execute(ws)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate thread context plan: %w", err)
+		return nil, nil, fmt.Errorf("failed to generate thread context plan: %w", err)
 	}
 
 	// Analyze impact
 	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
+		return nil, nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
 
 	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
-	return plan, nil
+	return plan, operation.GainedKeys(), nil
 }
 
 // ExtractMethod implements method extraction from code blocks
