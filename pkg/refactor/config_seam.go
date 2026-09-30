@@ -441,5 +441,6 @@ func (r *configRun) merge(unverified []types.Blocker) (*types.RefactoringPlan, e
 		return nil, err
 	}
 	reportUnverified(merged, unverified)
+	r.reportTypeErrors(merged)
 	return merged, nil
 }

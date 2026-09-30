@@ -59,6 +59,11 @@ type Package struct {
 	// these files, so lookups by go/types object identity do not see them.
 	ExcludedTestFiles map[string]error
 
+	// ProductionErrs maps the name of each non-test file to the first type
+	// error located in it. TypesInfo holds only what the checker resolved in
+	// such a file: identifiers inside erroring expressions may be absent.
+	ProductionErrs map[string]error
+
 	// UnattributedTestErr is set when dropping the test files that carry errors
 	// did not settle and every remaining test file was dropped. Files without
 	// an error of their own then map to this error in ExcludedTestFiles.

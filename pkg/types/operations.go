@@ -243,6 +243,18 @@ type Coverage struct {
 	// Uncovered lists, by path, the files in the packages the plan reached
 	// that no configuration type-checks. Edits they need are not in the plan.
 	Uncovered []UncoveredFile
+	// TypeErrors lists the packages with type errors in non-test files that
+	// the plan reached or whose erroring files name a changed symbol. Uses
+	// inside the erroring code may be missing from the plan.
+	TypeErrors []PackageTypeError
+}
+
+// PackageTypeError is the first type error in the non-test files of a package
+// under one build configuration.
+type PackageTypeError struct {
+	Package string // import path
+	Config  string
+	Error   string
 }
 
 // UncoveredFile is a file a plan could not account for.

@@ -342,3 +342,36 @@ func reportUnverified(plan *types.RefactoringPlan, unverified []types.Blocker) {
 		})
 	}
 }
+
+// reportTypeErrors lists on plan, per view, the packages with type errors in
+// non-test files that the run reached or whose erroring files name a changed
+// symbol.
+func (r *configRun) reportTypeErrors(plan *types.RefactoringPlan) {
+	dirs, names := r.reached()
+	for key := range r.linked {
+		names[key.Name] = true
+	}
+	for _, v := range r.views {
+		if v.Parser == nil {
+			continue
+		}
+		listed := make(map[*types.Package]bool)
+		for _, e := range v.ProductionErrors() {
+			if listed[e.Package] || !(slices.Contains(dirs, e.Package.Dir) || namesAny(e.File, names)) {
+				continue
+			}
+			listed[e.Package] = true
+			plan.Coverage.TypeErrors = append(plan.Coverage.TypeErrors, types.PackageTypeError{
+				Package: e.Package.ImportPath,
+				Config:  v.Config.String(),
+				Error:   e.Err.Error(),
+			})
+		}
+	}
+}
+
+// namesAny reports whether an identifier in file is one of names.
+func namesAny(file *types.File, names map[string]bool) bool {
+	_, ok := firstMention(&analysis.SourceFile{Path: file.Path, Content: file.OriginalContent}, names)
+	return ok
+}

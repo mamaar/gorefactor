@@ -3,6 +3,8 @@ package analysis
 import (
 	"slices"
 	"strings"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // UncheckedFile is a file that no view has type information for.
@@ -122,4 +124,32 @@ func joinReasons(configs []BuildConfig, reasons []string) string {
 		parts[i] = configs[i].String() + ": " + reason
 	}
 	return strings.Join(parts, "; ")
+}
+
+// ProductionError is the first type error located in one non-test file.
+type ProductionError struct {
+	Package *types.Package
+	File    *types.File
+	Err     error
+}
+
+// ProductionErrors returns the first type error of each non-test file the
+// last type-check of v found one in, ordered by path.
+func (v *View) ProductionErrors() []ProductionError {
+	v.Parser.mu.Lock()
+	defer v.Parser.mu.Unlock()
+	var out []ProductionError
+	for _, pkg := range v.Workspace.Packages {
+		for name, err := range pkg.ProductionErrs {
+			if f := pkg.Files[name]; f != nil {
+				out = append(out, ProductionError{Package: pkg, File: f, Err: err})
+			}
+		}
+	}
+	slices.SortFunc(out, compareProductionErrors)
+	return out
+}
+
+func compareProductionErrors(a, b ProductionError) int {
+	return strings.Compare(a.File.Path, b.File.Path)
 }

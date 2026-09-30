@@ -480,6 +480,7 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesPkg = nil
 	pkg.TypesErr = nil
 	pkg.ExcludedTestFiles = nil
+	pkg.ProductionErrs = nil
 	pkg.UnattributedTestErr = nil
 	pkg.TypesChecked = false
 }
@@ -602,6 +603,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	pkg.TypesInfo = res.info
 	pkg.TypesErr = res.err
 	pkg.ExcludedTestFiles = res.excluded
+	pkg.ProductionErrs = res.production
 	pkg.UnattributedTestErr = res.unattributed
 	pkg.TypesChecked = true
 	p.mu.Unlock()
@@ -632,7 +634,18 @@ func productionASTs(pkg *types.Package) []*ast.File {
 	return files
 }
 
-// testAST is a parsed test file under its key in Package.TestFiles.
+// productionFiles returns the non-test files of pkg among asts, by name.
+func productionFiles(pkg *types.Package, asts []*ast.File) []testAST {
+	var files []testAST
+	for name, f := range pkg.Files {
+		if f.AST != nil && slices.Contains(asts, f.AST) {
+			files = append(files, testAST{name: name, ast: f.AST})
+		}
+	}
+	return files
+}
+
+// testAST is a parsed file under its key in Package.TestFiles or Package.Files.
 type testAST struct {
 	name string
 	ast  *ast.File
@@ -663,6 +676,8 @@ type testCheck struct {
 
 	excluded     map[string]error
 	unattributed error
+	// production holds the first error of the last pass in each non-test file.
+	production map[string]error
 }
 
 // checkSheddingTests checks base together with tests, drops the test files
@@ -686,6 +701,7 @@ func (p *GoParser) checkSheddingTests(ws *types.Workspace, pkg *types.Package, b
 		res.pkg, res.info, res.err = p.checkFiles(ws, pkg, files, errs)
 		bad := errs.firstPerFile(ws.FileSet, tests)
 		if len(bad) == 0 {
+			res.production = errs.firstPerFile(ws.FileSet, productionFiles(pkg, base))
 			return res
 		}
 		if pass == maxTestExclusionPasses {

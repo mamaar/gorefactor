@@ -27,6 +27,10 @@ type PlanResult struct {
 	// UncoveredFiles lists the files in the packages the plan reached that no
 	// build configuration type-checks. The plan holds no edits for them.
 	UncoveredFiles []UncoveredFileInfo `json:"uncovered_files,omitempty"`
+	// TypeErrors lists the packages with type errors in non-test files that the
+	// plan reached or whose erroring files name a changed symbol. Uses inside
+	// the erroring code may be missing from the plan.
+	TypeErrors []TypeErrorInfo `json:"type_errors,omitempty"`
 
 	// DryRun is true when the plan was previewed rather than applied. Nothing
 	// was written to disk and ModifiedFiles is empty.
@@ -149,6 +153,7 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 		Diffs:         buildDiffs(plan.Changes),
 	}
 	res.UncoveredFiles = planUncoveredFiles(state, plan)
+	res.TypeErrors = planTypeErrors(plan)
 
 	if err := state.GetEngine().ValidateRefactoring(plan); err != nil {
 		res.Success = false
@@ -200,7 +205,24 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dry
 		SkippedSites:   plan.SkippedSites,
 		BuildConfigs:   planBuildConfigs(plan),
 		UncoveredFiles: planUncoveredFiles(state, plan),
+		TypeErrors:     planTypeErrors(plan),
 	}, nil
+}
+
+// TypeErrorInfo is the first type error in the non-test files of a package
+// under one build configuration.
+type TypeErrorInfo struct {
+	Package string `json:"package"`
+	Config  string `json:"config"`
+	Error   string `json:"error"`
+}
+
+func planTypeErrors(plan *types.RefactoringPlan) []TypeErrorInfo {
+	var out []TypeErrorInfo
+	for _, e := range plan.Coverage.TypeErrors {
+		out = append(out, TypeErrorInfo(e))
+	}
+	return out
 }
 
 // planUncoveredFiles returns plan's uncovered files with paths relative to
