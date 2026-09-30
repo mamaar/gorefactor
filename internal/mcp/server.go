@@ -24,6 +24,7 @@ import (
 type MCPServer struct {
 	mu        sync.RWMutex
 	engine    *refactor.DefaultEngine
+	parser    *analysis.GoParser
 	workspace *types.Workspace
 	resolver  any // *analysis.SymbolResolver (from WatchContext)
 	watcher   *watch.Watcher
@@ -72,6 +73,7 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 		return false, fmt.Errorf("load workspace: %w", err)
 	}
 	s.workspace = wctx.Workspace
+	s.parser = wctx.Parser
 	s.resolver = wctx.Resolver
 
 	// Invalidate cached reference index since workspace changed
@@ -128,6 +130,9 @@ func (s *MCPServer) GetWorkspace() (*types.Workspace, error) {
 	}
 	return s.workspace, nil
 }
+
+// Covering returns the build configurations covering the loaded workspace.
+func (s *MCPServer) Covering() analysis.Covering { return s.parser.Covering() }
 
 // GetEngine returns the refactoring engine.
 func (s *MCPServer) GetEngine() *refactor.DefaultEngine {

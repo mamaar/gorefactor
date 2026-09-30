@@ -2,9 +2,12 @@ package mcp
 
 import (
 	"context"
+	"path/filepath"
 	"sort"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
 )
 
 // --- load_workspace ---
@@ -14,10 +17,53 @@ type LoadWorkspaceInput struct {
 }
 
 type LoadWorkspaceOutput struct {
-	Module             string `json:"module"`
-	PackageCount       int    `json:"package_count"`
-	RootPath           string `json:"root_path"`
-	ReferenceIndexBuilt bool   `json:"reference_index_built"`
+	Module              string              `json:"module"`
+	PackageCount        int                 `json:"package_count"`
+	RootPath            string              `json:"root_path"`
+	ReferenceIndexBuilt bool                `json:"reference_index_built"`
+	BuildConfigs        []BuildConfigInfo   `json:"build_configs"`
+	UncoveredFiles      []UncoveredFileInfo `json:"uncovered_files,omitempty"`
+}
+
+// BuildConfigInfo describes one configuration of the covering set.
+type BuildConfigInfo struct {
+	Name   string   `json:"name"`
+	GOOS   string   `json:"goos"`
+	GOARCH string   `json:"goarch"`
+	Cgo    bool     `json:"cgo"`
+	Tags   []string `json:"tags"`
+	Files  int      `json:"files"`
+}
+
+// UncoveredFileInfo is a file no configuration of the covering set includes.
+type UncoveredFileInfo struct {
+	File       string `json:"file"`
+	Constraint string `json:"constraint,omitempty"`
+	Reason     string `json:"reason"`
+}
+
+func buildConfigInfos(cov analysis.Covering) []BuildConfigInfo {
+	out := make([]BuildConfigInfo, len(cov.Configs))
+	for i, c := range cov.Configs {
+		tags := c.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+		out[i] = BuildConfigInfo{Name: c.String(), GOOS: c.GOOS, GOARCH: c.GOARCH, Cgo: c.Cgo, Tags: tags, Files: cov.Files[i]}
+	}
+	return out
+}
+
+func uncoveredFileInfos(cov analysis.Covering, root string) []UncoveredFileInfo {
+	var out []UncoveredFileInfo
+	for _, u := range cov.Uncovered {
+		rel, err := filepath.Rel(root, u.Path)
+		if err != nil {
+			rel = u.Path
+		}
+		out = append(out, UncoveredFileInfo{File: filepath.ToSlash(rel), Constraint: u.Constraint, Reason: u.Reason})
+	}
+	return out
 }
 
 // --- workspace_status ---
@@ -30,6 +76,9 @@ type WorkspaceStatusOutput struct {
 	RootPath     string   `json:"root_path,omitempty"`
 	PackageCount int      `json:"package_count"`
 	Packages     []string `json:"packages,omitempty"`
+
+	BuildConfigs   []BuildConfigInfo   `json:"build_configs,omitempty"`
+	UncoveredFiles []UncoveredFileInfo `json:"uncovered_files,omitempty"`
 }
 
 func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
@@ -50,6 +99,9 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		if ws.Module != nil {
 			out.Module = ws.Module.Path
 		}
+		cov := state.Covering()
+		out.BuildConfigs = buildConfigInfos(cov)
+		out.UncoveredFiles = uncoveredFileInfos(cov, ws.RootPath)
 		return textResult(out), nil, nil
 	})
 
@@ -76,6 +128,9 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 			out.Packages = append(out.Packages, pkg.ImportPath)
 		}
 		sort.Strings(out.Packages)
+		cov := state.Covering()
+		out.BuildConfigs = buildConfigInfos(cov)
+		out.UncoveredFiles = uncoveredFileInfos(cov, ws.RootPath)
 		return textResult(out), nil, nil
 	})
 }
