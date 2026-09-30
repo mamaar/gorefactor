@@ -27,26 +27,13 @@ func setupWorkspace(t *testing.T) (*WorkspaceUpdater, string) {
 	_ = os.MkdirAll(pkgDir, 0755)
 	_ = os.WriteFile(filepath.Join(pkgDir, "a.go"), []byte("package a\n\nfunc Hello() {}\n"), 0644)
 
-	parser := analysis.NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ws, err := parser.ParseWorkspace(dir)
+	set, err := analysis.LoadWorkspaceSet(dir, analysis.DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	for _, pkg := range ws.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	analyzer := analysis.NewDependencyAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := analyzer.BuildDependencyGraph(); err != nil {
-		t.Fatal(err)
-	}
-
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	u := NewUpdater(ws, parser, resolver, analyzer, logger)
+	u := NewUpdater(set, logger)
 	return u, dir
 }
 
@@ -83,7 +70,7 @@ func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
 		t.Fatal("expected package at pkg/a")
 	}
 
-	u.parser.EnsureTypeChecked(u.workspace, pkg)
+	u.set.Primary().Parser.EnsureTypeChecked(u.Workspace(), pkg)
 	if !pkg.TypesChecked || pkg.TypesInfo == nil {
 		t.Fatal("expected initial type information")
 	}
@@ -94,7 +81,7 @@ func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
 		t.Fatal("reparsed package retained stale type information")
 	}
 
-	u.parser.EnsureTypeChecked(u.workspace, pkg)
+	u.set.Primary().Parser.EnsureTypeChecked(u.Workspace(), pkg)
 	var world *ast.FuncDecl
 	for _, file := range pkg.Files {
 		for _, decl := range file.AST.Decls {
@@ -227,7 +214,7 @@ func TestUpdater_CreateOfNonMatchingFileLeavesPackageUnchanged(t *testing.T) {
 	if pkg.Symbols.FindSymbol("Hidden") != nil {
 		t.Fatal("symbol of an excluded file entered the package")
 	}
-	if u.parser.Sources().File(newPath) == nil {
+	if u.set.Sources().File(newPath) == nil {
 		t.Fatal("excluded file must still be recorded in the source tree")
 	}
 }
@@ -303,7 +290,7 @@ func TestUpdater_ModifyToUnparsableFileRemovesItFromPackage(t *testing.T) {
 	if _, ok := pkg.Files["b.go"]; ok {
 		t.Fatal("unparsable file should not be in the package")
 	}
-	if src := u.parser.Sources().File(extra); src == nil || src.Err == nil {
+	if src := u.set.Sources().File(extra); src == nil || src.Err == nil {
 		t.Fatal("parse error should be recorded in the source tree")
 	}
 }

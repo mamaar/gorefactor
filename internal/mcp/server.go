@@ -22,20 +22,13 @@ import (
 // a loaded workspace, its refactoring engine, and an optional
 // filesystem watcher that incrementally updates the workspace.
 type MCPServer struct {
-	mu        sync.RWMutex
-	engine    *refactor.DefaultEngine
-	parser    *analysis.GoParser
-	workspace *types.Workspace
-	resolver  any // *analysis.SymbolResolver (from WatchContext)
-	watcher   *watch.Watcher
-	updater   *watch.WorkspaceUpdater
-	cancel    context.CancelFunc // stops watcher goroutine
-	logger    *slog.Logger
-
-	// Cached reference index for performance (invalidated on workspace changes)
-	refIndexMu    sync.RWMutex
-	refIndex      any // *analysis.ReferenceIndex
-	refIndexValid bool
+	mu      sync.RWMutex
+	engine  *refactor.DefaultEngine
+	set     *analysis.WorkspaceSet // nil until a workspace is loaded
+	watcher *watch.Watcher
+	updater *watch.WorkspaceUpdater
+	cancel  context.CancelFunc // stops watcher goroutine
+	logger  *slog.Logger
 }
 
 // NewMCPServer creates a new MCPServer with the given logger.
@@ -71,16 +64,10 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	if _, err := s.engine.LoadWorkspace(path); err != nil {
 		return false, fmt.Errorf("load workspace: %w", err)
 	}
-	wctx := s.engine.WorkspaceSet().Primary()
-	s.workspace = wctx.Workspace
-	s.parser = wctx.Parser
-	s.resolver = wctx.Resolver
-
-	// Invalidate cached reference index since workspace changed
-	s.InvalidateReferenceIndex()
+	s.set = s.engine.WorkspaceSet()
 
 	// Build reference index upfront (this may take a moment for large workspaces)
-	s.logger.Info("building reference index", "packages", len(s.workspace.Packages))
+	s.logger.Info("building reference index", "packages", len(s.set.Primary().Workspace.Packages))
 	indexBuilt := s.buildReferenceIndexLocked()
 	if indexBuilt {
 		s.logger.Info("reference index built successfully")
@@ -93,7 +80,7 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	// before the watcher and independently of it: if it were only constructed on
 	// the watcher-available path, a failed watcher would silently turn every
 	// post-apply sync into a no-op and later operations would analyse stale ASTs.
-	s.updater = watch.NewUpdater(wctx.Workspace, wctx.Parser, wctx.Resolver, wctx.Analyzer, s.logger)
+	s.updater = watch.NewUpdater(s.set, s.logger)
 
 	// Start watcher.
 	w, err := watch.NewWatcher(path, 200*time.Millisecond, s.logger)
@@ -123,63 +110,34 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	return indexBuilt, nil
 }
 
-// GetWorkspace returns the loaded workspace or an error if none is loaded.
+// GetWorkspace returns the primary view's workspace or an error if none is loaded.
 func (s *MCPServer) GetWorkspace() (*types.Workspace, error) {
-	if s.workspace == nil {
+	if s.set == nil {
 		return nil, fmt.Errorf("no workspace loaded — call load_workspace first")
 	}
-	return s.workspace, nil
+	return s.set.Primary().Workspace, nil
 }
 
 // Covering returns the build configurations covering the loaded workspace.
-func (s *MCPServer) Covering() analysis.Covering { return s.parser.Covering() }
+func (s *MCPServer) Covering() analysis.Covering { return s.set.Covering() }
 
 // GetEngine returns the refactoring engine.
 func (s *MCPServer) GetEngine() *refactor.DefaultEngine {
 	return s.engine
 }
 
-// EnsureReferenceIndex returns a cached reference index, building one if necessary.
-// Uses double-checked locking for thread safety.
+// viewOf returns the view that owns ws, or the primary view.
+func (s *MCPServer) viewOf(ws *types.Workspace) *analysis.View {
+	if v := s.set.ViewOf(ws); v != nil {
+		return v
+	}
+	return s.set.Primary()
+}
+
+// EnsureReferenceIndex returns the cached reference index of the view that
+// owns ws, building one if necessary.
 func (s *MCPServer) EnsureReferenceIndex(ws *types.Workspace) (*analysis.ReferenceIndex, error) {
-	// Fast path: check if valid cached index exists
-	s.refIndexMu.RLock()
-	if s.refIndexValid && s.refIndex != nil {
-		idx := s.refIndex.(*analysis.ReferenceIndex)
-		s.refIndexMu.RUnlock()
-		return idx, nil
-	}
-	s.refIndexMu.RUnlock()
-
-	// Slow path: build and cache
-	s.refIndexMu.Lock()
-	defer s.refIndexMu.Unlock()
-
-	// Double-check after acquiring write lock
-	if s.refIndexValid && s.refIndex != nil {
-		return s.refIndex.(*analysis.ReferenceIndex), nil
-	}
-
-	// Build the index using the resolver if available, otherwise create a new one
-	var resolver *analysis.SymbolResolver
-	if s.resolver != nil {
-		var ok bool
-		resolver, ok = s.resolver.(*analysis.SymbolResolver)
-		if !ok {
-			resolver = analysis.NewSymbolResolver(ws, s.logger)
-		}
-	} else {
-		resolver = analysis.NewSymbolResolver(ws, s.logger)
-	}
-
-	s.logger.Info("building reference index for workspace")
-	idx := resolver.BuildReferenceIndex()
-	if idx == nil {
-		return nil, fmt.Errorf("failed to build reference index")
-	}
-	s.refIndex = idx
-	s.refIndexValid = true
-	return idx, nil
+	return s.viewOf(ws).ReferenceIndex()
 }
 
 // EnsureTypedReferenceIndex type-checks every package and returns a reference
@@ -194,47 +152,31 @@ func (s *MCPServer) EnsureTypedReferenceIndex(ws *types.Workspace) (*analysis.Re
 			break
 		}
 	}
+	view := s.viewOf(ws)
 	if unchecked {
 		s.engine.EnsureTypeChecked(ws)
-		s.InvalidateReferenceIndex()
+		view.InvalidateReferenceIndex()
 	}
-	return s.EnsureReferenceIndex(ws)
+	return view.ReferenceIndex()
 }
 
-// InvalidateReferenceIndex marks the cached reference index as stale.
+// InvalidateReferenceIndex marks the cached reference index of every built
+// view as stale.
 func (s *MCPServer) InvalidateReferenceIndex() {
-	s.refIndexMu.Lock()
-	defer s.refIndexMu.Unlock()
-	s.refIndexValid = false
-	s.refIndex = nil
+	if s.set != nil {
+		s.set.InvalidateReferenceIndexes()
+	}
 }
 
-// buildReferenceIndexLocked builds the reference index (must be called with s.mu held).
-// Returns true if successful, false otherwise.
+// buildReferenceIndexLocked builds the primary view's reference index (must be
+// called with s.mu held). Returns true if successful, false otherwise.
 func (s *MCPServer) buildReferenceIndexLocked() bool {
-	if s.workspace == nil || s.resolver == nil {
-		s.logger.Warn("workspace or resolver not available")
-		return false
-	}
-
-	// Cast resolver and build index
-	resolver, ok := s.resolver.(*analysis.SymbolResolver)
-	if !ok {
-		s.logger.Error("resolver type assertion failed")
-		return false
-	}
-
 	s.logger.Debug("building reference index...")
-	idx := resolver.BuildReferenceIndex()
-	if idx != nil {
-		s.refIndexMu.Lock()
-		s.refIndex = idx
-		s.refIndexValid = true
-		s.refIndexMu.Unlock()
-		return true
+	if _, err := s.set.Primary().ReferenceIndex(); err != nil {
+		s.logger.Warn("failed to build reference index")
+		return false
 	}
-	s.logger.Warn("failed to build reference index")
-	return false
+	return true
 }
 
 // SyncWorkspaceChanges forces an immediate workspace update for the given files.
@@ -273,12 +215,12 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
 func (s *MCPServer) RefreshStaleFiles() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.workspace == nil || s.updater == nil {
+	if s.set == nil || s.updater == nil {
 		return
 	}
 
 	var events []watch.ChangeEvent
-	tree := s.updater.Sources()
+	tree := s.set.Sources()
 	for _, dir := range tree.Dirs() {
 		events = append(events, staleEvents(tree, dir)...)
 	}

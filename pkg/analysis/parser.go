@@ -29,11 +29,6 @@ type GoParser struct {
 	buildConfig BuildConfig
 	sources     *SourceTree
 
-	// coveringMu guards covering, which is computed on read and cleared
-	// whenever the source tree changes.
-	coveringMu sync.Mutex
-	covering   *Covering
-
 	// checkMu serializes whole type-checking sessions. It is acquired by the
 	// exported entry points (EnsureTypeChecked, TypeCheckPackage) and held for
 	// the entire recursive check, including the go/types.Config.Check call. The
@@ -103,24 +98,6 @@ func (p *GoParser) BuildConfig() BuildConfig { return p.buildConfig }
 
 // Sources returns the config-independent record of every file loaded so far.
 func (p *GoParser) Sources() *SourceTree { return p.sources }
-
-// Covering returns the build configurations that together include every
-// recorded file, computing them on first use after the source tree changed.
-func (p *GoParser) Covering() Covering {
-	p.coveringMu.Lock()
-	defer p.coveringMu.Unlock()
-	if p.covering == nil {
-		c := ComputeCovering(p.sources, p.buildConfig)
-		p.covering = &c
-	}
-	return *p.covering
-}
-
-func (p *GoParser) invalidateCovering() {
-	p.coveringMu.Lock()
-	defer p.coveringMu.Unlock()
-	p.covering = nil
-}
 
 // ParseFile parses a single Go file
 func (p *GoParser) ParseFile(filename string) (*types.File, error) {
@@ -195,35 +172,6 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 	}
 
 	return pkg, nil
-}
-
-// SyncSource brings the source tree in line with path on disk: a missing file
-// is forgotten (nil result), a recorded one is re-read, a new one is recorded.
-func (p *GoParser) SyncSource(path string) (*SourceFile, error) {
-	if !strings.HasSuffix(path, ".go") {
-		return nil, nil
-	}
-	defer p.invalidateCovering()
-	path = absDir(path)
-	if _, err := os.Stat(path); err != nil {
-		if !os.IsNotExist(err) {
-			return nil, err
-		}
-		p.sources.Remove(path)
-		return nil, nil
-	}
-
-	dir := filepath.Dir(path)
-	if !p.sources.loaded(dir) {
-		if err := p.sources.AddDir(dir); err != nil {
-			return nil, err
-		}
-		return p.sources.File(path), nil
-	}
-	if p.sources.File(path) != nil {
-		return p.sources.Replace(path)
-	}
-	return p.sources.Add(path)
 }
 
 // ProjectFile re-evaluates whether the recorded file at path belongs in pkg
@@ -301,7 +249,6 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		return nil, err
 	}
 	p.sources = NewSourceTree(p.fileSet)
-	p.invalidateCovering()
 	if err := loadSources(p.sources, absRootPath); err != nil {
 		p.logger.Error("workspace discovery failed", "path", rootPath, "err", err)
 		return nil, err

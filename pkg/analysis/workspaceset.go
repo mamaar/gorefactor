@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"go/token"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -16,6 +19,38 @@ type View struct {
 	Parser    *GoParser
 	Resolver  *SymbolResolver
 	Analyzer  *DependencyAnalyzer
+
+	refMu    sync.RWMutex
+	refIndex *ReferenceIndex
+}
+
+// ReferenceIndex returns the view's reference index, building and caching it
+// on first use.
+func (v *View) ReferenceIndex() (*ReferenceIndex, error) {
+	v.refMu.RLock()
+	idx := v.refIndex
+	v.refMu.RUnlock()
+	if idx != nil {
+		return idx, nil
+	}
+
+	v.refMu.Lock()
+	defer v.refMu.Unlock()
+	if v.refIndex == nil {
+		idx := v.Resolver.BuildReferenceIndex()
+		if idx == nil {
+			return nil, fmt.Errorf("failed to build reference index")
+		}
+		v.refIndex = idx
+	}
+	return v.refIndex, nil
+}
+
+// InvalidateReferenceIndex drops the cached reference index.
+func (v *View) InvalidateReferenceIndex() {
+	v.refMu.Lock()
+	defer v.refMu.Unlock()
+	v.refIndex = nil
 }
 
 // Approximate reports whether the view type-checks against the primary view's
@@ -122,6 +157,7 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	configs := s.coveringLocked().Configs
+	s.pruneLocked(configs)
 	views := make([]*View, 0, len(configs))
 	for _, cfg := range configs {
 		v, err := s.viewLocked(cfg)
@@ -146,7 +182,21 @@ func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
 	return v, nil
 }
 
-// BuiltViews returns the views built so far, primary first.
+// pruneLocked drops the built views whose configuration is not in configs.
+func (s *WorkspaceSet) pruneLocked(configs []BuildConfig) {
+	keep := make(map[string]bool, len(configs))
+	for _, cfg := range configs {
+		keep[cfg.Key()] = true
+	}
+	for key := range s.views {
+		if !keep[key] {
+			delete(s.views, key)
+		}
+	}
+}
+
+// BuiltViews returns the views built so far that the covering still holds,
+// primary first, and drops the rest.
 func (s *WorkspaceSet) BuiltViews() []*View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -154,7 +204,9 @@ func (s *WorkspaceSet) BuiltViews() []*View {
 	if len(s.views) == 1 {
 		return views
 	}
-	for _, cfg := range s.coveringLocked().Configs[1:] {
+	configs := s.coveringLocked().Configs
+	s.pruneLocked(configs)
+	for _, cfg := range configs[1:] {
 		if v := s.views[cfg.Key()]; v != nil {
 			views = append(views, v)
 		}
@@ -172,4 +224,49 @@ func (s *WorkspaceSet) ViewOf(ws *types.Workspace) *View {
 		}
 	}
 	return nil
+}
+
+// SyncSource brings the shared source tree in line with path on disk: a missing
+// file is forgotten (nil result), a recorded one is re-read, a new one is
+// recorded. Views are not touched; ProjectFile applies the result to each.
+func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
+	if !strings.HasSuffix(path, ".go") {
+		return nil, nil
+	}
+	defer s.invalidateCovering()
+	path = absDir(path)
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		s.tree.Remove(path)
+		return nil, nil
+	}
+
+	dir := filepath.Dir(path)
+	if !s.tree.loaded(dir) {
+		if err := s.tree.AddDir(dir); err != nil {
+			return nil, err
+		}
+		return s.tree.File(path), nil
+	}
+	if s.tree.File(path) != nil {
+		return s.tree.Replace(path)
+	}
+	return s.tree.Add(path)
+}
+
+func (s *WorkspaceSet) invalidateCovering() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.covering = nil
+}
+
+// InvalidateReferenceIndexes drops the cached reference index of every built view.
+func (s *WorkspaceSet) InvalidateReferenceIndexes() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, v := range s.views {
+		v.InvalidateReferenceIndex()
+	}
 }
