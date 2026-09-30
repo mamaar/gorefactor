@@ -876,12 +876,9 @@ type workspaceImporter struct {
 	// workspace (including the many synthetic, no-dependency workspaces the
 	// test suite builds in t.TempDir()) would be pure waste.
 	extOnce sync.Once
-	// ext holds every externally-resolved package keyed by import path, found
-	// by loading the workspace with go/packages and walking the roots plus
-	// their transitive Imports. Populated once by extOnce; safe to read
-	// afterward without additional synchronization since extOnce.Do's happens
-	// -before guarantees visibility to every subsequent Import call.
-	ext map[string]*gotypes.Package
+	// ext holds every package the go/packages load of the workspace listed.
+	// Set once by extOnce; nil when nothing was loaded.
+	ext *externalSet
 	// extErr records why the load produced no (or a partial) result, purely
 	// for the Debug log below — a failure here is not fatal, it just means
 	// the importer.Default() fallback is all that's left.
@@ -936,7 +933,9 @@ func (imp *workspaceImporter) loadExternal() {
 
 	env, flags := externalLoadSettings(imp.parser.buildConfig, runtime.GOOS, runtime.GOARCH)
 	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
+		// No NeedTypes: go/packages would type-check every listed package from
+		// source, function bodies and the workspace's own packages included.
+		Mode: packages.NeedName | packages.NeedCompiledGoFiles | packages.NeedImports | packages.NeedDeps,
 		Dir:  imp.ws.RootPath,
 		Fset: imp.fset,
 		// Tests: true adds each package's test-binary variants (and their
@@ -968,50 +967,10 @@ func (imp *workspaceImporter) loadExternal() {
 		return
 	}
 
-	imp.ext = make(map[string]*gotypes.Package)
-	seen := make(map[string]bool)
-
-	// The import graph is a DAG with heavy sharing (many packages depend on
-	// the same handful of leaves), so without a seen-set this recursion is
-	// exponential rather than linear in the number of packages.
-	//
-	// Deduping on pkg.ID, not pkg.PkgPath, is load-bearing now that cfg.Tests
-	// is true: for a workspace-local package with tests, "./..." then returns
-	// TWO *packages.Package values sharing one PkgPath — the production
-	// variant and the "p [p.test]" in-package-test variant — distinguished
-	// only by ID. Their Imports sets differ (the test variant adds whatever
-	// its _test.go files import), and roots is unordered, so whichever
-	// variant walk visits first would, keyed on PkgPath, mark the PkgPath
-	// seen and make walk skip the other variant's edges entirely. That
-	// silently drops any third-party module imported ONLY from _test.go
-	// files workspace-wide (nothing on the production side ever reaches it)
-	// from imp.ext, so Import() fails for it and the test files importing it
-	// are excluded from type-checking.
-	var walk func(pkg *packages.Package)
-	walk = func(pkg *packages.Package) {
-		if pkg == nil || seen[pkg.ID] {
-			return
-		}
-		seen[pkg.ID] = true
-
-		// Keep only non-workspace packages. Import resolves workspace-local
-		// paths from ws.Packages before it ever consults ext, so go/packages'
-		// separately type-checked copy of them would never be read — and
-		// holding it alive costs real memory, since the workspace's own
-		// packages are the largest in the graph. Their dependencies are still
-		// reached by continuing the walk below; nothing outside the workspace
-		// imports them, so dropping the reference lets those copies be
-		// collected.
-		if pkg.Types != nil && pkg.Types.Complete() {
-			imp.ext[pkg.PkgPath] = pkg.Types
-		}
-		for _, dep := range pkg.Imports {
-			walk(dep)
-		}
-	}
-	for _, root := range roots {
-		walk(root)
-	}
+	// Workspace packages are listed too, since their imports are what reaches
+	// the third-party ones; Import resolves them before it consults ext, so
+	// they are never type-checked here.
+	imp.ext = newExternalSet(imp.fset, roots)
 }
 
 // externalLoadSettings returns the environment additions and build flags that
@@ -1205,7 +1164,7 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// which is GOPATH-based and cannot see anything in the module cache — on
 	// a real workspace that fails on essentially every third-party import.
 	imp.extOnce.Do(imp.loadExternal)
-	if pkg, ok := imp.ext[path]; ok {
+	if pkg := imp.ext.lookup(path); pkg != nil {
 		return pkg, nil
 	}
 
