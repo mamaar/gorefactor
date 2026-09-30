@@ -3,6 +3,8 @@ package refactor
 import (
 	"strings"
 	"testing"
+
+	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
 // assertCallersPass fails unless the call site inside caller passes want.
@@ -108,5 +110,82 @@ func TestThreadContext_SeedWithTestingParamStillGainsCtx(t *testing.T) {
 	assertCallersPass(t, plan, "TestX", "t.Context()")
 	if strings.Contains(strings.Join(gainingNames(plan), ","), "TestX") {
 		t.Error("TestX must not gain a parameter")
+	}
+}
+
+// renderedFile renders the plan and returns the rewritten content of path.
+func renderedFile(t *testing.T, ws *pkgtypes.Workspace, plan *threadPlan, path string) string {
+	t.Helper()
+	changes, err := renderThreadPlan(ws, plan)
+	if err != nil {
+		t.Fatalf("renderThreadPlan: %v", err)
+	}
+	got := renderedContent(t, ws, wsPath(ws, path), changes)
+	assertParses(t, path, got)
+	return got
+}
+
+func TestThreadContext_ShadowedTestingParamHelperIsClimbed(t *testing.T) {
+	const helper = "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tfor _, t := range items {\n\t\t_ = t\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, nil) }\n"
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		"p/lib.go":    seedSrc,
+		"p/x_test.go": helper,
+	}, "p/lib.go", "Seed")
+	assertNames(t, gainingNames(plan), []string{"Seed", "helper"}, "Funcs")
+	assertCallersPass(t, plan, "helper", "ctx")
+	assertCallersPass(t, plan, "TestX", "t.Context()")
+
+	got := renderedFile(t, ws, plan, "p/x_test.go")
+	for _, want := range []string{"func helper(ctx context.Context, t *testing.T, items []int)", "Seed(ctx)", "helper(t.Context(), t, nil)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestThreadContext_ShadowedTestingParamInTestDeclUsesTODO(t *testing.T) {
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		"p/lib.go": seedSrc,
+		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {\n\tfor _, t := range []int{1} {\n\t\t_ = t\n\t\tSeed()\n\t}\n}\n",
+	}, "p/lib.go", "Seed")
+	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+	assertCallersPass(t, plan, "TestX", "context.TODO()")
+	if got := renderedFile(t, ws, plan, "p/x_test.go"); strings.Contains(got, "t.Context()") {
+		t.Errorf("shadowed t must not be used:\n%s", got)
+	}
+}
+
+func TestThreadContext_ShadowedTestingParamInRunClosureUsesTODO(t *testing.T) {
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		"p/lib.go": seedSrc,
+		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {\n\tt.Run(\"a\", func(t *testing.T) {\n\t\tfor _, t := range []int{1} {\n\t\t\t_ = t\n\t\t\tSeed()\n\t\t}\n\t})\n}\n",
+	}, "p/lib.go", "Seed")
+	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+	got := renderedFile(t, ws, plan, "p/x_test.go")
+	if !strings.Contains(got, "Seed(context.TODO())") || strings.Contains(got, "t.Context()") {
+		t.Errorf("expected context.TODO() and no t.Context():\n%s", got)
+	}
+}
+
+func TestThreadContext_HelperWithShadowedAndUnshadowedSites(t *testing.T) {
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		"p/lib.go": seedSrc,
+		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tSeed()\n\tfor _, t := range items {\n\t\t_ = t\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, nil) }\n",
+	}, "p/lib.go", "Seed")
+	assertNames(t, gainingNames(plan), []string{"Seed", "helper"}, "Funcs")
+	got := renderedFile(t, ws, plan, "p/x_test.go")
+	if strings.Count(got, "Seed(ctx)") != 2 || strings.Contains(got, "Seed(t.Context())") {
+		t.Errorf("both Seed calls must pass the helper's ctx:\n%s", got)
+	}
+}
+
+func TestThreadContext_UnshadowedTestingParamPassesTContext(t *testing.T) {
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		"p/lib.go": seedSrc,
+		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tfor _, i := range items {\n\t\t_ = i\n\t\tSeed()\n\t}\n}\n",
+	}, "p/lib.go", "Seed")
+	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+	if got := renderedFile(t, ws, plan, "p/x_test.go"); !strings.Contains(got, "Seed(t.Context())") {
+		t.Errorf("expected t.Context():\n%s", got)
 	}
 }

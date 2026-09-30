@@ -488,7 +488,7 @@ func (op *ThreadContextOperation) climbTarget(site analysis.CallSite) (*gotypes.
 	// must pass that local and stop — not hoist past it and delete it. Reversing
 	// these two checks silently strips main's context creation and produces code
 	// that does not compile.
-	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil); isRoot {
+	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call); isRoot {
 		return nil, false, nil
 	}
 
@@ -573,9 +573,9 @@ func (op *ThreadContextOperation) argFor(plan *threadPlan, site analysis.CallSit
 		return "", op.unknownCtxAbort(site)
 	}
 
-	// 4. A root: t.Context() for a test declaration or t.Run closure,
-	//    context.TODO() otherwise.
-	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit); ok {
+	// 4. A root: <param>.Context() for a testing parameter the call can still
+	//    reference, context.TODO() for any other root.
+	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call); ok {
 		return src.Expr, nil
 	}
 

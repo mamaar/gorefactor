@@ -177,9 +177,11 @@ func isFakeRootCtxCreation(fn *ast.FuncDecl) (*ast.AssignStmt, bool) {
 // which literal expression to inject there.
 //
 // Any function, method or closure with a named, non-blank *testing.T/B/F or
-// testing.TB parameter is a root and passes <param>.Context(), wherever it is
-// declared; test helpers are roots, not climbed.
-func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, lit *ast.FuncLit) (ctxSource, bool) {
+// testing.TB parameter that call can still reference is a root and passes
+// <param>.Context(); test helpers are roots, not climbed. When call shadows
+// the parameter, a closure or Test/Benchmark/Fuzz declaration is a
+// context.TODO() root and any other function is not a root.
+func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, lit *ast.FuncLit, call *ast.CallExpr) (ctxSource, bool) {
 	if lit != nil {
 		// t.Run(name, func(t *testing.T) { ... }) and similar: a closure
 		// whose own signature carries a *testing.T/B/F root gets
@@ -187,7 +189,7 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 		// a generic callback) gets context.TODO() since it may run
 		// outside any traceable synchronous caller chain.
 		if pkg != nil && pkg.TypesInfo != nil {
-			if p, ok := anyTestingTBParam(pkg, lit.Type); ok {
+			if p, ok := anyTestingTBParam(pkg, lit.Type, call.Pos()); ok {
 				return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 			}
 		}
@@ -216,12 +218,29 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 	}
 
 	if pkg != nil && pkg.TypesInfo != nil {
-		if p, ok := anyTestingTBParam(pkg, fn.Type); ok {
+		if p, ok := anyTestingTBParam(pkg, fn.Type, call.Pos()); ok {
 			return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
+		}
+		if file != nil && isTestDecl(file, fn) && hasTestingTBParam(pkg, fn.Type) {
+			return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
 		}
 	}
 
 	return ctxSource{}, false
+}
+
+// isTestDecl reports whether fn is a Test/Benchmark/Fuzz function declared in
+// a _test.go file, which go test calls and so cannot gain a parameter.
+func isTestDecl(file *pkgtypes.File, fn *ast.FuncDecl) bool {
+	if fn.Recv != nil || !strings.HasSuffix(file.Path, "_test.go") {
+		return false
+	}
+	for _, prefix := range []string{"Test", "Benchmark", "Fuzz"} {
+		if strings.HasPrefix(fn.Name.Name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // firstParamIdent returns the first parameter's identifier, if it is
@@ -242,8 +261,22 @@ func firstParamIdent(ft *ast.FuncType) (*ast.Ident, bool) {
 }
 
 // anyTestingTBParam returns the first named parameter of ft (in any
-// position) whose type satisfies analysis.IsTestingTB.
-func anyTestingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType) (*ast.Ident, bool) {
+// position) whose type satisfies analysis.IsTestingTB and whose name still
+// resolves to that parameter at pos.
+func anyTestingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType, pos token.Pos) (*ast.Ident, bool) {
+	return testingTBParam(pkg, ft, func(name *ast.Ident) bool {
+		return paramVisibleAt(pkg, name, pos)
+	})
+}
+
+// hasTestingTBParam reports whether ft has a named testing parameter,
+// regardless of shadowing.
+func hasTestingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType) bool {
+	_, ok := testingTBParam(pkg, ft, func(*ast.Ident) bool { return true })
+	return ok
+}
+
+func testingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType, accept func(*ast.Ident) bool) (*ast.Ident, bool) {
 	if ft == nil || ft.Params == nil {
 		return nil, false
 	}
@@ -252,12 +285,23 @@ func anyTestingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType) (*ast.Ident, boo
 			if name.Name == "_" {
 				continue
 			}
-			if analysis.IsTestingTB(paramType(pkg, name)) {
+			if analysis.IsTestingTB(paramType(pkg, name)) && accept(name) {
 				return name, true
 			}
 		}
 	}
 	return nil, false
+}
+
+// paramVisibleAt reports whether param's name resolves to param itself at pos,
+// i.e. no inner declaration shadows it there.
+func paramVisibleAt(pkg *pkgtypes.Package, param *ast.Ident, pos token.Pos) bool {
+	if pkg.TypesPkg == nil {
+		return false
+	}
+	want := pkg.TypesInfo.Defs[param]
+	_, got := pkg.TypesPkg.Scope().Innermost(pos).LookupParent(param.Name, pos)
+	return want != nil && got == want
 }
 
 // paramType resolves the go/types type of a parameter identifier via the
