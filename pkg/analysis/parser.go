@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -71,6 +72,9 @@ type GoParser struct {
 	// TypesChecked memo guard and the in-progress/cycle guard). Used by tests
 	// to count real check attempts without adding public API surface.
 	typeCheckHook func(pkg *types.Package)
+
+	// loadPackages stands in for packages.Load in tests.
+	loadPackages func(cfg *packages.Config, patterns ...string) ([]*packages.Package, error)
 }
 
 // ParserOption configures a GoParser.
@@ -91,7 +95,7 @@ func NewParser(logger *slog.Logger, opts ...ParserOption) *GoParser {
 
 // newViewParser returns a parser that selects files from tree under cfg.
 func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoParser {
-	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree}
+	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree, loadPackages: packages.Load}
 }
 
 // BuildConfig returns the configuration files are selected under.
@@ -834,6 +838,12 @@ type workspaceImporter struct {
 	// the importer.Default() fallback is all that's left.
 	extErr error
 
+	// fallback is the primary view's importer; its external packages stand in
+	// when this view's own load fails. Nil on the primary.
+	fallback *workspaceImporter
+	// fellBack is set, under parser.mu, once ext was taken from fallback.
+	fellBack bool
+
 	// productionOnly memoizes the production-files-only (no _test.go at all)
 	// check of a workspace-local package, computed on demand by Import when
 	// that package's own real check (production + in-package tests, owned by
@@ -874,6 +884,7 @@ func (imp *workspaceImporter) loadExternal() {
 		return
 	}
 
+	env, flags := externalLoadSettings(imp.parser.buildConfig, runtime.GOOS, runtime.GOARCH)
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
 		Dir:  imp.ws.RootPath,
@@ -905,13 +916,14 @@ func (imp *workspaceImporter) loadExternal() {
 		// otherwise, which is exactly the "degrade gracefully" behavior this
 		// fallback needs — a failed load just leaves imp.ext empty and control
 		// falls through to importer.Default().
-		Env: append(os.Environ(), "GOPROXY=off"),
+		Env:        append(os.Environ(), env...),
+		BuildFlags: flags,
 	}
 
-	roots, err := packages.Load(cfg, "./...")
+	roots, err := imp.parser.loadPackages(cfg, "./...")
 	if err != nil {
-		imp.extErr = err
-		imp.parser.logger.Debug("external package load failed", "err", err)
+		imp.parser.logger.Debug("external package load failed", "config", imp.parser.buildConfig.Key(), "err", err)
+		imp.failExternal(err)
 		return
 	}
 
@@ -962,6 +974,45 @@ func (imp *workspaceImporter) loadExternal() {
 	for _, root := range roots {
 		walk(root)
 	}
+}
+
+// externalLoadSettings returns the environment additions and build flags that
+// make packages.Load resolve third-party modules under cfg. Cgo stays off for
+// any port but the host's, which would need a C cross toolchain.
+func externalLoadSettings(cfg BuildConfig, hostOS, hostArch string) (env, flags []string) {
+	cgo := "0"
+	if cfg.Cgo && cfg.GOOS == hostOS && cfg.GOARCH == hostArch {
+		cgo = "1"
+	}
+	env = []string{"GOPROXY=off", "GOOS=" + cfg.GOOS, "GOARCH=" + cfg.GOARCH, "CGO_ENABLED=" + cgo}
+	if tags := normalizeTags(cfg.Tags); len(tags) > 0 {
+		flags = []string{"-tags=" + strings.Join(tags, ",")}
+	}
+	return env, flags
+}
+
+// failExternal records a failed load and, on a secondary view, adopts the
+// primary view's external packages in its place.
+func (imp *workspaceImporter) failExternal(err error) {
+	if imp.fallback != nil {
+		imp.fallback.extOnce.Do(imp.fallback.loadExternal)
+		imp.ext = imp.fallback.ext
+	}
+	imp.parser.mu.Lock()
+	defer imp.parser.mu.Unlock()
+	imp.extErr = err
+	imp.fellBack = imp.fallback != nil
+}
+
+// externalFallback reports whether the external packages were taken from
+// another view, and the load error that caused it.
+func (p *GoParser) externalFallback() (bool, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.importer == nil || !p.importer.fellBack {
+		return false, nil
+	}
+	return true, p.importer.extErr
 }
 
 // hasExternalImports reports whether any file in the workspace imports a

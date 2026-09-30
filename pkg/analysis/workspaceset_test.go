@@ -1,7 +1,10 @@
 package analysis
 
 import (
+	"errors"
 	"go/ast"
+	"go/token"
+	gotypes "go/types"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -9,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
+	"golang.org/x/tools/go/packages"
 )
 
 var setPrimary = NewBuildConfig("linux", "amd64", true)
@@ -199,5 +203,96 @@ func TestWorkspaceSet_ImportResolvesToTheViewsOwnDependency(t *testing.T) {
 	}
 	if got := fileNames(checkedPackage(t, primary, aDir).Files); !slices.Equal(got, []string{"a.go"}) {
 		t.Errorf("primary a Files = %v", got)
+	}
+}
+
+func TestExternalLoadSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cfg       BuildConfig
+		wantEnv   []string
+		wantFlags []string
+	}{
+		{"host port with cgo", NewBuildConfig("darwin", "arm64", true),
+			[]string{"GOPROXY=off", "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1"}, nil},
+		{"host port without cgo", NewBuildConfig("darwin", "arm64", false),
+			[]string{"GOPROXY=off", "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=0"}, nil},
+		{"other port with cgo", NewBuildConfig("windows", "amd64", true),
+			[]string{"GOPROXY=off", "GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}, nil},
+		{"same os other arch", NewBuildConfig("darwin", "amd64", true),
+			[]string{"GOPROXY=off", "GOOS=darwin", "GOARCH=amd64", "CGO_ENABLED=0"}, nil},
+		{"tags", NewBuildConfig("darwin", "arm64", false, "b", "a"),
+			[]string{"GOPROXY=off", "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=0"}, []string{"-tags=a,b"}},
+	} {
+		env, flags := externalLoadSettings(tc.cfg, "darwin", "arm64")
+		if !slices.Equal(env, tc.wantEnv) || !slices.Equal(flags, tc.wantFlags) {
+			t.Errorf("%s: env = %v, flags = %v; want %v, %v", tc.name, env, flags, tc.wantEnv, tc.wantFlags)
+		}
+	}
+}
+
+func externalWorkspace() map[string]string {
+	return map[string]string{
+		"p/p.go":     "package p\n\nimport \"example.org/ext\"\n\nfunc P() { ext.F() }\n",
+		"p/p_tag.go": "//go:build fts5x\n\npackage p\n\nimport \"example.org/ext\"\n\nfunc Tagged() { ext.F() }\n",
+	}
+}
+
+func fakeExternal() []*packages.Package {
+	pkg := gotypes.NewPackage("example.org/ext", "ext")
+	sig := gotypes.NewSignatureType(nil, nil, nil, nil, nil, false)
+	pkg.Scope().Insert(gotypes.NewFunc(token.NoPos, pkg, "F", sig))
+	pkg.MarkComplete()
+	return []*packages.Package{{ID: pkg.Path(), PkgPath: pkg.Path(), Types: pkg}}
+}
+
+type recordingLoader struct {
+	pkgs []*packages.Package
+	err  error
+	cfgs []*packages.Config
+}
+
+func (l *recordingLoader) load(cfg *packages.Config, _ ...string) ([]*packages.Package, error) {
+	l.cfgs = append(l.cfgs, cfg)
+	return l.pkgs, l.err
+}
+
+func TestView_ExternalLoadUsesTheViewsConfig(t *testing.T) {
+	set, root := loadSet(t, externalWorkspace())
+	tagged := viewWithTag(t, set, "fts5x")
+	loader := &recordingLoader{pkgs: fakeExternal()}
+	tagged.Parser.loadPackages = loader.load
+
+	checkedPackage(t, tagged, filepath.Join(root, "p"))
+	if len(loader.cfgs) != 1 {
+		t.Fatalf("loads = %d, want 1", len(loader.cfgs))
+	}
+	cfg := loader.cfgs[0]
+	for _, want := range []string{"GOPROXY=off", "GOOS=linux", "GOARCH=amd64"} {
+		if !slices.Contains(cfg.Env, want) {
+			t.Errorf("Env lacks %s", want)
+		}
+	}
+	if !slices.Equal(cfg.BuildFlags, []string{"-tags=fts5x"}) {
+		t.Errorf("BuildFlags = %v", cfg.BuildFlags)
+	}
+	if approx, err := tagged.Approximate(); approx || err != nil {
+		t.Errorf("Approximate = %v, %v", approx, err)
+	}
+}
+
+func TestView_FailedExternalLoadFallsBackToPrimary(t *testing.T) {
+	set, root := loadSet(t, externalWorkspace())
+	tagged := viewWithTag(t, set, "fts5x")
+	loadErr := errors.New("no cross toolchain")
+	set.Primary().Parser.loadPackages = (&recordingLoader{pkgs: fakeExternal()}).load
+	tagged.Parser.loadPackages = (&recordingLoader{err: loadErr}).load
+
+	checkedPackage(t, tagged, filepath.Join(root, "p"))
+	if approx, err := tagged.Approximate(); !approx || !errors.Is(err, loadErr) {
+		t.Errorf("tagged Approximate = %v, %v", approx, err)
+	}
+	if approx, err := set.Primary().Approximate(); approx || err != nil {
+		t.Errorf("primary Approximate = %v, %v", approx, err)
 	}
 }

@@ -18,6 +18,11 @@ type View struct {
 	Analyzer  *DependencyAnalyzer
 }
 
+// Approximate reports whether the view type-checks against the primary view's
+// third-party packages because loading them under its own configuration
+// failed, and that failure. It is known once a type-check has needed them.
+func (v *View) Approximate() (bool, error) { return v.Parser.externalFallback() }
+
 // WorkspaceSet holds one source tree and a view of it per build configuration.
 // The primary view is built at load, the others on first request.
 type WorkspaceSet struct {
@@ -69,6 +74,9 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	parser := newViewParser(s.logger, s.tree, cfg)
 	ws := parser.projectWorkspace(s.root, s.module)
+	if s.primary != nil {
+		parser.importer.fallback = s.primary.Parser.importer
+	}
 
 	resolver := NewSymbolResolver(ws, s.logger)
 	for _, pkg := range ws.Packages {
