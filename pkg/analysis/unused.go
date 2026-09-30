@@ -166,8 +166,8 @@ func (ua *UnusedAnalyzer) checkSymbolUsageIndexed(symbol *types.Symbol, idx *Ref
 		return nil
 	}
 
-	// Skip main functions and init functions
-	if symbol.Name == "main" || symbol.Name == "init" {
+	// Skip main functions, init functions and the blank identifier
+	if symbol.Name == "main" || symbol.Name == "init" || symbol.Name == "_" {
 		return nil
 	}
 

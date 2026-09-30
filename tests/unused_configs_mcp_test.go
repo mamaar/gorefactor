@@ -161,3 +161,13 @@ func TestUnused_SingleConfigOutputHasNoConfigFields(t *testing.T) {
 		}
 	}
 }
+
+func TestUnused_BlankIdentifierIsNotReported(t *testing.T) {
+	out, _ := callUnused(t, map[string]string{
+		"p/f.go": "package p\n\ntype T struct{}\n\nvar _ = T{}\n\nconst _ = 1\n\nfunc dead() {}\n\nvar V T\n",
+	})
+
+	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f.go:dead"}) {
+		t.Errorf("unused = %v, want only dead", got)
+	}
+}
