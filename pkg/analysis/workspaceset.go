@@ -53,6 +53,19 @@ func (v *View) InvalidateReferenceIndex() {
 	v.refIndex = nil
 }
 
+// WarmExternals loads the view's third-party packages and type-checks those
+// its files import, without type-checking any workspace package.
+func (v *View) WarmExternals() { v.Parser.importer.warm() }
+
+// DropTypeInfo frees the type information of every package and the cached
+// reference index, and keeps what the checks recorded about test files, so
+// UncheckedFiles answers as before. The packages are not type-checked again
+// until ReleaseTypeInfo.
+func (v *View) DropTypeInfo() {
+	v.Parser.dropTypeInfo(v.Workspace)
+	v.InvalidateReferenceIndex()
+}
+
 // ReleaseTypeInfo drops the type-check results of every package and the cached
 // reference index. The packages are type-checked again on next use; the
 // third-party packages stay loaded.

@@ -498,6 +498,23 @@ func (p *GoParser) releaseTypeChecks(ws *types.Workspace) {
 	}
 }
 
+// dropTypeInfo frees the type information of every package of ws. The packages
+// stay marked as checked, with what the check recorded about their test files,
+// until releaseTypeChecks.
+func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
+	p.checkMu.Lock()
+	defer p.checkMu.Unlock()
+	if p.importer != nil {
+		p.importer.productionOnly = nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for _, pkg := range ws.Packages {
+		pkg.TypesInfo = nil
+		pkg.TypesPkg = nil
+	}
+}
+
 // TypeCheckPackage runs go/types type-checking on a package.
 // Results are stored in pkg.TypesInfo, pkg.TypesPkg and pkg.TypesErr, and
 // pkg.TypesChecked is set once the attempt completes — on success AND on
@@ -985,6 +1002,34 @@ func (imp *workspaceImporter) loadExternal() {
 	// the third-party ones; Import resolves them before it consults ext, so
 	// they are never type-checked here.
 	imp.ext = newExternalSet(imp.fset, imp.parser.buildConfig.GOARCH, roots)
+}
+
+// warm loads the external packages and type-checks those a workspace file
+// imports, which are the ones a type-check of the workspace asks for.
+func (imp *workspaceImporter) warm() {
+	imp.extOnce.Do(imp.loadExternal)
+	if imp.ext == nil {
+		return
+	}
+	for _, pkg := range imp.ws.Packages {
+		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+			for _, file := range group {
+				imp.warmImports(file)
+			}
+		}
+	}
+}
+
+func (imp *workspaceImporter) warmImports(file *types.File) {
+	if file.AST == nil {
+		return
+	}
+	for _, spec := range file.AST.Imports {
+		path := strings.Trim(spec.Path.Value, `"`)
+		if _, local := imp.ws.ImportToPath[path]; !local {
+			imp.ext.lookup(path)
+		}
+	}
 }
 
 // externalLoadSettings returns the environment additions and build flags that
