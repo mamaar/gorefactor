@@ -2383,18 +2383,28 @@ func (op *RenameMethodOperation) Type() types.OperationType {
 }
 
 func (op *RenameMethodOperation) Validate(ws *types.Workspace) error {
-	// Find the type (struct or interface) in the workspace
-	typeSymbol, err := op.findType(ws)
+	typeSymbol, _, err := op.target(ws)
 	if err != nil {
 		return err
 	}
+	return op.validateNames(ws, typeSymbol)
+}
 
-	// Check if the method exists on the type
-	_, err = op.findMethodOnType(ws, typeSymbol)
+// target finds the type (struct or interface) and the method on it.
+func (op *RenameMethodOperation) target(ws *types.Workspace) (typeSymbol, methodSymbol *types.Symbol, err error) {
+	typeSymbol, err = op.findType(ws)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	methodSymbol, err = op.findMethodOnType(ws, typeSymbol)
+	if err != nil {
+		return nil, nil, err
+	}
+	return typeSymbol, methodSymbol, nil
+}
 
+// validateNames checks that the new method name is valid and free on the type.
+func (op *RenameMethodOperation) validateNames(ws *types.Workspace, typeSymbol *types.Symbol) error {
 	// Check that new method name is valid
 	if !isValidGoIdentifier(op.Request.NewMethodName) {
 		return &types.RefactorError{
@@ -2412,12 +2422,7 @@ func (op *RenameMethodOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check if new method name already exists on the type
-	err = op.checkMethodNameConflict(ws, typeSymbol)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return op.checkMethodNameConflict(ws, typeSymbol)
 }
 
 func (op *RenameMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
@@ -2463,7 +2468,7 @@ func (op *RenameMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	// If this is an interface and UpdateImplementations is true,
 	// also rename the method on all implementations
 	if typeSymbol.Kind == types.InterfaceSymbol && op.Request.UpdateImplementations {
-		implChanges, err := op.generateImplementationChanges(ws, typeSymbol, methodSymbol)
+		implChanges, err := op.generateImplementationChanges(ws)
 		if err != nil {
 			return nil, err
 		}
@@ -2587,10 +2592,10 @@ func (op *RenameMethodOperation) checkMethodNameConflict(ws *types.Workspace, ty
 	return nil
 }
 
-func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Workspace, typeSymbol *types.Symbol, methodSymbol *types.Symbol) (*types.Change, error) {
-	pkg := resolveSymbolPackage(ws, typeSymbol)
+func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Workspace, ownerSymbol *types.Symbol, methodSymbol *types.Symbol) (*types.Change, error) {
+	pkg := resolveSymbolPackage(ws, ownerSymbol)
 	if pkg == nil {
-		return nil, fmt.Errorf("package %s not found", typeSymbol.Package)
+		return nil, fmt.Errorf("package %s not found", ownerSymbol.Package)
 	}
 
 	var methodFile *types.File
@@ -2661,36 +2666,38 @@ func (op *RenameMethodOperation) generateMethodReferenceChanges(ws *types.Worksp
 	return changes, nil
 }
 
-func (op *RenameMethodOperation) generateImplementationChanges(ws *types.Workspace, interfaceSymbol *types.Symbol, methodSymbol *types.Symbol) ([]types.Change, error) {
+func (op *RenameMethodOperation) generateImplementationChanges(ws *types.Workspace) ([]types.Change, error) {
 	var changes []types.Change
+	for _, method := range op.implementationMethods(ws) {
+		change, err := op.generateMethodDefinitionChange(ws, method, method)
+		if err != nil {
+			return nil, err
+		}
+		if change != nil {
+			changes = append(changes, *change)
+		}
+	}
+	return changes, nil
+}
 
-	// Find all types that implement this interface
+// implementationMethods returns the methods named like the request's on the
+// workspace's struct types.
+func (op *RenameMethodOperation) implementationMethods(ws *types.Workspace) []*types.Symbol {
+	var methods []*types.Symbol
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols == nil {
 			continue
 		}
-
-		// Look for struct types that might implement the interface
 		for typeName, typeSymbol := range pkg.Symbols.Types {
-			if typeSymbol.Kind == types.TypeSymbol {
-				// Check if this type has methods that implement the interface
-				if methods, exists := pkg.Symbols.Methods[typeName]; exists {
-					for _, method := range methods {
-						if method.Name == op.Request.MethodName {
-							// This type has the method - rename it
-							change, err := op.generateMethodDefinitionChange(ws, typeSymbol, method)
-							if err != nil {
-								return nil, err
-							}
-							if change != nil {
-								changes = append(changes, *change)
-							}
-						}
-					}
+			if typeSymbol.Kind != types.TypeSymbol {
+				continue
+			}
+			for _, method := range pkg.Symbols.Methods[typeName] {
+				if method.Name == op.Request.MethodName {
+					methods = append(methods, method)
 				}
 			}
 		}
 	}
-
-	return changes, nil
+	return methods
 }

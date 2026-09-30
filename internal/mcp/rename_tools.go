@@ -101,30 +101,17 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "rename_method",
-		Description: "Rename a method on a specific type (struct or interface). Updates all call sites and, for interfaces, all implementations.",
+		Description: "Rename a method on a specific type (struct or interface). Updates all call sites and, for interfaces, all implementations, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameMethodInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		plan, err := planRenameMethod(state, in)
+		state.RUnlock()
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		pkgPath := in.PackagePath
-		if pkgPath != "" {
-			pkgPath = types.ResolvePackagePath(ws, pkgPath)
-		}
-		plan, err := state.GetEngine().RenameMethod(ws, types.RenameMethodRequest{
-			TypeName:      in.TypeName,
-			MethodName:    in.MethodName,
-			NewMethodName: in.NewMethodName,
-			PackagePath:   pkgPath,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		result, err := executePlanWithUnlock(state, plan, "rename method "+in.TypeName+"."+in.MethodName+" → "+in.NewMethodName, in.DryRun)
+		result, err := executePlan(state, plan, "rename method "+in.TypeName+"."+in.MethodName+" → "+in.NewMethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -194,5 +181,24 @@ func planRenameSymbol(state *MCPServer, in RenameSymbolInput) (*types.Refactorin
 		NewName:    in.NewName,
 		Package:    pkg,
 		Scope:      scope,
+	})
+}
+
+// planRenameMethod plans in under every build configuration. The caller holds
+// the read lock.
+func planRenameMethod(state *MCPServer, in RenameMethodInput) (*types.RefactoringPlan, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	pkgPath := in.PackagePath
+	if pkgPath != "" {
+		pkgPath = types.ResolvePackagePath(ws, pkgPath)
+	}
+	return state.GetEngine().RenameMethodAcrossConfigs(types.RenameMethodRequest{
+		TypeName:      in.TypeName,
+		MethodName:    in.MethodName,
+		NewMethodName: in.NewMethodName,
+		PackagePath:   pkgPath,
 	})
 }

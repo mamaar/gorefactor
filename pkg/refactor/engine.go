@@ -356,6 +356,14 @@ func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethod
 	return plan, nil
 }
 
+// RenameMethodAcrossConfigs renames a method like RenameMethod, under every
+// build configuration covering the workspace, and returns one merged plan. A
+// method with the same key as a renamed one is renamed under every
+// configuration that declares it, and the new name must be free under each.
+func (e *DefaultEngine) RenameMethodAcrossConfigs(req types.RenameMethodRequest) (*types.RefactoringPlan, error) {
+	return e.planAcrossConfigs(&renameMethodPlanner{req: req})
+}
+
 // RenameField implements renaming a struct field on a named type
 func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRequest) (*types.RefactoringPlan, error) {
 	operation := &RenameFieldOperation{Request: req}

@@ -135,19 +135,24 @@ func symbolForKey(ws *types.Workspace, key types.SymbolKey) *types.Symbol {
 // symbols do not cover yet, in key order.
 func withLinkedSymbols(ws *types.Workspace, symbols []*types.Symbol, linked types.SymbolKeySet) []*types.Symbol {
 	have := keysOf(symbols)
-	var keys []types.SymbolKey
-	for key := range linked {
-		if !have.Has(key) {
-			keys = append(keys, key)
+	for _, key := range orderedKeys(linked) {
+		if have.Has(key) {
+			continue
 		}
-	}
-	slices.SortFunc(keys, compareKeys)
-	for _, key := range keys {
 		if sym := symbolForKey(ws, key); sym != nil {
 			symbols = append(symbols, sym)
 		}
 	}
 	return symbols
+}
+
+func orderedKeys(set types.SymbolKeySet) []types.SymbolKey {
+	keys := make([]types.SymbolKey, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	slices.SortFunc(keys, compareKeys)
+	return keys
 }
 
 func compareKeys(a, b types.SymbolKey) int { return strings.Compare(a.String(), b.String()) }
