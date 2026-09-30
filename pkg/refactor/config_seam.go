@@ -25,6 +25,9 @@ type configResult struct {
 	// declared holds the keys of the functions the view declares. Linking any
 	// other key cannot change the view's plan; nil when unknown.
 	declared types.SymbolKeySet
+	// blockers holds the uses in the view that the operation of a gatedPlanner
+	// must not proceed past. Their Configs are filled in when views are combined.
+	blockers []types.Blocker
 }
 
 // declaredFuncKeys returns the keys of the functions and interface methods ws
@@ -43,6 +46,16 @@ func declaredFuncKeys(ws *types.Workspace) types.SymbolKeySet {
 // other views. Linking a key the view already reported must not change its plan.
 type configPlanner interface {
 	planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error)
+}
+
+// gatedPlanner is a configPlanner whose operation needs its symbols unused
+// under every configuration. Each view plans as if nothing objected and reports
+// its blockers; refuse sees those of all views before any plan is merged.
+type gatedPlanner interface {
+	configPlanner
+	// refuse returns the error that stops the operation for blockers, or nil
+	// when it proceeds regardless.
+	refuse(blockers []types.Blocker) error
 }
 
 // maxPreparedSecondaries bounds how many views besides the primary hold type
@@ -201,6 +214,12 @@ type indexedPlanner interface {
 	finish()
 }
 
+// gatedIndexedPlanner is a gatedPlanner that plans from per-view reference indexes.
+type gatedIndexedPlanner interface {
+	indexedPlanner
+	gatedPlanner
+}
+
 // planAcrossConfigs runs p under every build configuration of the covering set
 // and merges the per-view plans into one.
 func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringPlan, error) {
@@ -226,10 +245,60 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 	return plan, nil
 }
 
-// planAcrossViews replans the views until no view has linked keys it has not
-// planned with, then merges each view's latest plan. It also returns the number
-// of rounds in which some view was planned.
+// blockersAcrossConfigs returns what stands in the way of p's operation under
+// every build configuration of the covering set, without planning it.
+func (e *DefaultEngine) blockersAcrossConfigs(p gatedIndexedPlanner) ([]types.Blocker, error) {
+	if e.set == nil {
+		return nil, fmt.Errorf("no workspace loaded")
+	}
+	e.configRuns.Lock()
+	defer e.configRuns.Unlock()
+
+	views, err := e.set.Views()
+	if err != nil {
+		return nil, err
+	}
+	p.prepare(views)
+	defer p.finish()
+	return blockersAcrossViews(views, p, maxConfigRounds)
+}
+
+// planAcrossViews settles the views, lets a gatedPlanner refuse on the
+// blockers of all of them, then merges each view's latest plan. It also
+// returns the number of rounds in which some view was planned.
 func planAcrossViews(views []*analysis.View, p configPlanner, maxRounds int) (*types.RefactoringPlan, int, error) {
+	run, rounds, err := settleViews(views, p, maxRounds)
+	if err != nil {
+		return nil, rounds, err
+	}
+	var unverified []types.Blocker
+	if g, ok := p.(gatedPlanner); ok {
+		blockers := run.blockers()
+		if err := g.refuse(blockers); err != nil {
+			return nil, rounds, err
+		}
+		unverified = unverifiedOf(blockers)
+	}
+	plan, err := run.merge(unverified)
+	return plan, rounds, err
+}
+
+// blockersAcrossViews settles the views and returns the blockers of all of
+// them, or the primary view's error when the target is absent from every view.
+func blockersAcrossViews(views []*analysis.View, p gatedPlanner, maxRounds int) ([]types.Blocker, error) {
+	run, _, err := settleViews(views, p, maxRounds)
+	if err != nil {
+		return nil, err
+	}
+	if err := run.absentEverywhere(); err != nil {
+		return nil, err
+	}
+	return run.blockers(), nil
+}
+
+// settleViews replans the views until no view has linked keys it has not
+// planned with.
+func settleViews(views []*analysis.View, p configPlanner, maxRounds int) (*configRun, int, error) {
 	run := &configRun{
 		views:   views,
 		planner: p,
@@ -252,8 +321,7 @@ func planAcrossViews(views []*analysis.View, p configPlanner, maxRounds int) (*t
 			return nil, rounds, err
 		}
 	}
-	plan, err := run.merge()
-	return plan, rounds, err
+	return run, rounds, nil
 }
 
 // configRun is the state of one fixpoint over a set of views.
@@ -318,24 +386,35 @@ func (r *configRun) configError(v *analysis.View, err error) error {
 	return fmt.Errorf("build configuration %s: %w", v.Config, err)
 }
 
-// merge combines the views' plans. When the target is absent from every view
-// it returns the first view's error, which is the primary's.
-func (r *configRun) merge() (*types.RefactoringPlan, error) {
-	var plans []ConfigPlan
+// absentEverywhere returns the first view's error, which is the primary's,
+// when the target is absent from every view.
+func (r *configRun) absentEverywhere() error {
 	var absent error
+	for _, res := range r.results {
+		if res.plan != nil {
+			return nil
+		}
+		if absent == nil {
+			absent = res.absent
+		}
+	}
+	return absent
+}
+
+// merge combines the views' plans and reports what they do not cover, with
+// unverified as further sites the plan leaves for the user.
+func (r *configRun) merge(unverified []types.Blocker) (*types.RefactoringPlan, error) {
+	if err := r.absentEverywhere(); err != nil {
+		return nil, err
+	}
+	var plans []ConfigPlan
 	configs := make([]string, 0, len(r.views))
 	for i, v := range r.views {
 		name := v.Config.String()
 		configs = append(configs, name)
-		res := r.results[i]
-		if res.plan != nil {
+		if res := r.results[i]; res.plan != nil {
 			plans = append(plans, ConfigPlan{Config: name, Plan: res.plan})
-		} else if absent == nil {
-			absent = res.absent
 		}
-	}
-	if len(plans) == 0 && absent != nil {
-		return nil, absent
 	}
 	merged, err := MergeConfigPlans(plans)
 	if err != nil {
@@ -345,5 +424,6 @@ func (r *configRun) merge() (*types.RefactoringPlan, error) {
 	if err := r.reportUncovered(merged); err != nil {
 		return nil, err
 	}
+	reportUnverified(merged, unverified)
 	return merged, nil
 }

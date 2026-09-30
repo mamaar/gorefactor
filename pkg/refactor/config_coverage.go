@@ -102,8 +102,23 @@ func configNames(configs []analysis.BuildConfig) []string {
 // mentionSite returns a skipped site at the first identifier in src that is
 // one of names. Comments and string literals do not count.
 func mentionSite(src *analysis.SourceFile, names map[string]bool, file types.UncoveredFile) (types.SkippedSite, bool) {
-	if len(names) == 0 || len(src.Content) == 0 {
+	m, ok := firstMention(src, names)
+	if !ok {
 		return types.SkippedSite{}, false
+	}
+	return types.SkippedSite{File: src.Path, Line: m.Line, Reason: mentionReason(m.name, file), Snippet: m.Context}, true
+}
+
+// mention is an identifier found in a file by name alone.
+type mention struct {
+	types.Reference
+	name string
+}
+
+// firstMention returns the first identifier in src that is one of names.
+func firstMention(src *analysis.SourceFile, names map[string]bool) (mention, bool) {
+	if len(names) == 0 || len(src.Content) == 0 {
+		return mention{}, false
 	}
 	tf := token.NewFileSet().AddFile(src.Path, -1, len(src.Content))
 	var s scanner.Scanner
@@ -111,26 +126,33 @@ func mentionSite(src *analysis.SourceFile, names map[string]bool, file types.Unc
 	for {
 		pos, tok, lit := s.Scan()
 		if tok == token.EOF {
-			return types.SkippedSite{}, false
+			return mention{}, false
 		}
 		if tok != token.IDENT || !names[lit] {
 			continue
 		}
-		return types.SkippedSite{
+		at := tf.Position(pos)
+		return mention{name: lit, Reference: types.Reference{
 			File:    src.Path,
-			Line:    tf.Line(pos),
-			Reason:  mentionReason(lit, file),
-			Snippet: lineAt(src.Content, tf.Offset(pos)),
-		}, true
+			Offset:  at.Offset,
+			Line:    at.Line,
+			Column:  at.Column,
+			Context: lineAt(src.Content, at.Offset),
+		}}, true
 	}
 }
 
 func mentionReason(name string, file types.UncoveredFile) string {
+	return fmt.Sprintf("mentions %s but was not rewritten: %s; update it by hand", name, uncheckedWhere(file))
+}
+
+// uncheckedWhere says under which configurations file went unchecked, and why.
+func uncheckedWhere(file types.UncoveredFile) string {
 	where := "no build configuration includes the file"
 	if len(file.Configs) > 0 {
 		where = "not type-checked under " + strings.Join(file.Configs, ", ")
 	}
-	return fmt.Sprintf("mentions %s but was not rewritten: %s (%s); update it by hand", name, where, file.Reason)
+	return fmt.Sprintf("%s (%s)", where, file.Reason)
 }
 
 // lineAt returns the line of content that holds offset, without surrounding space.
@@ -141,4 +163,137 @@ func lineAt(content []byte, offset int) string {
 		end = offset + i
 	}
 	return strings.TrimSpace(string(content[start:end]))
+}
+
+// blockers returns the blockers of every view, each once and with the
+// configurations that see it, followed by the uses no view could type-check.
+func (r *configRun) blockers() []types.Blocker {
+	unverified := unverifiedUses(r.views, r.linked)
+	unchecked := make(map[string]bool, len(unverified))
+	for _, b := range unverified {
+		unchecked[b.File] = true
+	}
+
+	type site struct {
+		file   string
+		offset int
+	}
+	var out []types.Blocker
+	var seenBy [][]string
+	at := make(map[site]int)
+	for i, res := range r.results {
+		name := r.views[i].Config.String()
+		for _, b := range res.blockers {
+			if unchecked[b.File] {
+				continue
+			}
+			key := site{b.File, b.Offset}
+			j, ok := at[key]
+			if !ok {
+				j = len(out)
+				at[key] = j
+				out = append(out, b)
+				seenBy = append(seenBy, nil)
+			}
+			if !slices.Contains(seenBy[j], name) {
+				seenBy[j] = append(seenBy[j], name)
+			}
+		}
+	}
+	for j := range out {
+		if len(seenBy[j]) < len(r.views) {
+			out[j].Configs = seenBy[j]
+		}
+	}
+	return append(out, unverified...)
+}
+
+// unverifiedOf returns the blockers known by name only.
+func unverifiedOf(blockers []types.Blocker) []types.Blocker {
+	var out []types.Blocker
+	for _, b := range blockers {
+		if b.Unverified != "" {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// unverifiedUses returns a blocker at the first identifier of each file no
+// view type-checks that could be a use of a symbol in keys.
+func unverifiedUses(views []*analysis.View, keys types.SymbolKeySet) []types.Blocker {
+	if len(keys) == 0 {
+		return nil
+	}
+	dirs := declaringDirs(views, keys)
+	var out []types.Blocker
+	for _, u := range analysis.UncheckedFiles(views, views[0].SourceDirs()) {
+		names := make(map[string]bool)
+		for key, dir := range dirs {
+			if mayUse(u.Source, key, dir) {
+				names[key.Name] = true
+			}
+		}
+		if m, ok := firstMention(u.Source, names); ok {
+			out = append(out, types.Blocker{Reference: m.Reference, Configs: configNames(u.Configs), Unverified: u.Reason})
+		}
+	}
+	return out
+}
+
+// declaringDirs returns the directory of the package that declares each key.
+func declaringDirs(views []*analysis.View, keys types.SymbolKeySet) map[types.SymbolKey]string {
+	dirs := make(map[types.SymbolKey]string, len(keys))
+	for key := range keys {
+		for _, v := range views {
+			if pkg := resolveSymbolPackage(v.Workspace, &types.Symbol{Package: key.PkgPath}); pkg != nil {
+				dirs[key] = pkg.Dir
+				break
+			}
+		}
+	}
+	return dirs
+}
+
+// mayUse reports whether f, which is not type-checked, could use the symbol
+// key names, declared in dir: f is in dir, or the symbol is exported and f
+// imports its package. An exported method or field is reachable from anywhere.
+func mayUse(f *analysis.SourceFile, key types.SymbolKey, dir string) bool {
+	if f.Dir == dir {
+		return true
+	}
+	if !token.IsExported(key.Name) {
+		return false
+	}
+	if key.Recv != "" || f.AST == nil {
+		return true
+	}
+	for _, imp := range f.AST.Imports {
+		if strings.Trim(imp.Path.Value, "\"`") == key.PkgPath {
+			return true
+		}
+	}
+	return false
+}
+
+// reportUnverified lists on plan the unverified uses in files it does not
+// list yet, each with a skipped site.
+func reportUnverified(plan *types.RefactoringPlan, unverified []types.Blocker) {
+	listed := make(map[string]bool, len(plan.Coverage.Uncovered))
+	for _, u := range plan.Coverage.Uncovered {
+		listed[u.Path] = true
+	}
+	for _, b := range unverified {
+		if listed[b.File] {
+			continue
+		}
+		file := types.UncoveredFile{Path: b.File, Configs: b.Configs, Reason: b.Unverified}
+		plan.Coverage.Uncovered = append(plan.Coverage.Uncovered, file)
+		plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
+			File:    b.File,
+			Line:    b.Line,
+			Reason:  "may use a symbol this operation changes: " + uncheckedWhere(file) + "; update it by hand",
+			Snippet: b.Context,
+		})
+	}
 }

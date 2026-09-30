@@ -34,6 +34,9 @@ func UncheckedFiles(views []*View, dirs []string) []UncheckedFile {
 	return out
 }
 
+// SourceDirs returns every directory of the source tree v projects, sorted.
+func (v *View) SourceDirs() []string { return v.Parser.sources.Dirs() }
+
 func uncheckedFile(views []*View, f *SourceFile) (UncheckedFile, bool) {
 	u := UncheckedFile{Source: f}
 	if f.Err != nil {

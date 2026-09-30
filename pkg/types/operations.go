@@ -1,5 +1,7 @@
 package types
 
+import "strings"
+
 // Operation represents any refactoring operation
 type Operation interface {
 	Type() OperationType
@@ -191,6 +193,32 @@ type SkippedSite struct {
 	Line        int    `json:"line"`
 	Reason      string `json:"reason"`
 	Snippet     string `json:"snippet"`
+}
+
+// Blocker is a use of a symbol that stands in the way of an operation which
+// needs the symbol unused.
+type Blocker struct {
+	Reference
+	// Configs names the build configurations that see the use, or that include
+	// the file of an unverified one. It is empty for a resolved reference every
+	// configuration of the run sees.
+	Configs []string
+	// Unverified says why no configuration type-checks the file, so the use is
+	// known by name only. It is empty for a resolved reference.
+	Unverified string
+}
+
+// Note returns what sets the blocker apart from a reference every
+// configuration resolves, as a suffix to its file:line, or "".
+func (b Blocker) Note() string {
+	note := ""
+	if len(b.Configs) > 0 {
+		note = " [" + strings.Join(b.Configs, ", ") + "]"
+	}
+	if b.Unverified != "" {
+		note += " (not type-checked: " + b.Unverified + ")"
+	}
+	return note
 }
 
 // RefactoringPlan represents a planned set of changes
