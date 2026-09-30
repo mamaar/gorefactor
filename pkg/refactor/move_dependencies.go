@@ -90,20 +90,26 @@ func importGraph(ws *types.Workspace) map[string][]string {
 func importCycle(graph map[string][]string, target string, imports []string, importers []string) []string {
 	parent := map[string]string{target: ""}
 	var queue []string
+	// closing returns the cycle that runs from target through last and back.
+	closing := func(last string) []string {
+		var rev []string
+		for p := last; p != target; p = parent[p] {
+			rev = append(rev, p)
+		}
+		slices.Reverse(rev)
+		return append(append([]string{target}, rev...), target)
+	}
 	visit := func(from string, tos []string) []string {
 		for _, to := range tos {
+			if to == target {
+				return closing(from)
+			}
 			if _, seen := parent[to]; seen {
 				continue
 			}
 			parent[to] = from
 			if slices.Contains(importers, to) {
-				path := []string{target}
-				var rev []string
-				for p := to; p != target; p = parent[p] {
-					rev = append(rev, p)
-				}
-				slices.Reverse(rev)
-				return append(append(path, rev...), target)
+				return closing(to)
 			}
 			queue = append(queue, to)
 		}

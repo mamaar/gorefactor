@@ -322,3 +322,25 @@ func TestMoveSymbol_RefusesConstantsAndVariablesNamingTheLimitation(t *testing.T
 		assertFileUnchanged(t, dir, "src/src.go", src)
 	}
 }
+
+func TestMoveSymbol_RefusesWhenAnImportOfTheMovedCodeReachesTheTargetAgain(t *testing.T) {
+	srcFile := "package src\n\nimport \"example.com/threadmcp/x\"\n\nfunc Moved() int { return x.X() }\n"
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go":   srcFile,
+		"x/x.go":       "package x\n\nimport \"example.com/threadmcp/y\"\n\nfunc X() int { return y.Y() }\n",
+		"y/y.go":       "package y\n\nimport \"example.com/threadmcp/base\"\n\nfunc Y() int { return base.B() }\n",
+		"base/base.go": "package base\n\nfunc B() int { return 1 }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := moveSymbolCall(t, sess, "Moved", "src", "base")
+
+	if !res.IsError || !strings.Contains(errText(res), "import cycle") {
+		t.Fatalf("move Moved = error %v: %s, want an import cycle refusal", res.IsError, errText(res))
+	}
+	if want := "threadmcp/base -> example.com/threadmcp/x -> example.com/threadmcp/y -> example.com/threadmcp/base"; !strings.Contains(errText(res), want) {
+		t.Errorf("error %q does not name the path %q", errText(res), want)
+	}
+	assertFileUnchanged(t, dir, "src/src.go", srcFile)
+}
