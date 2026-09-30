@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,10 +43,10 @@ type ChangeSignatureRequest struct {
 
 // ChangeSignatureOperation implements changing function/method signatures
 type ChangeSignatureOperation struct {
-	FunctionName         string
-	SourceFile           string
-	NewParams            []Parameter
-	NewReturns           []string
+	FunctionName string
+	SourceFile   string
+	NewParams    []Parameter
+	NewReturns   []string
 	// NamedReturns holds named return parameters (e.g. {Name:"secret", Type:"[]byte"}).
 	// When non-nil it takes precedence over NewReturns in generateNewSignature so that
 	// the original named-result names are preserved verbatim.  Populated automatically
@@ -60,6 +61,27 @@ type ChangeSignatureOperation struct {
 	DefaultReturnValue   string                   // Default value for new return statements (e.g., "", nil, 0)
 	CachedIndex          *analysis.ReferenceIndex // Optional pre-built reference index for performance
 	Logger               *slog.Logger             // Logger for progress reporting
+
+	altered []AlteredDecl
+}
+
+// AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
+type AlteredDecl struct {
+	Key  pkgtypes.SymbolKey
+	File string
+}
+
+// AlteredDecls returns the declarations the executed operation rewrote: the
+// target and, when propagating, the interface methods and implementations.
+func (op *ChangeSignatureOperation) AlteredDecls() []AlteredDecl {
+	return op.altered
+}
+
+func (op *ChangeSignatureOperation) recordAltered(pkg *pkgtypes.Package, recv, name, file string) {
+	decl := AlteredDecl{Key: pkgtypes.SymbolKey{PkgPath: pkg.ImportPath, Recv: recv, Name: name}, File: file}
+	if !slices.Contains(op.altered, decl) {
+		op.altered = append(op.altered, decl)
+	}
 }
 
 func (op *ChangeSignatureOperation) Type() pkgtypes.OperationType {
@@ -179,6 +201,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		AffectedFiles: make([]string, 0),
 		Reversible:    true,
 	}
+	op.altered = nil
 
 	resolver, idx := op.initResolver(ws)
 
@@ -255,6 +278,7 @@ func (op *ChangeSignatureOperation) collectInterfaceChanges(
 		return nil, err
 	}
 	plan.Changes = append(plan.Changes, ifaceChange)
+	op.recordAltered(sourcePackage, typeName, methodName, sourceFile.Path)
 	if !contains(plan.AffectedFiles, sourceFile.Path) {
 		plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
 	}
@@ -284,7 +308,7 @@ func (op *ChangeSignatureOperation) collectInterfaceChanges(
 	}
 	impls, _ := resolver.FindInterfaceImplementations(ifaceSym)
 	for _, impl := range impls {
-		implPkg := ws.Packages[impl.Package]
+		implPkg := packageOfSymbol(ws, impl)
 		if implPkg == nil {
 			continue
 		}
@@ -325,6 +349,7 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 		Description: fmt.Sprintf("Update signature of function %s", op.FunctionName),
 	})
 	plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
+	op.recordAltered(sourcePackage, receiverTypeName(functionNode), functionNode.Name.Name, sourceFile.Path)
 
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName)
 	if err != nil {
@@ -351,7 +376,7 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 				if impl.Name == typeName {
 					continue
 				}
-				implPkg := ws.Packages[impl.Package]
+				implPkg := packageOfSymbol(ws, impl)
 				if implPkg == nil {
 					continue
 				}
@@ -1256,6 +1281,10 @@ func baseTypeName(expr ast.Expr) string {
 		return t.Name
 	case *ast.StarExpr:
 		return baseTypeName(t.X)
+	case *ast.IndexExpr:
+		return baseTypeName(t.X)
+	case *ast.IndexListExpr:
+		return baseTypeName(t.X)
 	}
 	return ""
 }
@@ -1344,9 +1373,23 @@ func findInterfacesForMethod(ws *pkgtypes.Workspace, resolver *analysis.SymbolRe
 	return result
 }
 
+// packageOfSymbol returns the workspace package that declares sym. Symbol.Package
+// is an import path, whereas Workspace.Packages may be keyed by directory.
+func packageOfSymbol(ws *pkgtypes.Workspace, sym *pkgtypes.Symbol) *pkgtypes.Package {
+	if pkg := ws.Packages[sym.Package]; pkg != nil {
+		return pkg
+	}
+	for _, pkg := range ws.Packages {
+		if pkg.ImportPath == sym.Package {
+			return pkg
+		}
+	}
+	return nil
+}
+
 // findFileForSymbol locates the File object for a symbol.
 func findFileForSymbol(ws *pkgtypes.Workspace, sym *pkgtypes.Symbol) *pkgtypes.File {
-	pkg := ws.Packages[sym.Package]
+	pkg := packageOfSymbol(ws, sym)
 	if pkg == nil {
 		return nil
 	}
@@ -1529,19 +1572,7 @@ func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
 	}
 
 	for _, impl := range impls {
-		implPkg := ws.Packages[impl.Package]
-		if implPkg == nil {
-			// Try to convert module-relative import path to absolute path
-			if ws.Module != nil && strings.HasPrefix(impl.Package, ws.Module.Path+"/") {
-				// Strip module prefix to get relative path
-				relativePath := strings.TrimPrefix(impl.Package, ws.Module.Path+"/")
-				// Construct absolute path
-				absPath := ws.RootPath + "/" + relativePath
-				if p, exists := ws.Packages[absPath]; exists {
-					implPkg = p
-				}
-			}
-		}
+		implPkg := packageOfSymbol(ws, impl)
 		if implPkg == nil {
 			continue
 		}
@@ -1562,6 +1593,7 @@ func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
 				NewText:     newSig,
 				Description: fmt.Sprintf("Update implementation %s.%s", impl.Name, methodName),
 			})
+			op.recordAltered(implPkg, impl.Name, methodName, file.Path)
 
 			if !contains(affectedFiles, file.Path) {
 				affectedFiles = append(affectedFiles, file.Path)
@@ -1596,6 +1628,9 @@ func (op *ChangeSignatureOperation) applyInterfaceMethodChanges(
 		return nil, nil, err
 	}
 	changes = append(changes, ifaceChange)
+	if ifacePkg := packageOfSymbol(ws, ifaceSym); ifacePkg != nil {
+		op.recordAltered(ifacePkg, ifaceSym.Name, methodName, ifaceFile.Path)
+	}
 	if !contains(affectedFiles, ifaceFile.Path) {
 		affectedFiles = append(affectedFiles, ifaceFile.Path)
 	}
