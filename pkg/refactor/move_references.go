@@ -89,7 +89,8 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 		if qualifier == "" {
 			continue
 		}
-		return referenceFileEdit{qualifier: qualifier, importChanges: removeDropped(dropped)}
+		// The rewritten references use this import, so it stays.
+		return referenceFileEdit{qualifier: qualifier, importChanges: removeDropped(slices.DeleteFunc(dropped, func(s *ast.ImportSpec) bool { return s == imp }))}
 	}
 
 	alias := chooseImportName(ws, file, dropped, targetImportPath, targetName)

@@ -74,3 +74,19 @@ func TestMoveByDependencies_SecondRunUnqualifiesTheSourceReferencesTheFirstWrote
 	}
 	goVets(t, dir, "")
 }
+
+func TestMoveSymbol_KeepsTheTargetImportASourceFileStillNeedsForItsRewrittenReferences(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"dst/dst.go": "package dst\n\nfunc Base() int { return 1 }\n",
+		"src/src.go": "package src\n\nimport \"example.com/threadmcp/dst\"\n\nfunc Wrapper() int { return dst.Base() }\n\nfunc Other() int { return Wrapper() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	if res := moveSymbolCall(t, sess, "Wrapper", "src", "dst"); res.IsError {
+		t.Fatalf("move Wrapper: %s", errText(res))
+	}
+
+	assertFileContains(t, dir, "src/src.go", "dst.Wrapper()")
+	goVets(t, dir, "")
+}
