@@ -7,7 +7,6 @@ import (
 	gotypes "go/types"
 	"log/slog"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"unicode"
@@ -169,64 +168,7 @@ func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Referen
 func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 	sr.logger.Info("building reference index", "packages", len(sr.workspace.Packages))
 
-	// Collect all files into a flat slice
-	var files []*types.File
-	for _, pkg := range sr.workspace.Packages {
-		for _, f := range pkg.Files {
-			files = append(files, f)
-		}
-		for _, f := range pkg.TestFiles {
-			files = append(files, f)
-		}
-	}
-
-	sr.logger.Debug("indexing files", "file_count", len(files))
-
-	workers := runtime.NumCPU()
-	if workers > len(files) {
-		workers = len(files)
-	}
-	if workers == 0 {
-		return &ReferenceIndex{
-			nameIndex: make(map[string][]indexEntry),
-		}
-	}
-
-	// Each worker builds local name indexes to avoid lock contention
-	localResults := make([]map[string][]indexEntry, workers)
-	var wg sync.WaitGroup
-	ch := make(chan int, len(files))
-	for i := range files {
-		ch <- i
-	}
-	close(ch)
-
-	for w := 0; w < workers; w++ {
-		localResults[w] = make(map[string][]indexEntry)
-		wg.Add(1)
-		go func(local map[string][]indexEntry) {
-			defer wg.Done()
-			for i := range ch {
-				f := files[i]
-				if f.Package != nil && f.Package.TypesInfo != nil {
-					sr.indexFileTyped(f, local, f.Package.TypesInfo)
-				} else {
-					sr.indexFileLocal(f, local)
-				}
-			}
-		}(localResults[w])
-	}
-	wg.Wait()
-
-	// Merge local indexes into the final index
-	idx := &ReferenceIndex{
-		nameIndex: make(map[string][]indexEntry),
-	}
-	for _, local := range localResults {
-		for name, entries := range local {
-			idx.nameIndex[name] = append(idx.nameIndex[name], entries...)
-		}
-	}
+	idx := &ReferenceIndex{nameIndex: sr.buildNameIndex()}
 
 	// Build workspaceIndex: group files by package, build per-package indexes in parallel
 	wsIdx := newWorkspaceIndex(sr.workspace.FileSet)
@@ -369,65 +311,128 @@ func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string]
 	)
 }
 
-// indexFileTyped builds index entries using go/types information directly.
-// Instead of walking the AST, it iterates the TypesInfo.Defs and Uses maps,
-// which provide *ast.Ident → types.Object pairs. This eliminates AST walking
-// for type-checked packages and populates TypesObject for pointer-equality matching.
-func (sr *SymbolResolver) indexFileTyped(file *types.File, nameIndex map[string][]indexEntry, info *gotypes.Info) {
-	if file.AST == nil || info == nil {
-		return
+// buildNameIndex indexes every identifier of the workspace by name, one
+// package per job.
+func (sr *SymbolResolver) buildNameIndex() map[string][]indexEntry {
+	pkgs := make([]*types.Package, 0, len(sr.workspace.Packages))
+	for _, pkg := range sr.workspace.Packages {
+		pkgs = append(pkgs, pkg)
+	}
+	sr.logger.Debug("indexing packages", "package_count", len(pkgs))
+
+	b := &nameIndexBuilder{resolver: sr, pkgs: pkgs, next: make(chan int, len(pkgs))}
+	for i := range pkgs {
+		b.next <- i
+	}
+	close(b.next)
+
+	b.locals = make([]map[string][]indexEntry, workerCount(len(pkgs)))
+	var wg sync.WaitGroup
+	for w := range b.locals {
+		b.locals[w] = make(map[string][]indexEntry)
+		wg.Add(1)
+		go b.work(w, &wg)
+	}
+	wg.Wait()
+
+	merged := make(map[string][]indexEntry)
+	for _, local := range b.locals {
+		for name, entries := range local {
+			merged[name] = append(merged[name], entries...)
+		}
+	}
+	return merged
+}
+
+// nameIndexBuilder indexes packages on several goroutines; each worker writes
+// only its own map of locals.
+type nameIndexBuilder struct {
+	resolver *SymbolResolver
+	pkgs     []*types.Package
+	next     chan int
+	locals   []map[string][]indexEntry
+}
+
+func (b *nameIndexBuilder) work(w int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	local := b.locals[w]
+	for i := range b.next {
+		pkg := b.pkgs[i]
+		if pkg.TypesInfo != nil {
+			b.resolver.indexPackageTyped(pkg, local)
+			continue
+		}
+		for _, f := range pkg.Files {
+			b.resolver.indexFileLocal(f, local)
+		}
+		for _, f := range pkg.TestFiles {
+			b.resolver.indexFileLocal(f, local)
+		}
+	}
+}
+
+// typedFile is one file of a type-checked package while its identifiers are indexed.
+type typedFile struct {
+	file *types.File
+	// qualifiers maps the position of a selector's Sel to the name of its X,
+	// for selectors whose X is a plain identifier.
+	qualifiers map[token.Pos]string
+}
+
+func (f *typedFile) visit(n ast.Node) bool {
+	if sel, ok := n.(*ast.SelectorExpr); ok {
+		if x, ok := sel.X.(*ast.Ident); ok {
+			f.qualifiers[sel.Sel.Pos()] = x.Name
+		}
+	}
+	return true
+}
+
+// indexPackageTyped adds an entry for every identifier pkg's type information
+// defines or resolves, with its go/types object for pointer-equality matching.
+func (sr *SymbolResolver) indexPackageTyped(pkg *types.Package, nameIndex map[string][]indexEntry) {
+	fset := sr.workspace.FileSet
+	files := make(map[*token.File]*typedFile, len(pkg.Files)+len(pkg.TestFiles))
+	for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+		for _, f := range group {
+			if f.AST == nil {
+				continue
+			}
+			tf := &typedFile{file: f, qualifiers: make(map[token.Pos]string)}
+			ast.Inspect(f.AST, tf.visit)
+			files[fset.File(f.AST.Pos())] = tf
+		}
 	}
 
-	// Process definitions (Defs maps defining identifiers to their objects)
-	for ident, obj := range info.Defs {
+	for ident, obj := range pkg.TypesInfo.Defs {
 		if obj == nil {
 			continue
 		}
-		// Only include idents that belong to this file
-		if sr.workspace.FileSet.File(ident.Pos()) != sr.workspace.FileSet.File(file.AST.Pos()) {
+		tf := files[fset.File(ident.Pos())]
+		if tf == nil {
 			continue
 		}
-		entry := indexEntry{
-			File:          file,
+		nameIndex[ident.Name] = append(nameIndex[ident.Name], indexEntry{
+			File:          tf.file,
 			Pos:           ident.Pos(),
 			IsDeclaration: true,
 			TypesObject:   obj,
-		}
-		nameIndex[ident.Name] = append(nameIndex[ident.Name], entry)
+		})
 	}
 
-	// Process uses (Uses maps using identifiers to their objects)
-	for ident, obj := range info.Uses {
+	for ident, obj := range pkg.TypesInfo.Uses {
 		if obj == nil {
 			continue
 		}
-		if sr.workspace.FileSet.File(ident.Pos()) != sr.workspace.FileSet.File(file.AST.Pos()) {
+		tf := files[fset.File(ident.Pos())]
+		if tf == nil {
 			continue
 		}
-		entry := indexEntry{
-			File:        file,
-			Pos:         ident.Pos(),
-			TypesObject: obj,
+		entry := indexEntry{File: tf.file, Pos: ident.Pos(), TypesObject: obj}
+		if alias, ok := tf.qualifiers[ident.Pos()]; ok {
+			entry.IsSelector = true
+			entry.PkgAlias = alias
 		}
-		// Determine if this is a selector (qualified reference)
-		// Walk file AST to find if this ident is the Sel of a SelectorExpr
-		ast.Inspect(file.AST, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			if sel.Sel.Pos() == ident.Pos() {
-				if pkgIdent, ok := sel.X.(*ast.Ident); ok {
-					entry.IsSelector = true
-					entry.PkgAlias = pkgIdent.Name
-					// Check for method call pattern
-					// We'd need parent context, but for typed index we rely on TypesObject
-				}
-				return false
-			}
-			return true
-		})
-
 		nameIndex[ident.Name] = append(nameIndex[ident.Name], entry)
 	}
 }
