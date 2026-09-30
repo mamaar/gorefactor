@@ -15,6 +15,7 @@ type FuncParam struct {
 }
 
 // ExtractFuncParams finds a function declaration in the workspace and returns its current parameters.
+// A missing file or function is a SymbolNotFound RefactorError.
 func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]FuncParam, error) {
 	// Find the file in the workspace
 	var file *types.File
@@ -34,7 +35,10 @@ func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]
 		}
 	}
 	if file == nil {
-		return nil, fmt.Errorf("source file not found: %s", sourceFile)
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("source file not found: %s", sourceFile),
+		}
 	}
 	if file.AST == nil {
 		return nil, fmt.Errorf("source file has no AST: %s", sourceFile)
@@ -43,7 +47,10 @@ func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]
 	// Find the function declaration
 	funcDecl := FindFuncDeclByName(file.AST, functionName)
 	if funcDecl == nil {
-		return nil, fmt.Errorf("function %s not found in %s", functionName, sourceFile)
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("function %s not found in %s", functionName, sourceFile),
+		}
 	}
 
 	// Extract parameters
