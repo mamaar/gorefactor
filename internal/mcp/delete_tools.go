@@ -113,7 +113,7 @@ func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "safe_delete",
 		Description: "Safely delete a symbol (function, type, variable, constant, method, struct field). If references exist, the human user is asked to confirm; the deletion is refused unless they accept or force is true. Surviving call sites are reported in skipped_sites, not rewritten. " +
-			"References are looked for under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace, a declaration of the symbol in each configuration is deleted, and a mention in a file no configuration type-checks counts as a reference.",
+			"References are looked for under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace, a declaration of the symbol in each configuration is deleted, and a mention in a file no configuration type-checks, or one the type checker could not resolve in a file with a type error, counts as a reference.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in SafeDeleteInput) (*mcpsdk.CallToolResult, any, error) {
 		force, err := confirmSafeDelete(ctx, req.Session, state, in)
 		if err != nil {

@@ -2,8 +2,10 @@ package refactor
 
 import (
 	"fmt"
+	"go/ast"
 	"go/scanner"
 	"go/token"
+	gotypes "go/types"
 	"maps"
 	"slices"
 	"strings"
@@ -268,7 +270,7 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 		names := make(map[string]bool)
 		byName := make(map[string][]types.SymbolKey)
 		for _, key := range ordered {
-			if mayUse(u.Source, key, dirs[key]) {
+			if mayUse(u.Source.Dir, u.Source.AST, key, dirs[key]) {
 				names[key.Name] = true
 				byName[key.Name] = append(byName[key.Name], key)
 			}
@@ -297,20 +299,21 @@ func declaringDirs(views []*analysis.View, keys types.SymbolKeySet) map[types.Sy
 	return dirs
 }
 
-// mayUse reports whether f, which is not type-checked, could use the symbol
-// key names, declared in dir: f is in dir, or the symbol is exported and f
-// imports its package. An exported method or field is reachable from anywhere.
-func mayUse(f *analysis.SourceFile, key types.SymbolKey, dir string) bool {
-	if f.Dir == dir {
+// mayUse reports whether a file that is not type-checked could use the symbol
+// key names, declared in declDir: the file is in declDir, or the symbol is
+// exported and the file imports its package. An exported method or field is
+// reachable from anywhere. A nil file imports unknown packages.
+func mayUse(fileDir string, file *ast.File, key types.SymbolKey, declDir string) bool {
+	if fileDir == declDir {
 		return true
 	}
 	if !token.IsExported(key.Name) {
 		return false
 	}
-	if key.Recv != "" || f.AST == nil {
+	if key.Recv != "" || file == nil {
 		return true
 	}
-	for _, imp := range f.AST.Imports {
+	for _, imp := range file.Imports {
 		if strings.Trim(imp.Path.Value, "\"`") == key.PkgPath {
 			return true
 		}
@@ -318,18 +321,81 @@ func mayUse(f *analysis.SourceFile, key types.SymbolKey, dir string) bool {
 	return false
 }
 
-// reportUnverified lists on plan the unverified uses in files it neither
-// lists yet nor changes, each with a skipped site.
+// unresolvedMention is an identifier the type-check of a view left unresolved
+// in a non-test file that carries a type error.
+type unresolvedMention struct {
+	mention
+	file *types.File
+	err  error
+}
+
+// unresolvedMentions returns the identifiers named in names that the
+// type-check of v left unresolved in the non-test files carrying a type error.
+// It reads the view's type information, so it runs before the view is dropped.
+func unresolvedMentions(v *analysis.View, names map[string]bool) []unresolvedMention {
+	if len(names) == 0 {
+		return nil
+	}
+	var out []unresolvedMention
+	for _, e := range v.ProductionErrors() {
+		if e.File.AST == nil {
+			continue
+		}
+		w := &unresolvedWalker{names: names, info: e.Package.TypesInfo}
+		ast.Walk(w, e.File.AST)
+		for _, id := range w.found {
+			at := v.Workspace.FileSet.Position(id.Pos())
+			out = append(out, unresolvedMention{file: e.File, err: e.Err, mention: mention{name: id.Name, Reference: types.Reference{
+				Position: id.Pos(),
+				File:     e.File.Path,
+				Offset:   at.Offset,
+				Line:     at.Line,
+				Column:   at.Column,
+				Context:  lineAt(e.File.OriginalContent, at.Offset),
+			}}})
+		}
+	}
+	return out
+}
+
+// blocker returns m as a use known by name only.
+func (m unresolvedMention) blocker() types.Blocker {
+	return types.Blocker{Reference: m.Reference, Unverified: "the file has a type error: " + m.err.Error()}
+}
+
+// unresolvedWalker collects the identifiers in names that info resolves to nothing.
+type unresolvedWalker struct {
+	names map[string]bool
+	info  *gotypes.Info
+	found []*ast.Ident
+}
+
+func (w *unresolvedWalker) Visit(n ast.Node) ast.Visitor {
+	id, ok := n.(*ast.Ident)
+	if !ok || !w.names[id.Name] {
+		return w
+	}
+	if w.info != nil {
+		if _, defined := w.info.Defs[id]; defined {
+			return w
+		}
+		if _, used := w.info.Uses[id]; used {
+			return w
+		}
+	}
+	w.found = append(w.found, id)
+	return w
+}
+
+// reportUnverified lists on plan the unverified uses it does not rewrite, in
+// files it does not list yet, each with a skipped site.
 func reportUnverified(plan *types.RefactoringPlan, unverified []types.Blocker) {
 	listed := make(map[string]bool, len(plan.Coverage.Uncovered))
 	for _, u := range plan.Coverage.Uncovered {
 		listed[u.Path] = true
 	}
-	for _, c := range plan.Changes {
-		listed[c.File] = true
-	}
 	for _, b := range unverified {
-		if listed[b.File] {
+		if listed[b.File] || rewrites(plan, b) {
 			continue
 		}
 		file := types.UncoveredFile{Path: b.File, Configs: b.Configs, Reason: b.Unverified}
@@ -341,6 +407,16 @@ func reportUnverified(plan *types.RefactoringPlan, unverified []types.Blocker) {
 			Snippet: b.Context,
 		})
 	}
+}
+
+// rewrites reports whether a change of plan covers the site of b.
+func rewrites(plan *types.RefactoringPlan, b types.Blocker) bool {
+	for _, c := range plan.Changes {
+		if c.File == b.File && (c.Delete || (c.Start <= b.Offset && b.Offset < c.End)) {
+			return true
+		}
+	}
+	return false
 }
 
 // reportTypeErrors lists on plan, per view, the packages with type errors in

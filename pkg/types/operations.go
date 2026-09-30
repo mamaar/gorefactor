@@ -203,8 +203,9 @@ type Blocker struct {
 	// the file of an unverified one. It is empty for a resolved reference every
 	// configuration of the run sees.
 	Configs []string
-	// Unverified says why no configuration type-checks the file, so the use is
-	// known by name only. It is empty for a resolved reference.
+	// Unverified says why the use is known by name only: no configuration
+	// type-checks the file, or the identifier sits in an erroring expression.
+	// It is empty for a resolved reference.
 	Unverified string
 }
 
@@ -216,7 +217,7 @@ func (b Blocker) Note() string {
 		note = " [" + strings.Join(b.Configs, ", ") + "]"
 	}
 	if b.Unverified != "" {
-		note += " (not type-checked: " + b.Unverified + ")"
+		note += " (unverified: " + b.Unverified + ")"
 	}
 	return note
 }

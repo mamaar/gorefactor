@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -73,9 +74,43 @@ func (p *safeDeletePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) 
 	for i, ref := range blocking {
 		res.blockers[i] = types.Blocker{Reference: ref}
 	}
+	res.blockers = append(res.blockers, unresolvedUses(v, targets)...)
 	op.dropAnalysis()
 	p.planned(v, plan)
 	return res, nil
+}
+
+// unresolvedUses returns a blocker for each identifier outside targets that
+// the type-check of v left unresolved in a file with a type error and that
+// could name a target: inside an erroring expression a use has no type.
+func unresolvedUses(v *analysis.View, targets []deletionTarget) []types.Blocker {
+	ws := v.Workspace
+	names := make(map[string]bool, len(targets))
+	for _, t := range targets {
+		names[t.symbol.Name] = true
+	}
+	var out []types.Blocker
+	for _, m := range unresolvedMentions(v, names) {
+		if insideTargets(ws, targets, &m.Reference) || !usesAnyTarget(ws, m, targets) {
+			continue
+		}
+		out = append(out, m.blocker())
+	}
+	return out
+}
+
+// usesAnyTarget reports whether m could be a use of a target of its name.
+func usesAnyTarget(ws *types.Workspace, m unresolvedMention, targets []deletionTarget) bool {
+	for _, t := range targets {
+		key, ok := symbolKeyOf(t.symbol)
+		if !ok || t.symbol.Name != m.name {
+			continue
+		}
+		if mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(t.file.Path)) {
+			return true
+		}
+	}
+	return false
 }
 
 // refuse stops an unforced delete that has blockers in any view.

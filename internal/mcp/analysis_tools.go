@@ -534,7 +534,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		Name: "unused",
 		Description: "Find unused symbols in the workspace. By default only shows unexported symbols that are safe to delete. " +
 			"A symbol counts as unused only when no build configuration (GOOS/GOARCH variants, custom build tags) covering the workspace uses it; " +
-			"one that a file no configuration type-checks mentions is listed under possibly_used instead.",
+			"one that a file no configuration type-checks mentions, or that is named unresolved in a file with a type error, is listed under possibly_used instead.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in UnusedInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the report exists: a watcher batch
 		// takes the write lock and may drop a view being analysed.

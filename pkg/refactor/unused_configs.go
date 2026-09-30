@@ -3,6 +3,7 @@ package refactor
 import (
 	"cmp"
 	"go/token"
+	"path/filepath"
 	"slices"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -22,8 +23,8 @@ type UnusedFinding struct {
 	analysis.UnusedSymbol
 	// Configs names the configurations that declare it; empty when all do.
 	Configs []string
-	// PossibleUse is where a file no configuration type-checks names the
-	// symbol; nil when none does.
+	// PossibleUse is where a file no configuration type-checks, or an
+	// erroring expression in one that some do, names the symbol.
 	PossibleUse *types.Blocker
 }
 
@@ -75,6 +76,9 @@ type unusedDecl struct {
 	key     types.SymbolKey
 	keyed   bool
 	configs []string // the views that report it
+	// unresolved is where a view left an identifier of this name unresolved
+	// in a file with a type error.
+	unresolved *types.Blocker
 }
 
 // visit records what v reports unused and marks the rest of its symbols used.
@@ -92,7 +96,9 @@ func (r *unusedRun) visit(v *analysis.View) error {
 	}
 
 	reported := make(types.SymbolKeySet)
+	names := make(map[string]bool, len(unused))
 	for _, u := range unused {
+		names[u.Symbol.Name] = true
 		site := declSite{u.Symbol.File, u.Symbol.Position}
 		d := r.decls[site]
 		if d == nil {
@@ -110,8 +116,27 @@ func (r *unusedRun) visit(v *analysis.View) error {
 			r.used[key] = struct{}{}
 		}
 	}
+	r.markUnresolved(v, unused, unresolvedMentions(v, names))
 	r.planned(v, nil)
 	return nil
+}
+
+// markUnresolved records, for each declaration v reports unused, the first of
+// mentions that could be a use of it.
+func (r *unusedRun) markUnresolved(v *analysis.View, unused []*analysis.UnusedSymbol, mentions []unresolvedMention) {
+	for _, m := range mentions {
+		for _, u := range unused {
+			d := r.decls[declSite{u.Symbol.File, u.Symbol.Position}]
+			if u.Symbol.Name != m.name || !d.keyed || d.unresolved != nil || m.Position == u.Symbol.Position {
+				continue
+			}
+			if mayUse(filepath.Dir(m.File), m.file.AST, d.key, filepath.Dir(u.Symbol.File)) {
+				use := m.blocker()
+				use.Configs = []string{v.Config.String()}
+				d.unresolved = &use
+			}
+		}
+	}
 }
 
 // report keeps the declarations unused in every view that has them and sets
@@ -146,7 +171,11 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 		if len(d.configs) < len(views) {
 			f.Configs = d.configs
 		}
-		if use := possible[d.key]; d.keyed && use != nil {
+		use := d.unresolved
+		if use == nil && d.keyed {
+			use = possible[d.key]
+		}
+		if use != nil {
 			f.PossibleUse, f.SafeToDelete = use, false
 			out.PossiblyUsed = append(out.PossiblyUsed, f)
 			continue
