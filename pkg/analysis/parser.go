@@ -914,10 +914,10 @@ type workspaceImporter struct {
 	productionOnly map[*types.Package]*gotypes.Package
 }
 
-// loadExternal populates imp.ext by loading the whole workspace module with
-// go/packages and collecting every package it resolves that is not
-// workspace-local (those are already handled by the ws.ImportToPath branch
-// above and by the recursive type-check). This is what lets third-party
+// loadExternal populates imp.ext by listing the whole workspace module with
+// go/packages; the packages it resolves are type-checked when Import first
+// asks for them (workspace-local ones are handled by the ws.ImportToPath
+// branch and the recursive type-check instead). This is what lets third-party
 // module dependencies (golang.org/x/..., etc.) resolve instead of falling
 // through to the GOPATH-only importer.Default(), which cannot see anything
 // in the module cache.
@@ -955,7 +955,7 @@ func (imp *workspaceImporter) loadExternal() {
 		// Tests: true adds each package's test-binary variants (and their
 		// Imports) to the load, which is the only way a third-party module
 		// that is imported EXCLUSIVELY from _test.go files anywhere in the
-		// workspace ever reaches imp.ext. Without it, walk below never sees
+		// workspace ever reaches imp.ext. Without it, the listing never holds
 		// that import edge at all — not even the workspace-local package that
 		// carries it — because a bare `packages.Load(cfg, "./...")` only
 		// resolves each package's non-test Imports. TypeCheckPackage then

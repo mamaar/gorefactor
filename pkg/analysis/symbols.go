@@ -197,7 +197,7 @@ func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 }
 
 // BuildLazyReferenceIndex is BuildReferenceIndex with the name index built on
-// first use, from the type information the packages have now.
+// first use, from the type information the packages hold at this call.
 func (sr *SymbolResolver) BuildLazyReferenceIndex() *ReferenceIndex {
 	sr.logger.Info("building reference index", "packages", len(sr.workspace.Packages))
 	return &ReferenceIndex{pending: sr.newNameIndexBuilder(), workspaceIdx: sr.buildWorkspaceIndex()}
