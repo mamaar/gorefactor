@@ -554,7 +554,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 		// Fast path: when both entry and target have types.Object, use pointer equality.
 		// This eliminates false positives from name shadowing across packages.
 		if targetObj != nil && entry.TypesObject != nil {
-			if entry.TypesObject != targetObj {
+			if !sameObject(entry.TypesObject, targetObj) {
 				skippedReasons["types_object_mismatch"]++
 				continue
 			}
@@ -763,7 +763,7 @@ func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *
 
 		// Fast path: type-identity comparison
 		if targetObj != nil && entry.TypesObject != nil {
-			if entry.TypesObject != targetObj {
+			if !sameObject(entry.TypesObject, targetObj) {
 				continue
 			}
 			return true
@@ -1310,7 +1310,7 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 		}
 		var refers bool
 		if obj, resolved := identObject(info, ident); target != nil && resolved {
-			refers = obj != nil && canonicalObject(obj) == target
+			refers = sameObject(obj, target)
 		} else {
 			if roles == nil {
 				roles = newIdentRoles(file.AST)

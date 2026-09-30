@@ -53,7 +53,6 @@ func (idx *ReferenceIndex) CallSitesOf(obj gotypes.Object) []CallSite {
 	if idx.workspaceIdx == nil {
 		return nil
 	}
-	obj = canonicalObject(obj)
 
 	var sites []CallSite
 	for _, pix := range idx.workspaceIdx.packages {
@@ -132,7 +131,6 @@ func (idx *ReferenceIndex) NonCallUsesOf(obj gotypes.Object) []ValueUse {
 	if idx.workspaceIdx == nil {
 		return nil
 	}
-	obj = canonicalObject(obj)
 
 	var uses []ValueUse
 	for _, pix := range idx.workspaceIdx.packages {
