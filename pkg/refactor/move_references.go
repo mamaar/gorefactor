@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -44,17 +45,36 @@ func importSpecText(alias, path string) string {
 	return fmt.Sprintf("%q", path)
 }
 
+// referenceSource is the references in one file to symbols moved out of the
+// package imported at importPath.
+type referenceSource struct {
+	importPath string
+	refs       []*types.Reference
+}
+
 // planReferenceFile decides how filePath refers to the target package after
 // the move. It reuses an existing import of the target (and its alias); else it
-// imports the target under a name that collides with nothing in the file. The
+// imports the target under a name that collides with nothing in the file. A
 // source import is dropped when the moved references were its last users.
-func planReferenceFile(ws *types.Workspace, filePath string, refs []*types.Reference, sourceImportPath, targetImportPath, targetName string) referenceFileEdit {
+func planReferenceFile(ws *types.Workspace, filePath string, sources []referenceSource, targetImportPath, targetName string) referenceFileEdit {
 	file := findParsedFile(ws, filePath)
 	if file == nil || file.AST == nil {
 		return referenceFileEdit{qualifier: targetName}
 	}
 
-	sourceSpec := unusedSourceImport(file, refs, sourceImportPath)
+	var dropped []*ast.ImportSpec
+	for _, src := range sources {
+		if spec := unusedSourceImport(file, src.refs, src.importPath); spec != nil {
+			dropped = append(dropped, spec)
+		}
+	}
+	removeDropped := func(specs []*ast.ImportSpec) []types.Change {
+		var changes []types.Change
+		for _, spec := range specs {
+			changes = append(changes, removeImportSpec(ws, file, spec))
+		}
+		return changes
+	}
 
 	for _, imp := range file.AST.Imports {
 		if strings.Trim(imp.Path.Value, `"`) != targetImportPath {
@@ -67,22 +87,18 @@ func planReferenceFile(ws *types.Workspace, filePath string, refs []*types.Refer
 		if qualifier == "" {
 			continue
 		}
-		edit := referenceFileEdit{qualifier: qualifier}
-		if sourceSpec != nil {
-			edit.importChanges = []types.Change{removeImportSpec(ws, file, sourceSpec)}
-		}
-		return edit
+		return referenceFileEdit{qualifier: qualifier, importChanges: removeDropped(dropped)}
 	}
 
-	alias := chooseImportName(ws, file, sourceSpec, targetImportPath, targetName)
+	alias := chooseImportName(ws, file, dropped, targetImportPath, targetName)
 	explicit := ""
 	if alias != lastPathComponent(targetImportPath) {
 		explicit = alias
 	}
 
 	edit := referenceFileEdit{qualifier: alias}
-	if sourceSpec != nil {
-		edit.importChanges = []types.Change{replaceImportSpec(ws, file, sourceSpec, explicit, targetImportPath)}
+	if len(dropped) > 0 {
+		edit.importChanges = append([]types.Change{replaceImportSpec(ws, file, dropped[0], explicit, targetImportPath)}, removeDropped(dropped[1:])...)
 	} else if change := generateAddImportChange(ws, filePath, explicit, targetImportPath); change != nil {
 		edit.importChanges = []types.Change{*change}
 	}
@@ -143,10 +159,10 @@ func countQualifierUses(f *ast.File, name string) int {
 
 // chooseImportName picks the local name for the target import: the package
 // name if free in the file, else the package name prefixed with preceding path
-// segments, else numbered. sourceSpec, when non-nil, is being dropped and so
-// does not occupy its name.
-func chooseImportName(ws *types.Workspace, file *types.File, sourceSpec *ast.ImportSpec, targetImportPath, targetName string) string {
-	taken := namesInFileScope(ws, file, sourceSpec)
+// segments, else numbered. dropped imports are being removed and so do not
+// occupy their names.
+func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.ImportSpec, targetImportPath, targetName string) string {
+	taken := namesInFileScope(ws, file, dropped)
 
 	segments := strings.Split(targetImportPath, "/")
 	candidates := []string{targetName}
@@ -179,16 +195,18 @@ func sanitizeIdent(s string) string {
 
 // namesInFileScope lists identifiers an import name in file could collide
 // with: other imports' names, package-level declarations, and every identifier
-// used in the file. Uses of dropSpec's qualifier are excluded, as that import
-// disappears.
-func namesInFileScope(ws *types.Workspace, file *types.File, dropSpec *ast.ImportSpec) map[string]bool {
+// used in the file. Uses of a dropped import's qualifier are excluded, as that
+// import disappears.
+func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.ImportSpec) map[string]bool {
 	taken := make(map[string]bool)
-	dropName := ""
-	if dropSpec != nil {
-		dropName, _ = importLocalName(dropSpec)
+	dropNames := make(map[string]bool)
+	for _, spec := range dropped {
+		if name, _ := importLocalName(spec); name != "" {
+			dropNames[name] = true
+		}
 	}
 	for _, imp := range file.AST.Imports {
-		if imp == dropSpec {
+		if slices.Contains(dropped, imp) {
 			continue
 		}
 		if name, _ := importLocalName(imp); name != "" {
@@ -209,7 +227,7 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropSpec *ast.Impor
 		case *ast.SelectorExpr:
 			// Sel is a member name, not a scope identifier; only X can collide.
 			if id, ok := node.X.(*ast.Ident); ok {
-				if id.Name != dropName || dropName == "" {
+				if !dropNames[id.Name] {
 					taken[id.Name] = true
 				}
 			} else {

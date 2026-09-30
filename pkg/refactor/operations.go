@@ -31,8 +31,45 @@ func (op *MoveSymbolOperation) Type() types.OperationType {
 }
 
 func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
+	refs := op.Request.Refs()
+	for i, ref := range refs {
+		if err := op.validateSymbol(ws, ref); err != nil {
+			if len(refs) > 1 {
+				return &groupMemberError{index: i, err: err}
+			}
+			return err
+		}
+	}
+	return validateDistinctNames(refs)
+}
+
+// groupMemberError blames one symbol of a multi-symbol move, by its index in
+// the request, for making the whole move invalid.
+type groupMemberError struct {
+	index int
+	err   error
+}
+
+func (e *groupMemberError) Error() string { return e.err.Error() }
+func (e *groupMemberError) Unwrap() error { return e.err }
+
+func validateDistinctNames(refs []types.QualifiedSymbol) error {
+	seen := make(map[string]string, len(refs))
+	for i, ref := range refs {
+		if from, ok := seen[ref.Name]; ok {
+			return &groupMemberError{index: i, err: &types.RefactorError{
+				Type:    types.NameConflict,
+				Message: fmt.Sprintf("symbol %s is also moved from %s, so the two would collide in the target package", ref.Name, from),
+			}}
+		}
+		seen[ref.Name] = ref.Package
+	}
+	return nil
+}
+
+func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.QualifiedSymbol) error {
 	// Check that source symbol exists
-	sourcePackage, exists := ws.Packages[op.Request.FromPackage]
+	sourcePackage, exists := ws.Packages[ref.Package]
 	if !exists {
 		// Build list of available packages for helpful error message
 		var availablePackages []string
@@ -41,7 +78,7 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 		}
 
 		var message strings.Builder
-		message.WriteString(fmt.Sprintf("source package not found: %s\nAvailable packages:\n", op.Request.FromPackage))
+		message.WriteString(fmt.Sprintf("source package not found: %s\nAvailable packages:\n", ref.Package))
 		if len(availablePackages) == 0 {
 			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
 		} else {
@@ -69,11 +106,11 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 
 	// Find the symbol to move
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	symbol, err := resolver.ResolveSymbol(sourcePackage, op.Request.SymbolName)
+	symbol, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
 	if err != nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
-			Message: fmt.Sprintf("symbol not found: %s", op.Request.SymbolName),
+			Message: fmt.Sprintf("symbol not found: %s", ref.Name),
 			Cause:   err,
 		}
 	}
@@ -104,17 +141,17 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 	// Check for name conflicts in target package
 	if targetPackage, exists := ws.Packages[op.Request.ToPackage]; exists {
 		if targetPackage.Symbols != nil {
-			if _, err := resolver.ResolveSymbol(targetPackage, op.Request.SymbolName); err == nil {
+			if _, err := resolver.ResolveSymbol(targetPackage, ref.Name); err == nil {
 				return &types.RefactorError{
 					Type:    types.NameConflict,
-					Message: fmt.Sprintf("symbol %s already exists in target package %s", op.Request.SymbolName, op.Request.ToPackage),
+					Message: fmt.Sprintf("symbol %s already exists in target package %s", ref.Name, op.Request.ToPackage),
 				}
 			}
 		}
 	}
 
 	// Check that move won't break visibility rules
-	if !symbol.Exported && op.Request.FromPackage != op.Request.ToPackage {
+	if !symbol.Exported && ref.Package != op.Request.ToPackage {
 		references, err := resolver.FindReferences(symbol)
 		if err != nil {
 			return err
@@ -134,10 +171,10 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check that move won't create import cycles
-	if wouldCreateImportCycle(ws, op.Request.FromPackage, op.Request.ToPackage) {
+	if wouldCreateImportCycle(ws, ref.Package, op.Request.ToPackage) {
 		return &types.RefactorError{
 			Type:    types.CyclicDependency,
-			Message: fmt.Sprintf("moving symbol would create import cycle between %s and %s", op.Request.FromPackage, op.Request.ToPackage),
+			Message: fmt.Sprintf("moving symbol would create import cycle between %s and %s", ref.Package, op.Request.ToPackage),
 		}
 	}
 
@@ -163,6 +200,16 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
+// movingSymbol is a declaration the operation moves, the package it leaves and
+// the index of the requested symbol that brought it along.
+type movingSymbol struct {
+	sym     *types.Symbol
+	pkg     *types.Package
+	file    *types.File
+	owner   int
+	removal []types.Change
+}
+
 func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	plan := &types.RefactoringPlan{
 		Changes:       make([]types.Change, 0),
@@ -170,57 +217,58 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		Reversible:    true,
 	}
 
-	// Find the symbol to move
-	sourcePackage := ws.Packages[op.Request.FromPackage]
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	symbol, err := resolver.ResolveSymbol(sourcePackage, op.Request.SymbolName)
+	moving, err := op.resolveMoving(ws, resolver)
 	if err != nil {
 		return nil, err
 	}
-
-	sourceFile := findFileContainingSymbol(sourcePackage, symbol)
-
-	// If symbol is a struct type, bring along any constructors that build it
-	// via unexported fields — see move_companions.go. Validate already
-	// refused the move if anything else would be left stranded, so by this
-	// point it's safe to move exactly this set.
-	companions, err := op.resolveCompanionSymbols(resolver, sourcePackage, sourceFile, symbol)
-	if err != nil {
-		return nil, err
+	moveSet := make([]*types.Symbol, len(moving))
+	sources := make(map[*types.Symbol]*types.Package, len(moving))
+	for i, m := range moving {
+		moveSet[i] = m.sym
+		sources[m.sym] = m.pkg
 	}
-	moveSet := append([]*types.Symbol{symbol}, companions...)
 
 	// Find all references to every symbol being moved together.
 	var allReferences []*types.Reference
-	for _, s := range moveSet {
-		refs, err := resolver.FindReferences(s)
+	refSource := make(map[*types.Reference]*types.Package)
+	for _, m := range moving {
+		refs, err := resolver.FindReferences(m.sym)
 		if err != nil {
 			return nil, err
+		}
+		for _, ref := range refs {
+			refSource[ref] = m.pkg
 		}
 		allReferences = append(allReferences, refs...)
 	}
 
 	op.moved, op.references = moveSet, allReferences
 
-	// Generate changes to remove each moved symbol from the source file
-	var removeChanges []types.Change
-	if sourceFile != nil {
-		for _, s := range moveSet {
-			c, err := op.generateSymbolRemovalChanges(sourceFile, s)
-			if err != nil {
-				return nil, err
-			}
-			removeChanges = append(removeChanges, c...)
+	// Remove each moved symbol from its source file.
+	removals := make(map[string][]types.Change)
+	var sourceFiles []*types.File
+	for _, m := range moving {
+		if m.file == nil {
+			continue
 		}
-		plan.Changes = append(plan.Changes, removeChanges...)
-		plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
+		c, err := op.generateSymbolRemovalChanges(m.file, m.sym)
+		if err != nil {
+			return nil, err
+		}
+		m.removal = c
+		if _, ok := removals[m.file.Path]; !ok {
+			sourceFiles = append(sourceFiles, m.file)
+		}
+		removals[m.file.Path] = append(removals[m.file.Path], c...)
+	}
+	for _, f := range sourceFiles {
+		plan.Changes = append(plan.Changes, removals[f.Path]...)
+		plan.AffectedFiles = append(plan.AffectedFiles, f.Path)
 
-		// If removing the moved declarations leaves any of the source
-		// file's own imports with nothing left that uses them, drop those
-		// imports too — an unused import is a hard compile error in Go, so
-		// leaving one behind is the source-side mirror of the target file
-		// missing an import it needs.
-		unusedImportChanges, err := generateUnusedImportRemovalChanges(ws, sourceFile, removeChanges)
+		// An unused import is a hard compile error, so drop the source
+		// file's imports that only the moved declarations used.
+		unusedImportChanges, err := generateUnusedImportRemovalChanges(ws, f, removals[f.Path])
 		if err != nil {
 			return nil, err
 		}
@@ -234,7 +282,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moveSet, sourcePackage, targetPackage)
+	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moveSet, sources, targetPackage)
 	if err != nil {
 		return nil, err
 	}
@@ -243,32 +291,23 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		plan.AffectedFiles = append(plan.AffectedFiles, targetFile.Path)
 	}
 
-	// Update all reference sites.
-	// But skip references that are within the removal changes (since we're
-	// removing that code anyway) — and keep track of which references
-	// survive, since only *those* files still need an import for the
-	// target package. Without this, moving a symbol whose only references
-	// were inside its own now-deleted method/constructor bodies (e.g. a
-	// constructor's `&Type{...}` referencing the type itself) left a
-	// dangling, unused import behind in the source file.
+	// References inside a removed declaration go with it; only the surviving
+	// ones are rewritten and need an import of the target package.
 	var survivingReferences []*types.Reference
 	for _, ref := range allReferences {
-		// Check if this reference is within a removal change
-		isWithinRemoval := false
-		if sourceFile != nil && ref.File == sourceFile.Path {
-			for _, change := range removeChanges {
-				if ref.Offset >= change.Start && ref.Offset < change.End {
-					isWithinRemoval = true
-					break
-				}
-			}
-		}
-
-		if isWithinRemoval {
-			// Skip this reference since it's being removed anyway
+		owner, within := removalContaining(moving, ref)
+		if !within {
+			survivingReferences = append(survivingReferences, ref)
 			continue
 		}
-		survivingReferences = append(survivingReferences, ref)
+		if refSource[ref].Path != owner.pkg.Path {
+			// The copied declaration would keep a qualifier for a package
+			// whose symbol has moved.
+			return nil, &groupMemberError{index: owner.owner, err: &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.sym.Name, ref.Symbol.Name),
+			}}
+		}
 	}
 
 	// Rewrite each surviving reference, file by file, using the qualifier the
@@ -276,14 +315,23 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	// targetPackage.Path is the workspace-absolute filesystem path resolved
 	// (and possibly created) by getOrCreateTargetFile above, unlike
 	// op.Request.ToPackage, which may still be the caller's raw input.
-	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
 	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
 	for _, group := range groupReferencesByFile(survivingReferences) {
 		// References already living in the target package need no qualifier.
 		if refPackage := findPackageForFile(ws, group.file); refPackage != nil && refPackage.Path == targetPackage.Path {
 			continue
 		}
-		edit := planReferenceFile(ws, group.file, group.refs, sourceImportPath, targetImportPath, targetPackage.Name)
+		var bySource []referenceSource
+		for _, ref := range group.refs {
+			importPath := packagePathToImportPath(ws, refSource[ref].Path)
+			i := slices.IndexFunc(bySource, func(s referenceSource) bool { return s.importPath == importPath })
+			if i < 0 {
+				i = len(bySource)
+				bySource = append(bySource, referenceSource{importPath: importPath})
+			}
+			bySource[i].refs = append(bySource[i].refs, ref)
+		}
+		edit := planReferenceFile(ws, group.file, bySource, targetImportPath, targetPackage.Name)
 		plan.Changes = append(plan.Changes, edit.importChanges...)
 		for _, ref := range group.refs {
 			updateChange, err := op.generateReferenceUpdateChange(ref, edit.qualifier)
@@ -300,8 +348,59 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	return plan, nil
 }
 
+// resolveMoving resolves the requested symbols and, for a struct type, the
+// constructors that must move with it (see move_companions.go; Validate
+// refused the move if anything else would be stranded).
+func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *analysis.SymbolResolver) ([]*movingSymbol, error) {
+	var moving []*movingSymbol
+	seen := make(map[*types.Symbol]bool)
+	names := make(map[string]bool)
+	for i, ref := range op.Request.Refs() {
+		pkg := ws.Packages[ref.Package]
+		symbol, err := resolver.ResolveSymbol(pkg, ref.Name)
+		if err != nil {
+			return nil, err
+		}
+		file := findFileContainingSymbol(pkg, symbol)
+		companions, err := op.resolveCompanionSymbols(resolver, pkg, file, symbol)
+		if err != nil {
+			return nil, err
+		}
+		for _, s := range append([]*types.Symbol{symbol}, companions...) {
+			if seen[s] {
+				continue
+			}
+			if names[s.Name] {
+				return nil, &groupMemberError{index: i, err: &types.RefactorError{
+					Type:    types.NameConflict,
+					Message: fmt.Sprintf("%s would collide with another symbol of the same name moved in the same call", s.Name),
+				}}
+			}
+			seen[s], names[s.Name] = true, true
+			moving = append(moving, &movingSymbol{sym: s, pkg: pkg, file: findFileContainingSymbol(pkg, s), owner: i})
+		}
+	}
+	return moving, nil
+}
+
+// removalContaining returns the moved symbol whose removal covers ref.
+func removalContaining(moving []*movingSymbol, ref *types.Reference) (*movingSymbol, bool) {
+	for _, m := range moving {
+		for _, c := range m.removal {
+			if c.File == ref.File && ref.Offset >= c.Start && ref.Offset < c.End {
+				return m, true
+			}
+		}
+	}
+	return nil, false
+}
+
 func (op *MoveSymbolOperation) Description() string {
-	return fmt.Sprintf("Move %s from %s to %s", op.Request.SymbolName, op.Request.FromPackage, op.Request.ToPackage)
+	refs := op.Request.Refs()
+	if len(refs) > 1 {
+		return fmt.Sprintf("Move %s to %s", refNames(refs), op.Request.ToPackage)
+	}
+	return fmt.Sprintf("Move %s from %s to %s", refs[0].Name, refs[0].Package, op.Request.ToPackage)
 }
 
 // RenameSymbolOperation implements symbol renaming
@@ -929,9 +1028,9 @@ func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, ty
 // generateSymbolAdditionChanges builds the change(s) that add every symbol in
 // symbols (the primary moved symbol plus any companion functions — see
 // move_companions.go) to targetFile, along with whatever imports that code
-// needs (see move_imports.go). All of symbols must already live in
-// sourcePackage.
-func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace, targetFile *types.File, symbols []*types.Symbol, sourcePackage, targetPackage *types.Package) ([]types.Change, error) {
+// needs (see move_imports.go). sources maps each symbol to the package
+// declaring it.
+func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace, targetFile *types.File, symbols []*types.Symbol, sources map[*types.Symbol]*types.Package, targetPackage *types.Package) ([]types.Change, error) {
 	if len(symbols) == 0 {
 		return nil, fmt.Errorf("no symbols to add to %s", targetPackage.Path)
 	}
@@ -948,7 +1047,7 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 	var needed []neededImport
 	seenImportPaths := make(map[string]bool)
 	for _, symbol := range symbols {
-		symbolFile := findFileContainingSymbol(sourcePackage, symbol)
+		symbolFile := findFileContainingSymbol(sources[symbol], symbol)
 		if symbolFile == nil {
 			return nil, fmt.Errorf("could not find source file for symbol %s", symbol.Name)
 		}

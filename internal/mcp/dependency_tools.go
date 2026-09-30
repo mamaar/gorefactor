@@ -37,7 +37,7 @@ type FixCyclesInput struct {
 func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_by_dependencies",
-		Description: "Analyze the dependency graph and move symbols to reduce coupling. Shared symbols are moved to a common package. Candidates are identified in the default build configuration; each move is checked under every configuration and skipped, with the reason in skipped_sites, if it would break one. At most one symbol per target file is moved per call; the others are listed in skipped_sites and are picked up by running the tool again.",
+		Description: "Analyze the dependency graph and move symbols to reduce coupling. Shared symbols are moved to a common package. Candidates are identified in the default build configuration; each move is checked under every configuration and skipped, with the reason in skipped_sites, if it would break one. Every candidate whose move is acceptable on its own is moved in the same call, planned as one combined move; a candidate that is refused, or that uses another symbol moved in the same call from a different package, stays and is listed in skipped_sites.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveByDependenciesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 

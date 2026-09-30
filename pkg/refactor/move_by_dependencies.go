@@ -1,64 +1,69 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
-// moveSharedSymbols moves each shared-symbol candidate of op to the target
-// package with MoveSymbolAcrossConfigs and merges the plans. A candidate whose
-// move fails, is refused, or conflicts with the moves before it is left in
-// place and listed as a skipped site.
+// moveSharedSymbols moves the shared-symbol candidates of op to the target
+// package. Each candidate is first planned alone with MoveSymbolAcrossConfigs;
+// one that fails or is refused stays in place and is listed as a skipped site.
+// The accepted ones are then planned as a single move, so the target file,
+// the source files and every referrer are edited once for the whole set.
 func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDependenciesOperation) (*types.RefactoringPlan, error) {
 	if op.Request.MoveSharedTo == "" {
 		return nil, fmt.Errorf("MoveSharedTo must be specified when AnalyzeOnly is false")
 	}
 
 	toPackage := op.getTargetFSPath(ws)
-	var accepted []*types.RefactoringPlan
-	var acceptedNames []string
 	var skipped []types.SkippedSite
-	skip := func(c sharedSymbolCandidate, err error) {
+	skip := func(c sharedSymbolCandidate, reason string) {
 		skipped = append(skipped, types.SkippedSite{
 			File:   c.symbol.File,
 			Line:   c.symbol.Line,
-			Reason: fmt.Sprintf("%s not moved: %v", c.symbol.Name, err),
+			Reason: fmt.Sprintf("%s not moved: %s", c.symbol.Name, reason),
 		})
 	}
+
+	var accepted []sharedSymbolCandidate
 	for _, c := range op.identifySharedSymbols(ws) {
-		plan, err := e.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
+		_, err := e.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
 			SymbolName:  c.symbol.Name,
 			FromPackage: c.pkg.Path,
 			ToPackage:   toPackage,
 		})
 		if err != nil {
-			skip(c, err)
+			skip(c, err.Error())
 			continue
 		}
-		if _, err := MergeStepPlans(append(accepted, plan)); err != nil {
-			skip(c, conflictWithEarlierMove(accepted, acceptedNames, plan, err))
+		accepted = append(accepted, c)
+	}
+
+	for len(accepted) > 0 {
+		req := types.MoveSymbolRequest{ToPackage: toPackage}
+		for _, c := range accepted {
+			req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: c.pkg.Path, Name: c.symbol.Name})
+		}
+		plan, err := e.MoveSymbolAcrossConfigs(req)
+		var member *groupMemberError
+		if errors.As(err, &member) && member.index < len(accepted) {
+			skip(accepted[member.index], member.err.Error())
+			accepted = append(accepted[:member.index:member.index], accepted[member.index+1:]...)
 			continue
 		}
-		accepted = append(accepted, plan)
-		acceptedNames = append(acceptedNames, c.symbol.Name)
-	}
-
-	merged, err := MergeStepPlans(accepted)
-	if err != nil {
-		return nil, err
-	}
-	merged.SkippedSites = append(merged.SkippedSites, skipped...)
-	return merged, nil
-}
-
-// conflictWithEarlierMove names the accepted move that plan conflicts with, or
-// returns mergeErr when no single earlier move accounts for it.
-func conflictWithEarlierMove(accepted []*types.RefactoringPlan, names []string, plan *types.RefactoringPlan, mergeErr error) error {
-	for i, earlier := range accepted {
-		if _, err := MergeStepPlans([]*types.RefactoringPlan{earlier, plan}); err != nil {
-			return fmt.Errorf("conflicts with the move of %s in this run; run again to move it", names[i])
+		if err != nil {
+			return nil, err
 		}
+		plan.SkippedSites = append(plan.SkippedSites, skipped...)
+		return plan, nil
 	}
-	return mergeErr
+
+	return &types.RefactoringPlan{
+		Changes:       []types.Change{},
+		AffectedFiles: []string{},
+		Reversible:    true,
+		SkippedSites:  skipped,
+	}, nil
 }

@@ -86,9 +86,11 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 	ws := v.Workspace
 	resolver := quietResolver(ws)
 	if len(p.moved) == 0 {
-		if pkg := ws.Packages[p.req.FromPackage]; pkg != nil && pkg.Symbols != nil {
-			if sym, err := resolver.ResolveSymbol(pkg, p.req.SymbolName); err == nil {
-				p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
+		for _, ref := range p.req.Refs() {
+			if pkg := ws.Packages[ref.Package]; pkg != nil && pkg.Symbols != nil {
+				if sym, err := resolver.ResolveSymbol(pkg, ref.Name); err == nil {
+					p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
+				}
 			}
 		}
 		return configResult{}
@@ -122,8 +124,15 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			}
 		}
 	}
-	if wouldCreateImportCycle(ws, p.req.FromPackage, p.req.ToPackage) {
-		p.object(v, "the move would create an import cycle between %s and %s", p.req.FromPackage, p.req.ToPackage)
+	checked := make(map[string]bool)
+	for _, ref := range p.req.Refs() {
+		if checked[ref.Package] {
+			continue
+		}
+		checked[ref.Package] = true
+		if wouldCreateImportCycle(ws, ref.Package, p.req.ToPackage) {
+			p.object(v, "the move would create an import cycle between %s and %s", ref.Package, p.req.ToPackage)
+		}
 	}
 	return res
 }
@@ -166,6 +175,14 @@ func (p *moveSymbolPlanner) refuse(blockers []types.Blocker) error {
 	return &types.RefactorError{
 		Type: types.InvalidOperation,
 		Message: fmt.Sprintf("cannot move %s: the move is planned for the default build configuration and does not hold under the others:%s",
-			p.req.SymbolName, b.String()),
+			refNames(p.req.Refs()), b.String()),
 	}
+}
+
+func refNames(refs []types.QualifiedSymbol) string {
+	names := make([]string, len(refs))
+	for i, ref := range refs {
+		names[i] = ref.Name
+	}
+	return strings.Join(names, ", ")
 }

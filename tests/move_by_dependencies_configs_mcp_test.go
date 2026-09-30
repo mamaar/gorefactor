@@ -65,7 +65,7 @@ func TestMoveByDependencies_SymbolWithNoConfigProblemIsMovedAndBuilds(t *testing
 	goBuilds(t, dir, "", "tagx")
 }
 
-func TestMoveByDependencies_SecondSymbolIntoSameTargetIsSkippedAsConflict(t *testing.T) {
+func TestMoveByDependencies_TwoSymbolsFromOnePackageMoveInOneCall(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"src/src.go": "package src\n\nfunc One() int { return 1 }\n\nfunc Two() int { return 2 }\n",
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() }\n",
@@ -76,20 +76,155 @@ func TestMoveByDependencies_SecondSymbolIntoSameTargetIsSkippedAsConflict(t *tes
 
 	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
 
-	assertFileContains(t, dir, "shared/shared.go", "func One() int")
-	assertFileContains(t, dir, "src/src.go", "func Two() int")
-	sites, _ := json.Marshal(out["skipped_sites"])
-	const want = "Two not moved: conflicts with the move of One in this run; run again to move it"
-	if !strings.Contains(string(sites), want) {
-		t.Errorf("skipped_sites = %s, want it to contain %q", sites, want)
+	if _, ok := out["skipped_sites"]; ok {
+		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
 	}
-	for _, site := range out["skipped_sites"].([]any) {
-		reason := site.(map[string]any)["reason"].(string)
-		if strings.Contains(reason, dir) || strings.Contains(reason, "step") {
-			t.Errorf("reason = %q, want no absolute paths or step numbers", reason)
+	assertFileContains(t, dir, "shared/shared.go", "func One() int")
+	assertFileContains(t, dir, "shared/shared.go", "func Two() int")
+	for _, rel := range []string{"a/a.go", "b/b.go"} {
+		assertFileContains(t, dir, rel, "shared.One() + shared.Two()")
+		if got := fileText(t, dir, rel); strings.Contains(got, "threadmcp/src\"") {
+			t.Errorf("%s still imports src:\n%s", rel, got)
 		}
 	}
-	goBuilds(t, dir, "")
+	goVets(t, dir, "")
+}
+
+func TestMoveByDependencies_SymbolsFromTwoPackagesMoveToOneTargetInOneCall(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src1/src1.go": "package src1\n\nfunc One() int { return 1 }\n",
+		"src2/src2.go": "package src2\n\nfunc Two() int { return 2 }\n",
+		"a/a.go":       "package a\n\nimport (\n\t\"example.com/threadmcp/src1\"\n\t\"example.com/threadmcp/src2\"\n)\n\nfunc A() int { return src1.One() + src2.Two() }\n",
+		"b/b.go":       "package b\n\nimport (\n\t\"example.com/threadmcp/src1\"\n\t\"example.com/threadmcp/src2\"\n)\n\nfunc B() int { return src1.One() + src2.Two() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	if _, ok := out["skipped_sites"]; ok {
+		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
+	}
+	assertFileContains(t, dir, "shared/shared.go", "func One() int")
+	assertFileContains(t, dir, "shared/shared.go", "func Two() int")
+	for _, rel := range []string{"a/a.go", "b/b.go"} {
+		assertFileContains(t, dir, rel, "shared.One() + shared.Two()")
+	}
+	goVets(t, dir, "")
+}
+
+func TestMoveByDependencies_RefusedCandidateIsReportedAndTheOthersMove(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go":  "package src\n\nfunc One() int { return 1 }\n\nfunc Two() int { return 2 }\n\nfunc Three() int { return 3 }\n",
+		"a/a.go":      "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() + src.Three() }\n",
+		"b/b.go":      "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.One() + src.Two() + src.Three() }\n",
+		"a/a_tagx.go": "//go:build tagx\n\npackage a\n\nimport \"example.com/threadmcp/src\"\n\nfunc Tagged() int { return src.Two() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	sites, _ := json.Marshal(out["skipped_sites"])
+	for _, want := range []string{"Two not moved", "a/a_tagx.go"} {
+		if !strings.Contains(string(sites), want) {
+			t.Errorf("skipped_sites = %s, want it to mention %q", sites, want)
+		}
+	}
+	for _, name := range []string{"One", "Three"} {
+		assertFileContains(t, dir, "shared/shared.go", "func "+name+"() int")
+	}
+	if got := fileText(t, dir, "shared/shared.go"); strings.Contains(got, "func Two") {
+		t.Errorf("Two moved although a build configuration needs it in src:\n%s", got)
+	}
+	assertFileContains(t, dir, "src/src.go", "func Two() int")
+	goVets(t, dir, "", "tagx")
+}
+
+func TestMoveByDependencies_TypeWithMethodsAndFunctionFromSamePackageMoveTogether(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go": "package src\n\ntype Box struct{ N int }\n\nfunc (b Box) Get() int { return b.N }\n\nfunc Make() int { return 1 }\n",
+		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.Box{N: src.Make()}.Get() }\n",
+		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.Box{N: src.Make()}.Get() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	if _, ok := out["skipped_sites"]; ok {
+		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
+	}
+	assertFileContains(t, dir, "shared/shared.go", "type Box struct")
+	assertFileContains(t, dir, "shared/shared.go", "func (b Box) Get() int")
+	assertFileContains(t, dir, "shared/shared.go", "func Make() int")
+	assertFileContains(t, dir, "a/a.go", "shared.Box{N: shared.Make()}.Get()")
+	goVets(t, dir, "")
+}
+
+func TestMoveByDependencies_DryRunReturnsCombinedDiffAndWritesNothing(t *testing.T) {
+	files := map[string]string{
+		"shared/shared.go": "package shared\n",
+		"src/src.go":       "package src\n\nfunc One() int { return 1 }\n\nfunc Two() int { return 2 }\n",
+		"a/a.go":           "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() }\n",
+		"b/b.go":           "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.One() + src.Two() }\n",
+	}
+	dir := writeInlineWorkspace(t, maps.Clone(files))
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared", "dry_run": true})
+
+	diff, _ := json.Marshal(out)
+	for _, want := range []string{"func One()", "func Two()", "shared.One"} {
+		if !strings.Contains(string(diff), want) {
+			t.Errorf("dry_run output lacks %q:\n%s", want, diff)
+		}
+	}
+	for rel, content := range files {
+		assertFileUnchanged(t, dir, rel, content)
+	}
+}
+
+func TestMoveByDependencies_SymbolUsingAnotherMovedPackageSymbolIsSkippedAndTheRestMove(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src1/src1.go": "package src1\n\nimport \"example.com/threadmcp/src2\"\n\nfunc One() int { return src2.Two() }\n",
+		"src2/src2.go": "package src2\n\nfunc Two() int { return 2 }\n",
+		"a/a.go":       "package a\n\nimport (\n\t\"example.com/threadmcp/src1\"\n\t\"example.com/threadmcp/src2\"\n)\n\nfunc A() int { return src1.One() + src2.Two() }\n",
+		"b/b.go":       "package b\n\nimport (\n\t\"example.com/threadmcp/src1\"\n\t\"example.com/threadmcp/src2\"\n)\n\nfunc B() int { return src1.One() + src2.Two() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	sites, _ := json.Marshal(out["skipped_sites"])
+	if !strings.Contains(string(sites), "One not moved") {
+		t.Errorf("skipped_sites = %s, want One reported", sites)
+	}
+	assertFileContains(t, dir, "shared/shared.go", "func Two() int")
+	assertFileContains(t, dir, "src1/src1.go", "func One() int")
+	goVets(t, dir, "")
+}
+
+func TestMoveByDependencies_SameNameFromTwoPackagesMovesOnlyTheFirst(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src1/src1.go": "package src1\n\nfunc Dup() int { return 1 }\n",
+		"src2/src2.go": "package src2\n\nfunc Dup() int { return 2 }\n",
+		"a/a.go":       "package a\n\nimport (\n\t\"example.com/threadmcp/src1\"\n\t\"example.com/threadmcp/src2\"\n)\n\nfunc A() int { return src1.Dup() + src2.Dup() }\n",
+		"b/b.go":       "package b\n\nimport (\n\t\"example.com/threadmcp/src1\"\n\t\"example.com/threadmcp/src2\"\n)\n\nfunc B() int { return src1.Dup() + src2.Dup() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	sites, _ := json.Marshal(out["skipped_sites"])
+	if !strings.Contains(string(sites), "Dup not moved") {
+		t.Errorf("skipped_sites = %s, want the second Dup reported", sites)
+	}
+	assertFileContains(t, dir, "src2/src2.go", "func Dup() int")
+	goVets(t, dir, "")
 }
 
 func TestMoveByDependencies_SymbolAlreadyInTargetPackageIsNotACandidate(t *testing.T) {

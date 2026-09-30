@@ -289,7 +289,7 @@ func (v *Validator) validateOperation(operation refactorTypes.Operation) []refac
 		// Note: This would need access to workspace, simplified for now
 		issues = append(issues, refactorTypes.Issue{
 			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("Move operation for symbol: %s", op.Request.SymbolName),
+			Description: fmt.Sprintf("Move operation for symbol: %s", refNames(op.Request.Refs())),
 			Severity:    refactorTypes.Info,
 		})
 	case *RenameSymbolOperation:

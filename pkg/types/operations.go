@@ -38,13 +38,31 @@ const (
 	ThreadContextOperationType
 )
 
-// MoveSymbolRequest represents moving a symbol between packages
+// QualifiedSymbol names a symbol by its declaring package and name.
+type QualifiedSymbol struct {
+	Package string
+	Name    string
+}
+
+// MoveSymbolRequest represents moving symbols between packages
 type MoveSymbolRequest struct {
 	SymbolName   string
 	FromPackage  string
 	ToPackage    string
-	CreateTarget bool   // Create target package if it doesn't exist
-	UpdateTests  bool   // Update test files as well
+	CreateTarget bool // Create target package if it doesn't exist
+	UpdateTests  bool // Update test files as well
+
+	// Symbols, when set, replaces SymbolName and FromPackage: all of them move
+	// to ToPackage in one plan.
+	Symbols []QualifiedSymbol
+}
+
+// Refs returns the symbols the request moves.
+func (r MoveSymbolRequest) Refs() []QualifiedSymbol {
+	if len(r.Symbols) > 0 {
+		return r.Symbols
+	}
+	return []QualifiedSymbol{{Package: r.FromPackage, Name: r.SymbolName}}
 }
 
 // RenameSymbolRequest represents renaming a symbol
