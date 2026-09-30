@@ -48,13 +48,30 @@ type MovePackagesInput struct {
 	DryRun    bool                  `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
+// planMoveSymbol plans in and checks it under every build configuration. The
+// read lock stays held until the plan exists: a watcher batch takes the write
+// lock and may drop a view being checked.
+func planMoveSymbol(state *MCPServer, in MoveSymbolInput) (*types.RefactoringPlan, error) {
+	state.RLock()
+	defer state.RUnlock()
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	return state.GetEngine().MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
+		SymbolName:  in.Symbol,
+		FromPackage: types.ResolvePackagePath(ws, in.FromPackage),
+		ToPackage:   types.ResolvePackagePath(ws, in.ToPackage),
+	})
+}
+
 func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "move_symbol",
-		Description: "Move a symbol (function, type, variable, constant) from one package to another. Updates all references across the workspace.",
+		Name: "move_symbol",
+		Description: "Move a symbol (function, type, variable, constant) from one package to another. Updates all references across the workspace. " +
+			"The move is planned for the default build configuration and checked under every other one (GOOS/GOARCH variants, custom build tags) that covers the workspace; " +
+			"it is refused when a file outside the default configuration references or declares the symbol.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
-		state.RLock()
-		locked := true
 		defer func() {
 			if r := recover(); r != nil {
 				stack := debug.Stack()
@@ -65,34 +82,15 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 					"panic", fmt.Sprintf("%v", r),
 					"stack", string(stack),
 				)
-				if locked {
-					state.RUnlock()
-					locked = false
-				}
 				result = errResult(fmt.Errorf("internal error (panic) in move_symbol: %v", r))
 			}
 		}()
 
-		ws, err := state.GetWorkspace()
+		plan, err := planMoveSymbol(state, in)
 		if err != nil {
-			state.RUnlock()
-			locked = false
 			return errResult(err), nil, nil
 		}
-		from := types.ResolvePackagePath(ws, in.FromPackage)
-		to := types.ResolvePackagePath(ws, in.ToPackage)
-		plan, err := state.GetEngine().MoveSymbol(ws, types.MoveSymbolRequest{
-			SymbolName:  in.Symbol,
-			FromPackage: from,
-			ToPackage:   to,
-		})
-		if err != nil {
-			state.RUnlock()
-			locked = false
-			return errResult(err), nil, nil
-		}
-		locked = false // executePlanWithUnlock releases the lock
-		planResult, err := executePlanWithUnlock(state, plan, "move symbol "+in.Symbol, in.DryRun)
+		planResult, err := executePlan(state, plan, "move symbol "+in.Symbol, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

@@ -20,6 +20,10 @@ import (
 // MoveSymbolOperation implements moving symbols between packages
 type MoveSymbolOperation struct {
 	Request types.MoveSymbolRequest
+
+	// moved and references hold what Execute moved and the references it found.
+	moved      []*types.Symbol
+	references []*types.Reference
 }
 
 func (op *MoveSymbolOperation) Type() types.OperationType {
@@ -195,6 +199,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 		allReferences = append(allReferences, refs...)
 	}
+
+	op.moved, op.references = moveSet, allReferences
 
 	// Generate changes to remove each moved symbol from the source file
 	var removeChanges []types.Change

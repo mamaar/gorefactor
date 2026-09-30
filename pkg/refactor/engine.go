@@ -237,6 +237,17 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 	return plan, nil
 }
 
+// MoveSymbolAcrossConfigs moves a symbol like MoveSymbol and checks the plan
+// under every build configuration covering the workspace. It refuses when a
+// configuration declares the symbol elsewhere or not at all, references it
+// where the plan rewrites nothing, has the name taken in the target package,
+// or would get an import cycle.
+func (e *DefaultEngine) MoveSymbolAcrossConfigs(req types.MoveSymbolRequest) (*types.RefactoringPlan, error) {
+	req.CreateTarget = true
+	req.UpdateTests = true
+	return e.planAcrossConfigs(&moveSymbolPlanner{req: req})
+}
+
 // RenameSymbol implements symbol renaming
 func (e *DefaultEngine) RenameSymbol(ws *types.Workspace, req types.RenameSymbolRequest) (*types.RefactoringPlan, error) {
 	operation := &RenameSymbolOperation{Request: req}

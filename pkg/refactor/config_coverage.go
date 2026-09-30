@@ -318,12 +318,15 @@ func mayUse(f *analysis.SourceFile, key types.SymbolKey, dir string) bool {
 	return false
 }
 
-// reportUnverified lists on plan the unverified uses in files it does not
-// list yet, each with a skipped site.
+// reportUnverified lists on plan the unverified uses in files it neither
+// lists yet nor changes, each with a skipped site.
 func reportUnverified(plan *types.RefactoringPlan, unverified []types.Blocker) {
 	listed := make(map[string]bool, len(plan.Coverage.Uncovered))
 	for _, u := range plan.Coverage.Uncovered {
 		listed[u.Path] = true
+	}
+	for _, c := range plan.Changes {
+		listed[c.File] = true
 	}
 	for _, b := range unverified {
 		if listed[b.File] {
