@@ -91,6 +91,8 @@ type DefaultEngine struct {
 type EngineConfig struct {
 	SkipCompilation bool
 	AllowBreaking   bool
+	// BuildConfig overrides the parser's host build configuration when set.
+	BuildConfig *analysis.BuildConfig
 }
 
 // WatchContext exposes the internal components needed by the watch subsystem.
@@ -129,8 +131,12 @@ func CreateEngine(logger *slog.Logger) RefactorEngine {
 }
 
 func CreateEngineWithConfig(config *EngineConfig, logger *slog.Logger) RefactorEngine {
+	var opts []analysis.ParserOption
+	if config.BuildConfig != nil {
+		opts = append(opts, analysis.WithBuildConfig(*config.BuildConfig))
+	}
 	return &DefaultEngine{
-		parser:     analysis.NewParser(logger),
+		parser:     analysis.NewParser(logger, opts...),
 		validator:  NewValidator(logger),
 		serializer: NewSerializer(),
 		config:     config,

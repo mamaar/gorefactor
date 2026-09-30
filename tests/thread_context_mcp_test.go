@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"go/build"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,5 +157,61 @@ func main() { Run() }
 	}
 	if !strings.Contains(got, "Run(context.TODO())") {
 		t.Errorf("expected main (a root) to pass context.TODO() to Run, got:\n%s", got)
+	}
+}
+
+func TestAddContextParameter_Thread_RewritesCallInCgoFile(t *testing.T) {
+	if !build.Default.CgoEnabled {
+		t.Skip("cgo disabled on host: cgo files are not part of the package")
+	}
+	dir := writeInlineWorkspace(t, map[string]string{
+		"leaf.go": `package main
+
+func leaf() {}
+`,
+		"cgo.go": `package main
+
+/*
+#include <stdio.h>
+*/
+import "C"
+
+func caller() {
+	C.puts(C.CString("x"))
+	leaf()
+}
+
+func main() { caller() }
+`,
+	})
+
+	ctx := context.Background()
+	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
+	defer sess.Close()
+
+	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
+		Name: "add_context_parameter",
+		Arguments: map[string]any{
+			"function_name": "leaf",
+			"source_file":   "leaf.go",
+			"thread":        true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("CallTool returned error: %s", errText(result))
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "cgo.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(content), "leaf(ctx)") {
+		t.Errorf("expected leaf call in cgo file to be rewritten, got:\n%s", content)
+	}
+	if !strings.Contains(string(content), "C.puts(C.CString(\"x\"))") {
+		t.Errorf("C expressions must be untouched, got:\n%s", content)
 	}
 }

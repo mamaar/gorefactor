@@ -361,10 +361,7 @@ func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, err
 // modified has error A and B" for "everything's new".
 func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPath string, files []*ast.File) []error {
 	var errs []error
-	conf := gotypes.Config{
-		Importer: importer,
-		Error:    func(err error) { errs = append(errs, err) },
-	}
+	conf := analysis.NewTypesConfig(importer, func(err error) { errs = append(errs, err) })
 	info := &gotypes.Info{
 		Types: make(map[ast.Expr]gotypes.TypeAndValue),
 		Defs:  make(map[*ast.Ident]gotypes.Object),

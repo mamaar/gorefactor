@@ -385,3 +385,49 @@ func main() {
 		t.Fatalf("expected a spurious time.Duration mismatch, got: %v", buggy.NewErrors)
 	}
 }
+
+func TestVerifyPlanTypes_CgoPackageReportsNoNewErrors(t *testing.T) {
+	cfg := analysis.NewBuildConfig("linux", "amd64", true)
+	dir := t.TempDir()
+	files := map[string]string{
+		"go.mod": "module example.com/verifytest\n\ngo 1.21\n",
+		"main.go": `package main
+
+/*
+#include <stdio.h>
+*/
+import "C"
+
+func viaC() {
+	C.puts(C.CString("x"))
+}
+
+func f(x int) {}
+
+func main() {
+	f(1)
+}
+`,
+	}
+	for rel, content := range files {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	engine := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true, BuildConfig: &cfg}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ws, err := engine.LoadWorkspace(dir)
+	if err != nil {
+		t.Fatalf("LoadWorkspace: %v", err)
+	}
+
+	f := findVerifyFile(t, ws, "main.go")
+	plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "f(1)", "f(2)")}}
+
+	res := VerifyPlanTypes(ws, plan)
+	if res.Skipped != "" {
+		t.Fatalf("unexpected skip: %s", res.Skipped)
+	}
+	if !res.OK() {
+		t.Fatalf("expected OK, got new errors: %v", res.NewErrors)
+	}
+}

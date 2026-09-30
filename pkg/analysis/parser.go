@@ -751,13 +751,23 @@ func (p *GoParser) Importer() gotypes.Importer {
 	return p.importer
 }
 
+// NewTypesConfig returns the go/types.Config used for every workspace
+// type-check. FakeImportC makes cgo files check cleanly; C.x expressions get
+// no type information and never appear in Info.Uses.
+func NewTypesConfig(importer gotypes.Importer, onError func(error)) gotypes.Config {
+	return gotypes.Config{
+		Importer:    importer,
+		Error:       onError,
+		FakeImportC: true,
+	}
+}
+
+func ignoreTypeError(error) {}
+
 // checkFiles runs go/types over the given file set, returning the populated Info
 // even when checking fails (go/types fills it in partially on error).
 func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*ast.File) (*gotypes.Package, *gotypes.Info, error) {
-	conf := gotypes.Config{
-		Importer: p.importer,
-		Error:    func(err error) {}, // silently ignore type errors
-	}
+	conf := NewTypesConfig(p.importer, ignoreTypeError)
 	info := &gotypes.Info{
 		Types: make(map[ast.Expr]gotypes.TypeAndValue),
 		Defs:  make(map[*ast.Ident]gotypes.Object),

@@ -1496,3 +1496,65 @@ func TestParsePackage_AllUnparsableYieldsNoPackage(t *testing.T) {
 		t.Errorf("ParsePackage = %v, %v; want nil, nil", pkg, err)
 	}
 }
+
+const cgoSrc = `package main
+
+/*
+#include <stdio.h>
+*/
+import "C"
+
+func viaC() {
+	C.puts(C.CString("x"))
+}
+
+func plain() {}
+
+func main() {
+	plain()
+}
+`
+
+func TestTypeCheck_CgoFilePackageIsTyped(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{"main.go": cgoSrc})
+	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
+	pkg := ws.Packages[root]
+	if pkg == nil {
+		t.Fatal("root package not loaded")
+	}
+	p.EnsureTypeChecked(ws, pkg)
+	if pkg.TypesErr != nil {
+		t.Fatalf("TypesErr = %v", pkg.TypesErr)
+	}
+	if pkg.TypesInfo == nil {
+		t.Fatal("TypesInfo is nil")
+	}
+	var plainFunc, putsUse bool
+	for id, obj := range pkg.TypesInfo.Uses {
+		if _, ok := obj.(*gotypes.Func); ok && id.Name == "plain" {
+			plainFunc = true
+		}
+		if id.Name == "puts" || id.Name == "CString" {
+			putsUse = true
+		}
+	}
+	if !plainFunc {
+		t.Error("no use of plain resolved to *types.Func")
+	}
+	if putsUse {
+		t.Error("C.puts / C.CString selectors have entries in Uses")
+	}
+}
+
+func TestTypeCheck_CgoPackageKeepsInPackageTestFiles(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"main.go":      cgoSrc,
+		"main_test.go": "package main\n\nimport \"testing\"\n\nfunc TestPlain(t *testing.T) { plain() }\n",
+	})
+	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
+	pkg := ws.Packages[root]
+	p.EnsureTypeChecked(ws, pkg)
+	if pkg.TestTypesExcluded {
+		t.Errorf("test files excluded from type-check: %v", pkg.TestTypesExcludedErr)
+	}
+}
