@@ -20,7 +20,7 @@ func alteredFixture(t *testing.T) (*DefaultEngine, string) {
 	})
 }
 
-func executeAltered(t *testing.T, eng *DefaultEngine, dir, fn, file string, propagate bool) *ChangeSignatureOperation {
+func executeAltered(t *testing.T, eng *DefaultEngine, dir, fn, file string, propagate bool) (*ChangeSignatureOperation, *types.RefactoringPlan) {
 	t.Helper()
 	ws := eng.WorkspaceSet().Primary().Workspace
 	op := &ChangeSignatureOperation{
@@ -38,15 +38,16 @@ func executeAltered(t *testing.T, eng *DefaultEngine, dir, fn, file string, prop
 	if err := op.Validate(ws); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := op.Execute(ws); err != nil {
+	plan, err := op.Execute(ws)
+	if err != nil {
 		t.Fatal(err)
 	}
-	return op
+	return op, plan
 }
 
 func TestChangeSignatureOperation_AlteredDeclsListsFunction(t *testing.T) {
 	eng, dir := alteredFixture(t)
-	op := executeAltered(t, eng, dir, "fn", "p/fn.go", false)
+	op, _ := executeAltered(t, eng, dir, "fn", "p/fn.go", false)
 
 	want := []AlteredDecl{{Key: types.SymbolKey{PkgPath: "example.com/threadtest/p", Name: "fn"}, File: filepath.Join(dir, "p/fn.go")}}
 	if got := op.AlteredDecls(); !slices.Equal(got, want) {
@@ -56,7 +57,8 @@ func TestChangeSignatureOperation_AlteredDeclsListsFunction(t *testing.T) {
 
 func TestChangeSignatureOperation_AlteredDeclsListsInterfaceAndImplementationsWithPropagate(t *testing.T) {
 	eng, dir := alteredFixture(t)
-	op := executeAltered(t, eng, dir, "A.Run", "p/a.go", true)
+	op, plan := executeAltered(t, eng, dir, "A.Run", "p/a.go", true)
+	assertNoDuplicateChanges(t, plan)
 
 	pkg := "example.com/threadtest/p"
 	want := []AlteredDecl{
@@ -71,6 +73,18 @@ func TestChangeSignatureOperation_AlteredDeclsListsInterfaceAndImplementationsWi
 	for _, w := range want {
 		if !slices.Contains(got, w) {
 			t.Errorf("AlteredDecls = %+v, missing %+v", got, w)
+		}
+	}
+}
+
+func assertNoDuplicateChanges(t *testing.T, plan *types.RefactoringPlan) {
+	t.Helper()
+	seen := make(map[changeIdentity]bool)
+	for _, c := range plan.Changes {
+		if id := identityOf(c); seen[id] {
+			t.Errorf("duplicate change %q at %s [%d,%d)", c.Description, c.File, c.Start, c.End)
+		} else {
+			seen[id] = true
 		}
 	}
 }

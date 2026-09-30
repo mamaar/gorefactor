@@ -289,7 +289,7 @@ func (op *ChangeSignatureOperation) collectInterfaceChanges(
 	}
 
 	logger.Info("finding interface implementations")
-	implChanges, implFiles, err := op.generateImplementationSignatureChanges(ws, resolver, ifaceSym, methodName)
+	implChanges, implFiles, err := op.generateImplementationSignatureChanges(ws, resolver, ifaceSym, methodName, "")
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +360,7 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 	if op.PropagateToInterface && isDotted {
 		ifaceSymbols := findInterfacesForMethod(ws, resolver, typeName, methodName)
 		for _, ifaceSym := range ifaceSymbols {
-			ifaceChanges, ifaceFiles, err := op.applyInterfaceMethodChanges(ws, resolver, ifaceSym, methodName)
+			ifaceChanges, ifaceFiles, err := op.applyInterfaceMethodChanges(ws, resolver, ifaceSym, methodName, typeName)
 			if err != nil {
 				continue
 			}
@@ -1562,6 +1562,7 @@ func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
 	resolver *analysis.SymbolResolver,
 	ifaceSym *pkgtypes.Symbol,
 	methodName string,
+	skipType string,
 ) ([]pkgtypes.Change, []string, error) {
 	var changes []pkgtypes.Change
 	var affectedFiles []string
@@ -1573,7 +1574,7 @@ func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
 
 	for _, impl := range impls {
 		implPkg := packageOfSymbol(ws, impl)
-		if implPkg == nil {
+		if implPkg == nil || impl.Name == skipType {
 			continue
 		}
 		for _, file := range implPkg.Files {
@@ -1612,6 +1613,7 @@ func (op *ChangeSignatureOperation) applyInterfaceMethodChanges(
 	resolver *analysis.SymbolResolver,
 	ifaceSym *pkgtypes.Symbol,
 	methodName string,
+	skipType string,
 ) ([]pkgtypes.Change, []string, error) {
 	var changes []pkgtypes.Change
 	var affectedFiles []string
@@ -1636,7 +1638,7 @@ func (op *ChangeSignatureOperation) applyInterfaceMethodChanges(
 	}
 
 	// Update all implementations
-	implChanges, implFiles, err := op.generateImplementationSignatureChanges(ws, resolver, ifaceSym, methodName)
+	implChanges, implFiles, err := op.generateImplementationSignatureChanges(ws, resolver, ifaceSym, methodName, skipType)
 	if err != nil {
 		return nil, nil, err
 	}
