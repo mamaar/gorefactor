@@ -759,20 +759,24 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 	return plan, nil
 }
 
-// SafeDeleteBlockingReferences reports the references that would block a
-// SafeDelete for req, without deleting anything or consulting req.Force. It
-// lets a caller inspect what would block the delete before deciding whether
-// to proceed.
-func (e *DefaultEngine) SafeDeleteBlockingReferences(ws *types.Workspace, req types.SafeDeleteRequest) ([]types.Reference, error) {
-	operation := &SafeDeleteOperation{
-		SymbolName: req.Symbol,
-		SourceFile: req.SourceFile,
-		Scope:      types.WorkspaceScope,
-		Force:      req.Force,
-	}
+// SafeDeleteBlockingReferences reports what would block a SafeDelete for req
+// under any build configuration covering the workspace, regardless of
+// req.Force and without deleting anything.
+func (e *DefaultEngine) SafeDeleteBlockingReferences(req types.SafeDeleteRequest) ([]types.Blocker, error) {
+	return e.blockersAcrossConfigs(&safeDeletePlanner{req: req})
+}
 
-	e.EnsureTypeChecked(ws)
-	return operation.BlockingReferences(ws)
+// SafeDeleteAcrossConfigs deletes a symbol like SafeDelete, under every build
+// configuration covering the workspace, and returns one merged plan. The
+// declarations with the symbol's key are deleted under every configuration,
+// and a use of any of them under any configuration, or a mention in a file no
+// configuration type-checks, refuses the delete unless req.Force is set.
+func (e *DefaultEngine) SafeDeleteAcrossConfigs(req types.SafeDeleteRequest) (*types.RefactoringPlan, error) {
+	p := &safeDeletePlanner{req: req, errPrefix: "safe delete operation validation failed"}
+	if err := p.operation(nil).validateRequest(); err != nil {
+		return nil, p.wrap(err)
+	}
+	return e.planAcrossConfigs(p)
 }
 
 // SafeDelete implements safe deletion of symbols

@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/format"
-	"io"
-	"log/slog"
 	"slices"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -19,16 +17,23 @@ type SafeDeleteOperation struct {
 	Scope      pkgtypes.RenameScope // PackageScope or WorkspaceScope
 	Force      bool                 // If true, delete even if references exist
 
+	// CachedIndex is used instead of building a reference index when set.
+	CachedIndex *analysis.ReferenceIndex
+
 	blocking     []pkgtypes.Reference
 	blockingDone bool
 }
 
-// deletionTarget is one declaration removed by the operation: the requested
-// symbol itself or, for a type, one of its methods.
+// dropAnalysis forgets the reference index the operation planned from.
+func (op *SafeDeleteOperation) dropAnalysis() { op.CachedIndex = nil }
+
+// deletionTarget is one declaration removed by the operation: a symbol asked
+// for or, for a type, one of its methods.
 type deletionTarget struct {
 	file   *pkgtypes.File
 	symbol *pkgtypes.Symbol
-	node   ast.Node // declaration or spec to cut
+	root   *pkgtypes.Symbol // the symbol asked for that brings this one along
+	node   ast.Node         // declaration or spec to cut
 	doc    *ast.CommentGroup
 	field  *ast.Field // set when the target is a struct field; node is the field
 }
@@ -38,17 +43,8 @@ func (op *SafeDeleteOperation) Type() pkgtypes.OperationType {
 }
 
 func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
-	if op.SymbolName == "" {
-		return &pkgtypes.RefactorError{
-			Type:    pkgtypes.InvalidOperation,
-			Message: "symbol name cannot be empty",
-		}
-	}
-	if op.SourceFile == "" {
-		return &pkgtypes.RefactorError{
-			Type:    pkgtypes.InvalidOperation,
-			Message: "source file cannot be empty",
-		}
+	if err := op.validateRequest(); err != nil {
+		return err
 	}
 
 	// Confirm the source file and symbol can be resolved before checking references
@@ -64,15 +60,35 @@ func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
 		}
 
 		if len(actualReferences) > 0 {
-			return &pkgtypes.RefactorError{
-				Type: pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("cannot safely delete %s: found %d references (use --force to delete anyway)",
-					op.SymbolName, len(actualReferences)),
-			}
+			return op.refusal(len(actualReferences))
 		}
 	}
 
 	return nil
+}
+
+func (op *SafeDeleteOperation) validateRequest() error {
+	if op.SymbolName == "" {
+		return &pkgtypes.RefactorError{
+			Type:    pkgtypes.InvalidOperation,
+			Message: "symbol name cannot be empty",
+		}
+	}
+	if op.SourceFile == "" {
+		return &pkgtypes.RefactorError{
+			Type:    pkgtypes.InvalidOperation,
+			Message: "source file cannot be empty",
+		}
+	}
+	return nil
+}
+
+func (op *SafeDeleteOperation) refusal(references int) *pkgtypes.RefactorError {
+	return &pkgtypes.RefactorError{
+		Type: pkgtypes.InvalidOperation,
+		Message: fmt.Sprintf("cannot safely delete %s: found %d references (use --force to delete anyway)",
+			op.SymbolName, references),
+	}
 }
 
 // BlockingReferences returns the references that would block a safe delete of
@@ -85,16 +101,67 @@ func (op *SafeDeleteOperation) BlockingReferences(ws *pkgtypes.Workspace) ([]pkg
 	if op.blockingDone {
 		return op.blocking, nil
 	}
-	_, sourcePackage, resolver, symbol, err := op.resolveSourceAndSymbol(ws)
+	targets, err := op.targetsIn(ws, nil)
 	if err != nil {
 		return nil, err
 	}
-	targets, err := op.deletionTargets(ws, sourcePackage, symbol)
+	blocking, err := op.blockingAmong(ws, targets)
 	if err != nil {
 		return nil, err
 	}
+	op.blocking, op.blockingDone = blocking, true
+	return blocking, nil
+}
 
-	idx := resolver.BuildReferenceIndex()
+// targetsIn returns the declarations to delete in ws.
+func (op *SafeDeleteOperation) targetsIn(ws *pkgtypes.Workspace, linked pkgtypes.SymbolKeySet) ([]deletionTarget, error) {
+	roots, notFound := op.rootsIn(ws, linked)
+	if len(roots) == 0 {
+		return nil, notFound
+	}
+	return op.targetsOf(ws, roots)
+}
+
+// rootsIn returns the symbols ws is asked to delete: the requested one and
+// those the linked keys name. When there are none it also returns the
+// requested symbol's lookup error.
+func (op *SafeDeleteOperation) rootsIn(ws *pkgtypes.Workspace, linked pkgtypes.SymbolKeySet) ([]*pkgtypes.Symbol, error) {
+	var roots []*pkgtypes.Symbol
+	_, _, _, symbol, notFound := op.resolveSourceAndSymbol(ws)
+	if notFound == nil {
+		roots = append(roots, symbol)
+	}
+	return withLinkedSymbols(ws, roots, linked), notFound
+}
+
+// targetsOf returns the declarations of roots and of what goes with them,
+// each once.
+func (op *SafeDeleteOperation) targetsOf(ws *pkgtypes.Workspace, roots []*pkgtypes.Symbol) ([]deletionTarget, error) {
+	var targets []deletionTarget
+	seen := make(map[ast.Node]bool)
+	for _, root := range roots {
+		found, err := op.deletionTargets(ws, resolveSymbolPackage(ws, root), root)
+		if err != nil {
+			return nil, err
+		}
+		for _, t := range found {
+			if !seen[t.node] {
+				seen[t.node] = true
+				targets = append(targets, t)
+			}
+		}
+	}
+	return targets, nil
+}
+
+// blockingAmong returns the references to targets from outside the
+// declarations being deleted. The result is empty, not nil, when there are none.
+func (op *SafeDeleteOperation) blockingAmong(ws *pkgtypes.Workspace, targets []deletionTarget) ([]pkgtypes.Reference, error) {
+	resolver := quietResolver(ws)
+	idx := op.CachedIndex
+	if idx == nil {
+		idx = resolver.BuildReferenceIndex()
+	}
 	blocking := make([]pkgtypes.Reference, 0)
 	for _, t := range targets {
 		references, err := resolver.FindReferencesIndexed(t.symbol, idx)
@@ -104,15 +171,13 @@ func (op *SafeDeleteOperation) BlockingReferences(ws *pkgtypes.Workspace) ([]pkg
 				Message: fmt.Sprintf("failed to find references: %v", err),
 			}
 		}
-		scoped := op.filterReferencesByScope(references, sourcePackage, ws)
+		scoped := op.filterReferencesByScope(references, resolveSymbolPackage(ws, t.root), ws)
 		for _, ref := range op.filterOutDefinition(scoped, t.symbol) {
 			if !insideTargets(ws, targets, ref) {
 				blocking = append(blocking, *ref)
 			}
 		}
 	}
-
-	op.blocking, op.blockingDone = blocking, true
 	return blocking, nil
 }
 
@@ -139,7 +204,7 @@ func nodeOffsets(ws *pkgtypes.Workspace, n ast.Node) (int, int) {
 // type, the declarations of its methods.
 func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgtypes.Package, symbol *pkgtypes.Symbol) ([]deletionTarget, error) {
 	symbols := []*pkgtypes.Symbol{symbol}
-	if symbol.Kind == pkgtypes.TypeSymbol && pkg.Symbols != nil {
+	if symbol.Kind == pkgtypes.TypeSymbol && pkg != nil && pkg.Symbols != nil {
 		for _, m := range pkg.Symbols.Methods[symbol.Name] {
 			if m.Kind == pkgtypes.MethodSymbol {
 				symbols = append(symbols, m)
@@ -149,7 +214,10 @@ func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgt
 
 	targets := make([]deletionTarget, 0, len(symbols))
 	for _, sym := range symbols {
-		file := findFileByPath(pkg, sym.File)
+		var file *pkgtypes.File
+		if pkg != nil {
+			file = findFileByPath(pkg, sym.File)
+		}
 		if file == nil {
 			return nil, &pkgtypes.RefactorError{
 				Type:    pkgtypes.FileSystemError,
@@ -172,7 +240,7 @@ func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgt
 				Message: fmt.Sprintf("declaration for %s not found", sym.Name),
 			}
 		}
-		targets = append(targets, deletionTarget{file: file, symbol: sym, node: node, doc: doc, field: field})
+		targets = append(targets, deletionTarget{file: file, symbol: sym, root: symbol, node: node, doc: doc, field: field})
 	}
 	return targets, nil
 }
@@ -214,7 +282,7 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 		}
 	}
 
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	resolver := quietResolver(ws)
 
 	if sourceFile == nil {
 		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
@@ -236,42 +304,36 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 }
 
 func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
-	_, sourcePackage, _, symbol, err := op.resolveSourceAndSymbol(ws)
+	targets, err := op.targetsIn(ws, nil)
 	if err != nil {
 		return nil, err
 	}
+	var blocking []pkgtypes.Reference
+	if op.Force {
+		if blocking, err = op.BlockingReferences(ws); err != nil {
+			return nil, err
+		}
+	}
+	return op.removalPlan(ws, targets, blocking), nil
+}
 
+// removalPlan cuts targets out of their files. A forced delete leaves the
+// blocking call sites in place, since removing a use safely depends on its
+// statement, and reports each as a skipped site.
+func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []deletionTarget, blocking []pkgtypes.Reference) *pkgtypes.RefactoringPlan {
 	plan := &pkgtypes.RefactoringPlan{
 		Changes:       make([]pkgtypes.Change, 0),
 		AffectedFiles: make([]string, 0),
 		Reversible:    true,
 	}
-
-	targets, err := op.deletionTargets(ws, sourcePackage, symbol)
-	if err != nil {
-		return nil, err
-	}
 	for _, t := range targets {
-		change := op.generateRemovalChange(ws, t, symbol)
-		plan.Changes = append(plan.Changes, change)
+		plan.Changes = append(plan.Changes, op.generateRemovalChange(ws, t))
 		if !slices.Contains(plan.AffectedFiles, t.file.Path) {
 			plan.AffectedFiles = append(plan.AffectedFiles, t.file.Path)
 		}
 	}
-
-	// If forced deletion, the declaration is removed but call sites are left
-	// in place: rewriting them safely would require distinguishing "remove
-	// the whole statement" from cases like `x := Foo()`, which is beyond
-	// what this operation attempts (see the removed generateReferenceRemovalChanges).
-	// Instead, every surviving reference is reported as a SkippedSite so the
-	// caller can fix it up manually.
 	if op.Force {
-		actualReferences, err := op.BlockingReferences(ws)
-		if err != nil {
-			return nil, err
-		}
-
-		for _, ref := range actualReferences {
+		for _, ref := range blocking {
 			plan.SkippedSites = append(plan.SkippedSites, pkgtypes.SkippedSite{
 				File:    ref.File,
 				Line:    ref.Line,
@@ -280,15 +342,12 @@ func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Refact
 			})
 		}
 	}
-
-	// Perform impact analysis
 	plan.Impact = &pkgtypes.ImpactAnalysis{
 		AffectedFiles:    plan.AffectedFiles,
 		AffectedPackages: op.getAffectedPackages(ws, plan.AffectedFiles),
-		PotentialIssues:  op.analyzeImpact(ws, symbol, op.Force),
+		PotentialIssues:  op.analyzeImpact(ws, targets[0].root, op.Force),
 	}
-
-	return plan, nil
+	return plan
 }
 
 func (op *SafeDeleteOperation) Description() string {
@@ -392,7 +451,8 @@ func findFieldDeclaration(file *pkgtypes.File, symbol *pkgtypes.Symbol) *ast.Fie
 	return found
 }
 
-func (op *SafeDeleteOperation) generateRemovalChange(ws *pkgtypes.Workspace, t deletionTarget, requested *pkgtypes.Symbol) pkgtypes.Change {
+func (op *SafeDeleteOperation) generateRemovalChange(ws *pkgtypes.Workspace, t deletionTarget) pkgtypes.Change {
+	requested := t.root
 	var start, end int
 	var newText string
 	if t.field != nil {

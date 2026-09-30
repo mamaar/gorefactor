@@ -28,7 +28,7 @@ const maxListedRefs = 10
 // safeDeleteConfirmMessage builds the message shown to the human user when a
 // safe_delete would break one or more live references and force/dry_run
 // were not set, so we need to ask before deleting.
-func safeDeleteConfirmMessage(symbol string, refs []types.Reference) string {
+func safeDeleteConfirmMessage(symbol string, refs []types.Blocker) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Deleting %q will break %d reference", symbol, len(refs))
 	if len(refs) != 1 {
@@ -41,7 +41,7 @@ func safeDeleteConfirmMessage(symbol string, refs []types.Reference) string {
 		n = maxListedRefs
 	}
 	for _, ref := range refs[:n] {
-		fmt.Fprintf(&b, "  %s:%d\n", ref.File, ref.Line)
+		fmt.Fprintf(&b, "  %s:%d%s\n", ref.File, ref.Line, ref.Note())
 	}
 	if len(refs) > maxListedRefs {
 		fmt.Fprintf(&b, "  …and %d more\n", len(refs)-maxListedRefs)
@@ -50,94 +50,81 @@ func safeDeleteConfirmMessage(symbol string, refs []types.Reference) string {
 	return b.String()
 }
 
+// safeDeleteRequest resolves in against the loaded workspace. The caller holds
+// the read lock.
+func safeDeleteRequest(state *MCPServer, in SafeDeleteInput) (types.SafeDeleteRequest, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return types.SafeDeleteRequest{}, err
+	}
+	return types.SafeDeleteRequest{Symbol: in.Symbol, SourceFile: resolveFile(ws, in.SourceFile), Force: in.Force}, nil
+}
+
+// safeDeleteBlockers returns what blocks deleting in's symbol under any build
+// configuration.
+func safeDeleteBlockers(state *MCPServer, in SafeDeleteInput) ([]types.Blocker, error) {
+	state.RLock()
+	defer state.RUnlock()
+	req, err := safeDeleteRequest(state, in)
+	if err != nil {
+		return nil, err
+	}
+	return state.GetEngine().SafeDeleteBlockingReferences(req)
+}
+
+// planSafeDelete plans in under every build configuration. The read lock stays
+// held until the merged plan exists: a watcher batch takes the write lock and
+// may drop a view being planned in.
+func planSafeDelete(state *MCPServer, in SafeDeleteInput) (*types.RefactoringPlan, error) {
+	state.RLock()
+	defer state.RUnlock()
+	req, err := safeDeleteRequest(state, in)
+	if err != nil {
+		return nil, err
+	}
+	return state.GetEngine().SafeDeleteAcrossConfigs(req)
+}
+
+// confirmSafeDelete asks the user whether to delete past the blockers of an
+// unforced, applying delete. It reports whether the delete is to be forced;
+// a client that cannot be asked gets the unforced delete and its refusal.
+func confirmSafeDelete(ctx context.Context, sess *mcpsdk.ServerSession, state *MCPServer, in SafeDeleteInput) (bool, error) {
+	if in.Force || in.DryRun {
+		return in.Force, nil
+	}
+	refs, err := safeDeleteBlockers(state, in)
+	if err != nil || len(refs) == 0 {
+		return false, err
+	}
+	// No lock is held here: the dialog may stay open indefinitely.
+	accepted, err := confirm(ctx, sess, safeDeleteConfirmMessage(in.Symbol, refs))
+	switch {
+	case errors.Is(err, errElicitUnsupported):
+		return false, nil
+	case err != nil:
+		return false, err
+	case !accepted:
+		return false, fmt.Errorf("deletion of %q cancelled: user did not confirm removing %d blocking reference(s)", in.Symbol, len(refs))
+	}
+	return true, nil
+}
+
 func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "safe_delete",
-		Description: "Safely delete a symbol (function, type, variable, constant). If references exist, the human user is asked to confirm; the deletion is refused unless they accept or force is true. Surviving call sites are reported in skipped_sites, not rewritten.",
+		Name: "safe_delete",
+		Description: "Safely delete a symbol (function, type, variable, constant, method, struct field). If references exist, the human user is asked to confirm; the deletion is refused unless they accept or force is true. Surviving call sites are reported in skipped_sites, not rewritten. " +
+			"References are looked for under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace, a declaration of the symbol in each configuration is deleted, and a mention in a file no configuration type-checks counts as a reference.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in SafeDeleteInput) (*mcpsdk.CallToolResult, any, error) {
-		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		force, err := confirmSafeDelete(ctx, req.Session, state, in)
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-
-		deleteReq := types.SafeDeleteRequest{
-			Symbol:     in.Symbol,
-			SourceFile: resolveFile(ws, in.SourceFile),
-			Force:      in.Force,
-		}
-
-		// Only ask the user when the delete would actually run unattended
-		// (not forced, not a dry run) and something would block it.
-		if !in.Force && !in.DryRun {
-			refs, err := state.GetEngine().SafeDeleteBlockingReferences(ws, deleteReq)
-			if err != nil {
-				state.RUnlock()
-				return errResult(err), nil, nil
-			}
-
-			if len(refs) > 0 {
-				// Never hold the read lock while waiting on a human - the
-				// dialog may sit open indefinitely and would otherwise
-				// stall every other workspace operation.
-				state.RUnlock()
-
-				accepted, cerr := confirm(ctx, req.Session, safeDeleteConfirmMessage(in.Symbol, refs))
-				switch {
-				case cerr != nil && !errors.Is(cerr, errElicitUnsupported):
-					// A real transport/protocol error - surface it.
-					return errResult(cerr), nil, nil
-
-				case cerr == nil && !accepted:
-					// User explicitly declined or cancelled the dialog.
-					// Nothing was written.
-					return errResult(fmt.Errorf("deletion of %q cancelled: user did not confirm removing %d blocking reference(s)", in.Symbol, len(refs))), nil, nil
-
-				case cerr == nil && accepted:
-					// User confirmed - re-acquire the lock and re-fetch the
-					// workspace, since it may have been reloaded while the
-					// dialog was open, then force the delete through.
-					state.RLock()
-					ws, err = state.GetWorkspace()
-					if err != nil {
-						state.RUnlock()
-						return errResult(err), nil, nil
-					}
-					forcedReq := deleteReq
-					forcedReq.Force = true
-					plan, err := state.GetEngine().SafeDelete(ws, forcedReq)
-					if err != nil {
-						state.RUnlock()
-						return errResult(err), nil, nil
-					}
-					result, err := executePlanWithUnlock(state, plan, "safe delete "+in.Symbol, in.DryRun)
-					if err != nil {
-						return errResult(err), nil, nil
-					}
-					return textResult(result), nil, nil
-				}
-
-				// errors.Is(cerr, errElicitUnsupported): the client cannot
-				// be asked. Fall through to the ordinary (non-forced)
-				// SafeDelete call below so the caller sees exactly today's
-				// error message.
-				state.RLock()
-				ws, err = state.GetWorkspace()
-				if err != nil {
-					state.RUnlock()
-					return errResult(err), nil, nil
-				}
-			}
-		}
-
-		plan, err := state.GetEngine().SafeDelete(ws, deleteReq)
+		in.Force = force
+		plan, err := planSafeDelete(state, in)
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		result, err := executePlanWithUnlock(state, plan, "safe delete "+in.Symbol, in.DryRun)
+		result, err := executePlan(state, plan, "safe delete "+in.Symbol, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
