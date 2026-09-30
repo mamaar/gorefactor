@@ -68,6 +68,9 @@ type GoParser struct {
 	// to count real check attempts without adding public API surface.
 	typeCheckHook func(pkg *types.Package)
 
+	// checkPassHook, if set, is invoked for every go/types pass over pkg's files.
+	checkPassHook func(pkg *types.Package)
+
 	// loadPackages stands in for packages.Load in tests.
 	loadPackages func(cfg *packages.Config, patterns ...string) ([]*packages.Package, error)
 }
@@ -476,8 +479,8 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesInfo = nil
 	pkg.TypesPkg = nil
 	pkg.TypesErr = nil
-	pkg.TestTypesExcluded = false
-	pkg.TestTypesExcludedErr = nil
+	pkg.ExcludedTestFiles = nil
+	pkg.UnattributedTestErr = nil
 	pkg.TypesChecked = false
 }
 
@@ -535,12 +538,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 		p.typeCheckHook(pkg)
 	}
 
-	var files []*ast.File
-	for _, f := range pkg.Files {
-		if f.AST != nil {
-			files = append(files, f.AST)
-		}
-	}
+	files := productionASTs(pkg)
 	if len(files) == 0 {
 		// Nothing to check (e.g. every file in the package failed to parse).
 		// Still mark it checked: leaving TypesChecked false would make every
@@ -557,36 +555,11 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// silently miss every test-file reference. External test packages (package x_test)
 	// carry a different package name and cannot be checked in the same pass.
 	pkgName := files[0].Name.Name
-	withTests := files
-	for _, f := range pkg.TestFiles {
-		if f.AST != nil && f.AST.Name.Name == pkgName {
-			withTests = append(withTests, f.AST)
-		}
-	}
+	inPackage, external := testASTs(pkg, pkgName)
 
-	typesPkg, info, err := p.checkFiles(ws, pkg, withTests)
-	var testTypesExcluded bool
-	var testTypesExcludedErr error
-	if err != nil && len(withTests) > len(files) {
-		// A test file that fails to type-check must not cost the whole package its
-		// type info, so retry without them. The retry's result — success or
-		// failure — is what gets recorded below.
-		//
-		// This withTests failure is recorded on the package (TestTypesExcluded/
-		// TestTypesExcludedErr) regardless of whether the retry that follows
-		// succeeds: a successful retry reports a nil TypesErr, which would
-		// otherwise look identical to a package whose test files WERE included.
-		// Consumers that resolve references by go/types object identity
-		// (CallSitesOf, NonCallUsesOf, ...) need to be able to tell the two
-		// apart, because in the excluded case they are silently blind to every
-		// call site in this package's tests.
-		p.logger.Debug("type-checking with test files failed, retrying without", "package", pkg.ImportPath, "err", err)
-		testTypesExcluded = true
-		testTypesExcludedErr = err
-		typesPkg, info, err = p.checkFiles(ws, pkg, files)
-	}
-	if err != nil {
-		p.logger.Debug("type-checking failed (falling back to AST inference)", "package", pkg.ImportPath, "err", err)
+	res := p.checkSheddingTests(ws, pkg, files, inPackage)
+	if res.err != nil {
+		p.logger.Debug("type-checking failed (falling back to AST inference)", "package", pkg.ImportPath, "err", res.err)
 	}
 
 	p.mu.Lock()
@@ -594,11 +567,11 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// error (partial results from whatever it managed to resolve), so store
 	// it unconditionally — dependents can use best-effort info instead of
 	// nothing at all.
-	pkg.TypesPkg = typesPkg
-	pkg.TypesInfo = info
-	pkg.TypesErr = err
-	pkg.TestTypesExcluded = testTypesExcluded
-	pkg.TestTypesExcludedErr = testTypesExcludedErr
+	pkg.TypesPkg = res.pkg
+	pkg.TypesInfo = res.info
+	pkg.TypesErr = res.err
+	pkg.ExcludedTestFiles = res.excluded
+	pkg.UnattributedTestErr = res.unattributed
 	pkg.TypesChecked = true
 	p.mu.Unlock()
 
@@ -614,7 +587,153 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// running this again via the deferred delete below is harmless.
 	delete(p.typeCheckInProgress, pkg)
 
-	p.checkExternalTestPackage(ws, pkg, pkgName)
+	p.checkExternalTestPackage(ws, pkg, external)
+}
+
+// productionASTs returns the parsed non-test files of pkg in file-name order.
+func productionASTs(pkg *types.Package) []*ast.File {
+	var files []*ast.File
+	for _, name := range slices.Sorted(maps.Keys(pkg.Files)) {
+		if f := pkg.Files[name]; f.AST != nil {
+			files = append(files, f.AST)
+		}
+	}
+	return files
+}
+
+// testAST is a parsed test file under its key in Package.TestFiles.
+type testAST struct {
+	name string
+	ast  *ast.File
+}
+
+// testASTs splits pkg's parsed test files, in file-name order, into those
+// declaring pkgName and those declaring another package.
+func testASTs(pkg *types.Package, pkgName string) (inPackage, external []testAST) {
+	for _, name := range slices.Sorted(maps.Keys(pkg.TestFiles)) {
+		f := pkg.TestFiles[name]
+		switch {
+		case f.AST == nil:
+		case f.AST.Name.Name == pkgName:
+			inPackage = append(inPackage, testAST{name: name, ast: f.AST})
+		default:
+			external = append(external, testAST{name: name, ast: f.AST})
+		}
+	}
+	return inPackage, external
+}
+
+// testCheck is the outcome of checking files together with the test files
+// that type-check alongside them.
+type testCheck struct {
+	pkg  *gotypes.Package
+	info *gotypes.Info
+	err  error // first error of the last pass
+
+	excluded     map[string]error
+	unattributed error
+}
+
+// checkSheddingTests checks base together with tests, drops the test files
+// that carry errors and checks again, at most maxTestExclusionPasses times.
+// A test file broken only by the loss of a dropped one is dropped in the next
+// pass with its own error. If test files still carry errors after the last
+// pass, all remaining ones are dropped and the first such error is unattributed.
+func (p *GoParser) checkSheddingTests(ws *types.Workspace, pkg *types.Package, base []*ast.File, tests []testAST) testCheck {
+	var res testCheck
+	for pass := 0; ; pass++ {
+		files := slices.Clone(base)
+		for _, t := range tests {
+			files = append(files, t.ast)
+		}
+		if len(files) == 0 {
+			res.pkg, res.info, res.err = nil, nil, nil
+			return res
+		}
+
+		errs := &typeErrors{}
+		res.pkg, res.info, res.err = p.checkFiles(ws, pkg, files, errs)
+		bad := errs.firstPerFile(ws.FileSet, tests)
+		if len(bad) == 0 {
+			return res
+		}
+		if pass == maxTestExclusionPasses {
+			res.unattributed = firstTestError(tests, bad)
+			p.logger.Debug("test files still fail after dropping those with errors, dropping all",
+				"package", pkg.ImportPath, "err", res.unattributed)
+		}
+		tests = res.drop(tests, bad)
+	}
+}
+
+// drop records the tests named in bad as excluded, or every test once the
+// check is unattributed, and returns the tests that stay.
+func (c *testCheck) drop(tests []testAST, bad map[string]error) []testAST {
+	if c.excluded == nil {
+		c.excluded = make(map[string]error)
+	}
+	var kept []testAST
+	for _, t := range tests {
+		err, isBad := bad[t.name]
+		switch {
+		case isBad:
+			c.excluded[t.name] = err
+		case c.unattributed != nil:
+			c.excluded[t.name] = c.unattributed
+		default:
+			kept = append(kept, t)
+		}
+	}
+	return kept
+}
+
+// firstTestError returns the error of the first test, in order, that has one.
+func firstTestError(tests []testAST, bad map[string]error) error {
+	for _, t := range tests {
+		if err, ok := bad[t.name]; ok {
+			return err
+		}
+	}
+	return nil
+}
+
+// typeErrors collects the errors go/types reports during one check.
+type typeErrors struct {
+	errs []gotypes.Error
+}
+
+func (c *typeErrors) add(err error) {
+	if terr, ok := err.(gotypes.Error); ok {
+		c.errs = append(c.errs, terr)
+	}
+}
+
+// firstPerFile returns, for each of tests that an error is located in, the
+// first such error by position. Continuation lines of an error, which point
+// at related declarations in other files, are not counted.
+func (c *typeErrors) firstPerFile(fset *token.FileSet, tests []testAST) map[string]error {
+	names := make(map[*token.File]string, len(tests))
+	for _, t := range tests {
+		names[fset.File(t.ast.Package)] = t.name
+	}
+	first := make(map[string]gotypes.Error)
+	for _, e := range c.errs {
+		if !e.Pos.IsValid() || strings.HasPrefix(e.Msg, "\t") {
+			continue
+		}
+		name, ok := names[fset.File(e.Pos)]
+		if !ok {
+			continue
+		}
+		if prev, seen := first[name]; !seen || e.Pos < prev.Pos {
+			first[name] = e
+		}
+	}
+	out := make(map[string]error, len(first))
+	for name, e := range first {
+		out[name] = e
+	}
+	return out
 }
 
 // checkExternalTestPackage type-checks pkg's external test files — files
@@ -638,14 +757,11 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 // in-package ones. The merge is safe because the two Info maps are keyed by
 // *ast.Ident pointers drawn from disjoint file sets — nothing in pkg's own
 // combined check can share a key with a file checked here.
-func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Package, pkgName string) {
-	var files []*ast.File
-	for _, f := range pkg.TestFiles {
-		if f.AST != nil && f.AST.Name.Name != pkgName {
-			files = append(files, f.AST)
-		}
-	}
-	if len(files) == 0 {
+//
+// External test files that carry errors are excluded like in-package ones and
+// recorded in the same per-file record.
+func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Package, tests []testAST) {
+	if len(tests) == 0 {
 		return
 	}
 
@@ -655,25 +771,34 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 	// store it as), and go/types.Checker verifies package-name consistency
 	// only among the files passed to ONE Check() call, never against that
 	// path string — it is purely a label on the (unused) result.
-	_, info, err := p.checkFiles(ws, pkg, files)
-	if err != nil {
-		p.logger.Debug("external test package type-checking failed", "package", pkg.ImportPath, "err", err)
-	}
-	if info == nil {
-		return
+	res := p.checkSheddingTests(ws, pkg, nil, tests)
+	if res.err != nil {
+		p.logger.Debug("external test package type-checking failed", "package", pkg.ImportPath, "err", res.err)
 	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if pkg.TypesInfo == nil {
-		// pkg's own check had zero parseable files (or failed hard enough
-		// that checkFiles returned a nil Info there too) — nowhere to merge.
+	if len(res.excluded) > 0 {
+		// A fresh map: readers may already hold the one published above.
+		excluded := maps.Clone(pkg.ExcludedTestFiles)
+		if excluded == nil {
+			excluded = make(map[string]error, len(res.excluded))
+		}
+		maps.Copy(excluded, res.excluded)
+		pkg.ExcludedTestFiles = excluded
+	}
+	if pkg.UnattributedTestErr == nil {
+		pkg.UnattributedTestErr = res.unattributed
+	}
+	if res.info == nil || pkg.TypesInfo == nil {
+		// Every external test file was excluded, or pkg's own check had
+		// nowhere to merge into.
 		return
 	}
-	for ident, obj := range info.Defs {
+	for ident, obj := range res.info.Defs {
 		pkg.TypesInfo.Defs[ident] = obj
 	}
-	for ident, obj := range info.Uses {
+	for ident, obj := range res.info.Uses {
 		pkg.TypesInfo.Uses[ident] = obj
 	}
 }
@@ -714,12 +839,18 @@ func NewTypesConfig(importer gotypes.Importer, onError func(error)) gotypes.Conf
 	}
 }
 
-func ignoreTypeError(error) {}
+// maxTestExclusionPasses bounds how often the test files that carry errors
+// are dropped and the rest checked again.
+const maxTestExclusionPasses = 3
 
 // checkFiles runs go/types over the given file set, returning the populated Info
 // even when checking fails (go/types fills it in partially on error).
-func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*ast.File) (*gotypes.Package, *gotypes.Info, error) {
-	conf := NewTypesConfig(p.importer, ignoreTypeError)
+// Every error go/types reports is added to errs.
+func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*ast.File, errs *typeErrors) (*gotypes.Package, *gotypes.Info, error) {
+	if p.checkPassHook != nil {
+		p.checkPassHook(pkg)
+	}
+	conf := NewTypesConfig(p.importer, errs.add)
 	info := &gotypes.Info{
 		Types: make(map[ast.Expr]gotypes.TypeAndValue),
 		Defs:  make(map[*ast.Ident]gotypes.Object),
@@ -815,17 +946,8 @@ func (imp *workspaceImporter) loadExternal() {
 		// that import edge at all — not even the workspace-local package that
 		// carries it — because a bare `packages.Load(cfg, "./...")` only
 		// resolves each package's non-test Imports. TypeCheckPackage then
-		// fails to resolve that import while checking the package WITH its
-		// test files, and its fallback (see the "retrying without" comment
-		// there) silently drops every test file in that package from
-		// TypesInfo — not just the one that imports the unresolvable module.
-		// That blinds CallSitesOf/NonCallUsesOf to every _test.go call site in
-		// the package, which is how this was first found: add_context_parameter
-		// threading a context through a function silently produced no edits
-		// for the test file that called it, even though the test file itself
-		// had nothing wrong with it — a sibling test file's go-sqlmock import
-		// (present only in tests, never in production code) was enough to
-		// take every test file in the package down with it.
+		// fails to resolve that import and excludes the test files that carry
+		// it, which blinds CallSitesOf/NonCallUsesOf to their call sites.
 		Tests: true,
 		// GOPROXY=off is load-bearing, not a performance nicety: this runs
 		// inside an MCP request, potentially against a workspace whose module
@@ -861,13 +983,10 @@ func (imp *workspaceImporter) loadExternal() {
 	// its _test.go files import), and roots is unordered, so whichever
 	// variant walk visits first would, keyed on PkgPath, mark the PkgPath
 	// seen and make walk skip the other variant's edges entirely. That
-	// silently dropped any third-party module imported ONLY from _test.go
+	// silently drops any third-party module imported ONLY from _test.go
 	// files workspace-wide (nothing on the production side ever reaches it)
-	// from imp.ext, which made Import() fail for it — and that failure is
-	// exactly what made TypeCheckPackage's withTests attempt fail and fall
-	// back to checking the package without ANY of its test files (see the
-	// "retrying without" logic below), silently blinding CallSitesOf to
-	// every _test.go call site in that package.
+	// from imp.ext, so Import() fails for it and the test files importing it
+	// are excluded from type-checking.
 	var walk func(pkg *packages.Package)
 	walk = func(pkg *packages.Package) {
 		if pkg == nil || seen[pkg.ID] {
@@ -1011,19 +1130,9 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 				// importer — including another package's test files — links
 				// against the plain, non-test-augmented package. Mirror that
 				// here: hand back pkg's production-files-only view instead of
-				// an empty placeholder. A previous version of this function
-				// returned gotypes.NewPackage(path, pkg.Name) — a package
-				// with no symbols at all — which made every reference into
-				// pkg from here "undefined". When the caller was itself a
-				// PRODUCTION file (as in the case that motivated this fix:
-				// package server's production go_server.go uses a type from
-				// package syncdb, and syncdb's own in-package tests happen to
-				// import something that imports back to server), that
-				// undefined reference failed the caller's own "with tests"
-				// type-check attempt — which cost the caller's ENTIRE test
-				// suite its call-site visibility via the "retry without
-				// tests" fallback below, even though nothing about the
-				// caller's OWN test files was at fault.
+				// an empty placeholder. A package with no symbols at all
+				// would make every reference into pkg from the caller
+				// "undefined", in its production files as much as its tests.
 				//
 				// This rescue view is deliberately never written to
 				// pkg.TypesPkg/TypesInfo/TypesChecked: those remain owned
@@ -1056,15 +1165,11 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 			// while some OTHER caller (reached earlier, nested inside this
 			// very check) already received the rescue view, would let both
 			// views collide the moment anything downstream tries to use a
-			// value that crossed both — this is not hypothetical: it is
-			// exactly how, before this guard, one package's own field
-			// (typed via the rescue view of a dependency) failed to
-			// type-check as an argument to a DIFFERENT package's function
-			// (typed via that same dependency's real, combined view),
-			// producing a spurious "cannot use ... as ... value" error that
-			// then cost pkg's own test files their coverage via the
-			// "retrying without" fallback below — the very failure mode
-			// this whole rescue mechanism exists to avoid.
+			// value that crossed both: one package's own field (typed via
+			// the rescue view of a dependency) fails to type-check as an
+			// argument to a DIFFERENT package's function (typed via that
+			// same dependency's real, combined view), with a spurious
+			// "cannot use ... as ... value" error.
 			//
 			// Once pkg has been rescued anywhere in this importer's
 			// lifetime, keep returning that SAME rescue value to every
@@ -1133,12 +1238,7 @@ func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotype
 		return cached, nil
 	}
 
-	var files []*ast.File
-	for _, f := range pkg.Files {
-		if f.AST != nil {
-			files = append(files, f.AST)
-		}
-	}
+	files := productionASTs(pkg)
 	if len(files) == 0 {
 		// Nothing to check — same "zero parseable files" case typeCheckLocked
 		// itself guards, just without anywhere to store the result.
@@ -1152,7 +1252,7 @@ func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotype
 	// results from whatever it managed to resolve) — see typeCheckLocked's
 	// own comment on the same guarantee — so the result is usable regardless
 	// of whether err is nil.
-	typesPkg, _, _ := imp.parser.checkFiles(imp.ws, pkg, files)
+	typesPkg, _, _ := imp.parser.checkFiles(imp.ws, pkg, files, &typeErrors{})
 
 	if imp.productionOnly == nil {
 		imp.productionOnly = make(map[*types.Package]*gotypes.Package)

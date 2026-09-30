@@ -72,8 +72,8 @@ func checkedPackage(t *testing.T, v *View, dir string) *types.Package {
 	if pkg.TypesInfo == nil {
 		t.Fatalf("view %s: %s has no TypesInfo", v.Config.Key(), dir)
 	}
-	if pkg.TestTypesExcluded {
-		t.Fatalf("view %s: %s test files excluded: %v", v.Config.Key(), dir, pkg.TestTypesExcludedErr)
+	if len(pkg.ExcludedTestFiles) > 0 {
+		t.Fatalf("view %s: %s test files excluded: %v", v.Config.Key(), dir, pkg.ExcludedTestFiles)
 	}
 	return pkg
 }

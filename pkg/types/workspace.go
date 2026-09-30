@@ -54,26 +54,15 @@ type Package struct {
 	// this rather than inferring it from nil-ness.
 	TypesErr error
 
-	// TestTypesExcluded reports whether this package's TypesInfo/TypesPkg were
-	// produced WITHOUT its _test.go files, because the type-check attempt that
-	// included them failed. (*analysis.GoParser).TypeCheckPackage folds
-	// in-package test files into its first check attempt and, on any failure,
-	// retries with only the non-test files — and that retry can succeed
-	// (leaving TypesErr nil) even though the failure that triggered it had
-	// nothing to do with the test files themselves. When this is true, Defs
-	// and Uses hold no entries for identifiers declared or referenced in any
-	// file in TestFiles, so anything that resolves references by go/types
-	// object identity (CallSitesOf, NonCallUsesOf, FindFieldReferences, ...)
-	// is blind to every call site in this package's tests — silently, since
-	// TypesErr alone cannot be used to detect this (it reports the LAST
-	// attempt's error, not the withTests attempt's).
-	TestTypesExcluded bool
+	// ExcludedTestFiles maps the name of each test file left out of TypesInfo
+	// to the first type error located in it. Defs and Uses hold nothing for
+	// these files, so lookups by go/types object identity do not see them.
+	ExcludedTestFiles map[string]error
 
-	// TestTypesExcludedErr is the error from the withTests attempt that caused
-	// TestTypesExcluded, kept for diagnostics even when the fallback retry
-	// without tests went on to succeed. Nil whenever TestTypesExcluded is
-	// false.
-	TestTypesExcludedErr error
+	// UnattributedTestErr is set when dropping the test files that carry errors
+	// did not settle and every remaining test file was dropped. Files without
+	// an error of their own then map to this error in ExcludedTestFiles.
+	UnattributedTestErr error
 }
 
 // File represents a single Go source file

@@ -8,6 +8,7 @@ import (
 	gotypes "go/types"
 	"io"
 	"log/slog"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -327,7 +328,7 @@ func isSymbolNotFound(err error) bool {
 
 // testTypesExcludedAbort fails when any package the traversal actually
 // touched had its _test.go files excluded from type-checking (see
-// pkgtypes.Package.TestTypesExcluded). CallSitesOf/NonCallUsesOf resolve
+// pkgtypes.Package.ExcludedTestFiles). CallSitesOf/NonCallUsesOf resolve
 // references by go/types object identity, so a package in that state is
 // invisible to discover for exactly the call sites that matter most here: a
 // _test.go file in the SAME package as a threaded function very often calls
@@ -345,7 +346,7 @@ func (op *ThreadContextOperation) testTypesExcludedAbort(plan *threadPlan, visit
 			continue
 		}
 		seen[fd.Pkg] = true
-		if fd.Pkg.TestTypesExcluded && len(fd.Pkg.TestFiles) > 0 {
+		if len(fd.Pkg.ExcludedTestFiles) > 0 {
 			affected = append(affected, fd)
 		}
 	}
@@ -362,7 +363,7 @@ func (op *ThreadContextOperation) testTypesExcludedAbort(plan *threadPlan, visit
 		len(affected))
 	for _, fd := range affected {
 		fmt.Fprintf(&b, "  - %s (%d test file(s) excluded): %v\n",
-			fd.Pkg.ImportPath, len(fd.Pkg.TestFiles), fd.Pkg.TestTypesExcludedErr)
+			fd.Pkg.ImportPath, len(fd.Pkg.ExcludedTestFiles), firstExcludedErr(fd.Pkg))
 	}
 	b.WriteString("fix the underlying type-check failure (often an unresolvable import in one _test.go " +
 		"file, which currently costs the whole package's tests their type info) and re-run")
@@ -371,6 +372,14 @@ func (op *ThreadContextOperation) testTypesExcludedAbort(plan *threadPlan, visit
 		Type:    pkgtypes.InvalidOperation,
 		Message: b.String(),
 	}
+}
+
+// firstExcludedErr returns the error of pkg's first excluded test file by name.
+func firstExcludedErr(pkg *pkgtypes.Package) error {
+	for _, name := range slices.Sorted(maps.Keys(pkg.ExcludedTestFiles)) {
+		return pkg.ExcludedTestFiles[name]
+	}
+	return nil
 }
 
 // discover is phase 1: the worklist fixpoint that decides WHICH functions gain a

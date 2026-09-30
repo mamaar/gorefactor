@@ -124,7 +124,7 @@ Set thread: true to thread a real context.Context transitively through every cal
 		// in-package test file calling the function directly is the single
 		// most common call-site shape this tool handles, and it is exactly
 		// what silently went unrewritten before this check existed.
-		if pkg := packageForFile(ws, sourceFile); pkg != nil && pkg.TestTypesExcluded && len(pkg.TestFiles) > 0 {
+		if pkg := packageForFile(ws, sourceFile); pkg != nil && len(pkg.ExcludedTestFiles) > 0 {
 			state.RUnlock()
 			return errResult(fmt.Errorf(
 				"cannot add context parameter: package %s has %d test file(s) that could not be "+
@@ -133,7 +133,7 @@ Set thread: true to thread a real context.Context transitively through every cal
 					"uncompilable once the signature changes — fix the underlying type-check failure "+
 					"(often an unresolvable import in one _test.go file, which currently costs the whole "+
 					"package's tests their type info) and re-run",
-				pkg.ImportPath, len(pkg.TestFiles), pkg.TestTypesExcludedErr)), nil, nil
+				pkg.ImportPath, len(pkg.ExcludedTestFiles), pkg.ExcludedTestFiles)), nil, nil
 		}
 
 		// Check if ctx context.Context already exists as first param
