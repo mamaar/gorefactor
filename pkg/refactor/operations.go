@@ -2594,7 +2594,7 @@ func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Worksp
 	}
 
 	var methodFile *types.File
-	for _, file := range pkg.Files {
+	for _, file := range allFilesOf(pkg) {
 		if file.Path == methodSymbol.File {
 			methodFile = file
 			break
@@ -2624,7 +2624,7 @@ func (op *RenameMethodOperation) generateMethodReferenceChanges(ws *types.Worksp
 
 	// Find all method calls and references across the workspace
 	for _, pkg := range ws.Packages {
-		for _, file := range pkg.Files {
+		for _, file := range allFilesOf(pkg) {
 			if file.AST == nil {
 				continue
 			}
