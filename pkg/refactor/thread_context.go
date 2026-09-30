@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -48,6 +50,11 @@ type ThreadContextOperation struct {
 	// RenameFieldOperation. The value-use abort is deliberately NOT gated on it:
 	// see valueUseAbort.
 	AllowBreaking bool
+
+	// Linked names functions that gain a ctx under another build configuration.
+	// Each one this workspace declares is seeded alongside the seed, so platform
+	// siblings and the call sites they share stay in agreement.
+	Linked pkgtypes.SymbolKeySet
 
 	plan *threadPlan // populated by Validate/Execute
 
@@ -241,11 +248,10 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 
 	op.declIndex = buildFuncDeclIndex(ws)
 
-	seed, err := op.resolveSeed(ws)
+	seeds, err := op.seeds(ws)
 	if err != nil {
 		return nil, err
 	}
-	op.seed = seed
 
 	plan := &threadPlan{
 		Funcs:  make(map[*gotypes.Func]string),
@@ -254,7 +260,7 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		ArgFor: make(map[token.Pos]*callEdit),
 	}
 
-	visited, err := op.discover(ws, idx, plan, seed)
+	visited, err := op.discover(ws, idx, plan, seeds)
 	if err != nil {
 		return nil, err
 	}
@@ -265,6 +271,58 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		return nil, err
 	}
 	return plan, nil
+}
+
+// seeds returns the requested seed followed by every function Linked names in
+// this workspace. A seed the workspace does not declare is an error only when
+// no linked function stands in for it.
+func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace) ([]*gotypes.Func, error) {
+	linked := op.linkedFuncs()
+	seed, err := op.resolveSeed(ws)
+	if err != nil {
+		if len(linked) == 0 || !isSymbolNotFound(err) {
+			return nil, err
+		}
+		return linked, nil
+	}
+	op.seed = seed
+	return append([]*gotypes.Func{seed}, linked...), nil
+}
+
+// linkedFuncs returns the declared functions whose key is in Linked.
+func (op *ThreadContextOperation) linkedFuncs() []*gotypes.Func {
+	if len(op.Linked) == 0 {
+		return nil
+	}
+	var out []*gotypes.Func
+	for f := range op.declIndex {
+		if key, ok := pkgtypes.SymbolKeyOf(f); ok && op.Linked.Has(key) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// GainedKeys returns the keys of the functions that gain a ctx parameter in the
+// built plan. Functions without a stable key are left out.
+func (op *ThreadContextOperation) GainedKeys() pkgtypes.SymbolKeySet {
+	keys := make(pkgtypes.SymbolKeySet)
+	if op.plan == nil {
+		return keys
+	}
+	for f := range op.plan.Funcs {
+		if key, ok := pkgtypes.SymbolKeyOf(f); ok {
+			keys[key] = struct{}{}
+		}
+	}
+	return keys
+}
+
+// isSymbolNotFound reports whether err is, or wraps, a RefactorError of type
+// SymbolNotFound: the seed's file or declaration is not in the workspace.
+func isSymbolNotFound(err error) bool {
+	var re *pkgtypes.RefactorError
+	return errors.As(err, &re) && re.Type == pkgtypes.SymbolNotFound
 }
 
 // testTypesExcludedAbort fails when any package the traversal actually
@@ -323,15 +381,15 @@ func (op *ThreadContextOperation) testTypesExcludedAbort(plan *threadPlan, visit
 // Funcs is final is what makes phase 2 correct.
 //
 // The returned set is every function the traversal touched, which is Funcs plus
-// (possibly) the seed when the seed already carried a context.
+// any seed that already carried a context.
 func (op *ThreadContextOperation) discover(
 	ws *pkgtypes.Workspace,
 	idx *analysis.ReferenceIndex,
 	plan *threadPlan,
-	seed *gotypes.Func,
+	seeds []*gotypes.Func,
 ) (map[*gotypes.Func]bool, error) {
 	visited := make(map[*gotypes.Func]bool)
-	queue := []*gotypes.Func{seed}
+	queue := slices.Clone(seeds)
 
 	for len(queue) > 0 {
 		f := queue[0]
