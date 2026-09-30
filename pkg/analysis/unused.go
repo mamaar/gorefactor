@@ -38,8 +38,10 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	var unusedSymbols []*UnusedSymbol
 
-	// Build symbol tables for all packages
 	for _, pkg := range ua.workspace.Packages {
+		if pkg.Symbols != nil {
+			continue
+		}
 		if _, err := ua.resolver.BuildSymbolTable(pkg); err != nil {
 			return nil, fmt.Errorf("failed to build symbol table for package %s: %v", pkg.Path, err)
 		}
