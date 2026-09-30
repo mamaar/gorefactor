@@ -192,6 +192,15 @@ type RefactoringPlan struct {
 	// SkippedSites holds call sites that were too complex to rewrite automatically.
 	// The caller should inspect these and update them manually.
 	SkippedSites  []SkippedSite
+	// Coverage says which build configurations the plan was computed under.
+	// It is empty for a plan made in a single view.
+	Coverage Coverage
+}
+
+// Coverage describes how much of the workspace's build configurations a plan
+// accounts for.
+type Coverage struct {
+	Configs []string // display names, primary first
 }
 
 // Change represents a specific change to be made

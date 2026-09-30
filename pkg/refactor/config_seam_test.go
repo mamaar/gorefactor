@@ -1,0 +1,164 @@
+package refactor
+
+import (
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
+	"github.com/mamaar/gorefactor/pkg/types"
+)
+
+// fakePlanner answers planIn from a function and records the linked set of every call.
+type fakePlanner struct {
+	plan  func(v *analysis.View, linked types.SymbolKeySet) (configResult, error)
+	calls map[*analysis.View][]types.SymbolKeySet
+}
+
+func (p *fakePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
+	if p.calls == nil {
+		p.calls = make(map[*analysis.View][]types.SymbolKeySet)
+	}
+	p.calls[v] = append(p.calls[v], linked.Clone())
+	return p.plan(v, linked)
+}
+
+func fakeViews() (primary, tagged *analysis.View) {
+	return &analysis.View{Config: analysis.NewBuildConfig("linux", "amd64", true)},
+		&analysis.View{Config: analysis.NewBuildConfig("linux", "amd64", true, "tagx")}
+}
+
+func fnKey(name string) types.SymbolKey { return types.SymbolKey{PkgPath: "m/p", Name: name} }
+
+func TestPlanAcrossViews_RerunsViewsUntilNoNewKeysAppear(t *testing.T) {
+	primary, tagged := fakeViews()
+	planner := &fakePlanner{plan: func(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
+		if v == tagged {
+			return configResult{plan: planOf(ins("/ws/a.go", 1, "a", "a")), changed: linkedKeys(fnKey("a"))}, nil
+		}
+		if linked.Has(fnKey("a")) {
+			return configResult{plan: planOf(ins("/ws/b.go", 2, "b", "b")), changed: linkedKeys(fnKey("b"))}, nil
+		}
+		return configResult{plan: planOf(ins("/ws/stale.go", 3, "s", "s"))}, nil
+	}}
+
+	plan, rounds, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rounds != 2 {
+		t.Errorf("rounds = %d, want 2", rounds)
+	}
+	if got := len(planner.calls[primary]); got != 2 {
+		t.Errorf("primary planned %d times, want 2", got)
+	}
+	if got := len(planner.calls[tagged]); got != 2 {
+		t.Errorf("tagged view planned %d times, want 2 (it has not seen key b)", got)
+	}
+	want := []types.Change{ins("/ws/b.go", 2, "b", "b"), ins("/ws/a.go", 1, "a", "a")}
+	if !reflect.DeepEqual(plan.Changes, want) {
+		t.Errorf("merged changes = %+v, want only the final plans: %+v", plan.Changes, want)
+	}
+	wantConfigs := []string{primary.Config.String(), tagged.Config.String()}
+	if !reflect.DeepEqual(plan.Coverage.Configs, wantConfigs) {
+		t.Errorf("Coverage.Configs = %v, want %v", plan.Coverage.Configs, wantConfigs)
+	}
+}
+
+func TestPlanAcrossViews_StopsAfterOneRoundWhenKeysAreStable(t *testing.T) {
+	primary, tagged := fakeViews()
+	planner := &fakePlanner{plan: func(*analysis.View, types.SymbolKeySet) (configResult, error) {
+		return configResult{plan: planOf(ins("/ws/a.go", 1, "a", "a")), changed: linkedKeys(fnKey("a"))}, nil
+	}}
+
+	plan, rounds, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rounds != 1 || len(planner.calls[primary]) != 1 || len(planner.calls[tagged]) != 1 {
+		t.Errorf("rounds = %d, calls = %d/%d; want one of each", rounds, len(planner.calls[primary]), len(planner.calls[tagged]))
+	}
+	if len(plan.Changes) != 1 {
+		t.Errorf("identical changes not deduplicated: %+v", plan.Changes)
+	}
+}
+
+func TestPlanAcrossViews_ExceedingTheRoundBoundIsAnError(t *testing.T) {
+	primary, tagged := fakeViews()
+	n := 0
+	planner := &fakePlanner{plan: func(*analysis.View, types.SymbolKeySet) (configResult, error) {
+		n++
+		return configResult{plan: planOf(), changed: linkedKeys(fnKey(fmt.Sprint("f", n)))}, nil
+	}}
+
+	_, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 5)
+	if err == nil || !strings.Contains(err.Error(), "5 rounds") {
+		t.Fatalf("err = %v, want the round bound reported", err)
+	}
+}
+
+func TestPlanAcrossViews_PlannerErrorNamesItsConfig(t *testing.T) {
+	primary, tagged := fakeViews()
+	boom := errors.New("boom")
+	planner := &fakePlanner{plan: func(v *analysis.View, _ types.SymbolKeySet) (configResult, error) {
+		if v == tagged {
+			return configResult{}, boom
+		}
+		return configResult{plan: planOf()}, nil
+	}}
+
+	_, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap the planner error", err)
+	}
+	if want := "build configuration " + tagged.Config.String() + ": boom"; err.Error() != want {
+		t.Errorf("err = %q, want %q", err, want)
+	}
+}
+
+func TestPlanAcrossViews_SingleViewErrorIsReturnedUnchanged(t *testing.T) {
+	primary, _ := fakeViews()
+	boom := errors.New("boom")
+	planner := &fakePlanner{plan: func(*analysis.View, types.SymbolKeySet) (configResult, error) {
+		return configResult{}, boom
+	}}
+
+	if _, _, err := planAcrossViews([]*analysis.View{primary}, planner, 10); err != boom {
+		t.Errorf("err = %v, want the planner error itself", err)
+	}
+}
+
+func TestPlanAcrossViews_TargetAbsentEverywhereReturnsThePrimaryError(t *testing.T) {
+	primary, tagged := fakeViews()
+	primaryErr := errors.New("not in primary")
+	planner := &fakePlanner{plan: func(v *analysis.View, _ types.SymbolKeySet) (configResult, error) {
+		if v == primary {
+			return configResult{absent: primaryErr}, nil
+		}
+		return configResult{absent: errors.New("not in tagged")}, nil
+	}}
+
+	if _, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10); err != primaryErr {
+		t.Errorf("err = %v, want the primary view's error unchanged", err)
+	}
+}
+
+func TestPlanAcrossViews_AbsentViewContributesNothing(t *testing.T) {
+	primary, tagged := fakeViews()
+	planner := &fakePlanner{plan: func(v *analysis.View, _ types.SymbolKeySet) (configResult, error) {
+		if v == primary {
+			return configResult{absent: errors.New("not in primary")}, nil
+		}
+		return configResult{plan: planOf(ins("/ws/a.go", 1, "a", "a"))}, nil
+	}}
+
+	plan, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Changes) != 1 || len(plan.Coverage.Configs) != 2 {
+		t.Errorf("plan = %+v", plan)
+	}
+}
