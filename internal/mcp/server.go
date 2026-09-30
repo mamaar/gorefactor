@@ -260,11 +260,11 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
 	return nil
 }
 
-// RefreshStaleFiles re-syncs every workspace file whose on-disk content differs
-// from the parsed copy (edited, created or deleted outside the tool, or by an
-// apply the file watcher has not delivered yet). Tools plan from parsed byte
-// offsets, so they must call this before planning; otherwise hunks land at
-// stale offsets.
+// RefreshStaleFiles re-syncs every .go file whose on-disk content differs from
+// the source tree (edited, created or deleted outside the tool, or by an apply
+// the file watcher has not delivered yet), including files the build config
+// excludes. Tools plan from parsed byte offsets, so they must call this before
+// planning; otherwise hunks land at stale offsets.
 func (s *MCPServer) RefreshStaleFiles() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -273,31 +273,9 @@ func (s *MCPServer) RefreshStaleFiles() {
 	}
 
 	var events []watch.ChangeEvent
-	for _, pkg := range s.workspace.Packages {
-		known := make(map[string]bool)
-		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
-			for base, f := range group {
-				path := filepath.Join(pkg.Dir, base)
-				known[base] = true
-				disk, err := os.ReadFile(path)
-				switch {
-				case os.IsNotExist(err):
-					events = append(events, watch.ChangeEvent{Path: path, Op: fsnotify.Remove})
-				case err == nil && (f == nil || !bytes.Equal(disk, f.OriginalContent)):
-					events = append(events, watch.ChangeEvent{Path: path, Op: fsnotify.Write})
-				}
-			}
-		}
-		entries, err := os.ReadDir(pkg.Dir)
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || known[e.Name()] {
-				continue
-			}
-			events = append(events, watch.ChangeEvent{Path: filepath.Join(pkg.Dir, e.Name()), Op: fsnotify.Create})
-		}
+	tree := s.updater.Sources()
+	for _, dir := range tree.Dirs() {
+		events = append(events, staleEvents(tree, dir)...)
 	}
 	if len(events) == 0 {
 		return
@@ -305,6 +283,34 @@ func (s *MCPServer) RefreshStaleFiles() {
 	s.logger.Info("refreshing files changed outside the workspace", "files", len(events))
 	s.updater.HandleChanges(events)
 	s.InvalidateReferenceIndex()
+}
+
+// staleEvents compares the recorded files of dir with disk and returns a
+// change event for each one that was removed, edited or added.
+func staleEvents(tree *analysis.SourceTree, dir string) []watch.ChangeEvent {
+	var events []watch.ChangeEvent
+	known := make(map[string]bool)
+	for _, f := range tree.Dir(dir) {
+		known[f.Name] = true
+		disk, err := os.ReadFile(f.Path)
+		switch {
+		case os.IsNotExist(err):
+			events = append(events, watch.ChangeEvent{Path: f.Path, Op: fsnotify.Remove})
+		case err == nil && !bytes.Equal(disk, f.Content):
+			events = append(events, watch.ChangeEvent{Path: f.Path, Op: fsnotify.Write})
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return events
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || known[e.Name()] {
+			continue
+		}
+		events = append(events, watch.ChangeEvent{Path: filepath.Join(dir, e.Name()), Op: fsnotify.Create})
+	}
+	return events
 }
 
 // RLock acquires a read lock on the server state.

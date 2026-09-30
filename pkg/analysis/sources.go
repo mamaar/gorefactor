@@ -106,6 +106,67 @@ func (t *SourceTree) AddDir(dir string) error {
 	return nil
 }
 
+// Replace re-reads a recorded file from disk and returns the new record.
+func (t *SourceTree) Replace(path string) (*SourceFile, error) {
+	path = absDir(path)
+	dir, name := filepath.Split(path)
+	fresh := t.readFile(filepath.Clean(dir), name)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	files := slices.Clone(t.byDir[fresh.Dir])
+	i, ok := slices.BinarySearchFunc(files, name, compareFileName)
+	if !ok {
+		return nil, fmt.Errorf("source file not recorded: %s", path)
+	}
+	files[i] = fresh
+	t.byDir[fresh.Dir] = files
+	t.byPath[path] = fresh
+	return fresh, nil
+}
+
+// Add reads a file that is not yet recorded, in a directory that is, and
+// inserts it in name order.
+func (t *SourceTree) Add(path string) (*SourceFile, error) {
+	path = absDir(path)
+	dir, name := filepath.Split(path)
+	fresh := t.readFile(filepath.Clean(dir), name)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	files, loaded := t.byDir[fresh.Dir]
+	if !loaded {
+		return nil, fmt.Errorf("directory not loaded: %s", fresh.Dir)
+	}
+	i, found := slices.BinarySearchFunc(files, name, compareFileName)
+	if found {
+		return nil, fmt.Errorf("source file already recorded: %s", path)
+	}
+	t.byDir[fresh.Dir] = slices.Insert(slices.Clone(files), i, fresh)
+	t.byPath[path] = fresh
+	return fresh, nil
+}
+
+// Remove forgets a file. The directory stays loaded.
+func (t *SourceTree) Remove(path string) {
+	path = absDir(path)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	f := t.byPath[path]
+	if f == nil {
+		return
+	}
+	delete(t.byPath, path)
+	files := slices.Clone(t.byDir[f.Dir])
+	if i, ok := slices.BinarySearchFunc(files, f.Name, compareFileName); ok {
+		files = slices.Delete(files, i, i+1)
+	}
+	t.byDir[f.Dir] = files
+}
+
+func compareFileName(f *SourceFile, name string) int { return strings.Compare(f.Name, name) }
+
 func (t *SourceTree) readFile(dir, name string) *SourceFile {
 	f := &SourceFile{Path: filepath.Join(dir, name), Dir: dir, Name: name}
 	f.Content, f.Err = os.ReadFile(f.Path)

@@ -148,3 +148,85 @@ func TestChangeSignature_ConsecutiveApplies(t *testing.T) {
 		}
 	}
 }
+
+const (
+	buildExcluded = "//go:build neverset\n\n"
+	constrainBase = "package lib\n\nfunc Base() {}\n"
+)
+
+func symbolVisible(t *testing.T, sess *mcptest.Session, name string) bool {
+	t.Helper()
+	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+		Name:      "analyze_symbol",
+		Arguments: map[string]any{"symbol": name, "package": "lib"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(analyze_symbol %s): %v", name, err)
+	}
+	return !res.IsError
+}
+
+func writeLibFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "lib", name), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRefreshStaleFiles_NewFileExcludedByConstraintStaysOutOfPackage(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{"lib/base.go": constrainBase})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	writeLibFile(t, dir, "hidden.go", buildExcluded+"package lib\n\nfunc Hidden() {}\n")
+	if symbolVisible(t, sess, "Hidden") {
+		t.Fatal("function from a constrained-out new file is visible")
+	}
+	if symbolVisible(t, sess, "Hidden") {
+		t.Fatal("constrained-out file entered the package on the second refresh")
+	}
+
+	writeLibFile(t, dir, "shown.go", "package lib\n\nfunc Shown() {}\n")
+	if !symbolVisible(t, sess, "Shown") {
+		t.Fatal("function from an unconstrained new file is not visible")
+	}
+	if symbolVisible(t, sess, "Hidden") {
+		t.Fatal("constrained-out file entered the package after a later refresh")
+	}
+}
+
+func TestRefreshStaleFiles_AddedConstraintRemovesSymbols(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lib/base.go":  constrainBase,
+		"lib/other.go": "package lib\n\nfunc Other() {}\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+	if !symbolVisible(t, sess, "Other") {
+		t.Fatal("precondition: Other should be visible")
+	}
+
+	writeLibFile(t, dir, "other.go", buildExcluded+"package lib\n\nfunc Other() {}\n")
+
+	if symbolVisible(t, sess, "Other") {
+		t.Fatal("symbols of a file that gained a constraint are still visible")
+	}
+}
+
+func TestRefreshStaleFiles_RemovedConstraintAddsSymbols(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lib/base.go":  constrainBase,
+		"lib/other.go": buildExcluded + "package lib\n\nfunc Other() {}\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+	if symbolVisible(t, sess, "Other") {
+		t.Fatal("precondition: Other should be excluded")
+	}
+
+	writeLibFile(t, dir, "other.go", "package lib\n\nfunc Other() {}\n")
+
+	if !symbolVisible(t, sess, "Other") {
+		t.Fatal("symbols of a file that lost its constraint are not visible")
+	}
+}

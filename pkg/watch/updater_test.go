@@ -210,6 +210,104 @@ func TestUpdater_NewDirectoryCreatesPackage(t *testing.T) {
 	}
 }
 
+const neverBuilt = "//go:build neverset\n\n"
+
+func TestUpdater_CreateOfNonMatchingFileLeavesPackageUnchanged(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "a")
+	pkg := u.FindPackage(pkgDir)
+
+	newPath := filepath.Join(pkgDir, "b.go")
+	_ = os.WriteFile(newPath, []byte(neverBuilt+"package a\n\nfunc Hidden() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: newPath, Op: fsnotify.Create}})
+
+	if _, ok := pkg.Files["b.go"]; ok || len(pkg.Files) != 1 {
+		t.Fatalf("package files = %v, want only a.go", pkg.Files)
+	}
+	if pkg.Symbols.FindSymbol("Hidden") != nil {
+		t.Fatal("symbol of an excluded file entered the package")
+	}
+	if u.parser.Sources().File(newPath) == nil {
+		t.Fatal("excluded file must still be recorded in the source tree")
+	}
+}
+
+func TestUpdater_CreateInNewDirectoryWithOnlyNonMatchingFilesCreatesNoPackage(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	initialCount := u.PackageCount()
+
+	newPkgDir := filepath.Join(dir, "pkg", "b")
+	_ = os.MkdirAll(newPkgDir, 0755)
+	newFile := filepath.Join(newPkgDir, "b.go")
+	_ = os.WriteFile(newFile, []byte(neverBuilt+"package b\n\nfunc Hidden() {}\n"), 0644)
+
+	u.HandleChanges([]ChangeEvent{{Path: newFile, Op: fsnotify.Create}})
+
+	if u.PackageCount() != initialCount || u.FindPackage(newPkgDir) != nil {
+		t.Fatal("a directory with only excluded files must not become a package")
+	}
+}
+
+func TestUpdater_ModifyAddingConstraintRemovesFileFromPackage(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "a")
+	pkg := u.FindPackage(pkgDir)
+
+	extra := filepath.Join(pkgDir, "b.go")
+	_ = os.WriteFile(extra, []byte("package a\n\nfunc Extra() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Create}})
+	if pkg.Symbols.FindSymbol("Extra") == nil {
+		t.Fatal("precondition: Extra should be in the package")
+	}
+
+	_ = os.WriteFile(extra, []byte(neverBuilt+"package a\n\nfunc Extra() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
+
+	if _, ok := pkg.Files["b.go"]; ok {
+		t.Fatal("b.go should have left the package")
+	}
+	if pkg.Symbols.FindSymbol("Extra") != nil {
+		t.Fatal("symbol of the excluded file is still in the package")
+	}
+}
+
+func TestUpdater_ModifyRemovingConstraintAddsFileToPackage(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "a")
+	pkg := u.FindPackage(pkgDir)
+
+	extra := filepath.Join(pkgDir, "b.go")
+	_ = os.WriteFile(extra, []byte(neverBuilt+"package a\n\nfunc Extra() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Create}})
+
+	_ = os.WriteFile(extra, []byte("package a\n\nfunc Extra() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
+
+	if pkg.Symbols.FindSymbol("Extra") == nil {
+		t.Fatal("symbol should appear once the constraint is gone")
+	}
+}
+
+func TestUpdater_ModifyToUnparsableFileRemovesItFromPackage(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "a")
+	pkg := u.FindPackage(pkgDir)
+
+	extra := filepath.Join(pkgDir, "b.go")
+	_ = os.WriteFile(extra, []byte("package a\n\nfunc Extra() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Create}})
+
+	_ = os.WriteFile(extra, []byte("package a\n\nfunc {"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
+
+	if _, ok := pkg.Files["b.go"]; ok {
+		t.Fatal("unparsable file should not be in the package")
+	}
+	if src := u.parser.Sources().File(extra); src == nil || src.Err == nil {
+		t.Fatal("parse error should be recorded in the source tree")
+	}
+}
+
 func safeFuncCount(pkg *types.Package) int {
 	if pkg.Symbols == nil {
 		return 0

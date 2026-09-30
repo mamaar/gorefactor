@@ -3,9 +3,7 @@ package watch
 import (
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -64,124 +62,63 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 
 func (u *WorkspaceUpdater) handlePackageChanges(dir string, events []ChangeEvent) {
 	for _, ev := range events {
-		base := filepath.Base(ev.Path)
-		isTest := strings.HasSuffix(base, "_test.go")
-
-		switch {
-		case ev.Op&(fsnotify.Remove|fsnotify.Rename) != 0:
-			u.handleDelete(dir, ev.Path, base, isTest)
-		case ev.Op&fsnotify.Create != 0:
-			u.handleCreate(dir, ev.Path, base, isTest)
-		case ev.Op&fsnotify.Write != 0:
-			u.handleModify(dir, ev.Path, base, isTest)
-		}
+		u.handleChange(dir, ev.Path, actionName(ev.Op))
 	}
 }
 
-// handleModify re-parses a single file and updates its package's symbol table.
-func (u *WorkspaceUpdater) handleModify(dir, path, base string, isTest bool) {
+func actionName(op fsnotify.Op) string {
+	switch {
+	case op&(fsnotify.Remove|fsnotify.Rename) != 0:
+		return "delete"
+	case op&fsnotify.Create != 0:
+		return "create"
+	default:
+		return "modify"
+	}
+}
+
+// handleChange re-reads path into the source tree and re-evaluates whether it
+// belongs to its package under the build config. A package left without
+// non-test files is removed from the workspace.
+func (u *WorkspaceUpdater) handleChange(dir, path, action string) {
 	start := time.Now()
 
-	pkg := u.findPackageByDir(dir)
-	if pkg == nil {
-		u.logger.Warn("modify: package not found for dir, treating as create", "dir", dir, "file", base)
-		u.handleCreate(dir, path, base, isTest)
-		return
-	}
-
-	file, err := u.parser.ParseFile(path)
+	src, err := u.parser.SyncSource(path)
 	if err != nil {
-		u.logger.Error("modify: parse failed", "file", path, "err", err)
-		return
-	}
-	file.Package = pkg
-
-	if isTest {
-		pkg.TestFiles[base] = file
-	} else {
-		pkg.Files[base] = file
-		u.recollectImports(pkg)
-	}
-
-	u.rebuildPackage(pkg, "modify", path, start)
-}
-
-// handleCreate parses a new file and adds it to the appropriate package.
-// If the package doesn't exist yet, a new package is created.
-func (u *WorkspaceUpdater) handleCreate(dir, path, base string, isTest bool) {
-	start := time.Now()
-
-	// Ensure the file actually exists (create events can race with deletes).
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return
-	}
-
-	file, err := u.parser.ParseFile(path)
-	if err != nil {
-		u.logger.Error("create: parse failed", "file", path, "err", err)
+		u.logger.Error(action+": source sync failed", "file", path, "err", err)
 		return
 	}
 
 	pkg := u.findPackageByDir(dir)
 	if pkg == nil {
-		// New package.
-		pkg = u.createPackage(dir, file, isTest)
-		if pkg == nil {
-			return
+		if src != nil {
+			u.createPackage(dir, start)
 		}
-		u.logger.Info("create: new package",
-			"dir", dir,
-			"importPath", pkg.ImportPath,
-			"elapsed", time.Since(start).Round(time.Millisecond),
-		)
 		return
 	}
 
-	file.Package = pkg
-	if isTest {
-		pkg.TestFiles[base] = file
-	} else {
-		pkg.Files[base] = file
-		u.recollectImports(pkg)
-	}
-
-	u.rebuildPackage(pkg, "create", path, start)
-}
-
-// handleDelete removes a file from its package. If the package becomes empty it
-// is removed from the workspace.
-func (u *WorkspaceUpdater) handleDelete(dir, path, base string, isTest bool) {
-	start := time.Now()
-
-	pkg := u.findPackageByDir(dir)
-	if pkg == nil {
+	if !u.parser.ProjectFile(pkg, path) {
 		return
 	}
-
-	if isTest {
-		delete(pkg.TestFiles, base)
-	} else {
-		delete(pkg.Files, base)
-	}
-
 	u.resolver.InvalidateCacheForFile(path)
 
 	if len(pkg.Files) == 0 {
-		// Package is empty — remove it.
-		delete(u.workspace.Packages, pkg.Path)
-		if pkg.ImportPath != "" {
-			delete(u.workspace.ImportToPath, pkg.ImportPath)
-		}
-		u.resolver.InvalidateCacheForPackage(pkg.Path)
-		u.logger.Info("delete: removed empty package",
-			"dir", dir,
-			"elapsed", time.Since(start).Round(time.Millisecond),
-		)
+		u.removePackage(pkg, start)
 		return
 	}
+	u.rebuildPackage(pkg, action, path, start)
+}
 
-	u.recollectImports(pkg)
-	u.rebuildPackage(pkg, "delete", path, start)
+func (u *WorkspaceUpdater) removePackage(pkg *types.Package, start time.Time) {
+	delete(u.workspace.Packages, pkg.Path)
+	if pkg.ImportPath != "" {
+		delete(u.workspace.ImportToPath, pkg.ImportPath)
+	}
+	u.resolver.InvalidateCacheForPackage(pkg.Path)
+	u.logger.Info("removed empty package",
+		"dir", pkg.Dir,
+		"elapsed", time.Since(start).Round(time.Millisecond),
+	)
 }
 
 // rebuildPackage invalidates caches, rebuilds the symbol table and dependency graph,
@@ -212,42 +149,24 @@ func (u *WorkspaceUpdater) rebuildPackage(pkg *types.Package, action, path strin
 	)
 }
 
-// createPackage creates a brand-new Package for a directory that wasn't previously
-// known to the workspace.
-func (u *WorkspaceUpdater) createPackage(dir string, file *types.File, isTest bool) *types.Package {
-	pkg := &types.Package{
-		Dir:       dir,
-		Path:      dir,
-		Files:     make(map[string]*types.File),
-		TestFiles: make(map[string]*types.File),
-		Imports:   make([]string, 0),
+// createPackage builds the package in dir from the source tree and registers
+// it. A directory with no usable non-test files yields no package.
+func (u *WorkspaceUpdater) createPackage(dir string, start time.Time) {
+	pkg, err := u.parser.ParsePackage(dir)
+	if err != nil {
+		u.logger.Error("create: package parse failed", "dir", dir, "err", err)
+		return
+	}
+	if pkg == nil {
+		return
 	}
 
-	base := filepath.Base(file.Path)
-	file.Package = pkg
-
-	if isTest {
-		pkg.TestFiles[base] = file
-		// Can't determine package name from test file alone; wait for a non-test file.
-		return nil
-	}
-
-	pkg.Files[base] = file
-	pkg.Name = file.AST.Name.Name
-
-	u.recollectImports(pkg)
-
-	// Compute import path.
-	importPath := analysis.ComputeImportPath(u.workspace, dir)
-	pkg.ImportPath = importPath
-
-	// Register in workspace.
+	pkg.ImportPath = analysis.ComputeImportPath(u.workspace, dir)
 	u.workspace.Packages[pkg.Path] = pkg
-	if importPath != "" {
-		u.workspace.ImportToPath[importPath] = pkg.Path
+	if pkg.ImportPath != "" {
+		u.workspace.ImportToPath[pkg.ImportPath] = pkg.Path
 	}
 
-	// Build symbol table and dependency graph.
 	u.resolver.InvalidateCacheForPackage(pkg.Path)
 	if _, err := u.resolver.BuildSymbolTable(pkg); err != nil {
 		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)
@@ -255,8 +174,11 @@ func (u *WorkspaceUpdater) createPackage(dir string, file *types.File, isTest bo
 	if _, err := u.analyzer.BuildDependencyGraph(); err != nil {
 		u.logger.Error("create: dependency graph build failed", "dir", dir, "err", err)
 	}
-
-	return pkg
+	u.logger.Info("create: new package",
+		"dir", dir,
+		"importPath", pkg.ImportPath,
+		"elapsed", time.Since(start).Round(time.Millisecond),
+	)
 }
 
 // findPackageByDir returns the workspace package whose Dir matches dir.
@@ -267,32 +189,6 @@ func (u *WorkspaceUpdater) findPackageByDir(dir string) *types.Package {
 		}
 	}
 	return nil
-}
-
-// recollectImports rebuilds the import list for pkg from its file ASTs.
-func (u *WorkspaceUpdater) recollectImports(pkg *types.Package) {
-	seen := make(map[string]bool)
-	var imports []string
-	for path, f := range pkg.Files {
-		// Defensive: a *types.File with a nil AST should never be inserted
-		// into pkg.Files, but other code paths (e.g. refactor operations
-		// that fabricate a placeholder File before it has been parsed) have
-		// done so in the past and crashed this shared incremental-update
-		// path for every caller, not just the one that produced the bad
-		// entry. Skip rather than panic.
-		if f == nil || f.AST == nil {
-			u.logger.Warn("recollectImports: skipping file with nil AST", "package", pkg.Path, "file", path)
-			continue
-		}
-		for _, imp := range f.AST.Imports {
-			p := strings.Trim(imp.Path.Value, `"`)
-			if !seen[p] {
-				seen[p] = true
-				imports = append(imports, p)
-			}
-		}
-	}
-	pkg.Imports = imports
 }
 
 // countSymbols returns the total number of symbols in a symbol table.
@@ -317,6 +213,9 @@ func (u *WorkspaceUpdater) PackageCount() int {
 func (u *WorkspaceUpdater) FindPackage(dir string) *types.Package {
 	return u.findPackageByDir(dir)
 }
+
+// Sources returns the source tree the updater keeps in sync with disk.
+func (u *WorkspaceUpdater) Sources() *analysis.SourceTree { return u.parser.Sources() }
 
 // Workspace returns the workspace for testing.
 func (u *WorkspaceUpdater) Workspace() *types.Workspace {

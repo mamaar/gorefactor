@@ -8,6 +8,7 @@ import (
 	"go/token"
 	gotypes "go/types"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -158,42 +159,102 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 	}
 
 	for _, src := range srcs {
-		if !p.admits(src) {
-			continue
-		}
-
-		file := &types.File{
-			Path:            src.Path,
-			Package:         pkg,
-			AST:             src.AST,
-			OriginalContent: src.Content,
-			Modifications:   make([]types.Modification, 0),
-		}
-
-		if strings.HasSuffix(src.Name, "_test.go") {
-			pkg.TestFiles[src.Name] = file
-			continue
-		}
-		pkg.Files[src.Name] = file
-
-		if pkg.Name == "" {
-			pkg.Name = src.AST.Name.Name
-			pkg.Path = p.inferPackagePath(dir, src.AST.Name.Name)
-		}
-
-		for _, imp := range src.AST.Imports {
-			importPath := strings.Trim(imp.Path.Value, "\"")
-			if !contains(pkg.Imports, importPath) {
-				pkg.Imports = append(pkg.Imports, importPath)
-			}
+		if p.admits(src) {
+			p.addSource(pkg, src)
 		}
 	}
+	collectImports(pkg)
 
 	if pkg.Name == "" {
 		return nil, nil
 	}
 
 	return pkg, nil
+}
+
+// SyncSource brings the source tree in line with path on disk: a missing file
+// is forgotten (nil result), a recorded one is re-read, a new one is recorded.
+func (p *GoParser) SyncSource(path string) (*SourceFile, error) {
+	if !strings.HasSuffix(path, ".go") {
+		return nil, nil
+	}
+	path = absDir(path)
+	if _, err := os.Stat(path); err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		p.sources.Remove(path)
+		return nil, nil
+	}
+
+	dir := filepath.Dir(path)
+	if !p.sources.loaded(dir) {
+		if err := p.sources.AddDir(dir); err != nil {
+			return nil, err
+		}
+		return p.sources.File(path), nil
+	}
+	if p.sources.File(path) != nil {
+		return p.sources.Replace(path)
+	}
+	return p.sources.Add(path)
+}
+
+// ProjectFile re-evaluates whether the recorded file at path belongs in pkg
+// under the build config and updates pkg to match. It reports whether the
+// file was or is a member, i.e. whether pkg needs re-evaluating.
+func (p *GoParser) ProjectFile(pkg *types.Package, path string) bool {
+	name := filepath.Base(path)
+	_, wasFile := pkg.Files[name]
+	_, wasTest := pkg.TestFiles[name]
+	delete(pkg.Files, name)
+	delete(pkg.TestFiles, name)
+
+	src := p.sources.File(path)
+	admitted := src != nil && p.admits(src)
+	if admitted {
+		p.addSource(pkg, src)
+	}
+	if wasFile || wasTest || admitted {
+		collectImports(pkg)
+		return true
+	}
+	return false
+}
+
+// addSource adds src to pkg as a test or non-test file; the first non-test
+// file names the package.
+func (p *GoParser) addSource(pkg *types.Package, src *SourceFile) {
+	file := &types.File{
+		Path:            src.Path,
+		Package:         pkg,
+		AST:             src.AST,
+		OriginalContent: src.Content,
+		Modifications:   make([]types.Modification, 0),
+	}
+	if strings.HasSuffix(src.Name, "_test.go") {
+		pkg.TestFiles[src.Name] = file
+		return
+	}
+	pkg.Files[src.Name] = file
+	if pkg.Name == "" {
+		pkg.Name = src.AST.Name.Name
+		pkg.Path = p.inferPackagePath(pkg.Dir, src.AST.Name.Name)
+	}
+}
+
+// collectImports sets pkg.Imports to the distinct imports of its non-test
+// files, in file-name order.
+func collectImports(pkg *types.Package) {
+	pkg.Imports = make([]string, 0)
+	for _, name := range slices.Sorted(maps.Keys(pkg.Files)) {
+		for _, imp := range pkg.Files[name].AST.Imports {
+			importPath := strings.Trim(imp.Path.Value, "\"")
+			if !contains(pkg.Imports, importPath) {
+				pkg.Imports = append(pkg.Imports, importPath)
+			}
+		}
+	}
 }
 
 // admits reports whether src parsed cleanly and matches the build config.
