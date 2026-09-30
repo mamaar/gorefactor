@@ -138,33 +138,6 @@ func TestDefaultEngine_ExecutePlan_Success(t *testing.T) {
 	}
 }
 
-func TestDefaultEngine_findOperationConflicts(t *testing.T) {
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
-
-	// Test with non-overlapping changes
-	changes := []types.Change{
-		{File: "test.go", Start: 0, End: 10},
-		{File: "test.go", Start: 20, End: 30},
-		{File: "other.go", Start: 0, End: 10},
-	}
-
-	conflicts := engine.findOperationConflicts(changes)
-	if len(conflicts) != 0 {
-		t.Errorf("Expected no conflicts, got %d", len(conflicts))
-	}
-
-	// Test with overlapping changes
-	overlappingChanges := []types.Change{
-		{File: "test.go", Start: 0, End: 15},
-		{File: "test.go", Start: 10, End: 25},
-	}
-
-	conflicts = engine.findOperationConflicts(overlappingChanges)
-	if len(conflicts) == 0 {
-		t.Error("Expected conflicts with overlapping changes")
-	}
-}
-
 // TestDefaultEngine_EnsureTypeCheckedPackage_ScopedToTarget verifies that
 // EnsureTypeCheckedPackage only type-checks the requested package and the
 // dependencies it transitively pulls in through the importer, leaving

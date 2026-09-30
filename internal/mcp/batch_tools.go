@@ -11,9 +11,8 @@ import (
 // --- batch_operations ---
 
 type BatchOperationsInput struct {
-	Operations        []string `json:"operations" jsonschema:"steps, each a JSON object string with a type and that type's keys: rename_symbol (symbol, new_name, package optional); move_symbol (symbol, from_package, to_package); rename_method (type_name, method_name, new_method_name, package_path optional); rename_field (type_name, field_name, new_field_name, package_path optional); rename_package (package_path, new_name, old_name optional); move_package (source, target)"`
-	RollbackOnFailure bool     `json:"rollback_on_failure,omitempty" jsonschema:"rollback all operations if any single operation fails"`
-	DryRun            bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+	Operations []string `json:"operations" jsonschema:"steps, each a JSON object string with a type and that type's keys: rename_symbol (symbol, new_name, package optional); move_symbol (symbol, from_package, to_package); rename_method (type_name, method_name, new_method_name, package_path optional); rename_field (type_name, field_name, new_field_name, package_path optional); rename_package (package_path, new_name, old_name optional); move_package (source, target)"`
+	DryRun     bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
@@ -36,9 +35,7 @@ func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 		plan, err := state.GetEngine().BatchOperations(ws, types.BatchOperationRequest{
-			Operations:        in.Operations,
-			RollbackOnFailure: in.RollbackOnFailure,
-			DryRun:            false,
+			Operations: in.Operations,
 		})
 		if err != nil {
 			state.RUnlock()

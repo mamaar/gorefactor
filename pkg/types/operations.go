@@ -19,7 +19,6 @@ const (
 	RenameMethodOperation
 	ExtractOperation
 	InlineOperation
-	BatchOperation
 	MovePackageOperation
 	MoveDirOperation
 	MovePackagesOperation
@@ -35,9 +34,6 @@ const (
 	FixCyclesOperation
 	AnalyzeDependenciesOperation
 	BatchOperations
-	PlanOperation
-	ExecuteOperation
-	RollbackOperation
 	RenameFieldOperationType
 	ThreadContextOperationType
 )
@@ -486,30 +482,5 @@ type AnalyzeDependenciesRequest struct {
 
 // BatchOperationRequest represents executing multiple operations atomically
 type BatchOperationRequest struct {
-	Operations       []string // Command strings to execute
-	RollbackOnFailure bool
-	DryRun           bool
-}
-
-// PlanOperationRequest represents creating a refactoring plan
-type PlanOperationRequest struct {
-	Operations []PlanStep
-	OutputFile string
-	DryRun     bool
-}
-
-type PlanStep struct {
-	Type string            `json:"type"`
-	Args map[string]string `json:"args"`
-}
-
-// ExecuteOperationRequest represents executing a previously created plan
-type ExecuteOperationRequest struct {
-	PlanFile string
-}
-
-// RollbackOperationRequest represents rolling back operations
-type RollbackOperationRequest struct {
-	LastBatch bool
-	ToStep    int // Rollback to specific step number
+	Operations []string // Command strings to execute
 }

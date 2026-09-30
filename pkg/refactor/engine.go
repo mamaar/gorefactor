@@ -35,7 +35,6 @@ type RefactorEngine interface {
 	InlineFunction(ws *types.Workspace, req types.InlineFunctionRequest) (*types.RefactoringPlan, error)
 	SafeDelete(ws *types.Workspace, req types.SafeDeleteRequest) (*types.RefactoringPlan, error)
 	ChangeSignature(ws *types.Workspace, req ChangeSignatureRequest) (*types.RefactoringPlan, error)
-	BatchRefactor(ws *types.Workspace, ops []types.Operation) (*types.RefactoringPlan, error)
 
 	// Bulk operations
 	MovePackage(ws *types.Workspace, req types.MovePackageRequest) (*types.RefactoringPlan, error)
@@ -59,11 +58,8 @@ type RefactorEngine interface {
 	FixCycles(ws *types.Workspace, req types.FixCyclesRequest) (*types.RefactoringPlan, error)
 	AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error)
 	
-	// Batch operations with rollback
+	// Batch operations
 	BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error)
-	CreatePlan(ws *types.Workspace, req types.PlanOperationRequest) (*types.RefactoringPlan, error)
-	ExecutePlanFromFile(req types.ExecuteOperationRequest) (*types.RefactoringPlan, error)
-	RollbackOperations(req types.RollbackOperationRequest) (*types.RefactoringPlan, error)
 
 	// Analysis
 	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
@@ -844,90 +840,6 @@ func (e *DefaultEngine) ChangeSignatureAcrossConfigs(req ChangeSignatureRequest)
 	return e.planAcrossConfigs(&changeSignaturePlanner{engine: e, req: req})
 }
 
-// BatchRefactor executes multiple refactoring operations as a batch
-func (e *DefaultEngine) BatchRefactor(ws *types.Workspace, ops []types.Operation) (*types.RefactoringPlan, error) {
-	plan := &types.RefactoringPlan{
-		Operations:    ops,
-		Changes:       make([]types.Change, 0),
-		AffectedFiles: make([]string, 0),
-		Reversible:    true,
-	}
-
-	var allIssues []types.Issue
-	var allChanges []types.Change
-	affectedFiles := make(map[string]bool)
-	affectedPackages := make(map[string]bool)
-	var affectedSymbols []*types.Symbol
-
-	// Process each operation
-	for i, op := range ops {
-		// Validate each operation
-		if err := op.Validate(ws); err != nil {
-			return nil, fmt.Errorf("operation %d validation failed: %w", i, err)
-		}
-
-		// Generate plan for this operation
-		opPlan, err := op.Execute(ws)
-		if err != nil {
-			return nil, fmt.Errorf("operation %d execution failed: %w", i, err)
-		}
-
-		// Analyze impact
-		impact, err := e.analyzerFor(ws).AnalyzeImpact(op)
-		if err != nil {
-			return nil, fmt.Errorf("failed to analyze impact for operation %d: %w", i, err)
-		}
-
-		// Collect results
-		allChanges = append(allChanges, opPlan.Changes...)
-		allIssues = append(allIssues, impact.PotentialIssues...)
-		affectedSymbols = append(affectedSymbols, impact.AffectedSymbols...)
-
-		for _, file := range impact.AffectedFiles {
-			affectedFiles[file] = true
-		}
-		for _, pkg := range impact.AffectedPackages {
-			affectedPackages[pkg] = true
-		}
-
-		if !opPlan.Reversible {
-			plan.Reversible = false
-		}
-	}
-
-	// Check for conflicts between operations
-	conflicts := e.findOperationConflicts(allChanges)
-	if len(conflicts) > 0 {
-		for _, conflict := range conflicts {
-			issue := types.Issue{
-				Type:        types.IssueNameConflict,
-				Description: conflict,
-				Severity:    types.Error,
-			}
-			allIssues = append(allIssues, issue)
-		}
-	}
-
-	// Build final plan
-	plan.Changes = allChanges
-
-	for file := range affectedFiles {
-		plan.AffectedFiles = append(plan.AffectedFiles, file)
-	}
-
-	plan.Impact = &types.ImpactAnalysis{
-		AffectedFiles:   plan.AffectedFiles,
-		AffectedSymbols: affectedSymbols,
-		PotentialIssues: allIssues,
-	}
-
-	for pkg := range affectedPackages {
-		plan.Impact.AffectedPackages = append(plan.Impact.AffectedPackages, pkg)
-	}
-
-	return plan, nil
-}
-
 // AnalyzeImpact analyzes the impact of a refactoring operation
 func (e *DefaultEngine) AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error) {
 	analyzer := e.analyzerFor(ws)
@@ -1122,35 +1034,6 @@ func (e *DefaultEngine) getModificationDescription(mod types.Modification) strin
 	default:
 		return "Unknown modification"
 	}
-}
-
-func (e *DefaultEngine) findOperationConflicts(changes []types.Change) []string {
-	var conflicts []string
-
-	// Group changes by file
-	fileChanges := make(map[string][]types.Change)
-	for _, change := range changes {
-		fileChanges[change.File] = append(fileChanges[change.File], change)
-	}
-
-	// Check for overlapping changes in each file
-	for file, changes := range fileChanges {
-		for i, change1 := range changes {
-			for j, change2 := range changes {
-				if i >= j {
-					continue
-				}
-
-				// Check if changes overlap
-				if (change1.Start <= change2.Start && change2.Start < change1.End) ||
-					(change2.Start <= change1.Start && change1.Start < change2.End) {
-					conflicts = append(conflicts, fmt.Sprintf("Overlapping changes in file %s", file))
-				}
-			}
-		}
-	}
-
-	return conflicts
 }
 
 // Bulk operation implementations
@@ -1564,102 +1447,5 @@ func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOper
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate batch operations plan: %w", err)
 	}
-	return plan, nil
-}
-
-// CreatePlan implements creating a refactoring plan
-func (e *DefaultEngine) CreatePlan(ws *types.Workspace, req types.PlanOperationRequest) (*types.RefactoringPlan, error) {
-	operation := &PlanOperation{Request: req}
-
-	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
-		return nil, fmt.Errorf("plan operation validation failed: %w", err)
-	}
-
-	// Execute the operation to generate the plan
-	plan, err := operation.Execute(ws)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate plan: %w", err)
-	}
-
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
-	plan.Operations = []types.Operation{operation}
-
-	return plan, nil
-}
-
-// ExecutePlanFromFile implements executing a previously created plan
-func (e *DefaultEngine) ExecutePlanFromFile(req types.ExecuteOperationRequest) (*types.RefactoringPlan, error) {
-	// Note: this method signature differs from the interface ExecutePlan method
-	// to avoid confusion with executing an in-memory plan
-	operation := &ExecuteOperation{Request: req, engine: e}
-
-	// Load the plan file first to get workspace info
-	// This is a simplified approach - in reality we'd need better workspace management
-	ws, err := e.LoadWorkspace(".")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load workspace for plan execution: %w", err)
-	}
-
-	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
-		return nil, fmt.Errorf("execute operation validation failed: %w", err)
-	}
-
-	// Execute the operation to generate the plan
-	plan, err := operation.Execute(ws)
-	if err != nil {
-		return nil, fmt.Errorf("failed to execute plan from file: %w", err)
-	}
-
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
-	plan.Operations = []types.Operation{operation}
-
-	return plan, nil
-}
-
-// RollbackOperations implements rolling back operations
-func (e *DefaultEngine) RollbackOperations(req types.RollbackOperationRequest) (*types.RefactoringPlan, error) {
-	operation := &RollbackOperation{Request: req}
-
-	// For rollback, we might not need a workspace initially
-	// This is a simplified approach - in reality we'd need better state management
-	ws, err := e.LoadWorkspace(".")
-	if err != nil {
-		return nil, fmt.Errorf("failed to load workspace for rollback: %w", err)
-	}
-
-	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
-		return nil, fmt.Errorf("rollback operation validation failed: %w", err)
-	}
-
-	// Execute the operation to generate the plan
-	plan, err := operation.Execute(ws)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate rollback plan: %w", err)
-	}
-
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
-	plan.Operations = []types.Operation{operation}
-
 	return plan, nil
 }

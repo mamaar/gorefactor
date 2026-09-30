@@ -1,218 +1,209 @@
 package refactor
 
 import (
+	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
-// BatchOperation implements executing multiple operations as a single transaction
-type BatchOperation struct {
-	Operations []types.Operation
-	Name       string
-	Atomic     bool // If true, all operations must succeed or none are applied
+// batchStep is one parsed batch step: the packages it refers to and how to plan it.
+type batchStep struct {
+	typ string
+	// packages are the resolved packages the step refers to; an empty entry
+	// stands for "any package" (the step is workspace-wide).
+	packages []string
+	// renamesPackage is set for steps that rename or move a package.
+	renamesPackage bool
+	plan           func() (*types.RefactoringPlan, error)
 }
 
-func (op *BatchOperation) Type() types.OperationType {
-	return types.BatchOperation
+// parseStep parses one batch step, a JSON object with a "type" field. ws
+// resolves package paths and is the workspace of the steps that plan in the
+// default configuration only.
+func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep, error) {
+	var raw map[string]string
+	if err := json.Unmarshal([]byte(opStr), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse operation JSON: %w", err)
+	}
+
+	opType, ok := raw["type"]
+	if !ok {
+		return nil, fmt.Errorf("operation JSON missing 'type' field")
+	}
+
+	step := &batchStep{typ: opType}
+	switch opType {
+	case "rename_symbol":
+		req := types.RenameSymbolRequest{
+			SymbolName: raw["symbol"],
+			NewName:    raw["new_name"],
+			Scope:      types.WorkspaceScope,
+		}
+		if pkg := raw["package"]; pkg != "" {
+			req.Package = types.ResolvePackagePath(ws, pkg)
+			req.Scope = types.PackageScope
+		}
+		step.packages = []string{req.Package}
+		step.plan = func() (*types.RefactoringPlan, error) { return e.RenameSymbolAcrossConfigs(req) }
+	case "move_symbol":
+		req := types.MoveSymbolRequest{
+			SymbolName:  raw["symbol"],
+			FromPackage: types.ResolvePackagePath(ws, raw["from_package"]),
+			ToPackage:   types.ResolvePackagePath(ws, raw["to_package"]),
+		}
+		step.packages = []string{resolveOptionalPackage(ws, raw["from_package"]), resolveOptionalPackage(ws, raw["to_package"])}
+		step.plan = func() (*types.RefactoringPlan, error) { return e.MoveSymbolAcrossConfigs(req) }
+	case "rename_package":
+		resolved := types.ResolvePackagePath(ws, raw["package_path"])
+		oldName := raw["old_name"]
+		if pkg := ws.Packages[resolved]; oldName == "" && pkg != nil {
+			oldName = pkg.Name
+		}
+		req := types.RenamePackageRequest{
+			OldPackageName: oldName,
+			NewPackageName: raw["new_name"],
+			PackagePath:    resolved,
+			UpdateImports:  true,
+		}
+		step.packages = []string{resolveOptionalPackage(ws, raw["package_path"])}
+		step.renamesPackage = true
+		step.plan = func() (*types.RefactoringPlan, error) { return e.RenamePackage(ws, req) }
+	case "move_package":
+		req := types.MovePackageRequest{
+			SourcePackage: types.ResolvePackagePath(ws, raw["source"]),
+			TargetPackage: raw["target"],
+			UpdateImports: true,
+		}
+		step.packages = []string{resolveOptionalPackage(ws, raw["source"]), resolveOptionalPackage(ws, raw["target"])}
+		step.renamesPackage = true
+		step.plan = func() (*types.RefactoringPlan, error) { return e.MovePackage(ws, req) }
+	case "rename_method":
+		req := types.RenameMethodRequest{
+			TypeName:              raw["type_name"],
+			MethodName:            raw["method_name"],
+			NewMethodName:         raw["new_method_name"],
+			PackagePath:           resolveOptionalPackage(ws, raw["package_path"]),
+			UpdateImplementations: true,
+		}
+		step.packages = []string{req.PackagePath}
+		step.plan = func() (*types.RefactoringPlan, error) { return e.RenameMethodAcrossConfigs(req) }
+	case "rename_field":
+		req := types.RenameFieldRequest{
+			TypeName:     raw["type_name"],
+			FieldName:    raw["field_name"],
+			NewFieldName: raw["new_field_name"],
+			PackagePath:  resolveOptionalPackage(ws, raw["package_path"]),
+		}
+		step.packages = []string{req.PackagePath}
+		step.plan = func() (*types.RefactoringPlan, error) { return e.RenameFieldAcrossConfigs(req) }
+	default:
+		return nil, fmt.Errorf("unknown operation type: %s", opType)
+	}
+	return step, nil
 }
 
-func (op *BatchOperation) Validate(ws *types.Workspace) error {
-	if op.Name == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "batch operation name cannot be empty",
+// findPackageStepConflict refuses a batch in which a step that renames or moves
+// a package shares a package with another step, or any step is workspace-wide.
+// Every step is planned against the unmodified workspace, so such steps can
+// invalidate each other without their edits overlapping.
+func findPackageStepConflict(steps []*batchStep) error {
+	for i, a := range steps {
+		if !a.renamesPackage {
+			continue
 		}
-	}
-	if len(op.Operations) == 0 {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "batch operation must contain at least one operation",
-		}
-	}
-
-	// Validate each individual operation
-	for i, operation := range op.Operations {
-		if err := operation.Validate(ws); err != nil {
-			return &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("operation %d validation failed: %v", i, err),
+		for j, b := range steps {
+			if i == j || (b.renamesPackage && j < i) {
+				continue
+			}
+			for _, pa := range a.packages {
+				for _, pb := range b.packages {
+					if pa != "" && pb != "" && pa != pb {
+						continue
+					}
+					lo, hi, first, second := i, j, a, b
+					if j < i {
+						lo, hi, first, second = j, i, b, a
+					}
+					what := fmt.Sprintf("both refer to package %q", pa)
+					if pa == "" || pb == "" {
+						what = "cannot be shown to touch different packages, as one names no package"
+					}
+					return &types.RefactorError{
+						Type: types.InvalidOperation,
+						Message: fmt.Sprintf(
+							"step %d (%s) and step %d (%s) %s; a package rename or move invalidates other steps planned against the unmodified workspace, so run them as separate batch_operations calls",
+							lo+1, first.typ, hi+1, second.typ, what),
+					}
+				}
 			}
 		}
 	}
-
 	return nil
 }
 
-func (op *BatchOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	var allChanges []types.Change
-	var allAffectedFiles []string
-	var allAffectedPackages []string
-	var executedOperations []types.Operation
-	var executionResults []*types.RefactoringPlan
+func resolveOptionalPackage(ws *types.Workspace, path string) string {
+	if path == "" {
+		return ""
+	}
+	return types.ResolvePackagePath(ws, path)
+}
 
-	// Execute each operation and collect changes
-	var firstError error
-	for i, operation := range op.Operations {
-		plan, err := operation.Execute(ws)
+// planSteps parses every step, refuses package-step conflicts, plans each step
+// against ws and merges the plans. It fails on the first step that does not
+// parse or plan, naming it by its position.
+func (e *DefaultEngine) planSteps(ws *types.Workspace, steps []string) (*types.RefactoringPlan, error) {
+	parsed := make([]*batchStep, 0, len(steps))
+	for i, raw := range steps {
+		step, err := e.parseStep(ws, raw)
 		if err != nil {
-			if firstError == nil {
-				firstError = err
-			}
-			if op.Atomic {
-				// Rollback - in a real implementation, this would undo changes
-				return nil, &types.RefactorError{
-					Type:    types.InvalidOperation,
-					Message: fmt.Sprintf("batch operation failed at step %d, rolling back: %v", i, err),
-				}
-			}
-			// Non-atomic: continue with other operations but track the error
-			continue
+			return nil, fmt.Errorf("step %d: %w", i+1, err)
 		}
-
-		executionResults = append(executionResults, plan)
-		allChanges = append(allChanges, plan.Changes...)
-		allAffectedFiles = append(allAffectedFiles, plan.AffectedFiles...)
-		if plan.Impact != nil {
-			allAffectedPackages = append(allAffectedPackages, plan.Impact.AffectedPackages...)
+		parsed = append(parsed, step)
+	}
+	if err := findPackageStepConflict(parsed); err != nil {
+		return nil, err
+	}
+	plans := make([]*types.RefactoringPlan, 0, len(parsed))
+	for i, step := range parsed {
+		plan, err := step.plan()
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", i+1, err)
 		}
-		executedOperations = append(executedOperations, operation)
+		plans = append(plans, plan)
 	}
-
-	// Check for conflicts between operations
-	conflicts := op.detectConflicts(allChanges)
-	if len(conflicts) > 0 {
-		return nil, &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("batch operation contains conflicting changes: %s", strings.Join(conflicts, ", ")),
-		}
-	}
-
-	// Remove duplicate files and packages
-	uniqueFiles := removeDuplicateStrings(allAffectedFiles)
-	uniquePackages := removeDuplicateStrings(allAffectedPackages)
-
-	// Aggregate all issues from individual operations
-	var allIssues []types.Issue
-	for _, result := range executionResults {
-		if result.Impact != nil {
-			allIssues = append(allIssues, result.Impact.PotentialIssues...)
-		}
-	}
-
-	// Sort changes by file and position to ensure consistent application
-	sortedChanges := op.sortChanges(allChanges)
-
-	// If no operations succeeded and we have an error, return the error
-	if len(executedOperations) == 0 && firstError != nil {
-		return nil, firstError
-	}
-
-	return &types.RefactoringPlan{
-		Operations:    executedOperations,
-		Changes:       sortedChanges,
-		AffectedFiles: uniqueFiles,
-		Impact: &types.ImpactAnalysis{
-			AffectedFiles:    uniqueFiles,
-			AffectedPackages: uniquePackages,
-			PotentialIssues:  allIssues,
-		},
-		Reversible: op.allOperationsReversible(executedOperations),
-	}, firstError
+	return MergeStepPlans(plans)
 }
 
-func (op *BatchOperation) Description() string {
-	operationTypes := make([]string, len(op.Operations))
-	for i, operation := range op.Operations {
-		operationTypes[i] = op.operationTypeToString(operation.Type())
-	}
-	return fmt.Sprintf("Batch operation '%s' with %d operations: [%s]",
-		op.Name, len(op.Operations), strings.Join(operationTypes, " "))
+// BatchOperationOperation implements executing multiple operations atomically
+type BatchOperationOperation struct {
+	Request types.BatchOperationRequest
+	engine  *DefaultEngine
 }
 
-func (op *BatchOperation) detectConflicts(changes []types.Change) []string {
-	var conflicts []string
-
-	// Group changes by file
-	fileChanges := make(map[string][]types.Change)
-	for _, change := range changes {
-		fileChanges[change.File] = append(fileChanges[change.File], change)
-	}
-
-	// Check for overlapping changes within each file
-	for file, changes := range fileChanges {
-		for i := range changes {
-			for j := i + 1; j < len(changes); j++ {
-				if op.changesOverlap(changes[i], changes[j]) {
-					conflicts = append(conflicts, fmt.Sprintf("overlapping changes in %s at positions %d-%d and %d-%d",
-						file, changes[i].Start, changes[i].End, changes[j].Start, changes[j].End))
-				}
-			}
-		}
-	}
-
-	return conflicts
+func (op *BatchOperationOperation) Type() types.OperationType {
+	return types.BatchOperations
 }
 
-func (op *BatchOperation) changesOverlap(a, b types.Change) bool {
-	if a.File != b.File {
-		return false
+func (op *BatchOperationOperation) Description() string {
+	return fmt.Sprintf("Execute %d operations atomically", len(op.Request.Operations))
+}
+
+func (op *BatchOperationOperation) Validate(ws *types.Workspace) error {
+	if len(op.Request.Operations) == 0 {
+		return fmt.Errorf("no operations specified for batch execution")
 	}
-	// Check if ranges overlap: [a.Start, a.End) and [b.Start, b.End)
-	return a.End > b.Start && b.End > a.Start
+	return nil
 }
 
-func (op *BatchOperation) sortChanges(changes []types.Change) []types.Change {
-	// Sort changes by file path first, then by start position in reverse order
-	// (reverse order ensures that later changes don't affect earlier positions)
-
-	sorted := make([]types.Change, len(changes))
-	copy(sorted, changes)
-
-	// Simple bubble sort for demonstration - a real implementation would use a more efficient sort
-	for i := range sorted {
-		for j := i + 1; j < len(sorted); j++ {
-			// Sort by file first
-			if sorted[i].File > sorted[j].File {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			} else if sorted[i].File == sorted[j].File {
-				// Same file: sort by position in reverse order
-				if sorted[i].Start < sorted[j].Start {
-					sorted[i], sorted[j] = sorted[j], sorted[i]
-				}
-			}
-		}
+func (op *BatchOperationOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	plan, err := op.engine.planSteps(ws, op.Request.Operations)
+	if err != nil {
+		return nil, err
 	}
-
-	return sorted
+	plan.Operations = []types.Operation{op}
+	return plan, nil
 }
-
-func (op *BatchOperation) allOperationsReversible(operations []types.Operation) bool {
-	// Check if all operations in the batch are reversible
-	// This would require examining each operation's reversibility
-	// For now, assume batch operations are not reversible due to complexity
-	return false
-}
-
-func (op *BatchOperation) operationTypeToString(opType types.OperationType) string {
-	switch opType {
-	case types.MoveOperation:
-		return "MoveOperation"
-	case types.RenameOperation:
-		return "RenameOperation"
-	case types.ExtractOperation:
-		return "ExtractOperation"
-	case types.InlineOperation:
-		return "InlineOperation"
-	case types.BatchOperation:
-		return "BatchOperation"
-	default:
-		return "UnknownOperation"
-	}
-}
-
-// Helper functions for batch operations
 
 func removeDuplicateStrings(strs []string) []string {
 	keys := make(map[string]bool)
@@ -224,167 +215,4 @@ func removeDuplicateStrings(strs []string) []string {
 		}
 	}
 	return result
-}
-
-// BatchOperationBuilder provides a fluent interface for building batch operations
-type BatchOperationBuilder struct {
-	operations []types.Operation
-	name       string
-	atomic     bool
-}
-
-func NewBatchOperation(name string) *BatchOperationBuilder {
-	return &BatchOperationBuilder{
-		operations: make([]types.Operation, 0),
-		name:       name,
-		atomic:     false,
-	}
-}
-
-func (b *BatchOperationBuilder) AddOperation(op types.Operation) *BatchOperationBuilder {
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddMoveOperation(symbolName, fromPackage, toPackage string) *BatchOperationBuilder {
-	op := &MoveSymbolOperation{
-		Request: types.MoveSymbolRequest{
-			SymbolName:  symbolName,
-			FromPackage: fromPackage,
-			ToPackage:   toPackage,
-		},
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddRenameOperation(symbolName, newName, packagePath string, scope types.RenameScope) *BatchOperationBuilder {
-	op := &RenameSymbolOperation{
-		Request: types.RenameSymbolRequest{
-			SymbolName: symbolName,
-			NewName:    newName,
-			Package:    packagePath,
-			Scope:      scope,
-		},
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddExtractMethodOperation(sourceFile string, startLine, endLine int, methodName, targetStruct string) *BatchOperationBuilder {
-	op := &ExtractMethodOperation{
-		SourceFile:    sourceFile,
-		StartLine:     startLine,
-		EndLine:       endLine,
-		NewMethodName: methodName,
-		TargetStruct:  targetStruct,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddExtractInterfaceOperation(sourceStruct, interfaceName string, methods []string, targetPackage string) *BatchOperationBuilder {
-	op := &ExtractInterfaceOperation{
-		SourceStruct:  sourceStruct,
-		InterfaceName: interfaceName,
-		Methods:       methods,
-		TargetPackage: targetPackage,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddExtractVariableOperation(sourceFile string, startLine, endLine int, variableName, expression string) *BatchOperationBuilder {
-	op := &ExtractVariableOperation{
-		SourceFile:   sourceFile,
-		StartLine:    startLine,
-		EndLine:      endLine,
-		VariableName: variableName,
-		Expression:   expression,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddInlineMethodOperation(methodName, sourceStruct, targetFile string) *BatchOperationBuilder {
-	op := &InlineMethodOperation{
-		MethodName:   methodName,
-		SourceStruct: sourceStruct,
-		TargetFile:   targetFile,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddInlineVariableOperation(variableName, sourceFile string, startLine, endLine int) *BatchOperationBuilder {
-	op := &InlineVariableOperation{
-		VariableName: variableName,
-		SourceFile:   sourceFile,
-		StartLine:    startLine,
-		EndLine:      endLine,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddInlineFunctionOperation(functionName, sourceFile string, targetFiles []string) *BatchOperationBuilder {
-	op := &InlineFunctionOperation{
-		FunctionName: functionName,
-		SourceFile:   sourceFile,
-		TargetFiles:  targetFiles,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) AddInlineConstantOperation(constantName, sourceFile string, scope types.RenameScope) *BatchOperationBuilder {
-	op := &InlineConstantOperation{
-		ConstantName: constantName,
-		SourceFile:   sourceFile,
-		Scope:        scope,
-	}
-	b.operations = append(b.operations, op)
-	return b
-}
-
-func (b *BatchOperationBuilder) SetAtomic(atomic bool) *BatchOperationBuilder {
-	b.atomic = atomic
-	return b
-}
-
-func (b *BatchOperationBuilder) Build() *BatchOperation {
-	return &BatchOperation{
-		Operations: b.operations,
-		Name:       b.name,
-		Atomic:     b.atomic,
-	}
-}
-
-// Pre-defined batch operation patterns
-
-// CreateRefactoringWorkflow creates common refactoring workflows
-func CreateExtractAndRenameWorkflow(structName, methodName, newMethodName string, sourceFile string, startLine, endLine int) *BatchOperation {
-	return NewBatchOperation("Extract and Rename Method").
-		AddExtractMethodOperation(sourceFile, startLine, endLine, methodName, structName).
-		AddRenameOperation(methodName, newMethodName, "", types.PackageScope).
-		SetAtomic(true).
-		Build()
-}
-
-func CreateMoveAndUpdateWorkflow(symbolName, fromPackage, toPackage string) *BatchOperation {
-	return NewBatchOperation("Move Symbol with Updates").
-		AddMoveOperation(symbolName, fromPackage, toPackage).
-		SetAtomic(true).
-		Build()
-}
-
-func CreateInterfaceExtractionWorkflow(sourceStruct, interfaceName string, methods []string, targetPackage string) *BatchOperation {
-	builder := NewBatchOperation("Extract Interface and Update References").
-		AddExtractInterfaceOperation(sourceStruct, interfaceName, methods, targetPackage).
-		SetAtomic(true)
-
-	// Could add additional operations to update references to use the interface
-	// This would require more sophisticated analysis
-
-	return builder.Build()
 }
