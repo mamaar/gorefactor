@@ -1445,6 +1445,10 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 		return nil, fmt.Errorf("move by dependencies operation validation failed: %w", err)
 	}
 
+	// Reference matching without type information is name-based, so candidates
+	// would differ depending on which tools ran earlier.
+	e.EnsureTypeChecked(ws)
+
 	// Analysis runs in the default configuration; each move is checked under all of them
 	var plan *types.RefactoringPlan
 	var err error
@@ -1455,15 +1459,6 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move by dependencies plan: %w", err)
-	}
-
-	// Only set impact from analyzer if the operation didn't already compute it
-	if plan.Impact == nil {
-		impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-		if err != nil {
-			return nil, fmt.Errorf("failed to analyze impact: %w", err)
-		}
-		plan.Impact = impact
 	}
 
 	plan.Operations = []types.Operation{operation}
@@ -1528,6 +1523,9 @@ func (e *DefaultEngine) FixCycles(ws *types.Workspace, req types.FixCyclesReques
 // AnalyzeDependencies implements analyzing dependency flow
 func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error) {
 	operation := &AnalyzeDependenciesOperation{Request: req}
+
+	// Suggested moves match references by type information when available.
+	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {

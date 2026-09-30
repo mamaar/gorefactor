@@ -17,6 +17,7 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 
 	toPackage := op.getTargetFSPath(ws)
 	var accepted []*types.RefactoringPlan
+	var acceptedNames []string
 	var skipped []types.SkippedSite
 	skip := func(c sharedSymbolCandidate, err error) {
 		skipped = append(skipped, types.SkippedSite{
@@ -36,10 +37,11 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 			continue
 		}
 		if _, err := MergeStepPlans(append(accepted, plan)); err != nil {
-			skip(c, err)
+			skip(c, conflictWithEarlierMove(accepted, acceptedNames, plan, err))
 			continue
 		}
 		accepted = append(accepted, plan)
+		acceptedNames = append(acceptedNames, c.symbol.Name)
 	}
 
 	merged, err := MergeStepPlans(accepted)
@@ -48,4 +50,15 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 	}
 	merged.SkippedSites = append(merged.SkippedSites, skipped...)
 	return merged, nil
+}
+
+// conflictWithEarlierMove names the accepted move that plan conflicts with, or
+// returns mergeErr when no single earlier move accounts for it.
+func conflictWithEarlierMove(accepted []*types.RefactoringPlan, names []string, plan *types.RefactoringPlan, mergeErr error) error {
+	for i, earlier := range accepted {
+		if _, err := MergeStepPlans([]*types.RefactoringPlan{earlier, plan}); err != nil {
+			return fmt.Errorf("conflicts with the move of %s in this run; run again to move it", names[i])
+		}
+	}
+	return mergeErr
 }

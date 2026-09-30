@@ -221,7 +221,7 @@ type RefactoringPlan struct {
 	Impact        *ImpactAnalysis
 	Reversible    bool
 	// SkippedSites holds call sites that were too complex to rewrite automatically,
-	// or declarations left unmoved. The caller should inspect these and update them manually.
+	// or declarations left unmoved. The caller should inspect these; call sites need manual updates.
 	SkippedSites  []SkippedSite
 	// Coverage says which build configurations the plan was computed under.
 	// It is empty for a plan made in a single view.

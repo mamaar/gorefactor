@@ -19,8 +19,8 @@ type PlanResult struct {
 	ModifiedFiles []string `json:"modified_files"`
 	Success       bool     `json:"success"`
 	// SkippedSites lists call sites that could not be automatically rewritten,
-	// or declarations left unmoved. Each call site must be updated manually
-	// before the build will succeed.
+	// or declarations left unmoved. Each skipped call site must be updated
+	// manually before the build will succeed; a skipped declaration stays put.
 	SkippedSites []types.SkippedSite `json:"skipped_sites,omitempty"`
 	// BuildConfigs names the build configurations the plan was computed under,
 	// primary first. Omitted when there is only one.

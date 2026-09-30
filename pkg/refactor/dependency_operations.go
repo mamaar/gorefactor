@@ -141,6 +141,9 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 		if pkg.Symbols == nil {
 			continue
 		}
+		if targetFSPath != "" && filepath.Clean(pkg.Path) == filepath.Clean(targetFSPath) {
+			continue
+		}
 		if isKeepInternal(pkg, op.Request.KeepInternal) {
 			continue
 		}

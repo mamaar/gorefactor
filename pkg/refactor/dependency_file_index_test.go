@@ -1,7 +1,10 @@
 package refactor
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 func TestBuildFilePackageIndex_KeysByAbsoluteFilePath(t *testing.T) {
@@ -39,5 +42,22 @@ func TestSuggestedMoves_FindsSymbolReferencedByTwoPackages(t *testing.T) {
 
 	if len(moves) != 1 || moves[0].Symbol != "Shared" {
 		t.Errorf("moves = %+v, want one suggestion for Shared", moves)
+	}
+}
+
+func TestAnalyzeDependencies_SuggestsDotImportedSymbolOnUntypeCheckedWorkspace(t *testing.T) {
+	eng, ws := writeExtractWorkspace(t, map[string]string{
+		"src/src.go": "package src\n\nfunc Shared() int { return 1 }\n",
+		"a/a.go":     "package a\n\nimport . \"example.com/extracttest/src\"\n\nfunc A() int { return Shared() }\n",
+		"b/b.go":     "package b\n\nimport \"example.com/extracttest/src\"\n\nfunc B() int { return src.Shared() }\n",
+	})
+
+	plan, err := eng.AnalyzeDependencies(ws, types.AnalyzeDependenciesRequest{Workspace: ws.RootPath, SuggestMoves: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(plan.Changes) != 1 || !strings.Contains(plan.Changes[0].NewText, "Shared") {
+		t.Errorf("report = %+v, want it to suggest moving Shared", plan.Changes)
 	}
 }
