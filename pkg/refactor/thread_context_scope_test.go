@@ -384,7 +384,7 @@ func mark() {}
 	fn := findFuncDecl(pkg, "TestFoo")
 	file := pkg.TestFiles["foo_test.go"]
 
-	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn))
+	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn), false)
 	if !ok || src.Kind != ctxRootLiteral || src.Expr != "t.Context()" {
 		t.Fatalf("expected TestFoo to be a root with t.Context(), got %+v ok=%v", src, ok)
 	}
@@ -408,7 +408,7 @@ func mark() {}
 	fn := findFuncDecl(pkg, "BenchmarkFoo")
 	file := pkg.TestFiles["foo_test.go"]
 
-	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn))
+	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn), false)
 	if !ok || src.Kind != ctxRootLiteral || src.Expr != "b.Context()" {
 		t.Fatalf("expected BenchmarkFoo to be a root with b.Context(), got %+v ok=%v", src, ok)
 	}
@@ -432,7 +432,7 @@ func mark() {}
 	fn := findFuncDecl(pkg, "TestMain")
 	file := pkg.TestFiles["foo_test.go"]
 
-	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn))
+	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn), false)
 	if !ok || src.Kind != ctxRootLiteral || src.Expr != "context.TODO()" {
 		t.Fatalf("expected TestMain to be a root with context.TODO() (testing.M has no Context()), got %+v ok=%v", src, ok)
 	}
@@ -457,7 +457,7 @@ func mark() {}
 	fn := findFuncDecl(pkg, "helper")
 	file := pkg.TestFiles["foo_test.go"]
 
-	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn))
+	src, ok := classifyRoot(pkg, file, fn, nil, findMarkCall(fn), false)
 	if !ok || src.Kind != ctxRootLiteral || src.Expr != "t.Context()" {
 		t.Fatalf("expected helper(t *testing.T) to be a root with t.Context(), got %+v ok=%v", src, ok)
 	}
@@ -484,7 +484,7 @@ func mark() {}
 	file := pkg.TestFiles["foo_test.go"]
 	lit := findFuncLit(testFn.Body)
 
-	src, ok := classifyRoot(pkg, file, nil, lit, findMarkCall(lit))
+	src, ok := classifyRoot(pkg, file, nil, lit, findMarkCall(lit), false)
 	if !ok || src.Kind != ctxRootLiteral || src.Expr != "t.Context()" {
 		t.Fatalf("expected t.Run subtest closure to be a root with t.Context(), got %+v ok=%v", src, ok)
 	}
@@ -507,7 +507,7 @@ func mark() {}
 	fn := findFuncDecl(pkg, "F")
 	lit := findFuncLit(fn.Body)
 
-	src, ok := classifyRoot(pkg, nil, nil, lit, findMarkCall(lit))
+	src, ok := classifyRoot(pkg, nil, nil, lit, findMarkCall(lit), false)
 	if !ok || src.Kind != ctxRootLiteral || src.Expr != "context.TODO()" {
 		t.Fatalf("expected go func(){}() closure to be a root with context.TODO(), got %+v ok=%v", src, ok)
 	}

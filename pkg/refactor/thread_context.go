@@ -444,7 +444,7 @@ func (op *ThreadContextOperation) discover(
 		queue = append(queue, extra...)
 
 		for _, site := range idx.CallSitesOf(f) {
-			caller, climb, err := op.climbTarget(site)
+			caller, climb, err := op.climbTarget(idx, site)
 			if err != nil {
 				return nil, err
 			}
@@ -459,7 +459,7 @@ func (op *ThreadContextOperation) discover(
 // climbTarget decides, for a single call site of a function that is gaining a
 // ctx, whether the enclosing function must itself be climbed (and thus gain a
 // ctx parameter of its own).
-func (op *ThreadContextOperation) climbTarget(site analysis.CallSite) (*gotypes.Func, bool, error) {
+func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, site analysis.CallSite) (*gotypes.Func, bool, error) {
 	// A call inside a closure is a threading root by product decision: a closure
 	// may outlive or run outside its lexical caller (go/defer/callback), so its
 	// enclosing FuncDecl is not a reliable place to source a context from.
@@ -488,7 +488,11 @@ func (op *ThreadContextOperation) climbTarget(site analysis.CallSite) (*gotypes.
 	// must pass that local and stop — not hoist past it and delete it. Reversing
 	// these two checks silently strips main's context creation and produces code
 	// that does not compile.
-	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call); isRoot {
+	cleanupHelper, err := op.calledFromCleanup(idx, site)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, cleanupHelper); isRoot {
 		return nil, false, nil
 	}
 
@@ -537,7 +541,7 @@ func (op *ThreadContextOperation) resolve(
 ) error {
 	for f := range visited {
 		for _, site := range idx.CallSitesOf(f) {
-			expr, err := op.argFor(plan, site)
+			expr, err := op.argFor(idx, plan, site)
 			if err != nil {
 				return err
 			}
@@ -548,7 +552,7 @@ func (op *ThreadContextOperation) resolve(
 }
 
 // argFor returns the expression to pass as ctx at site.
-func (op *ThreadContextOperation) argFor(plan *threadPlan, site analysis.CallSite) (string, error) {
+func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *threadPlan, site analysis.CallSite) (string, error) {
 	// 1. The enclosing function is itself gaining a ctx parameter — pass it.
 	//    Only when the call is directly in the FuncDecl body: a closure does not
 	//    automatically get to use its enclosing declaration's new parameter,
@@ -575,7 +579,11 @@ func (op *ThreadContextOperation) argFor(plan *threadPlan, site analysis.CallSit
 
 	// 4. A root: <param>.Context() for a testing parameter the call can still
 	//    reference, context.TODO() for any other root.
-	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call); ok {
+	cleanupHelper, err := op.calledFromCleanup(idx, site)
+	if err != nil {
+		return "", err
+	}
+	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call, cleanupHelper); ok {
 		return src.Expr, nil
 	}
 
@@ -591,6 +599,22 @@ func (op *ThreadContextOperation) argFor(plan *threadPlan, site analysis.CallSit
 		File: site.File.Path,
 		Line: op.siteLine(site),
 	}
+}
+
+// calledFromCleanup reports whether the function enclosing site, when the call
+// is directly in its body, is called from inside a testing Cleanup closure
+// anywhere in the workspace.
+func (op *ThreadContextOperation) calledFromCleanup(idx *analysis.ReferenceIndex, site analysis.CallSite) (bool, error) {
+	if site.Fn == nil || site.Lit != nil || !hasTestingTBParam(site.Pkg, site.Fn.Type) {
+		return false, nil
+	}
+	caller, err := op.callerObject(site)
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(idx.CallSitesOf(caller), func(s analysis.CallSite) bool {
+		return inCleanupClosure(s.Pkg, s.Fn, s.Call)
+	}), nil
 }
 
 // expandInterfaces returns any additional functions that must gain a ctx

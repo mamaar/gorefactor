@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -181,14 +182,18 @@ func isFakeRootCtxCreation(fn *ast.FuncDecl) (*ast.AssignStmt, bool) {
 // <param>.Context(); test helpers are roots, not climbed. When call shadows
 // the parameter, a closure or Test/Benchmark/Fuzz declaration is a
 // context.TODO() root and any other function is not a root.
-func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, lit *ast.FuncLit, call *ast.CallExpr) (ctxSource, bool) {
+//
+// t.Context() is cancelled before Cleanup functions run, so nothing inside a
+// Cleanup closure uses it, and a testing-param function that cleanupHelper
+// marks as called from one is not a root.
+func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, lit *ast.FuncLit, call *ast.CallExpr, cleanupHelper bool) (ctxSource, bool) {
 	if lit != nil {
 		// t.Run(name, func(t *testing.T) { ... }) and similar: a closure
 		// whose own signature carries a *testing.T/B/F root gets
 		// t.Context(); any other closure (go func(){}, defer func(){},
 		// a generic callback) gets context.TODO() since it may run
 		// outside any traceable synchronous caller chain.
-		if pkg != nil && pkg.TypesInfo != nil {
+		if pkg != nil && pkg.TypesInfo != nil && !inCleanupClosure(pkg, fn, call) {
 			if p, ok := anyTestingTBParam(pkg, lit.Type, call.Pos()); ok {
 				return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 			}
@@ -218,7 +223,7 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 	}
 
 	if pkg != nil && pkg.TypesInfo != nil {
-		if p, ok := anyTestingTBParam(pkg, fn.Type, call.Pos()); ok {
+		if p, ok := anyTestingTBParam(pkg, fn.Type, call.Pos()); ok && !cleanupHelper {
 			return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 		}
 		if file != nil && isTestDecl(file, fn) && hasTestingTBParam(pkg, fn.Type) {
@@ -227,6 +232,52 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 	}
 
 	return ctxSource{}, false
+}
+
+// inCleanupClosure reports whether call sits lexically inside a function
+// literal passed to a Cleanup method of a *testing.T/B/F or testing.TB value.
+func inCleanupClosure(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExpr) bool {
+	if fn == nil || pkg == nil || pkg.TypesInfo == nil {
+		return false
+	}
+	var stack []ast.Node
+	found := false
+	ast.Inspect(fn, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return false
+		}
+		if found || call.Pos() < n.Pos() || call.End() > n.End() {
+			return false
+		}
+		stack = append(stack, n)
+		if n == call {
+			found = anyCleanupArg(pkg, stack)
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// anyCleanupArg reports whether a function literal on stack is an argument of
+// a testing Cleanup call that also lies on stack.
+func anyCleanupArg(pkg *pkgtypes.Package, stack []ast.Node) bool {
+	for i := 1; i < len(stack); i++ {
+		lit, ok := stack[i].(*ast.FuncLit)
+		if !ok {
+			continue
+		}
+		parent, ok := stack[i-1].(*ast.CallExpr)
+		if !ok || !slices.Contains(parent.Args, ast.Expr(lit)) {
+			continue
+		}
+		sel, ok := parent.Fun.(*ast.SelectorExpr)
+		if ok && sel.Sel.Name == "Cleanup" && analysis.IsTestingTB(pkg.TypesInfo.TypeOf(sel.X)) {
+			return true
+		}
+	}
+	return false
 }
 
 // isTestDecl reports whether fn is a Test/Benchmark/Fuzz function declared in
