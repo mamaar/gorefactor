@@ -165,7 +165,7 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		if !needed || hasImport(ws, path, "context") {
 			continue
 		}
-		if imp := generateAddImportChange(ws, path, "context"); imp != nil {
+		if imp := generateAddImportChange(ws, path, "", "context"); imp != nil {
 			changes = append(changes, *imp)
 		}
 	}

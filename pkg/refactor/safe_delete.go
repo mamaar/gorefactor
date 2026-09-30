@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/format"
 	"io"
 	"log/slog"
 	"slices"
@@ -29,6 +30,7 @@ type deletionTarget struct {
 	symbol *pkgtypes.Symbol
 	node   ast.Node // declaration or spec to cut
 	doc    *ast.CommentGroup
+	field  *ast.Field // set when the target is a struct field; node is the field
 }
 
 func (op *SafeDeleteOperation) Type() pkgtypes.OperationType {
@@ -154,14 +156,23 @@ func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgt
 				Message: fmt.Sprintf("file %s of %s not found in package", sym.File, sym.Name),
 			}
 		}
-		node, doc := op.findDeclaration(file, sym)
+		var node ast.Node
+		var doc *ast.CommentGroup
+		var field *ast.Field
+		if sym.Kind == pkgtypes.StructFieldSymbol {
+			if field = findFieldDeclaration(file, sym); field != nil {
+				node, doc = field, field.Doc
+			}
+		} else {
+			node, doc = op.findDeclaration(file, sym)
+		}
 		if node == nil {
 			return nil, &pkgtypes.RefactorError{
 				Type:    pkgtypes.SymbolNotFound,
 				Message: fmt.Sprintf("declaration for %s not found", sym.Name),
 			}
 		}
-		targets = append(targets, deletionTarget{file: file, symbol: sym, node: node, doc: doc})
+		targets = append(targets, deletionTarget{file: file, symbol: sym, node: node, doc: doc, field: field})
 	}
 	return targets, nil
 }
@@ -361,8 +372,34 @@ func (op *SafeDeleteOperation) findDeclaration(file *pkgtypes.File, symbol *pkgt
 	return nil, nil
 }
 
+// findFieldDeclaration returns the struct field of a top-level type in file
+// whose name identifier is at symbol's position.
+func findFieldDeclaration(file *pkgtypes.File, symbol *pkgtypes.Symbol) *ast.Field {
+	if file.AST == nil {
+		return nil
+	}
+	var found *ast.Field
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		if f, ok := n.(*ast.Field); ok {
+			for _, name := range f.Names {
+				if name.Pos() == symbol.Position {
+					found = f
+				}
+			}
+		}
+		return found == nil
+	})
+	return found
+}
+
 func (op *SafeDeleteOperation) generateRemovalChange(ws *pkgtypes.Workspace, t deletionTarget, requested *pkgtypes.Symbol) pkgtypes.Change {
-	start, end := calculateRemovalRange(ws, t)
+	var start, end int
+	var newText string
+	if t.field != nil {
+		start, end, newText = fieldRemoval(ws, t)
+	} else {
+		start, end = calculateRemovalRange(ws, t)
+	}
 
 	oldText := ""
 	if start >= 0 && end <= len(t.file.OriginalContent) && start <= end {
@@ -373,14 +410,79 @@ func (op *SafeDeleteOperation) generateRemovalChange(ws *pkgtypes.Workspace, t d
 	if t.symbol != requested {
 		desc = fmt.Sprintf("Remove method %s.%s (deleted with type %s)", requested.Name, t.symbol.Name, requested.Name)
 	}
+	if t.field != nil {
+		// "Replace" marks the change as a fragment for the syntax validator.
+		desc = fmt.Sprintf("Replace struct text after removing field %s.%s", t.symbol.Parent.Name, t.symbol.Name)
+	}
 	return pkgtypes.Change{
 		File:        t.file.Path,
 		Start:       start,
 		End:         end,
 		OldText:     oldText,
-		NewText:     "",
+		NewText:     newText,
 		Description: desc,
 	}
+}
+
+// fieldRemoval returns the replacement for deleting one field name: the whole
+// line for a single-name field, only the name for `A, B T`. The file is then
+// gofmt'ed so struct column alignment is recomputed, and the change is trimmed
+// to the span that differs from the original.
+func fieldRemoval(ws *pkgtypes.Workspace, t deletionTarget) (int, int, string) {
+	content := t.file.OriginalContent
+	cutStart, cutEnd := fieldCutRange(ws, t)
+	edited := append(append([]byte{}, content[:cutStart]...), content[cutEnd:]...)
+	formatted, err := format.Source(edited)
+	if err != nil {
+		formatted = edited
+	}
+
+	prefix := 0
+	for prefix < len(content) && prefix < len(formatted) && content[prefix] == formatted[prefix] {
+		prefix++
+	}
+	suffix := 0
+	for suffix < len(content)-prefix && suffix < len(formatted)-prefix &&
+		content[len(content)-1-suffix] == formatted[len(formatted)-1-suffix] {
+		suffix++
+	}
+	return prefix, len(content) - suffix, string(formatted[prefix : len(formatted)-suffix])
+}
+
+func fieldCutRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) {
+	content := t.file.OriginalContent
+	f := t.field
+	if len(f.Names) > 1 {
+		for i, name := range f.Names {
+			if name.Pos() != t.symbol.Position {
+				continue
+			}
+			if i+1 < len(f.Names) {
+				return ws.FileSet.Position(name.Pos()).Offset, ws.FileSet.Position(f.Names[i+1].Pos()).Offset
+			}
+			return ws.FileSet.Position(f.Names[i-1].End()).Offset, ws.FileSet.Position(name.End()).Offset
+		}
+	}
+
+	first := f.Pos()
+	if f.Doc != nil {
+		first = f.Doc.Pos()
+	}
+	last := f.End()
+	if f.Comment != nil {
+		last = f.Comment.End()
+	}
+	start, end := ws.FileSet.Position(first).Offset, ws.FileSet.Position(last).Offset
+	if end < len(content) && content[end] == '\r' {
+		end++
+	}
+	if end < len(content) && content[end] == '\n' {
+		end++
+	}
+	for start > 0 && content[start-1] != '\n' {
+		start--
+	}
+	return start, end
 }
 
 // calculateRemovalRange returns the byte range to cut: from the start of the

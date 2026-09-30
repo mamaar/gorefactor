@@ -263,28 +263,33 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			continue
 		}
 		survivingReferences = append(survivingReferences, ref)
-
-		// targetPackage.Path is the workspace-absolute filesystem path,
-		// resolved (and possibly created) by getOrCreateTargetFile above —
-		// unlike op.Request.ToPackage, which may still be the caller's raw,
-		// unresolved input (e.g. "pkg/memcache") when the target package
-		// didn't exist yet. packagePathToImportPath below requires an
-		// absolute path to compute a correct module-relative import path.
-		updateChange, err := op.generateReferenceUpdateChange(ws, ref, targetPackage.Path, targetPackage.Name)
-		if err != nil {
-			return nil, err
-		}
-		if updateChange != nil {
-			plan.Changes = append(plan.Changes, *updateChange)
-			if !contains(plan.AffectedFiles, ref.File) {
-				plan.AffectedFiles = append(plan.AffectedFiles, ref.File)
-			}
-		}
 	}
 
-	// Generate import statement changes (see targetPackage.Path note above)
-	importChanges := op.generateImportChanges(ws, survivingReferences, targetPackage.Path, targetPackage.Name)
-	plan.Changes = append(plan.Changes, importChanges...)
+	// Rewrite each surviving reference, file by file, using the qualifier the
+	// file can actually use for the target package (see move_references.go).
+	// targetPackage.Path is the workspace-absolute filesystem path resolved
+	// (and possibly created) by getOrCreateTargetFile above, unlike
+	// op.Request.ToPackage, which may still be the caller's raw input.
+	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
+	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
+	for _, group := range groupReferencesByFile(survivingReferences) {
+		// References already living in the target package need no qualifier.
+		if refPackage := findPackageForFile(ws, group.file); refPackage != nil && refPackage.Path == targetPackage.Path {
+			continue
+		}
+		edit := planReferenceFile(ws, group.file, group.refs, sourceImportPath, targetImportPath, targetPackage.Name)
+		plan.Changes = append(plan.Changes, edit.importChanges...)
+		for _, ref := range group.refs {
+			updateChange, err := op.generateReferenceUpdateChange(ref, edit.qualifier)
+			if err != nil {
+				return nil, err
+			}
+			plan.Changes = append(plan.Changes, *updateChange)
+		}
+		if !contains(plan.AffectedFiles, group.file) {
+			plan.AffectedFiles = append(plan.AffectedFiles, group.file)
+		}
+	}
 
 	return plan, nil
 }
@@ -1005,19 +1010,9 @@ func symbolNames(symbols []*types.Symbol) string {
 	return strings.Join(names, ", ")
 }
 
-func (op *MoveSymbolOperation) generateReferenceUpdateChange(ws *types.Workspace, ref *types.Reference, targetPackagePath, targetPackageName string) (*types.Change, error) {
-	// Update reference to use new package qualified name
-	// Skip references that already live in the target package — no
-	// qualifier is needed (or wanted) for a same-package reference.
-	//
-	// targetPackagePath must be the workspace-absolute filesystem path (the
-	// same convention as types.Package.Path everywhere else in this file),
-	// not a caller-supplied relative path — findPackageForFile below looks
-	// packages up by that absolute key.
-	if refPackage := findPackageForFile(ws, ref.File); refPackage != nil && refPackage.Path == targetPackagePath {
-		return nil, nil
-	}
-
+// generateReferenceUpdateChange rewrites one reference to a moved symbol so it
+// is spelled qualifier.Name, replacing any existing package qualifier.
+func (op *MoveSymbolOperation) generateReferenceUpdateChange(ref *types.Reference, qualifier string) (*types.Change, error) {
 	// Read the file content to detect if this is a qualified reference
 	content, err := os.ReadFile(ref.File)
 	if err != nil {
@@ -1025,7 +1020,7 @@ func (op *MoveSymbolOperation) generateReferenceUpdateChange(ws *types.Workspace
 	}
 
 	oldRef := ref.Symbol.Name
-	newRef := targetPackageName + "." + ref.Symbol.Name
+	newRef := qualifier + "." + ref.Symbol.Name
 	startPos := ref.Offset
 	endPos := startPos + len(oldRef)
 
@@ -1045,7 +1040,6 @@ func (op *MoveSymbolOperation) generateReferenceUpdateChange(ws *types.Workspace
 			// This is a qualified reference - replace the whole thing
 			oldRef = oldPkg + "." + ref.Symbol.Name
 			startPos = pkgStart
-			// newRef stays as targetPackageName + "." + ref.Symbol.Name
 		}
 	}
 
@@ -1064,40 +1058,6 @@ func (op *MoveSymbolOperation) generateReferenceUpdateChange(ws *types.Workspace
 // isIdentChar returns true if the byte is a valid Go identifier character
 func isIdentChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
-}
-
-func (op *MoveSymbolOperation) generateImportChanges(ws *types.Workspace, references []*types.Reference, targetPackagePath, targetPackageName string) []types.Change {
-	var changes []types.Change
-	processedFiles := make(map[string]bool)
-
-	for _, ref := range references {
-		if processedFiles[ref.File] {
-			continue
-		}
-		processedFiles[ref.File] = true
-
-		// Add import for target package if needed
-		refPackage := findPackageForFile(ws, ref.File)
-		if refPackage != nil && refPackage.Path != targetPackagePath {
-			// Convert absolute path to module-relative import path
-			importPath := packagePathToImportPath(ws, targetPackagePath)
-
-			// Check if import already exists. This must be a per-file check:
-			// Package.Imports is the union over every file in the package, so a
-			// package-level check silently skips the import for a file that does
-			// not have it yet whenever a sibling file does — leaving the rewritten
-			// reference (skip.Foo) with no import and the package uncompilable.
-			if !hasImport(ws, ref.File, importPath) {
-				// Generate import change (handles both single-line and multi-line imports)
-				change := generateAddImportChange(ws, ref.File, importPath)
-				if change != nil {
-					changes = append(changes, *change)
-				}
-			}
-		}
-	}
-
-	return changes
 }
 
 func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, targetPackagePath string) (*types.Package, *types.File, error) {
@@ -1359,9 +1319,9 @@ func findParsedFile(ws *types.Workspace, filePath string) *types.File {
 	return nil
 }
 
-// generateAddImportChange generates a change to add a new import, handling both
-// single-line and multi-line import formats
-func generateAddImportChange(ws *types.Workspace, filePath string, importPath string) *types.Change {
+// generateAddImportChange generates a change to add a new import (under alias
+// when non-empty), handling both single-line and multi-line import formats
+func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath string) *types.Change {
 	file := findParsedFile(ws, filePath)
 	if file == nil {
 		return nil
@@ -1380,7 +1340,7 @@ func generateAddImportChange(ws *types.Workspace, filePath string, importPath st
 
 		if isSingleLine {
 			// Convert single-line import to multi-line format
-			return convertSingleLineImportToMultiLine(file.AST, content, filePath, importPath)
+			return convertSingleLineImportToMultiLine(file.AST, content, filePath, alias, importPath)
 		}
 
 		// Add to existing multi-line import block
@@ -1397,7 +1357,7 @@ func generateAddImportChange(ws *types.Workspace, filePath string, importPath st
 						Start:       i + 1,
 						End:         i + 1,
 						OldText:     "",
-						NewText:     fmt.Sprintf("\t\"%s\"\n", importPath),
+						NewText:     "\t" + importSpecText(alias, importPath) + "\n",
 						Description: fmt.Sprintf("Add import for %s", importPath),
 					}
 				}
@@ -1424,7 +1384,7 @@ func generateAddImportChange(ws *types.Workspace, filePath string, importPath st
 					Start:       i + 1,
 					End:         i + 1,
 					OldText:     "",
-					NewText:     fmt.Sprintf("\nimport \"%s\"\n", importPath),
+					NewText:     "\nimport " + importSpecText(alias, importPath) + "\n",
 					Description: fmt.Sprintf("Add import for %s", importPath),
 				}
 			}
@@ -1453,7 +1413,7 @@ func isSingleLineImport(astFile *ast.File, content []byte) bool {
 
 // convertSingleLineImportToMultiLine converts a single-line import to multi-line format
 // and adds the new import
-func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, filePath string, newImportPath string) *types.Change {
+func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, filePath, newAlias, newImportPath string) *types.Change {
 	lines := strings.Split(string(content), "\n")
 
 	// Find the single-line import statement
@@ -1482,10 +1442,10 @@ func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, fileP
 			if len(parts) == 3 {
 				// Has alias: import alias "path"
 				alias := parts[1]
-				newImport = fmt.Sprintf("import (\n\t%s %s\n\t\"%s\"\n)", alias, oldImportPath, newImportPath)
+				newImport = fmt.Sprintf("import (\n\t%s %s\n\t%s\n)", alias, oldImportPath, importSpecText(newAlias, newImportPath))
 			} else {
 				// No alias: import "path"
-				newImport = fmt.Sprintf("import (\n\t%s\n\t\"%s\"\n)", oldImportPath, newImportPath)
+				newImport = fmt.Sprintf("import (\n\t%s\n\t%s\n)", oldImportPath, importSpecText(newAlias, newImportPath))
 			}
 
 			return &types.Change{
@@ -1618,77 +1578,25 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 // extractMethodsForType extracts all methods that have the given type as receiver
 func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName string) string {
 	var methods []string
-	lines := strings.Split(string(file.OriginalContent), "\n")
-
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			// Check if this function has a receiver (i.e., it's a method)
-			if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
-				// Get the receiver type
-				var receiverType string
-				recvField := funcDecl.Recv.List[0]
-
-				switch recvType := recvField.Type.(type) {
-				case *ast.Ident:
-					receiverType = recvType.Name
-				case *ast.StarExpr:
-					if ident, ok := recvType.X.(*ast.Ident); ok {
-						receiverType = ident.Name
-					}
-				}
-
-				// If the receiver matches our type, extract the method
-				if receiverType == typeName {
-					methodName := funcDecl.Name.Name
-					// Find the method in the source
-					for i, line := range lines {
-						// Look for the method declaration (including receiver)
-						if strings.Contains(line, "func (") && strings.Contains(line, receiverType) && strings.Contains(line, methodName) {
-							start := i
-
-							// Include doc comments if present
-						docSearch4:
-							for j := i - 1; j >= 0; j-- {
-								trimmed := strings.TrimSpace(lines[j])
-								switch {
-								case strings.HasPrefix(trimmed, "//"):
-									start = j
-								case trimmed == "":
-									continue
-								default:
-									break docSearch4
-								}
-							}
-
-							// Find the end of the method
-							braceCount := 0
-							foundOpenBrace := false
-
-							for j := i; j < len(lines); j++ {
-								for _, char := range lines[j] {
-									if char == '{' {
-										foundOpenBrace = true
-										braceCount++
-									} else if char == '}' && foundOpenBrace {
-										braceCount--
-										if braceCount == 0 {
-											end := j + 1
-											methodCode := strings.Join(lines[start:end], "\n")
-											methods = append(methods, methodCode)
-											return false
-										}
-									}
-								}
-							}
-							break
-						}
-					}
-				}
-			}
+	for _, d := range file.AST.Decls {
+		funcDecl, ok := d.(*ast.FuncDecl)
+		if !ok || funcDecl.Recv == nil || len(funcDecl.Recv.List) == 0 {
+			continue
 		}
-		return true
-	})
-
+		recv := funcDecl.Recv.List[0].Type
+		if star, ok := recv.(*ast.StarExpr); ok {
+			recv = star.X
+		}
+		if ident, ok := recv.(*ast.Ident); !ok || ident.Name != typeName {
+			continue
+		}
+		first := funcDecl.Pos()
+		if funcDecl.Doc != nil {
+			first = funcDecl.Doc.Pos()
+		}
+		start, end := int(first-file.AST.FileStart), int(funcDecl.End()-file.AST.FileStart)
+		methods = append(methods, string(file.OriginalContent[start:end]))
+	}
 	return strings.Join(methods, "\n\n")
 }
 
