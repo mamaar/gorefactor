@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"bytes"
+	"go/ast"
 	"go/build"
 	"io"
 	"slices"
@@ -85,6 +86,21 @@ func (c BuildConfig) MatchesFile(f *SourceFile) bool {
 		return false
 	}
 	return c.Cgo || !importsC(f)
+}
+
+// IncludedInEveryConfig reports whether the file name in dir, parsed as f, is
+// part of its package under every build configuration: it has no build
+// constraint, no GOOS or GOARCH filename suffix and does not import "C".
+func IncludedInEveryConfig(dir, name string, f *ast.File) bool {
+	if fileConstraint(&SourceFile{AST: f}) != nil || importsC(&SourceFile{AST: f}) {
+		return false
+	}
+	for _, port := range candidatePorts {
+		if !NewBuildConfig(port[0], port[1], true).MatchesFile(&SourceFile{Dir: dir, Name: name}) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c BuildConfig) context() build.Context {

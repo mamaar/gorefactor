@@ -1130,17 +1130,23 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 		}
 	}
 
-	if len(targetPackage.Files) > 0 {
-		return targetPackage, targetPackage.Files[slices.Sorted(maps.Keys(targetPackage.Files))[0]], false, nil
+	for _, name := range slices.Sorted(maps.Keys(targetPackage.Files)) {
+		f := targetPackage.Files[name]
+		if f.AST != nil && analysis.IncludedInEveryConfig(targetPackage.Dir, filepath.Base(f.Path), f.AST) {
+			return targetPackage, f, false, nil
+		}
 	}
 
-	// targetPackagePath is whatever the caller supplied: reaching here means it
-	// named a package that does not exist, so ResolvePackagePath had nothing to
-	// match it against and passed it through untouched. It is resolved as a
-	// path so the file lands inside the project, and the module import path
-	// form ("mod/pkg/thing") does not name a directory called after the module.
-	absPackageDir, err := types.ResolveNewPackagePath(ws, targetPackagePath)
-	if err != nil {
+	// A package that does not exist yet was passed through ResolvePackagePath
+	// untouched. It is resolved as a path so the file lands inside the
+	// project, and the module import path form ("mod/pkg/thing") does not
+	// name a directory called after the module.
+	absPackageDir := targetPackage.Dir
+	if exists {
+		if absPackageDir == "" {
+			absPackageDir = targetPackage.Path
+		}
+	} else if absPackageDir, err = types.ResolveNewPackagePath(ws, targetPackagePath); err != nil {
 		return nil, nil, false, err
 	}
 	filename := targetPackage.Name + ".go"
@@ -1148,7 +1154,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	if _, err := os.Stat(fullPath); err == nil {
 		return nil, nil, false, &types.RefactorError{
 			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("target file %s exists but is not part of package %s under this build configuration", fullPath, targetPackagePath),
+			Message: fmt.Sprintf("target file %s exists but is not part of package %s under every build configuration", fullPath, targetPackagePath),
 		}
 	}
 
@@ -1161,19 +1167,21 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("failed to parse initial file content: %v", err)
 	}
-	virtual := &types.Package{
-		Path:  absPackageDir,
-		Dir:   absPackageDir,
-		Name:  targetPackage.Name,
-		Files: make(map[string]*types.File),
+	if !exists {
+		targetPackage = &types.Package{
+			Path:  absPackageDir,
+			Dir:   absPackageDir,
+			Name:  targetPackage.Name,
+			Files: make(map[string]*types.File),
+		}
 	}
 	targetFile = &types.File{
 		Path:            fullPath,
-		Package:         virtual,
+		Package:         targetPackage,
 		AST:             astFile,
 		OriginalContent: []byte(initialContent),
 	}
-	return virtual, targetFile, true, nil
+	return targetPackage, targetFile, true, nil
 }
 
 // Helper methods for RenameSymbolOperation
