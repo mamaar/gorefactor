@@ -247,7 +247,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 
 	// Generate changes to add the moved symbols (and any imports they need)
 	// to the target file
-	targetPackage, targetFile, err := op.getOrCreateTargetFile(ws, op.Request.ToPackage)
+	targetPackage, targetFile, created, err := op.getOrCreateTargetFile(ws, op.Request.ToPackage)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +256,13 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moving, uses, targetPackage)
 	if err != nil {
 		return nil, err
+	}
+	if created {
+		addChanges = []types.Change{{
+			File:        targetFile.Path,
+			NewText:     string(applyChangesInMemory(targetFile.OriginalContent, addChanges)),
+			Description: fmt.Sprintf("Create %s with %s", targetFile.Path, symbolNames(moving)),
+		}}
 	}
 	plan.Changes = append(plan.Changes, addChanges...)
 	if !contains(plan.AffectedFiles, targetFile.Path) {
@@ -1049,103 +1056,70 @@ func isIdentChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
-func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, targetPackagePath string) (*types.Package, *types.File, error) {
-	// Get or create target package
+// getOrCreateTargetFile returns the target package and the file the moved
+// code is added to. A package with no file yet gets one that exists only in
+// memory (created reports it); the plan then carries its creation, and
+// planning changes neither the disk nor the workspace.
+func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, targetPackagePath string) (targetPackage *types.Package, targetFile *types.File, created bool, err error) {
 	targetPackage, exists := ws.Packages[targetPackagePath]
 	if !exists {
 		if !op.Request.CreateTarget {
-			return nil, nil, &types.RefactorError{
+			return nil, nil, false, &types.RefactorError{
 				Type:    types.InvalidOperation,
 				Message: fmt.Sprintf("target package does not exist: %s", targetPackagePath),
 			}
 		}
-
-		// Create new package (simplified implementation)
 		targetPackage = &types.Package{
 			Path:  targetPackagePath,
 			Name:  lastPathComponent(targetPackagePath),
 			Files: make(map[string]*types.File),
 		}
-		ws.Packages[targetPackagePath] = targetPackage
 	}
 
-	// Get or create a file in the target package
-	var targetFile *types.File
 	if len(targetPackage.Files) > 0 {
-		// Use existing file
-		for _, file := range targetPackage.Files {
-			targetFile = file
-			break
-		}
-	} else {
-		// Create new file (simplified)
-		filename := targetPackage.Name + ".go"
-		// targetPackagePath is whatever the caller supplied: reaching this branch
-		// means it named a package that does not exist, so ResolvePackagePath
-		// had nothing to match it against and passed it through untouched. It
-		// has to be resolved as a path so MkdirAll/WriteFile land inside the
-		// project rather than relative to the MCP server's working directory —
-		// and so the module import path form ("mod/pkg/thing") doesn't create a
-		// directory named after the module inside the module.
-		absPackageDir, resolveErr := types.ResolveNewPackagePath(ws, targetPackagePath)
-		if resolveErr != nil {
-			return nil, nil, resolveErr
-		}
-		fullPath := filepath.Join(absPackageDir, filename)
-		initialContent := fmt.Sprintf("package %s\n", targetPackage.Name)
-
-		// Create the directory and file on disk
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
-			return nil, nil, fmt.Errorf("failed to create directory: %v", err)
-		}
-		if err := os.WriteFile(fullPath, []byte(initialContent), 0644); err != nil {
-			return nil, nil, fmt.Errorf("failed to create initial file: %v", err)
-		}
-
-		// Update the package's Path to the resolved absolute path and re-register
-		// it in the workspace under the absolute key so subsequent lookups succeed.
-		if targetPackage.Path != absPackageDir {
-			delete(ws.Packages, targetPackage.Path)
-			targetPackage.Path = absPackageDir
-			ws.Packages[absPackageDir] = targetPackage
-		}
-		targetPackage.Dir = absPackageDir
-
-		// Parse the freshly-written stub so File.AST is a real, non-nil AST
-		// (using the workspace's shared FileSet, same as the initial parse
-		// pass). A nil AST here is what previously caused a panic: the MCP
-		// layer re-syncs the workspace from disk after every write
-		// (internal/mcp.executePlan -> SyncWorkspaceChanges), which
-		// re-parses this same file and inserts it into targetPackage.Files
-		// keyed by filepath.Base(fullPath). If our own key here didn't match
-		// that convention, our nil-AST placeholder would linger in the map
-		// alongside the freshly-parsed entry, and the next iteration over
-		// Files (e.g. WorkspaceUpdater.recollectImports) would dereference
-		// the nil AST and crash the whole server process.
-		fset := ws.FileSet
-		if fset == nil {
-			fset = token.NewFileSet()
-		}
-		astFile, err := parser.ParseFile(fset, fullPath, initialContent, parser.ParseComments)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to parse initial file content: %v", err)
-		}
-
-		targetFile = &types.File{
-			Path:            fullPath,
-			Package:         targetPackage,
-			AST:             astFile,
-			OriginalContent: []byte(initialContent),
-			Modifications:   make([]types.Modification, 0),
-		}
-		// Keyed by base filename, matching the convention used everywhere
-		// else pkg.Files is populated (analysis.GoParser, WorkspaceUpdater),
-		// so a later re-parse of this same file replaces this entry instead
-		// of leaving a stale duplicate behind under a different key.
-		targetPackage.Files[filename] = targetFile
+		return targetPackage, targetPackage.Files[slices.Sorted(maps.Keys(targetPackage.Files))[0]], false, nil
 	}
 
-	return targetPackage, targetFile, nil
+	// targetPackagePath is whatever the caller supplied: reaching here means it
+	// named a package that does not exist, so ResolvePackagePath had nothing to
+	// match it against and passed it through untouched. It is resolved as a
+	// path so the file lands inside the project, and the module import path
+	// form ("mod/pkg/thing") does not name a directory called after the module.
+	absPackageDir, err := types.ResolveNewPackagePath(ws, targetPackagePath)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	filename := targetPackage.Name + ".go"
+	fullPath := filepath.Join(absPackageDir, filename)
+	if _, err := os.Stat(fullPath); err == nil {
+		return nil, nil, false, &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("target file %s exists but is not part of package %s under this build configuration", fullPath, targetPackagePath),
+		}
+	}
+
+	initialContent := fmt.Sprintf("package %s\n", targetPackage.Name)
+	fset := ws.FileSet
+	if fset == nil {
+		fset = token.NewFileSet()
+	}
+	astFile, err := parser.ParseFile(fset, fullPath, initialContent, parser.ParseComments)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("failed to parse initial file content: %v", err)
+	}
+	virtual := &types.Package{
+		Path:  absPackageDir,
+		Dir:   absPackageDir,
+		Name:  targetPackage.Name,
+		Files: make(map[string]*types.File),
+	}
+	targetFile = &types.File{
+		Path:            fullPath,
+		Package:         virtual,
+		AST:             astFile,
+		OriginalContent: []byte(initialContent),
+	}
+	return virtual, targetFile, true, nil
 }
 
 // Helper methods for RenameSymbolOperation

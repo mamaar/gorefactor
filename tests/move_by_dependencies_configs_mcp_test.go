@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"maps"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -164,10 +166,9 @@ func TestMoveByDependencies_TypeWithMethodsAndFunctionFromSamePackageMoveTogethe
 
 func TestMoveByDependencies_DryRunReturnsCombinedDiffAndWritesNothing(t *testing.T) {
 	files := map[string]string{
-		"shared/shared.go": "package shared\n",
-		"src/src.go":       "package src\n\nfunc One() int { return 1 }\n\nfunc Two() int { return 2 }\n",
-		"a/a.go":           "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() }\n",
-		"b/b.go":           "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.One() + src.Two() }\n",
+		"src/src.go": "package src\n\nfunc One() int { return 1 }\n\nfunc Two() int { return 2 }\n",
+		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() }\n",
+		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.One() + src.Two() }\n",
 	}
 	dir := writeInlineWorkspace(t, maps.Clone(files))
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
@@ -184,6 +185,15 @@ func TestMoveByDependencies_DryRunReturnsCombinedDiffAndWritesNothing(t *testing
 	for rel, content := range files {
 		assertFileUnchanged(t, dir, rel, content)
 	}
+	if _, err := os.Stat(filepath.Join(dir, "shared")); !os.IsNotExist(err) {
+		t.Errorf("dry run left the target directory behind, stat err = %v", err)
+	}
+
+	callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	assertFileContains(t, dir, "shared/shared.go", "package shared")
+	assertFileContains(t, dir, "shared/shared.go", "func One()")
+	goVets(t, dir, "")
 }
 
 func TestMoveByDependencies_SymbolUsingAnotherMovedPackageSymbolIsSkippedAndTheRestMove(t *testing.T) {
