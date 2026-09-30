@@ -19,9 +19,7 @@ func buildScopeWorkspace(t *testing.T, files map[string]string) *pkgtypes.Worksp
 	if !ok {
 		t.Fatalf("engine is not *DefaultEngine")
 	}
-	for _, pkg := range ws.Packages {
-		de.parser.EnsureTypeChecked(ws, pkg)
-	}
+	de.EnsureTypeChecked(ws)
 	return ws
 }
 

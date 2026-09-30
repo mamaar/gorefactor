@@ -78,9 +78,7 @@ type RefactorEngine interface {
 
 // DefaultEngine implements the Engine interface
 type DefaultEngine struct {
-	parser     *analysis.GoParser
-	resolver   *analysis.SymbolResolver
-	analyzer   *analysis.DependencyAnalyzer
+	set        *analysis.WorkspaceSet
 	validator  *Validator
 	serializer *Serializer
 	config     *EngineConfig
@@ -93,29 +91,6 @@ type EngineConfig struct {
 	AllowBreaking   bool
 	// BuildConfig overrides the parser's host build configuration when set.
 	BuildConfig *analysis.BuildConfig
-}
-
-// WatchContext exposes the internal components needed by the watch subsystem.
-type WatchContext struct {
-	Workspace *types.Workspace
-	Parser    *analysis.GoParser
-	Resolver  *analysis.SymbolResolver
-	Analyzer  *analysis.DependencyAnalyzer
-}
-
-// LoadWorkspaceForWatch loads a workspace and returns the internal components
-// required for incremental watch-mode updates.
-func (e *DefaultEngine) LoadWorkspaceForWatch(path string) (*WatchContext, error) {
-	ws, err := e.LoadWorkspace(path)
-	if err != nil {
-		return nil, err
-	}
-	return &WatchContext{
-		Workspace: ws,
-		Parser:    e.parser,
-		Resolver:  e.resolver,
-		Analyzer:  e.analyzer,
-	}, nil
 }
 
 // DefaultConfig returns the default engine configuration
@@ -131,12 +106,7 @@ func CreateEngine(logger *slog.Logger) RefactorEngine {
 }
 
 func CreateEngineWithConfig(config *EngineConfig, logger *slog.Logger) RefactorEngine {
-	var opts []analysis.ParserOption
-	if config.BuildConfig != nil {
-		opts = append(opts, analysis.WithBuildConfig(*config.BuildConfig))
-	}
 	return &DefaultEngine{
-		parser:     analysis.NewParser(logger, opts...),
 		validator:  NewValidator(logger),
 		serializer: NewSerializer(),
 		config:     config,
@@ -144,37 +114,55 @@ func CreateEngineWithConfig(config *EngineConfig, logger *slog.Logger) RefactorE
 	}
 }
 
-// LoadWorkspace loads and parses a complete workspace
+// primaryConfig returns the build configuration workspaces are loaded under.
+func (e *DefaultEngine) primaryConfig() analysis.BuildConfig {
+	if e.config != nil && e.config.BuildConfig != nil {
+		return *e.config.BuildConfig
+	}
+	return analysis.DefaultBuildConfig()
+}
+
+// viewOf returns the view that owns ws, the primary view for a workspace the
+// set does not know, or nil before LoadWorkspace.
+func (e *DefaultEngine) viewOf(ws *types.Workspace) *analysis.View {
+	if e.set == nil {
+		return nil
+	}
+	if v := e.set.ViewOf(ws); v != nil {
+		return v
+	}
+	return e.set.Primary()
+}
+
+func (e *DefaultEngine) parserFor(ws *types.Workspace) *analysis.GoParser {
+	if v := e.viewOf(ws); v != nil {
+		return v.Parser
+	}
+	return nil
+}
+
+func (e *DefaultEngine) analyzerFor(ws *types.Workspace) *analysis.DependencyAnalyzer {
+	if v := e.viewOf(ws); v != nil {
+		return v.Analyzer
+	}
+	return nil
+}
+
+// WorkspaceSet returns the per-build-configuration views of the loaded
+// workspace, or nil before LoadWorkspace.
+func (e *DefaultEngine) WorkspaceSet() *analysis.WorkspaceSet { return e.set }
+
+// LoadWorkspace loads a workspace and returns its primary view's workspace.
 func (e *DefaultEngine) LoadWorkspace(path string) (*types.Workspace, error) {
 	e.logger.Info("loading workspace", "path", path)
 
-	// Parse the workspace
-	workspace, err := e.parser.ParseWorkspace(path)
+	set, err := analysis.LoadWorkspaceSet(path, e.primaryConfig(), e.logger)
 	if err != nil {
-		e.logger.Error("workspace parsing failed", "path", path, "err", err)
+		e.logger.Error("workspace loading failed", "path", path, "err", err)
 		return nil, fmt.Errorf("failed to parse workspace: %w", err)
 	}
-
-	// Create resolver with parsed workspace
-	e.resolver = analysis.NewSymbolResolver(workspace, e.logger)
-
-	// Build symbol tables for all packages
-	e.logger.Debug("building symbol tables", "package_count", len(workspace.Packages))
-	for _, pkg := range workspace.Packages {
-		_, err := e.resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			e.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
-			return nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
-		}
-	}
-
-	// Create dependency analyzer and build dependency graph
-	e.analyzer = analysis.NewDependencyAnalyzer(workspace, e.logger)
-	_, err = e.analyzer.BuildDependencyGraph()
-	if err != nil {
-		e.logger.Error("dependency graph build failed", "err", err)
-		return nil, fmt.Errorf("failed to build dependency graph: %w", err)
-	}
+	e.set = set
+	workspace := set.Primary().Workspace
 
 	// Configure import ordering with module info
 	if workspace.Module != nil {
@@ -234,7 +222,7 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -261,7 +249,7 @@ func (e *DefaultEngine) RenameSymbol(ws *types.Workspace, req types.RenameSymbol
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -288,7 +276,7 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -315,7 +303,7 @@ func (e *DefaultEngine) RenameInterfaceMethod(ws *types.Workspace, req types.Ren
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -345,7 +333,7 @@ func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethod
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -383,7 +371,7 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -419,11 +407,10 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 
 	// The operation type-checks packages itself when it needs to build its own
 	// reference index (CachedIndex nil), and doing that requires a parser with
-	// a real importer. A parser built via analysis.NewParser has none — only
-	// ParseWorkspace populates it — so a self-made parser would panic partway
-	// through type-checking. The engine's own parser was built by
-	// ParseWorkspace (see LoadWorkspace) and so is safe to hand over.
-	operation.Parser = e.parser
+	// a real importer. A parser built via analysis.NewParser has none, so a
+	// self-made parser would panic partway through type-checking; the parser
+	// of the view that owns ws is bound to ws's importer.
+	operation.Parser = e.parserFor(ws)
 	operation.Logger = e.logger
 
 	// Validate the operation
@@ -438,7 +425,7 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -464,7 +451,7 @@ func (e *DefaultEngine) ExtractMethod(ws *types.Workspace, req types.ExtractMeth
 		NewMethodName: req.NewMethodName,
 		TargetStruct:  req.TargetStruct,
 		Logger:        logger,
-		Parser:        e.parser,
+		Parser:        e.parserFor(ws),
 	}
 
 	// Validate the operation
@@ -479,7 +466,7 @@ func (e *DefaultEngine) ExtractMethod(ws *types.Workspace, req types.ExtractMeth
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -506,7 +493,7 @@ func (e *DefaultEngine) ExtractFunction(ws *types.Workspace, req types.ExtractFu
 		EndLine:         req.EndLine,
 		NewFunctionName: req.NewFunctionName,
 		Logger:          logger,
-		Parser:          e.parser,
+		Parser:          e.parserFor(ws),
 	}
 
 	// Validate the operation
@@ -521,7 +508,7 @@ func (e *DefaultEngine) ExtractFunction(ws *types.Workspace, req types.ExtractFu
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -553,7 +540,7 @@ func (e *DefaultEngine) ExtractInterface(ws *types.Workspace, req types.ExtractI
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -586,7 +573,7 @@ func (e *DefaultEngine) ExtractVariable(ws *types.Workspace, req types.ExtractVa
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -617,7 +604,7 @@ func (e *DefaultEngine) InlineMethod(ws *types.Workspace, req types.InlineMethod
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -649,7 +636,7 @@ func (e *DefaultEngine) InlineVariable(ws *types.Workspace, req types.InlineVari
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -680,7 +667,7 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -726,7 +713,7 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 		return nil, fmt.Errorf("failed to generate safe delete plan: %w", err)
 	}
 
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -793,7 +780,7 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 		return nil, fmt.Errorf("failed to generate change signature plan: %w", err)
 	}
 
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -833,7 +820,7 @@ func (e *DefaultEngine) BatchRefactor(ws *types.Workspace, ops []types.Operation
 		}
 
 		// Analyze impact
-		impact, err := e.analyzer.AnalyzeImpact(op)
+		impact, err := e.analyzerFor(ws).AnalyzeImpact(op)
 		if err != nil {
 			return nil, fmt.Errorf("failed to analyze impact for operation %d: %w", i, err)
 		}
@@ -890,11 +877,12 @@ func (e *DefaultEngine) BatchRefactor(ws *types.Workspace, ops []types.Operation
 
 // AnalyzeImpact analyzes the impact of a refactoring operation
 func (e *DefaultEngine) AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error) {
-	if e.analyzer == nil {
+	analyzer := e.analyzerFor(ws)
+	if analyzer == nil {
 		return nil, fmt.Errorf("workspace not loaded")
 	}
 
-	return e.analyzer.AnalyzeImpact(op)
+	return analyzer.AnalyzeImpact(op)
 }
 
 // ValidateRefactoring validates a complete refactoring plan
@@ -907,9 +895,9 @@ func (e *DefaultEngine) ValidateRefactoring(plan *types.RefactoringPlan) error {
 // is a no-op once a package has already been checked, so calling this
 // repeatedly across operations is cheap.
 func (e *DefaultEngine) EnsureTypeChecked(ws *types.Workspace) {
-	if e.parser != nil {
+	if parser := e.parserFor(ws); parser != nil {
 		for _, pkg := range ws.Packages {
-			e.parser.EnsureTypeChecked(ws, pkg)
+			parser.EnsureTypeChecked(ws, pkg)
 		}
 	}
 }
@@ -927,7 +915,8 @@ func (e *DefaultEngine) EnsureTypeChecked(ws *types.Workspace) {
 // a no-op: the subsequent analyzers.Run call already returns an empty result
 // for an unknown package filter, so there is nothing useful to type-check.
 func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath string) {
-	if e.parser == nil {
+	parser := e.parserFor(ws)
+	if parser == nil {
 		return
 	}
 	if pkgPath == "" {
@@ -936,7 +925,7 @@ func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath st
 	}
 	resolved := types.ResolvePackagePath(ws, pkgPath)
 	if pkg, ok := ws.Packages[resolved]; ok {
-		e.parser.EnsureTypeChecked(ws, pkg)
+		parser.EnsureTypeChecked(ws, pkg)
 	}
 }
 
@@ -947,11 +936,12 @@ func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath st
 // produces spurious type errors on cross-package references. Returns nil if
 // e has no parser (e.g. a test double), which VerifyPlanTypesWithImporter
 // treats the same as VerifyPlanTypes: it builds its own throwaway importer.
-func (e *DefaultEngine) Importer() gotypes.Importer {
-	if e.parser == nil {
+func (e *DefaultEngine) Importer(ws *types.Workspace) gotypes.Importer {
+	parser := e.parserFor(ws)
+	if parser == nil {
 		return nil
 	}
-	return e.parser.Importer()
+	return parser.Importer()
 }
 
 // ExecutePlan applies a refactoring plan to the workspace
@@ -1127,7 +1117,7 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1157,7 +1147,7 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1188,7 +1178,7 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1215,7 +1205,7 @@ func (e *DefaultEngine) CreateFacade(ws *types.Workspace, req types.CreateFacade
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1242,7 +1232,7 @@ func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateF
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1269,7 +1259,7 @@ func (e *DefaultEngine) UpdateFacades(ws *types.Workspace, req types.UpdateFacad
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1296,7 +1286,7 @@ func (e *DefaultEngine) CleanAliases(ws *types.Workspace, req types.CleanAliases
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1323,7 +1313,7 @@ func (e *DefaultEngine) StandardizeImports(ws *types.Workspace, req types.Standa
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1350,7 +1340,7 @@ func (e *DefaultEngine) ResolveAliasConflicts(ws *types.Workspace, req types.Res
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1377,7 +1367,7 @@ func (e *DefaultEngine) ConvertAliases(ws *types.Workspace, req types.ConvertAli
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1405,7 +1395,7 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 
 	// Only set impact from analyzer if the operation didn't already compute it
 	if plan.Impact == nil {
-		impact, err := e.analyzer.AnalyzeImpact(operation)
+		impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 		if err != nil {
 			return nil, fmt.Errorf("failed to analyze impact: %w", err)
 		}
@@ -1433,7 +1423,7 @@ func (e *DefaultEngine) OrganizeByLayers(ws *types.Workspace, req types.Organize
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1460,7 +1450,7 @@ func (e *DefaultEngine) FixCycles(ws *types.Workspace, req types.FixCyclesReques
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1487,7 +1477,7 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1519,7 +1509,7 @@ func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOper
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1546,7 +1536,7 @@ func (e *DefaultEngine) CreatePlan(ws *types.Workspace, req types.PlanOperationR
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1582,7 +1572,7 @@ func (e *DefaultEngine) ExecutePlanFromFile(req types.ExecuteOperationRequest) (
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -1616,7 +1606,7 @@ func (e *DefaultEngine) RollbackOperations(req types.RollbackOperationRequest) (
 	}
 
 	// Analyze impact
-	impact, err := e.analyzer.AnalyzeImpact(operation)
+	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
 	if err != nil {
 		return nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}

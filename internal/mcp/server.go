@@ -68,10 +68,10 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	}
 
 	s.logger.Info("loading workspace", "path", path)
-	wctx, err := s.engine.LoadWorkspaceForWatch(path)
-	if err != nil {
+	if _, err := s.engine.LoadWorkspace(path); err != nil {
 		return false, fmt.Errorf("load workspace: %w", err)
 	}
+	wctx := s.engine.WorkspaceSet().Primary()
 	s.workspace = wctx.Workspace
 	s.parser = wctx.Parser
 	s.resolver = wctx.Resolver

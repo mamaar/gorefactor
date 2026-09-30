@@ -944,7 +944,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// syntax. The importer must be the one that type-checked ws — see
 		// VerifyPlanTypesWithImporter's doc comment — which is why
 		// EnsureTypeCheckedPackage above and this share state.GetEngine().
-		importer := state.GetEngine().Importer()
+		importer := state.GetEngine().Importer(ws)
 		plan := analyzers.ChangesToPlan(changes)
 		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, importer)
 
@@ -1203,7 +1203,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// syntax) will catch. The importer must be the one that type-checked
 		// ws — see VerifyPlanTypesWithImporter's doc comment — which is why
 		// EnsureTypeCheckedPackage above and this share state.GetEngine().
-		importer := state.GetEngine().Importer()
+		importer := state.GetEngine().Importer(ws)
 		plan := analyzers.ChangesToPlan(changes)
 		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, importer)
 
