@@ -51,3 +51,21 @@ func TestExternal_TypeCheckedFromListedFilesWithoutBodies(t *testing.T) {
 		t.Errorf("the dependency of an imported package was not type-checked: %+v", n)
 	}
 }
+
+func TestExternal_SizesFollowTheViewsArchitecture(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go": "package p\n\nimport \"example.org/ext\"\n\nvar V = ext.Word\n",
+	})
+	dir := t.TempDir()
+	ext := listedExternal(t, dir, "example.org/ext", "ext",
+		"package ext\n\nimport \"unsafe\"\n\nvar Word [unsafe.Sizeof(uintptr(0))]byte\n")
+	for goarch, want := range map[string]string{"386": "[4]byte", "amd64": "[8]byte"} {
+		parser, ws := loadWithConfig(t, root, NewBuildConfig("linux", goarch, false))
+		parser.loadPackages = (&recordingLoader{pkgs: []*packages.Package{ext}}).load
+		pkg := ws.Packages[filepath.Join(root, "p")]
+		parser.EnsureTypeChecked(ws, pkg)
+		if got := pkg.TypesPkg.Scope().Lookup("V").Type().String(); got != want {
+			t.Errorf("GOARCH=%s: V has type %s, want %s", goarch, got, want)
+		}
+	}
+}

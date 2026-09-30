@@ -14,7 +14,8 @@ import (
 // externalSet holds the packages a load listed for one build configuration.
 // Each is type-checked from source, without function bodies, when first imported.
 type externalSet struct {
-	fset *token.FileSet
+	fset  *token.FileSet
+	sizes gotypes.Sizes // of the configuration's architecture, as go/packages checks with
 
 	// mu serializes type-checking; views that fell back to another view's set
 	// import from it concurrently.
@@ -35,8 +36,8 @@ type externalPackage struct {
 
 // newExternalSet indexes roots and everything they import by import path. Of
 // several listed variants of one path, the one compiled for no test is kept.
-func newExternalSet(fset *token.FileSet, roots []*packages.Package) *externalSet {
-	s := &externalSet{fset: fset, byPath: make(map[string]*externalPackage)}
+func newExternalSet(fset *token.FileSet, goarch string, roots []*packages.Package) *externalSet {
+	s := &externalSet{fset: fset, sizes: gotypes.SizesFor("gc", goarch), byPath: make(map[string]*externalPackage)}
 	byID := make(map[string]*externalPackage)
 	for _, root := range roots {
 		s.add(byID, root)
@@ -168,6 +169,7 @@ func (s *externalSet) check(n *externalPackage) {
 		Importer:         &externalImporter{set: s, pkg: n},
 		IgnoreFuncBodies: true,
 		Error:            ignoreTypeError,
+		Sizes:            s.sizes,
 	}
 	_ = gotypes.NewChecker(&conf, s.fset, n.types, nil).Files(files)
 }

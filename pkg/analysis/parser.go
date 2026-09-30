@@ -984,7 +984,7 @@ func (imp *workspaceImporter) loadExternal() {
 	// Workspace packages are listed too, since their imports are what reaches
 	// the third-party ones; Import resolves them before it consults ext, so
 	// they are never type-checked here.
-	imp.ext = newExternalSet(imp.fset, roots)
+	imp.ext = newExternalSet(imp.fset, imp.parser.buildConfig.GOARCH, roots)
 }
 
 // externalLoadSettings returns the environment additions and build flags that
