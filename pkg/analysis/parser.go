@@ -7,7 +7,6 @@ import (
 	"go/parser"
 	"go/token"
 	gotypes "go/types"
-	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -25,6 +24,9 @@ type GoParser struct {
 	fileSet  *token.FileSet
 	logger   *slog.Logger
 	importer *workspaceImporter
+
+	buildConfig BuildConfig
+	sources     *SourceTree
 
 	// checkMu serializes whole type-checking sessions. It is acquired by the
 	// exported entry points (EnsureTypeChecked, TypeCheckPackage) and held for
@@ -66,12 +68,33 @@ type GoParser struct {
 	typeCheckHook func(pkg *types.Package)
 }
 
-func NewParser(logger *slog.Logger) *GoParser {
-	return &GoParser{
-		fileSet: token.NewFileSet(),
-		logger:  logger,
-	}
+// ParserOption configures a GoParser.
+type ParserOption func(*GoParser)
+
+// WithBuildConfig pins the build configuration files are selected under.
+func WithBuildConfig(cfg BuildConfig) ParserOption {
+	return func(p *GoParser) { p.buildConfig = cfg }
 }
+
+func NewParser(logger *slog.Logger, opts ...ParserOption) *GoParser {
+	fset := token.NewFileSet()
+	p := &GoParser{
+		fileSet:     fset,
+		logger:      logger,
+		buildConfig: DefaultBuildConfig(),
+		sources:     NewSourceTree(fset),
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p
+}
+
+// BuildConfig returns the configuration files are selected under.
+func (p *GoParser) BuildConfig() BuildConfig { return p.buildConfig }
+
+// Sources returns the config-independent record of every file loaded so far.
+func (p *GoParser) Sources() *SourceTree { return p.sources }
 
 // ParseFile parses a single Go file
 func (p *GoParser) ParseFile(filename string) (*types.File, error) {
@@ -105,62 +128,11 @@ func (p *GoParser) ParseFile(filename string) (*types.File, error) {
 	return file, nil
 }
 
-// ParsePackage parses all Go files in a package directory
+// ParsePackage builds the package in dir from the files that match the parser's
+// build config. It returns (nil, nil) when dir has .go files but none usable
+// as a non-test file under that config.
 func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
-	pkg := &types.Package{
-		Dir:       dir,
-		Files:     make(map[string]*types.File),
-		TestFiles: make(map[string]*types.File),
-		Imports:   make([]string, 0),
-	}
-
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip subdirectories for package parsing
-		if d.IsDir() && path != dir {
-			return filepath.SkipDir
-		}
-
-		// Only process .go files
-		if !strings.HasSuffix(path, ".go") {
-			return nil
-		}
-
-		file, err := p.ParseFile(path)
-		if err != nil {
-			return err
-		}
-
-		file.Package = pkg
-
-		// Separate test files from regular files
-		if strings.HasSuffix(path, "_test.go") {
-			pkg.TestFiles[filepath.Base(path)] = file
-		} else {
-			pkg.Files[filepath.Base(path)] = file
-
-			// Set package name and path from first non-test file
-			if pkg.Name == "" {
-				pkg.Name = file.AST.Name.Name
-				pkg.Path = p.inferPackagePath(dir, file.AST.Name.Name)
-			}
-
-			// Collect imports
-			for _, imp := range file.AST.Imports {
-				importPath := strings.Trim(imp.Path.Value, "\"")
-				if !contains(pkg.Imports, importPath) {
-					pkg.Imports = append(pkg.Imports, importPath)
-				}
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
+	if err := p.sources.AddDir(dir); err != nil {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse package: %v", err),
@@ -169,7 +141,8 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 		}
 	}
 
-	if pkg.Name == "" {
+	srcs := p.sources.Dir(dir)
+	if len(srcs) == 0 {
 		return nil, &types.RefactorError{
 			Type:    types.ParseError,
 			Message: "no non-test Go files found in package",
@@ -177,7 +150,59 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 		}
 	}
 
+	pkg := &types.Package{
+		Dir:       dir,
+		Files:     make(map[string]*types.File),
+		TestFiles: make(map[string]*types.File),
+		Imports:   make([]string, 0),
+	}
+
+	for _, src := range srcs {
+		if !p.admits(src) {
+			continue
+		}
+
+		file := &types.File{
+			Path:            src.Path,
+			Package:         pkg,
+			AST:             src.AST,
+			OriginalContent: src.Content,
+			Modifications:   make([]types.Modification, 0),
+		}
+
+		if strings.HasSuffix(src.Name, "_test.go") {
+			pkg.TestFiles[src.Name] = file
+			continue
+		}
+		pkg.Files[src.Name] = file
+
+		if pkg.Name == "" {
+			pkg.Name = src.AST.Name.Name
+			pkg.Path = p.inferPackagePath(dir, src.AST.Name.Name)
+		}
+
+		for _, imp := range src.AST.Imports {
+			importPath := strings.Trim(imp.Path.Value, "\"")
+			if !contains(pkg.Imports, importPath) {
+				pkg.Imports = append(pkg.Imports, importPath)
+			}
+		}
+	}
+
+	if pkg.Name == "" {
+		return nil, nil
+	}
+
 	return pkg, nil
+}
+
+// admits reports whether src parsed cleanly and matches the build config.
+func (p *GoParser) admits(src *SourceFile) bool {
+	if src.Err != nil {
+		p.logger.Debug("skipping unparsable file", "path", src.Path, "err", src.Err)
+		return false
+	}
+	return p.buildConfig.MatchesFile(src)
 }
 
 // ParseWorkspace parses an entire Go workspace/module.
@@ -202,6 +227,7 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		Packages:     make(map[string]*types.Package),
 		ImportToPath: make(map[string]string),
 		FileSet:      p.fileSet,
+		BuildConfig:  p.buildConfig.Key(),
 	}
 
 	// Try to find and parse go.mod
@@ -214,42 +240,23 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		workspace.Module = module
 	}
 
-	// Phase 1: Discover package directories (sequential — filesystem walk is I/O bound and fast)
-	var pkgDirs []string
-	err = filepath.WalkDir(absRootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-
-		// Skip hidden directories and vendor
-		if d.IsDir() {
-			name := d.Name()
-			if strings.HasPrefix(name, ".") || name == "vendor" {
-				return filepath.SkipDir
-			}
-		}
-
-		// Collect directories containing .go files
-		if d.IsDir() {
-			hasGoFiles, err := p.hasGoFiles(path)
-			if err != nil {
-				return err
-			}
-			if hasGoFiles {
-				pkgDirs = append(pkgDirs, path)
-			}
-		}
-
-		return nil
-	})
-
-	if err != nil {
+	// Phase 1: Load every .go file under the root into a fresh source tree, then
+	// keep the directories that hold at least one file admitted by the build config.
+	p.sources = NewSourceTree(p.fileSet)
+	if err := p.sources.Load(absRootPath); err != nil {
 		p.logger.Error("workspace discovery failed", "path", rootPath, "err", err)
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse workspace: %v", err),
 			File:    rootPath,
 			Cause:   err,
+		}
+	}
+
+	var pkgDirs []string
+	for _, dir := range p.sources.Dirs() {
+		if p.hasGoFiles(dir) {
+			pkgDirs = append(pkgDirs, dir)
 		}
 	}
 
@@ -293,6 +300,9 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		if res.err != nil {
 			// Log error but continue parsing other packages (same as before)
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
+			continue
+		}
+		if res.pkg == nil {
 			continue
 		}
 		workspace.Packages[res.pkg.Path] = res.pkg
@@ -389,19 +399,9 @@ func computeImportPath(ws *types.Workspace, fsPath string) string {
 	return ws.Module.Path + "/" + filepath.ToSlash(relPath)
 }
 
-func (p *GoParser) hasGoFiles(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false, err
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			return true, nil
-		}
-	}
-
-	return false, nil
+// hasGoFiles reports whether dir holds a file admitted by the build config.
+func (p *GoParser) hasGoFiles(dir string) bool {
+	return slices.ContainsFunc(p.sources.Dir(dir), p.admits)
 }
 
 func (p *GoParser) applyModifications(content []byte, modifications []types.Modification) []byte {

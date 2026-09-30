@@ -1335,3 +1335,164 @@ func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
 		})
 	}
 }
+
+const (
+	fts5TestSrc   = "//go:build fts5\n\npackage p\n\nvar registry = []string{\"fts5\"}\n"
+	nofts5TestSrc = "//go:build !fts5\n\npackage p\n\nvar registry = []string{}\n"
+)
+
+func writeWorkspace(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	files["go.mod"] = "module example.com/w\n\ngo 1.22\n"
+	for name, content := range files {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func loadWithConfig(t *testing.T, root string, cfg BuildConfig) (*GoParser, *types.Workspace) {
+	t.Helper()
+	p := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)), WithBuildConfig(cfg))
+	ws, err := p.ParseWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p, ws
+}
+
+func constrainedWorkspace(t *testing.T) string {
+	return writeWorkspace(t, map[string]string{
+		"p/p.go":             "package p\n",
+		"p/x_fts5_test.go":   fts5TestSrc,
+		"p/x_nofts5_test.go": nofts5TestSrc,
+		"p/y_windows.go":     "package p\n\nfunc OnlyWindows() {}\n",
+	})
+}
+
+func fileNames(m map[string]*types.File) []string {
+	var names []string
+	for n := range m {
+		names = append(names, n)
+	}
+	slices.Sort(names)
+	return names
+}
+
+func TestParseWorkspace_ExcludesConstrainedFilesAndTypeChecks(t *testing.T) {
+	root := constrainedWorkspace(t)
+	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+	pkg := ws.Packages[filepath.Join(root, "p")]
+	if pkg == nil {
+		t.Fatal("package p not loaded")
+	}
+	if got := fileNames(pkg.TestFiles); !slices.Equal(got, []string{"x_nofts5_test.go"}) {
+		t.Errorf("TestFiles = %v", got)
+	}
+	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
+		t.Errorf("Files = %v", got)
+	}
+	p.EnsureTypeChecked(ws, pkg)
+	if pkg.TypesErr != nil {
+		t.Errorf("TypesErr = %v", pkg.TypesErr)
+	}
+	if pkg.TestTypesExcluded {
+		t.Errorf("test files excluded from type-check: %v", pkg.TestTypesExcludedErr)
+	}
+}
+
+func TestParseWorkspace_TagSelectsConstrainedTestFile(t *testing.T) {
+	root := constrainedWorkspace(t)
+	_, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false, "fts5"))
+	pkg := ws.Packages[filepath.Join(root, "p")]
+	if got := fileNames(pkg.TestFiles); !slices.Equal(got, []string{"x_fts5_test.go"}) {
+		t.Errorf("TestFiles = %v", got)
+	}
+}
+
+func TestParseWorkspace_GOOSSelectsSuffixedFile(t *testing.T) {
+	root := constrainedWorkspace(t)
+	_, ws := loadWithConfig(t, root, NewBuildConfig("windows", "amd64", false))
+	pkg := ws.Packages[filepath.Join(root, "p")]
+	if _, ok := pkg.Files["y_windows.go"]; !ok {
+		t.Errorf("Files = %v, want y_windows.go", fileNames(pkg.Files))
+	}
+}
+
+func TestParseWorkspace_LegacyPlusBuildIgnoreExcluded(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":   "package p\n",
+		"p/gen.go": "// +build ignore\n\npackage main\n",
+	})
+	_, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+	pkg := ws.Packages[filepath.Join(root, "p")]
+	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
+		t.Errorf("Files = %v", got)
+	}
+}
+
+func TestParseWorkspace_ImportCRequiresCgo(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go": "package p\n",
+		"p/c.go": "package p\n\n// int x;\nimport \"C\"\n",
+	})
+	_, off := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+	if got := fileNames(off.Packages[filepath.Join(root, "p")].Files); !slices.Equal(got, []string{"p.go"}) {
+		t.Errorf("cgo off: Files = %v", got)
+	}
+	_, on := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
+	if got := fileNames(on.Packages[filepath.Join(root, "p")].Files); !slices.Equal(got, []string{"c.go", "p.go"}) {
+		t.Errorf("cgo on: Files = %v", got)
+	}
+}
+
+func TestParseWorkspace_UnparsableFileDoesNotDropPackage(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":   "package p\n",
+		"p/bad.go": "package p\n\nfunc (\n",
+	})
+	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+	pkg := ws.Packages[filepath.Join(root, "p")]
+	if pkg == nil {
+		t.Fatal("package p dropped")
+	}
+	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
+		t.Errorf("Files = %v", got)
+	}
+	bad := p.Sources().File(filepath.Join(root, "p", "bad.go"))
+	if bad == nil || bad.Err == nil {
+		t.Errorf("bad.go record = %+v, want non-nil Err", bad)
+	}
+}
+
+func TestParseWorkspace_FullyConstrainedDirectoryIsNotAPackage(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":           "package p\n",
+		"win/w_windows.go": "package win\n",
+	})
+	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+	if _, ok := ws.Packages[filepath.Join(root, "win")]; ok {
+		t.Error("win loaded as a package")
+	}
+	if _, ok := ws.Packages[filepath.Join(root, "p")]; !ok {
+		t.Error("p not loaded")
+	}
+	if p.Sources().File(filepath.Join(root, "win", "w_windows.go")) == nil {
+		t.Error("constrained file missing from source tree")
+	}
+}
+
+func TestParsePackage_AllUnparsableYieldsNoPackage(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{"p/bad.go": "package p\n\nfunc (\n"})
+	p := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	pkg, err := p.ParsePackage(filepath.Join(root, "p"))
+	if pkg != nil || err != nil {
+		t.Errorf("ParsePackage = %v, %v; want nil, nil", pkg, err)
+	}
+}

@@ -14,6 +14,10 @@ type Workspace struct {
 	ImportToPath map[string]string   // import path -> filesystem path
 	FileSet      *token.FileSet
 	Dependencies *DependencyGraph
+
+	// BuildConfig is the Key() of the analysis.BuildConfig the packages were
+	// selected under.
+	BuildConfig string
 }
 
 // Package represents a single Go package
