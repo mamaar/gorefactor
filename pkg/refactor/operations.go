@@ -632,7 +632,8 @@ func (op *RenameSymbolOperation) planSymbols(ws *types.Workspace, resolver *anal
 			plan.AffectedFiles = append(plan.AffectedFiles, symbol.File)
 		}
 
-		// Update all references
+		// Update all references; a type's embedded fields are named after it
+		references = append(references, resolver.FindEmbeddedFieldReferences(symbol)...)
 		for _, ref := range references {
 			refChange := op.generateReferenceRenameChange(ref, op.Request.NewName)
 			plan.Changes = append(plan.Changes, refChange)

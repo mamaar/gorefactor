@@ -1318,21 +1318,73 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 			refers = sr.nameRefersToSymbol(ident, file, roles, symbol)
 		}
 		if refers {
-			pos := sr.workspace.FileSet.Position(ident.Pos())
-			references = append(references, &types.Reference{
-				Symbol:   symbol,
-				Position: ident.Pos(),
-				Offset:   pos.Offset,
-				File:     file.Path,
-				Line:     pos.Line,
-				Column:   pos.Column,
-				Context:  sr.extractContext(ident, file),
-			})
+			references = append(references, sr.referenceAt(file, ident, symbol))
 		}
 		return true
 	})
 
 	return references, nil
+}
+
+func (sr *SymbolResolver) referenceAt(file *types.File, ident *ast.Ident, symbol *types.Symbol) *types.Reference {
+	pos := sr.workspace.FileSet.Position(ident.Pos())
+	return &types.Reference{
+		Symbol:   symbol,
+		Position: ident.Pos(),
+		Offset:   pos.Offset,
+		File:     file.Path,
+		Line:     pos.Line,
+		Column:   pos.Column,
+		Context:  sr.extractContext(ident, file),
+	}
+}
+
+// FindEmbeddedFieldReferences finds the identifiers that name the field a
+// struct embeds a type as (keys of keyed literals and selectors). They are
+// not references to the type, but the field is named after it, so renaming
+// the type renames them; moving it does not.
+func (sr *SymbolResolver) FindEmbeddedFieldReferences(symbol *types.Symbol) []*types.Reference {
+	target := sr.resolveTypesObject(symbol)
+	if target == nil {
+		return nil
+	}
+	var references []*types.Reference
+	for _, pkg := range sr.workspace.Packages {
+		for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+			for _, file := range files {
+				info := checkedInfo(pkg, file)
+				if info == nil || file.AST == nil {
+					continue
+				}
+				ast.Inspect(file.AST, func(n ast.Node) bool {
+					ident, ok := n.(*ast.Ident)
+					if !ok || ident.Name != symbol.Name {
+						return true
+					}
+					if field, ok := info.Uses[ident].(*gotypes.Var); ok && field.IsField() && field.Embedded() && sameObject(embeddedTypeName(field), target) {
+						references = append(references, sr.referenceAt(file, ident, symbol))
+					}
+					return true
+				})
+			}
+		}
+	}
+	return references
+}
+
+// embeddedTypeName returns the declared name of the type an embedded field embeds.
+func embeddedTypeName(field *gotypes.Var) gotypes.Object {
+	t := field.Type()
+	if p, ok := t.(*gotypes.Pointer); ok {
+		t = p.Elem()
+	}
+	switch t := t.(type) {
+	case *gotypes.Named:
+		return t.Origin().Obj()
+	case *gotypes.Alias:
+		return t.Obj()
+	}
+	return nil
 }
 
 // checkedInfo returns pkg's type information when it covers the identifiers
