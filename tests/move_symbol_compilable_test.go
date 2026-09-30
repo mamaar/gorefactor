@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -93,5 +94,90 @@ func TestMoveSymbol_LeavesFieldsKeysMethodsLabelsAndLocalsNamedLikeTheSymbol(t *
 	assertFileContains(t, dir, "src/src.go", "File{Package: &dst.Package{")
 	assertFileContains(t, dir, "src/src.go", "Package := 3")
 	assertFileContains(t, dir, "a/a.go", "f.Package.Name + dst.Package{}.Name")
+	goVets(t, dir, "")
+}
+
+func TestMoveSymbol_RefusesWhenMovedCodeUsesUnexportedMembersLeftBehind(t *testing.T) {
+	const src = `package src
+
+type Box struct{ n int }
+
+func (b *Box) peek() int { return b.n }
+
+const limit = 3
+
+var counter int
+
+type hidden struct{}
+
+func helper() int { return 1 }
+
+func UsesFunc() int { return helper() }
+
+func UsesField(b *Box) int { return b.n }
+
+func UsesMethod(b *Box) int { return b.peek() }
+
+func UsesConst() int { return limit }
+
+func UsesVar() int { return counter }
+
+func UsesType() hidden { return hidden{} }
+`
+	for symbol, unexported := range map[string]string{
+		"UsesFunc": "helper", "UsesField": "n", "UsesMethod": "peek",
+		"UsesConst": "limit", "UsesVar": "counter", "UsesType": "hidden",
+	} {
+		t.Run(symbol, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+
+			res := moveSymbolCall(t, sess, symbol, "src", "dst")
+
+			if !res.IsError {
+				t.Fatalf("move %s succeeded, want a refusal", symbol)
+			}
+			for _, want := range []string{symbol, unexported, "unexported"} {
+				if got := errText(res); !strings.Contains(got, want) {
+					t.Errorf("error %q does not mention %q", got, want)
+				}
+			}
+			assertFileUnchanged(t, dir, "src/src.go", src)
+		})
+	}
+}
+
+func TestMoveSymbol_RefusesWhenCodeLeftBehindUsesAnUnexportedFieldOfTheMovedType(t *testing.T) {
+	const src = "package src\n\ntype Box struct{ n int }\n\nfunc NewBox() *Box { return &Box{n: 1} }\n\nfunc Dump(b Box) int { return b.n }\n"
+	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := moveSymbolCall(t, sess, "Box", "src", "dst")
+
+	if !res.IsError || !strings.Contains(errText(res), "Dump") && !strings.Contains(errText(res), "stays in package") {
+		t.Fatalf("move Box = error %v: %s, want a refusal naming the code left behind", res.IsError, errText(res))
+	}
+	assertFileUnchanged(t, dir, "src/src.go", src)
+}
+
+func TestMoveByDependencies_SkipsCandidateThatUsesAnUnexportedHelperAndMovesTheRest(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go": "package src\n\nfunc helper() int { return 1 }\n\nfunc NeedsHelper() int { return helper() }\n\nfunc Free() int { return 2 }\n",
+		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.NeedsHelper() + src.Free() }\n",
+		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.NeedsHelper() + src.Free() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	sites, _ := json.Marshal(out["skipped_sites"])
+	if !strings.Contains(string(sites), "NeedsHelper not moved") || !strings.Contains(string(sites), "helper") {
+		t.Errorf("skipped_sites = %s, want NeedsHelper skipped for its unexported helper", sites)
+	}
+	assertFileContains(t, dir, "shared/shared.go", "func Free() int")
+	assertFileContains(t, dir, "src/src.go", "func NeedsHelper()")
 	goVets(t, dir, "")
 }

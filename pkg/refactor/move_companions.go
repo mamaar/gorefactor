@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	gotypes "go/types"
 	"sort"
 	"unicode"
 
@@ -168,45 +169,28 @@ func containsSamePackageCompositeLit(node ast.Node, typeName string, unexportedF
 	return found
 }
 
-// findStrandedCompositeLiterals scans every file in pkg for composite
-// literals of typeName that require same-package access (see
-// compositeLitRequiresSamePackage) and are not inside one of the
-// already-selected companion declarations, and are not part of the moved
-// type's own method set. It returns "file:line" locations describing each
-// one, for use in an error message when a move must be refused outright
-// rather than risk emitting code that cannot compile.
-func findStrandedCompositeLiterals(ws *types.Workspace, pkg *types.Package, typeName string, unexportedFields map[string]bool, companions map[*ast.FuncDecl]bool) []string {
+// findStrandedCompositeLiterals scans every file in pkg, tests included, for
+// composite literals of typeName that require same-package access (see
+// compositeLitRequiresSamePackage) and are not inside a declaration that
+// moves. It returns "file:line" locations describing each one.
+func findStrandedCompositeLiterals(ws *types.Workspace, pkg *types.Package, typeName string, unexportedFields map[string]bool, moving []*movingSymbol) []string {
 	if len(unexportedFields) == 0 {
 		return nil
 	}
 
 	var stranded []string
-	report := func(lit *ast.CompositeLit, filePath string) {
-		loc := filePath
-		if ws.FileSet != nil {
-			pos := ws.FileSet.Position(lit.Pos())
-			loc = fmt.Sprintf("%s:%d", filePath, pos.Line)
-		}
-		stranded = append(stranded, loc)
-	}
-
-	for _, file := range pkg.Files {
-		if file.AST == nil {
-			continue
-		}
-		for _, decl := range file.AST.Decls {
-			switch d := decl.(type) {
-			case *ast.FuncDecl:
-				if d.Body == nil || companions[d] {
-					continue
-				}
-				if d.Recv != nil && receiverTypeName(d) == typeName {
-					continue // one of the type's own methods; moves with the type
-				}
-				findCompositeLitsInto(d.Body, typeName, unexportedFields, file.Path, report)
-			default:
-				findCompositeLitsInto(decl, typeName, unexportedFields, file.Path, report)
+	for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+		for _, file := range files {
+			if file.AST == nil {
+				continue
 			}
+			findCompositeLitsInto(file.AST, typeName, unexportedFields, file.Path, func(lit *ast.CompositeLit, filePath string) {
+				pos := ws.FileSet.Position(lit.Pos())
+				if movingAt(moving, filePath, pos.Offset) != nil {
+					return
+				}
+				stranded = append(stranded, fmt.Sprintf("%s:%d", filePath, pos.Line))
+			})
 		}
 	}
 	sort.Strings(stranded)
@@ -257,41 +241,111 @@ func (op *MoveSymbolOperation) resolveCompanionSymbols(resolver *analysis.Symbol
 	return companions, nil
 }
 
-// checkForStrandedDependents returns a RefactorError if moving symbol (a
-// struct type) would strand code elsewhere in sourcePackage that reaches
-// into its unexported fields and isn't covered by the companion functions
-// resolveCompanionSymbols already picked up. Returns nil if the move is
-// safe (either nothing depends on unexported fields, or everything that
-// does is moving along with the type).
-func (op *MoveSymbolOperation) checkForStrandedDependents(ws *types.Workspace, sourcePackage *types.Package, sourceFile *types.File, symbol *types.Symbol, companions []*types.Symbol) error {
-	if symbol.Kind != types.TypeSymbol || sourceFile == nil || sourceFile.AST == nil {
-		return nil
+// checkForStrandedReferences returns an error blaming one moving symbol when
+// the move would leave code that cannot compile: moved code that uses an
+// unexported member (function, type, variable, constant, field or method) of
+// its source package that stays behind, or code left behind that uses an
+// unexported member that moves. Positional literals of a moved struct type
+// carry no identifier to find, so they are looked for separately.
+func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, moving []*movingSymbol) error {
+	for _, m := range moving {
+		file := m.file
+		if m.sym.Kind != types.TypeSymbol || file == nil || file.AST == nil {
+			continue
+		}
+		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
+		if stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving); len(stranded) > 0 {
+			return &groupMemberError{index: m.owner, err: &types.RefactorError{
+				Type: types.VisibilityViolation,
+				Message: fmt.Sprintf(
+					"moving %s would strand code that constructs it via unexported fields (%s) and cannot be safely auto-moved: %s\n"+
+						"Refactor these to only set exported fields (or move them manually alongside %s first), then retry.",
+					m.sym.Name, joinFieldNames(unexportedFields), joinLocations(stranded), m.sym.Name,
+				),
+			}}
+		}
 	}
 
-	unexportedFields := unexportedStructFields(sourceFile.AST, symbol.Name)
-	if len(unexportedFields) == 0 {
-		return nil
+	checked := make(map[*types.Package]bool)
+	for _, m := range moving {
+		if checked[m.pkg] || m.pkg.TypesInfo == nil || m.pkg.TypesPkg == nil {
+			continue
+		}
+		checked[m.pkg] = true
+		var found []strandedUse
+		for ident, obj := range m.pkg.TypesInfo.Uses {
+			if !unexportedMember(obj, m.pkg.TypesPkg) {
+				continue
+			}
+			use := ws.FileSet.Position(ident.Pos())
+			def := ws.FileSet.Position(obj.Pos())
+			user, owner := movingAt(moving, use.Filename, use.Offset), movingAt(moving, def.Filename, def.Offset)
+			if (user == nil) != (owner == nil) {
+				found = append(found, strandedUse{user: user, owner: owner, name: obj.Name(), file: use.Filename, line: use.Line, offset: use.Offset})
+			}
+		}
+		if len(found) > 0 {
+			return found[firstStrandedUse(found)].error(m.pkg.Path)
+		}
 	}
+	return nil
+}
 
-	companionDecls := findCompanionFuncDecls(sourceFile.AST, symbol.Name, unexportedFields)
-	moving := make(map[*ast.FuncDecl]bool, len(companionDecls))
-	for _, d := range companionDecls {
-		moving[d] = true
+// strandedUse is a use of an unexported member that crosses the boundary of
+// the moved declarations: exactly one of user and owner moves.
+type strandedUse struct {
+	user, owner *movingSymbol
+	name        string
+	file        string
+	line        int
+	offset      int
+}
+
+// firstStrandedUse is the index of the use first in file and position order.
+func firstStrandedUse(uses []strandedUse) int {
+	first := 0
+	for i, u := range uses {
+		if u.file < uses[first].file || u.file == uses[first].file && u.offset < uses[first].offset {
+			first = i
+		}
 	}
+	return first
+}
 
-	stranded := findStrandedCompositeLiterals(ws, sourcePackage, symbol.Name, unexportedFields, moving)
-	if len(stranded) == 0 {
-		return nil
+func (u strandedUse) error(sourcePackage string) error {
+	if u.user != nil {
+		return &groupMemberError{index: u.user.owner, err: &types.RefactorError{
+			Type: types.VisibilityViolation,
+			Message: fmt.Sprintf("%s cannot move: it uses %s, which is unexported and stays in package %s; move %s along or export it first",
+				u.user.sym.Name, u.name, sourcePackage, u.name),
+			File: u.file,
+			Line: u.line,
+		}}
 	}
-
-	return &types.RefactorError{
+	return &groupMemberError{index: u.owner.owner, err: &types.RefactorError{
 		Type: types.VisibilityViolation,
-		Message: fmt.Sprintf(
-			"moving %s would strand code that constructs it via unexported fields (%s) and cannot be safely auto-moved: %s\n"+
-				"Refactor these to only set exported fields (or move them manually alongside %s first), then retry.",
-			symbol.Name, joinFieldNames(unexportedFields), joinLocations(stranded), symbol.Name,
-		),
+		Message: fmt.Sprintf("%s cannot move: unexported %s moves with it but is used by code that stays in package %s; move that code along or export %s first",
+			u.owner.sym.Name, u.name, sourcePackage, u.name),
+		File: u.file,
+		Line: u.line,
+	}}
+}
+
+// unexportedMember reports whether obj is an unexported package-level object,
+// field or method of pkg.
+func unexportedMember(obj gotypes.Object, pkg *gotypes.Package) bool {
+	if obj == nil || obj.Pkg() != pkg || obj.Exported() {
+		return false
 	}
+	switch o := obj.(type) {
+	case *gotypes.Var:
+		return o.IsField() || o.Parent() == pkg.Scope()
+	case *gotypes.Func:
+		return o.Parent() == pkg.Scope() || o.Type().(*gotypes.Signature).Recv() != nil
+	case *gotypes.TypeName, *gotypes.Const:
+		return o.Parent() == pkg.Scope()
+	}
+	return false
 }
 
 func joinFieldNames(fields map[string]bool) string {

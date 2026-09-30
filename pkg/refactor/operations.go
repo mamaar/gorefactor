@@ -115,8 +115,7 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 
 	// Find the symbol to move
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	symbol, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
-	if err != nil {
+	if _, err := resolver.ResolveSymbol(sourcePackage, ref.Name); err != nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("symbol not found: %s", ref.Name),
@@ -159,50 +158,11 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 	}
 
-	// Check that move won't break visibility rules
-	if !symbol.Exported && ref.Package != op.Request.ToPackage {
-		references, err := resolver.FindReferences(symbol)
-		if err != nil {
-			return err
-		}
-
-		for _, ref := range references {
-			refPackage := findPackageForFile(ws, ref.File)
-			if refPackage != nil && refPackage.Path != op.Request.ToPackage {
-				return &types.RefactorError{
-					Type:    types.VisibilityViolation,
-					Message: fmt.Sprintf("unexported symbol %s cannot be accessed from package %s after move", symbol.Name, refPackage.Path),
-					File:    ref.File,
-					Line:    ref.Line,
-				}
-			}
-		}
-	}
-
 	// Check that move won't create import cycles
 	if wouldCreateImportCycle(ws, ref.Package, op.Request.ToPackage) {
 		return &types.RefactorError{
 			Type:    types.CyclicDependency,
 			Message: fmt.Sprintf("moving symbol would create import cycle between %s and %s", ref.Package, op.Request.ToPackage),
-		}
-	}
-
-	// If we're moving a struct type, its constructor(s) almost always build
-	// it via unexported fields (idiomatic `func NewFoo(...) *Foo { return
-	// &Foo{unexportedField: ...} }`), which is only legal from within the
-	// type's own package. Rather than silently leave such a constructor
-	// behind — producing code that can never compile — resolve which
-	// constructors need to move alongside the type, and refuse the whole
-	// move if anything else (that we won't auto-move) would still be
-	// stranded. See move_companions.go.
-	if symbol.Kind == types.TypeSymbol {
-		sourceFile := findFileContainingSymbol(sourcePackage, symbol)
-		companions, err := op.resolveCompanionSymbols(resolver, sourcePackage, sourceFile, symbol)
-		if err != nil {
-			return err
-		}
-		if err := op.checkForStrandedDependents(ws, sourcePackage, sourceFile, symbol, companions); err != nil {
-			return err
 		}
 	}
 
@@ -271,6 +231,9 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 		removals[m.file.Path] = append(removals[m.file.Path], c...)
 	}
+	if err := op.checkForStrandedReferences(ws, moving); err != nil {
+		return nil, err
+	}
 	unusedImports := make(map[string][]*ast.ImportSpec)
 	for _, f := range sourceFiles {
 		plan.Changes = append(plan.Changes, removals[f.Path]...)
@@ -298,8 +261,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	// ones are rewritten and need an import of the target package.
 	var survivingReferences []*types.Reference
 	for _, ref := range allReferences {
-		owner, within := removalContaining(moving, ref)
-		if !within {
+		owner := movingAt(moving, ref.File, ref.Offset)
+		if owner == nil {
 			survivingReferences = append(survivingReferences, ref)
 			continue
 		}
@@ -359,8 +322,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 }
 
 // resolveMoving resolves the requested symbols and, for a struct type, the
-// constructors that must move with it (see move_companions.go; Validate
-// refused the move if anything else would be stranded).
+// constructors that must move with it (see move_companions.go; Execute
+// refuses the move if anything else would be stranded).
 func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *analysis.SymbolResolver) ([]*movingSymbol, error) {
 	var moving []*movingSymbol
 	seen := make(map[*types.Symbol]bool)
@@ -393,16 +356,16 @@ func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *anal
 	return moving, nil
 }
 
-// removalContaining returns the moved symbol whose removal covers ref.
-func removalContaining(moving []*movingSymbol, ref *types.Reference) (*movingSymbol, bool) {
+// movingAt returns the moved symbol whose removal covers offset in file.
+func movingAt(moving []*movingSymbol, file string, offset int) *movingSymbol {
 	for _, m := range moving {
 		for _, c := range m.removal {
-			if c.File == ref.File && ref.Offset >= c.Start && ref.Offset < c.End {
-				return m, true
+			if c.File == file && offset >= c.Start && offset < c.End {
+				return m
 			}
 		}
 	}
-	return nil, false
+	return nil
 }
 
 func (op *MoveSymbolOperation) Description() string {
