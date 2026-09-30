@@ -135,6 +135,16 @@ type threadPlan struct {
 	ArgFor map[token.Pos]*callEdit
 }
 
+// dropAnalysis forgets the index, declarations and plan-of-record the
+// operation was planned with.
+func (op *ThreadContextOperation) dropAnalysis() {
+	op.CachedIndex = nil
+	op.plan = nil
+	op.declIndex = nil
+	op.seed = nil
+	op.ifaceCache = nil
+}
+
 func (op *ThreadContextOperation) Type() pkgtypes.OperationType {
 	return pkgtypes.ThreadContextOperationType
 }

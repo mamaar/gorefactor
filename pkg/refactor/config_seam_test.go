@@ -163,7 +163,7 @@ func TestPlanAcrossViews_AbsentViewContributesNothing(t *testing.T) {
 	}
 }
 
-func TestViewIndexes_PrepareTypeChecksAndIndexesEveryView(t *testing.T) {
+func TestViewIndexes_PrepareTypeChecksAndIndexesTheViews(t *testing.T) {
 	eng, _ := loadConfigsEngine(t, map[string]string{
 		"p/p.go":      "package p\n\nfunc P() {}\n",
 		"p/p_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Tagged() { P() }\n",
@@ -181,9 +181,9 @@ func TestViewIndexes_PrepareTypeChecksAndIndexesEveryView(t *testing.T) {
 	c.prepare(views)
 	seen := make(map[*analysis.ReferenceIndex]bool)
 	for _, v := range views {
-		idx := c.indexes[v]
+		idx := c.indexOf(v)
 		if idx == nil || !idx.HasTypeInfo() {
-			t.Fatalf("view %s: prepare left no typed index", v.Config)
+			t.Fatalf("view %s: no typed index", v.Config)
 		}
 		if seen[idx] {
 			t.Errorf("view %s shares its index with another view", v.Config)
@@ -195,6 +195,15 @@ func TestViewIndexes_PrepareTypeChecksAndIndexesEveryView(t *testing.T) {
 		for _, pkg := range v.Workspace.Packages {
 			if !pkg.TypesChecked {
 				t.Errorf("view %s: %s was not type-checked", v.Config, pkg.ImportPath)
+			}
+		}
+	}
+
+	c.finish()
+	for i, v := range views {
+		for _, pkg := range v.Workspace.Packages {
+			if pkg.TypesChecked != (i == 0) {
+				t.Errorf("after finish, view %s: %s type-checked = %v", v.Config, pkg.ImportPath, pkg.TypesChecked)
 			}
 		}
 	}

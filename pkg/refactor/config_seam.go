@@ -45,31 +45,32 @@ type configPlanner interface {
 	planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error)
 }
 
-// viewIndexes holds each view's reference index for one run, so replanning a
-// view does not rebuild it.
+// maxPreparedSecondaries bounds how many views besides the primary hold type
+// information at once during a run; each holds roughly as much as the primary.
+const maxPreparedSecondaries = 2
+
+// viewIndexes holds the reference indexes of the views one run plans in.
+// Within planAcrossConfigs it prepares views ahead of their plan and drops
+// each secondary view once planned; used alone it builds a view's index on
+// request and keeps it. Only the planning goroutine calls it.
 type viewIndexes struct {
 	indexes map[*analysis.View]*analysis.ReferenceIndex
+
+	views   []*analysis.View // of the run, primary first; nil outside one
+	preps   map[*analysis.View]*viewPrep
+	dropped map[*analysis.View]bool
+	warming sync.WaitGroup
 }
 
-// prepare type-checks and indexes the views concurrently.
-func (c *viewIndexes) prepare(views []*analysis.View) {
-	built := make([]*analysis.ReferenceIndex, len(views))
-	var wg sync.WaitGroup
-	for i, v := range views {
-		wg.Add(1)
-		go buildViewIndex(v, &built[i], &wg)
-	}
-	wg.Wait()
-
-	c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex, len(views))
-	for i, v := range views {
-		c.indexes[v] = built[i]
-	}
+// viewPrep is one view being type-checked and indexed.
+type viewPrep struct {
+	done  chan struct{}
+	index *analysis.ReferenceIndex
 }
 
-func buildViewIndex(v *analysis.View, out **analysis.ReferenceIndex, wg *sync.WaitGroup) {
-	defer wg.Done()
-	*out = checkedIndex(v)
+func (p *viewPrep) run(v *analysis.View) {
+	defer close(p.done)
+	p.index = checkedIndex(v)
 }
 
 // checkedIndex type-checks v and builds its reference index. The view's own
@@ -79,7 +80,59 @@ func checkedIndex(v *analysis.View) *analysis.ReferenceIndex {
 	return v.Resolver.BuildLazyReferenceIndex()
 }
 
-// indexOf returns v's index, building it if prepare did not.
+// prepare starts type-checking the primary and the first secondary views, and
+// loads the third-party packages of the others meanwhile.
+func (c *viewIndexes) prepare(views []*analysis.View) {
+	c.views = views
+	c.preps = make(map[*analysis.View]*viewPrep)
+	c.dropped = make(map[*analysis.View]bool)
+	c.start(views[0])
+	c.fill()
+	for _, v := range views[1:] {
+		if c.preps[v] == nil {
+			c.warming.Add(1)
+			go c.warm(v)
+		}
+	}
+}
+
+func (c *viewIndexes) warm(v *analysis.View) {
+	defer c.warming.Done()
+	v.WarmExternals()
+}
+
+func (c *viewIndexes) start(v *analysis.View) *viewPrep {
+	p := &viewPrep{done: make(chan struct{})}
+	c.preps[v] = p
+	go p.run(v)
+	return p
+}
+
+// fill starts preparing secondary views not planned yet, in order, up to the bound.
+func (c *viewIndexes) fill() {
+	for _, v := range c.views[1:] {
+		if c.heldSecondaries() >= maxPreparedSecondaries {
+			return
+		}
+		if c.preps[v] == nil && c.indexes[v] == nil && !c.dropped[v] {
+			c.start(v)
+		}
+	}
+}
+
+// heldSecondaries counts the secondary views that hold type information or
+// are being type-checked.
+func (c *viewIndexes) heldSecondaries() int {
+	n := 0
+	for _, v := range c.views[1:] {
+		if c.preps[v] != nil || c.indexes[v] != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// indexOf returns v's index, waiting for or building it as needed.
 func (c *viewIndexes) indexOf(v *analysis.View) *analysis.ReferenceIndex {
 	if idx := c.indexes[v]; idx != nil {
 		return idx
@@ -87,14 +140,65 @@ func (c *viewIndexes) indexOf(v *analysis.View) *analysis.ReferenceIndex {
 	if c.indexes == nil {
 		c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
 	}
+	if p := c.preps[v]; p != nil {
+		<-p.done
+		delete(c.preps, v)
+		c.indexes[v] = p.index
+		return p.index
+	}
+	if c.dropped[v] {
+		// A dropped view still counts as checked.
+		v.ReleaseTypeInfo()
+		delete(c.dropped, v)
+	}
 	c.indexes[v] = checkedIndex(v)
 	return c.indexes[v]
+}
+
+// planned drops the type information of a secondary view of the run once
+// plan, its plan, is made, and starts preparing the next one. The view keeps
+// what coverage reporting reads, and is type-checked again if it is replanned.
+func (c *viewIndexes) planned(v *analysis.View, plan *types.RefactoringPlan) {
+	if len(c.views) == 0 || v == c.views[0] {
+		return
+	}
+	if plan != nil {
+		for _, op := range plan.Operations {
+			if h, ok := op.(analysisHolder); ok {
+				h.dropAnalysis()
+			}
+		}
+	}
+	delete(c.indexes, v)
+	v.DropTypeInfo()
+	c.dropped[v] = true
+	c.fill()
+}
+
+// analysisHolder is an operation that keeps the type information it planned
+// from reachable.
+type analysisHolder interface {
+	dropAnalysis()
+}
+
+// finish waits for the views still being prepared and releases the type
+// information of every secondary view.
+func (c *viewIndexes) finish() {
+	c.warming.Wait()
+	for _, p := range c.preps {
+		<-p.done
+	}
+	for _, v := range c.views[1:] {
+		v.ReleaseTypeInfo()
+	}
+	c.views, c.preps, c.dropped = nil, nil, nil
 }
 
 // indexedPlanner is a configPlanner that plans from per-view reference indexes.
 type indexedPlanner interface {
 	configPlanner
 	prepare(views []*analysis.View)
+	finish()
 }
 
 // planAcrossConfigs runs p under every build configuration of the covering set
@@ -111,8 +215,8 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 	if err != nil {
 		return nil, err
 	}
-	defer releaseSecondaryViews(views)
 	p.prepare(views)
+	defer p.finish()
 	plan, rounds, err := planAcrossViews(views, p, maxConfigRounds)
 	if err != nil {
 		return nil, err
@@ -120,14 +224,6 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 	e.logger.Info("planned across build configurations",
 		"configs", len(views), "rounds", rounds, "changes", len(plan.Changes))
 	return plan, nil
-}
-
-// releaseSecondaryViews drops the type information of every view but the
-// first, which only cross-configuration runs read.
-func releaseSecondaryViews(views []*analysis.View) {
-	for _, v := range views[1:] {
-		v.ReleaseTypeInfo()
-	}
 }
 
 // planAcrossViews replans the views until no view has linked keys it has not

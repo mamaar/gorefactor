@@ -411,13 +411,15 @@ type threadContextPlanner struct {
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
 	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked)
-	if isSymbolNotFound(err) {
-		return configResult{absent: err, declared: declaredFuncKeys(v.Workspace)}, nil
-	}
-	if err != nil {
+	if err != nil && !isSymbolNotFound(err) {
 		return configResult{}, err
 	}
-	return configResult{plan: plan, changed: op.GainedKeys(), reach: op.reach(), declared: declaredFuncKeys(v.Workspace)}, nil
+	res := configResult{absent: err, declared: declaredFuncKeys(v.Workspace)}
+	if err == nil {
+		res = configResult{plan: plan, changed: op.GainedKeys(), reach: op.reach(), declared: res.declared}
+	}
+	p.planned(v, plan)
+	return res, nil
 }
 
 // AddContextParameterAcrossConfigs adds a ctx parameter to a function and passes

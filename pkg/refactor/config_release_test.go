@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 	"github.com/mamaar/gorefactor/pkg/watch"
 )
@@ -139,4 +140,38 @@ func TestPlanAcrossConfigs_ConcurrentWithViewsAndUpdater(t *testing.T) {
 		}
 	})
 	wg.Wait()
+}
+
+// observingPlanner records, at every plan, how many secondary views hold type
+// information.
+type observingPlanner struct {
+	*threadContextPlanner
+	held []int
+}
+
+func (p *observingPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
+	p.held = append(p.held, p.heldSecondaries())
+	return p.threadContextPlanner.planIn(v, linked)
+}
+
+func TestPlanAcrossConfigs_BoundsTheSecondaryViewsHoldingTypeInfo(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/leaf.go":      "package p\n\nfunc leaf() {}\n",
+		"p/p_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc tagged() { leaf() }\n",
+		"p/p_windows.go": "package p\n\nfunc win() { leaf() }\n",
+		"p/p_darwin.go":  "package p\n\nfunc mac() { leaf() }\n",
+		"p/p_js.go":      "package p\n\nfunc web() { leaf() }\n",
+	})
+	planner := &observingPlanner{threadContextPlanner: &threadContextPlanner{
+		engine: eng, req: types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/leaf.go"}}}
+	plan, err := eng.planAcrossConfigs(planner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Coverage.Configs) != 5 || len(plan.Changes) == 0 {
+		t.Fatalf("planned %d changes under %v, want some under 5 configurations", len(plan.Changes), plan.Coverage.Configs)
+	}
+	if !reflect.DeepEqual(planner.held, []int{2, 2, 2, 2, 1}) {
+		t.Errorf("secondary views holding type info at each plan = %v, want [2 2 2 2 1]", planner.held)
+	}
 }
