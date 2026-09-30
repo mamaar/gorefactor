@@ -189,3 +189,15 @@ func TestThreadContext_UnshadowedTestingParamPassesTContext(t *testing.T) {
 		t.Errorf("expected t.Context():\n%s", got)
 	}
 }
+
+func TestThreadContext_TwoTestingParamsFirstShadowedSecondVisibleIsRoot(t *testing.T) {
+	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
+		"p/lib.go": seedSrc,
+		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(a *testing.T, b *testing.T, items []int) {\n\tfor _, a := range items {\n\t\t_ = a\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, t, nil) }\n",
+	}, "p/lib.go", "Seed")
+	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+	got := renderedFile(t, ws, plan, "p/x_test.go")
+	if !strings.Contains(got, "Seed(b.Context())") {
+		t.Errorf("expected the unshadowed second param b.Context():\n%s", got)
+	}
+}
