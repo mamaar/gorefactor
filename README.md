@@ -44,14 +44,14 @@ The server communicates over stdio using the MCP protocol.
 
 | Tool | Description |
 |------|-------------|
-| `move_symbol` | Move a function, type, constant, or variable between packages |
-| `move_package` | Move an entire package to a new location |
-| `move_dir` | Move a directory of packages |
-| `move_packages` | Move multiple packages at once |
+| `move_symbol` | Move a function, type, constant, or variable between packages; refused when it would leave another build configuration broken |
+| `move_package` | Move an entire package to a new location (default build configuration only) |
+| `move_dir` | Move a directory of packages (default build configuration only) |
+| `move_packages` | Move multiple packages at once (default build configuration only) |
 | `rename_symbol` | Rename a symbol across the workspace |
 | `rename_method` | Rename a method on a type |
 | `rename_field` | Rename a struct field and update all references, including selector expressions, keyed composite literals, and promoted access through embedding |
-| `rename_package` | Rename a package |
+| `rename_package` | Rename a package (default build configuration only) |
 | `extract_function` | Extract a code block into a new function |
 | `extract_method` | Extract a code block into a new method |
 | `extract_interface` | Extract an interface from a struct's methods |
@@ -61,8 +61,8 @@ The server communicates over stdio using the MCP protocol.
 | `inline_variable` | Inline a variable at its usage sites |
 | `change_signature` | Change a function's parameter list and update all callers |
 | `add_context_parameter` | Add a `context.Context` parameter to a function and its callers; with `thread: true`, thread a real context transitively through every call chain in the workspace that reaches it instead |
-| `safe_delete` | Delete a symbol only if it has no references; if it does, asks the human user to confirm before deleting unless `force` or `dry_run` is set. `force` deletes the declaration and reports surviving call sites in `skipped_sites` rather than rewriting them |
-| `batch_operations` | Run multiple refactoring operations atomically |
+| `safe_delete` | Delete a symbol only if it has no references in any build configuration; if it does, asks the human user to confirm before deleting unless `force` or `dry_run` is set. `force` deletes the declaration and reports surviving call sites in `skipped_sites` rather than rewriting them |
+| `batch_operations` | Run multiple refactoring operations atomically (default build configuration only) |
 
 ### Analysis
 
@@ -71,7 +71,7 @@ The server communicates over stdio using the MCP protocol.
 | `analyze_symbol` | Analyze a symbol's usage, references, and dependencies |
 | `analyze_dependencies` | Analyze package dependency structure |
 | `complexity` | Compute cyclomatic complexity for functions |
-| `unused` | Find unused symbols in the workspace |
+| `unused` | Find symbols that no build configuration uses |
 
 ### Code Quality Detection & Auto-Fix
 
@@ -110,9 +110,31 @@ The server communicates over stdio using the MCP protocol.
 | `create_facade` | Create a facade package that re-exports symbols |
 | `generate_facades` | Generate facades for a set of packages |
 | `update_facades` | Update existing facades after changes |
-| `move_by_dependencies` | Reorganize packages based on dependency analysis |
+| `move_by_dependencies` | Reorganize packages based on dependency analysis (default build configuration only) |
 | `organize_by_layers` | Organize packages into architectural layers |
 | `fix_cycles` | Break import cycles |
+
+## Build configurations
+
+Files are selected with the Go toolchain's own rules: `//go:build` and `// +build` lines, `_GOOS` and `_GOARCH` file name suffixes, and cgo. A single configuration never contains every file of a repository, so GoRefactor computes a covering set of build configurations when the workspace loads: the host's default configuration plus the fewest additional combinations of tags, GOOS and GOARCH such that every file is included in at least one. The set is derived from the files themselves; there is nothing to configure. Files with `import "C"` are type-checked, and `C.*` expressions are never edited.
+
+`load_workspace` and `workspace_status` report the set as `build_configs` (name, GOOS, GOARCH, cgo, tags and the number of files only that configuration adds) and list `uncovered_files`: files no configuration can include, such as `//go:build ignore`, an unsatisfiable constraint, or a file that does not parse.
+
+These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete` and `unused`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
+
+These tools act on the default configuration only and can miss files excluded by build constraints: `batch_operations`, `rename_package`, `move_package`, `move_dir`, `move_packages`, `move_by_dependencies`, `analyze_symbol`, `analyze_dependencies`, `fix_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
+
+Plan results from the tools that plan under every configuration carry:
+
+- `build_configs`: the configurations the plan was computed under, when there is more than one. An abort message names the configuration it came from.
+- `uncovered_files`: files in the reached packages that no configuration could type-check, with the configurations that include them and the reason. The plan holds no edits for them. A file that mentions a changed symbol also appears in `skipped_sites` and must be updated by hand.
+- `type_errors`: reached packages that have type errors in non-test files, per configuration. Uses inside the erroring code may be missing from the plan.
+
+`unused` returns `build_configs` when there is more than one, and `possibly_used` for symbols that a file no configuration type-checks, or an unresolved name in a file with a type error, may use.
+
+Test files are excluded from type-checking one file at a time, and only those that themselves have type errors. A reached package is refused when dropping its erroring test files does not leave the remaining ones error-free, because then the files that use the changed symbols cannot be identified.
+
+A cross-configuration operation on a repository with about 600 packages and five configurations takes about 10 seconds and peaks around 6 GB of memory; single-configuration workspaces are unaffected.
 
 ## Safety
 
@@ -138,7 +160,7 @@ What it will not do is hoist an `if init; cond` header. Those declarations are s
 
 `rename_field` has a couple of limitations worth knowing about. If the field being renamed has no struct tag, its `encoding/json` (and yaml/db) key is derived from the field name, so the rename silently changes the wire format; a field with an explicit tag like `json:"name"` is unaffected, since existing struct tags are never rewritten. Reflection-based and string-literal field access, such as `reflect`'s `FieldByName("Name")`, can't be detected by static analysis and won't be updated. Renaming an embedded field is also not supported, since that's really a type rename — use `rename_symbol` on the embedded type instead.
 
-`add_context_parameter`'s `thread: true` mode threads a real `context.Context` transitively through every call chain that reaches the function, and it makes a few judgment calls worth understanding before trusting the diff. A call inside a closure — `go func(){...}()`, a `defer`, a callback — is treated as a threading root: it gets `context.TODO()` and the enclosing function is not climbed, *unless* the closure itself captures a ctx already in scope, in which case that capture is used instead. This is deliberate, and it's the most likely reason to see an unexplained `context.TODO()` in the diff. When a goroutine does capture an in-scope ctx, threading it through is usually the right call, but it can also be a real bug: a request-scoped context handed to a goroutine that outlives the request is a cancellation hazard, so review every goroutine the diff touches, not just whether it compiles. Interface handling has two separate blind spots. First, an implementation of a workspace-declared interface that lives outside the loaded workspace (another module, an untouched sibling repo) is invisible to the traversal, which only ever scans workspace packages — rewriting the interface will silently break that implementation. Second, detection of interfaces declared *outside* the workspace, which is what triggers an abort, is best-effort: it catches interfaces reachable from direct imports and from types that already appear in the workspace's own type information (which is how `http.Handler`, `io.Writer`, `sort.Interface`, and `fmt.Stringer` get caught), but it misses satisfaction that's only visible through `any`/reflection — `json.Marshal(v)` hiding a `json.Marshaler` implementation, for instance — and interfaces from imports that are only transitive and never named in a workspace signature. External test packages (`package foo_test`) are not type-checked by this tool's loader, which folds in only same-package test files, so call sites in an external test package are not rewritten. The loader also silently swallows type-check errors and keeps whatever partial type information it got, so threading a workspace that doesn't currently compile can misclassify a caller as having no context in scope — make sure the workspace builds first. `t.Context()` is emitted unconditionally at test roots and requires Go 1.24+; a module still on an older `go` directive won't compile until it's bumped. A `context.TODO()` left at a root is a marker, not a fix: `main` almost certainly wants `context.Background()` plus signal handling, and the tool won't write that for you. Adding a context parameter to an exported function is also a breaking API change for anything outside the workspace calling it. And as with every operation here, reflection, code generation, and files excluded by build tags are invisible to it.
+`add_context_parameter`'s `thread: true` mode threads a real `context.Context` transitively through every call chain that reaches the function, and it makes a few judgment calls worth understanding before trusting the diff. A call inside a closure — `go func(){...}()`, a `defer`, a callback — is treated as a threading root: it gets `context.TODO()` and the enclosing function is not climbed, *unless* the closure itself captures a ctx already in scope, in which case that capture is used instead. This is deliberate, and it's the most likely reason to see an unexplained `context.TODO()` in the diff. When a goroutine does capture an in-scope ctx, threading it through is usually the right call, but it can also be a real bug: a request-scoped context handed to a goroutine that outlives the request is a cancellation hazard, so review every goroutine the diff touches, not just whether it compiles. Interface handling has two separate blind spots. First, an implementation of a workspace-declared interface that lives outside the loaded workspace (another module, an untouched sibling repo) is invisible to the traversal, which only ever scans workspace packages — rewriting the interface will silently break that implementation. Second, detection of interfaces declared *outside* the workspace, which is what triggers an abort, is best-effort: it catches interfaces reachable from direct imports and from types that already appear in the workspace's own type information (which is how `http.Handler`, `io.Writer`, `sort.Interface`, and `fmt.Stringer` get caught), but it misses satisfaction that's only visible through `any`/reflection — `json.Marshal(v)` hiding a `json.Marshaler` implementation, for instance — and interfaces from imports that are only transitive and never named in a workspace signature. A package with type errors in non-test files keeps whatever partial type information was recovered and is listed in `type_errors`; threading through it can misclassify a caller as having no context in scope, so make sure the workspace builds first. `t.Context()` is emitted unconditionally at test roots and requires Go 1.24+; a module still on an older `go` directive won't compile until it's bumped. A `context.TODO()` left at a root is a marker, not a fix: `main` almost certainly wants `context.Background()` plus signal handling, and the tool won't write that for you. Adding a context parameter to an exported function is also a breaking API change for anything outside the workspace calling it. And as with every operation here, reflection and code generation are invisible to it; files excluded by build constraints are covered by the build configurations described above, except those listed in `uncovered_files`.
 
 Threading aborts outright — making no changes at all and returning an error — in two cases: when a function it would thread through is a method satisfying an interface declared outside the workspace, since adding ctx would silently stop it satisfying that interface; and when the function is ever used as a value rather than called (`var h = Seed`, `Seed` passed as a callback or taken as a method value). Both are refusals by design: the tool would rather stop than hand back a half-threaded workspace that doesn't compile.
 
