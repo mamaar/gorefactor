@@ -60,10 +60,10 @@ func main() {
 
 			// Create a test file
 			testFile := &types.File{
-				Path:              "test.go",
-				AST:               astFile,
-				OriginalContent:   []byte(tt.code),
-				Package:           &types.Package{Path: "test", ImportPath: "test"},
+				Path:            "test.go",
+				AST:             astFile,
+				OriginalContent: []byte(tt.code),
+				Package:         &types.Package{Path: "test", ImportPath: "test"},
 			}
 
 			// Index the file

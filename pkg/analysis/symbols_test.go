@@ -269,7 +269,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when resolving non-existent symbol")
 	}
-	
+
 	// Check that it's a RefactorError
 	if refErr, ok := err.(*types.RefactorError); ok {
 		if refErr.Type != types.SymbolNotFound {
@@ -283,7 +283,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 func TestSymbolResolver_FindReferences(t *testing.T) {
 	// Create a test workspace with references
 	fileSet := token.NewFileSet()
-	
+
 	// Create a file with symbol references
 	src := `package test
 
@@ -367,7 +367,7 @@ func TestSymbolResolver_FindDefinition(t *testing.T) {
 	// This test is complex and requires precise position calculation
 	// For now, we'll test the basic error path and skip the complex position matching
 	// In a production system, this would need more sophisticated position tracking
-	
+
 	ws := &types.Workspace{
 		Packages: make(map[string]*types.Package),
 		FileSet:  token.NewFileSet(),
@@ -444,7 +444,7 @@ func TestSymbolResolver_isExported(t *testing.T) {
 
 func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 	fileSet := token.NewFileSet()
-	
+
 	testCases := []struct {
 		name     string
 		source   string
