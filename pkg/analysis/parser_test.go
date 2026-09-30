@@ -266,8 +266,6 @@ func TestParser_ParsePackage_Empty(t *testing.T) {
 }
 
 func TestParser_ParseWorkspace(t *testing.T) {
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
 	// Create a temporary workspace
 	tempDir := t.TempDir()
 
@@ -320,7 +318,7 @@ func Add(a, b int) int {
 	}
 
 	// Parse the workspace
-	ws, err := parser.ParseWorkspace(tempDir)
+	_, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("Failed to parse workspace: %v", err)
 	}
@@ -457,7 +455,6 @@ func Test() {
 // test fails on the pre-fix code and passes after it — verified by stashing
 // the parser.go fix and re-running.
 func TestParser_TypeCheckPackage_DiamondMemoization(t *testing.T) {
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	tempDir := t.TempDir()
 
 	writeFile := func(rel, content string) {
@@ -520,7 +517,7 @@ func UseBoth() {
 }
 `)
 
-	ws, err := parser.ParseWorkspace(tempDir)
+	parser, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -555,7 +552,6 @@ func UseBoth() {
 // forbids import cycles in non-test code. Without a guard this recurses
 // forever (stack overflow); the test asserts it terminates instead.
 func TestParser_TypeCheckPackage_CycleThroughTestFiles(t *testing.T) {
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	tempDir := t.TempDir()
 
 	writeFile := func(rel, content string) {
@@ -591,7 +587,7 @@ func G() {
 }
 `)
 
-	ws, err := parser.ParseWorkspace(tempDir)
+	parser, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -675,7 +671,6 @@ func G() {
 // match — a spurious "cannot use ... as ... value" error, exactly the
 // failure first observed against a real, large workspace.
 func TestParser_TypeCheckPackage_DiamondRescueIsConsistentAcrossImporters(t *testing.T) {
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	tempDir := t.TempDir()
 
 	writeFile := func(rel, content string) {
@@ -775,7 +770,7 @@ func Run(e *Entry) {
 }
 `)
 
-	ws, err := parser.ParseWorkspace(tempDir)
+	parser, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -906,7 +901,6 @@ func Run(e *Entry) {
 // as a permanent gap rather than something TestTypesExcluded could ever
 // report (TestTypesExcluded only tracks the withTests fold's own failures).
 func TestParser_TypeCheckPackage_ExternalTestPackage(t *testing.T) {
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	tempDir := t.TempDir()
 
 	writeFile := func(rel, content string) {
@@ -939,7 +933,7 @@ func TestProcess(t *testing.T) {
 }
 `)
 
-	ws, err := parser.ParseWorkspace(tempDir)
+	parser, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -982,7 +976,6 @@ func TestProcess(t *testing.T) {
 }
 
 func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	tempDir := t.TempDir()
 
 	writeFile := func(rel, content string) {
@@ -1019,7 +1012,7 @@ func Use() dep.T {
 `, i))
 	}
 
-	ws, err := parser.ParseWorkspace(tempDir)
+	parser, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -1095,8 +1088,7 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 		t.Skipf("repo root %s has no go.mod; skipping", repoRoot)
 	}
 
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ws, err := parser.ParseWorkspace(repoRoot)
+	parser, ws, err := parseWorkspace(repoRoot)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -1212,8 +1204,7 @@ func TestProcess(t *testing.T) {
 }
 `)
 
-	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ws, err := parser.ParseWorkspace(tempDir)
+	parser, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
@@ -1313,7 +1304,6 @@ func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 			tempDir := t.TempDir()
 			for rel, content := range tt.files {
 				full := filepath.Join(tempDir, rel)
@@ -1325,7 +1315,8 @@ func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
 				}
 			}
 
-			if _, err := parser.ParseWorkspace(tempDir); err != nil {
+			parser, _, err := parseWorkspace(tempDir)
+			if err != nil {
 				t.Fatalf("failed to parse workspace: %v", err)
 			}
 
@@ -1359,12 +1350,21 @@ func writeWorkspace(t *testing.T, files map[string]string) string {
 
 func loadWithConfig(t *testing.T, root string, cfg BuildConfig) (*GoParser, *types.Workspace) {
 	t.Helper()
-	p := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)), WithBuildConfig(cfg))
-	ws, err := p.ParseWorkspace(root)
+	set, err := LoadWorkspaceSet(root, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return p, ws
+	return set.Primary().Parser, set.Primary().Workspace
+}
+
+// parseWorkspace loads root under the host configuration and returns the
+// primary view's parser and workspace.
+func parseWorkspace(root string) (*GoParser, *types.Workspace, error) {
+	set, err := LoadWorkspaceSet(root, DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		return nil, nil, err
+	}
+	return set.Primary().Parser, set.Primary().Workspace, nil
 }
 
 func constrainedWorkspace(t *testing.T) string {
@@ -1465,7 +1465,7 @@ func TestParseWorkspace_UnparsableFileDoesNotDropPackage(t *testing.T) {
 	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
 	}
-	bad := p.Sources().File(filepath.Join(root, "p", "bad.go"))
+	bad := p.sources.File(filepath.Join(root, "p", "bad.go"))
 	if bad == nil || bad.Err == nil {
 		t.Errorf("bad.go record = %+v, want non-nil Err", bad)
 	}
@@ -1483,7 +1483,7 @@ func TestParseWorkspace_FullyConstrainedDirectoryIsNotAPackage(t *testing.T) {
 	if _, ok := ws.Packages[filepath.Join(root, "p")]; !ok {
 		t.Error("p not loaded")
 	}
-	if p.Sources().File(filepath.Join(root, "win", "w_windows.go")) == nil {
+	if p.sources.File(filepath.Join(root, "win", "w_windows.go")) == nil {
 		t.Error("constrained file missing from source tree")
 	}
 }

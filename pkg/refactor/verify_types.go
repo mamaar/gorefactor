@@ -207,7 +207,7 @@ func verifyPackageTypes(pkg *types.Package, changesByFile map[string][]types.Cha
 		// Should not happen: pkg.Files/TestFiles only ever hold content that
 		// already parsed successfully once, at workspace-load time (a
 		// package with any unparseable file never makes it into
-		// ws.Packages — see GoParser.ParsePackage/ParseWorkspace). A failure
+		// ws.Packages — see GoParser.ParsePackage). A failure
 		// re-parsing that same content here would mean something mutated it
 		// out from under us, which is exactly the kind of "can't trust the
 		// result" situation Skipped exists for.

@@ -39,11 +39,11 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 		}
 	}
 
-	parser := analysis.NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	ws, err := parser.ParseWorkspace(dir)
+	set, err := analysis.LoadWorkspaceSet(dir, analysis.DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		t.Fatalf("ParseWorkspace: %v", err)
+		t.Fatalf("LoadWorkspaceSet: %v", err)
 	}
+	parser, ws := set.Primary().Parser, set.Primary().Workspace
 
 	pkgDir := filepath.Join(dir, filepath.Dir(target))
 	pkg, ok := ws.Packages[pkgDir]

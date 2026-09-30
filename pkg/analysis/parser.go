@@ -72,20 +72,10 @@ type GoParser struct {
 	loadPackages func(cfg *packages.Config, patterns ...string) ([]*packages.Package, error)
 }
 
-// ParserOption configures a GoParser.
-type ParserOption func(*GoParser)
-
-// WithBuildConfig pins the build configuration files are selected under.
-func WithBuildConfig(cfg BuildConfig) ParserOption {
-	return func(p *GoParser) { p.buildConfig = cfg }
-}
-
-func NewParser(logger *slog.Logger, opts ...ParserOption) *GoParser {
-	p := newViewParser(logger, NewSourceTree(token.NewFileSet()), DefaultBuildConfig())
-	for _, opt := range opts {
-		opt(p)
-	}
-	return p
+// NewParser returns a parser for the host build configuration with an empty
+// source tree of its own, for use outside a WorkspaceSet.
+func NewParser(logger *slog.Logger) *GoParser {
+	return newViewParser(logger, NewSourceTree(token.NewFileSet()), DefaultBuildConfig())
 }
 
 // newViewParser returns a parser that selects files from tree under cfg.
@@ -95,9 +85,6 @@ func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoPa
 
 // BuildConfig returns the configuration files are selected under.
 func (p *GoParser) BuildConfig() BuildConfig { return p.buildConfig }
-
-// Sources returns the config-independent record of every file loaded so far.
-func (p *GoParser) Sources() *SourceTree { return p.sources }
 
 // ParseFile parses a single Go file
 func (p *GoParser) ParseFile(filename string) (*types.File, error) {
@@ -238,22 +225,6 @@ func (p *GoParser) admits(src *SourceFile) bool {
 		return false
 	}
 	return p.buildConfig.MatchesFile(src)
-}
-
-// ParseWorkspace loads every .go file under rootPath into a fresh source tree
-// and returns the workspace the build config selects from it.
-func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
-	absRootPath, err := absWorkspaceRoot(rootPath)
-	if err != nil {
-		p.logger.Error("failed to get absolute path", "path", rootPath, "err", err)
-		return nil, err
-	}
-	p.sources = NewSourceTree(p.fileSet)
-	if err := loadSources(p.sources, absRootPath); err != nil {
-		p.logger.Error("workspace discovery failed", "path", rootPath, "err", err)
-		return nil, err
-	}
-	return p.projectWorkspace(absRootPath, readModule(absRootPath)), nil
 }
 
 func absWorkspaceRoot(rootPath string) (string, error) {
@@ -708,7 +679,7 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 }
 
 // BindWorkspace attaches p to ws as ws's workspace importer, without going
-// through ParseWorkspace. It exists for one-off type-checking sessions that
+// through a WorkspaceSet. It exists for one-off type-checking sessions that
 // need TypeCheckPackage's exact package-resolution logic (workspace-local
 // lookup, then the go/packages-backed external-module fallback, then
 // importer.Default()) against a *types.Workspace some other GoParser already
@@ -727,7 +698,7 @@ func (p *GoParser) BindWorkspace(ws *types.Workspace) {
 // checkFiles below does, silently discarding) after the first — so they can
 // reuse the same import-resolution logic as checkFiles without duplicating
 // workspaceImporter. Returns nil if p has not been attached to a workspace
-// yet via ParseWorkspace or BindWorkspace.
+// yet via a WorkspaceSet or BindWorkspace.
 func (p *GoParser) Importer() gotypes.Importer {
 	return p.importer
 }
@@ -769,7 +740,7 @@ type workspaceImporter struct {
 	// extOnce guards the one-time, workspace-wide load of external
 	// (non-workspace-local) packages via go/packages. It runs lazily, on the
 	// first Import call that misses ws.ImportToPath, rather than eagerly in
-	// ParseWorkspace: most callers only ever need a handful of stdlib/module
+	// projectWorkspace: most callers only ever need a handful of stdlib/module
 	// packages, and eagerly loading the whole dependency graph for every
 	// workspace (including the many synthetic, no-dependency workspaces the
 	// test suite builds in t.TempDir()) would be pure waste.
