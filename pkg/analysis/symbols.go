@@ -161,24 +161,23 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 	return symbolTable, nil
 }
 
-// FindReferences finds all references to a symbol in workspace
+// FindReferences finds all references to a symbol in workspace. Where a
+// package is type-checked an identifier counts when it uses the symbol's
+// go/types object; other identifiers (untyped packages, test files outside the
+// check, names the checker could not resolve) count by name and qualifier.
 func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Reference, error) {
 	var references []*types.Reference
+	target := sr.resolveTypesObject(symbol)
 
 	for _, pkg := range sr.workspace.Packages {
-		for _, file := range pkg.Files {
-			refs, err := sr.findReferencesInFile(file, symbol)
-			if err != nil {
-				return nil, err
+		for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+			for _, file := range files {
+				refs, err := sr.findReferencesInFile(pkg, file, symbol, target)
+				if err != nil {
+					return nil, err
+				}
+				references = append(references, refs...)
 			}
-			references = append(references, refs...)
-		}
-		for _, file := range pkg.TestFiles {
-			refs, err := sr.findReferencesInFile(file, symbol)
-			if err != nil {
-				return nil, err
-			}
-			references = append(references, refs...)
 		}
 	}
 
@@ -1295,36 +1294,145 @@ func (sr *SymbolResolver) extractInterfaceMethodSymbols(typeSpec *ast.TypeSpec, 
 	}
 }
 
-func (sr *SymbolResolver) findReferencesInFile(file *types.File, symbol *types.Symbol) ([]*types.Reference, error) {
+func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.File, symbol *types.Symbol, target gotypes.Object) ([]*types.Reference, error) {
 	var references []*types.Reference
 
 	if file.AST == nil {
 		return references, nil
 	}
 
+	info := checkedInfo(pkg, file)
+	var roles *identRoles
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok {
-			if ident.Name == symbol.Name {
-				// Check if this identifier refers to our symbol
-				if sr.identifierRefersToSymbol(ident, file, symbol) {
-					pos := sr.workspace.FileSet.Position(ident.Pos())
-					ref := &types.Reference{
-						Symbol:   symbol,
-						Position: ident.Pos(),
-						Offset:   pos.Offset,
-						File:     file.Path,
-						Line:     pos.Line,
-						Column:   pos.Column,
-						Context:  sr.extractContext(ident, file),
-					}
-					references = append(references, ref)
-				}
+		ident, ok := n.(*ast.Ident)
+		if !ok || ident.Name != symbol.Name || ident.Pos() == symbol.Position {
+			return true
+		}
+		var refers bool
+		if obj, resolved := identObject(info, ident); target != nil && resolved {
+			refers = obj != nil && canonicalObject(obj) == target
+		} else {
+			if roles == nil {
+				roles = newIdentRoles(file.AST)
 			}
+			refers = sr.nameRefersToSymbol(ident, file, roles, symbol)
+		}
+		if refers {
+			pos := sr.workspace.FileSet.Position(ident.Pos())
+			references = append(references, &types.Reference{
+				Symbol:   symbol,
+				Position: ident.Pos(),
+				Offset:   pos.Offset,
+				File:     file.Path,
+				Line:     pos.Line,
+				Column:   pos.Column,
+				Context:  sr.extractContext(ident, file),
+			})
 		}
 		return true
 	})
 
 	return references, nil
+}
+
+// checkedInfo returns pkg's type information when it covers the identifiers
+// of file, and nil for a package that is not type-checked and for a test file
+// the check left out or checked as another package.
+func checkedInfo(pkg *types.Package, file *types.File) *gotypes.Info {
+	if pkg == nil || pkg.TypesInfo == nil || pkg.TypesInfo.Uses == nil || pkg.TypesPkg == nil {
+		return nil
+	}
+	for name, f := range pkg.TestFiles {
+		if f != file {
+			continue
+		}
+		if _, excluded := pkg.ExcludedTestFiles[name]; excluded || file.AST.Name.Name != pkg.TypesPkg.Name() {
+			return nil
+		}
+	}
+	return pkg.TypesInfo
+}
+
+// identObject returns the object ident uses, or nil for one it defines, and
+// whether info resolved ident at all.
+func identObject(info *gotypes.Info, ident *ast.Ident) (obj gotypes.Object, resolved bool) {
+	if info == nil {
+		return nil, false
+	}
+	if obj, ok := info.Uses[ident]; ok {
+		return obj, true
+	}
+	if _, ok := info.Defs[ident]; ok {
+		return nil, true
+	}
+	return nil, false
+}
+
+// identRoles holds what the syntax alone says about the identifiers of a file.
+type identRoles struct {
+	// nonReference holds the identifiers that name no declaration of the
+	// package scope: fields, parameters, method names, labels, import
+	// aliases, the package clause and the keys of struct literals.
+	nonReference map[*ast.Ident]bool
+	// selector maps the selected name of each selector expression to it.
+	selector map[*ast.Ident]*ast.SelectorExpr
+}
+
+func newIdentRoles(f *ast.File) *identRoles {
+	r := &identRoles{nonReference: map[*ast.Ident]bool{f.Name: true}, selector: map[*ast.Ident]*ast.SelectorExpr{}}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.Field:
+			for _, name := range node.Names {
+				r.nonReference[name] = true
+			}
+		case *ast.FuncDecl:
+			if node.Recv != nil {
+				r.nonReference[node.Name] = true
+			}
+		case *ast.LabeledStmt:
+			r.nonReference[node.Label] = true
+		case *ast.BranchStmt:
+			if node.Label != nil {
+				r.nonReference[node.Label] = true
+			}
+		case *ast.ImportSpec:
+			if node.Name != nil {
+				r.nonReference[node.Name] = true
+			}
+		case *ast.SelectorExpr:
+			r.selector[node.Sel] = node
+		case *ast.CompositeLit:
+			switch node.Type.(type) {
+			case *ast.MapType, *ast.ArrayType:
+				// Keys are expressions.
+			default:
+				for _, elt := range node.Elts {
+					if kv, ok := elt.(*ast.KeyValueExpr); ok {
+						if key, ok := kv.Key.(*ast.Ident); ok {
+							r.nonReference[key] = true
+						}
+					}
+				}
+			}
+		}
+		return true
+	})
+	return r
+}
+
+// nameRefersToSymbol decides by name and import qualifier whether ident refers
+// to symbol: a selected name must be qualified by an import of the symbol's
+// package, any other name must be in that package.
+func (sr *SymbolResolver) nameRefersToSymbol(ident *ast.Ident, file *types.File, roles *identRoles, symbol *types.Symbol) bool {
+	if roles.nonReference[ident] {
+		return false
+	}
+	if sel, ok := roles.selector[ident]; ok {
+		x, ok := sel.X.(*ast.Ident)
+		return ok && sr.importAliasRefersToPackage(x.Name, file, symbol.Package)
+	}
+	return sr.isSamePackage(file.Package, symbol.Package)
 }
 
 func (sr *SymbolResolver) resolveIdentifier(ident *ast.Ident, file *types.File) (*types.Symbol, error) {
@@ -1372,62 +1480,6 @@ func (sr *SymbolResolver) resolveIdentifier(ident *ast.Ident, file *types.File) 
 	}
 
 	return nil, sr.diagnostics.AnalyzeResolutionFailure(ident, file, basicError)
-}
-
-func (sr *SymbolResolver) identifierRefersToSymbol(ident *ast.Ident, file *types.File, symbol *types.Symbol) bool {
-	// Don't include the name match if it's the symbol definition itself
-	if ident.Pos() == symbol.Position {
-		return false
-	}
-
-	// Check if this identifier is part of a function declaration for the same symbol
-	var isDefinition bool
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			if funcDecl.Name != nil && funcDecl.Name.Pos() == ident.Pos() && funcDecl.Name.Name == symbol.Name {
-				isDefinition = true
-				return false
-			}
-		}
-		return true
-	})
-
-	if isDefinition {
-		return false
-	}
-
-	// Name must match
-	if ident.Name != symbol.Name {
-		return false
-	}
-
-	// Check if this is a qualified reference (pkg.Symbol)
-	pkgAlias := sr.getQualifyingPackage(ident, file)
-	if pkgAlias != "" {
-		return sr.importAliasRefersToPackage(pkgAlias, file, symbol.Package)
-	}
-
-	// Unqualified reference - must be in the same package
-	return sr.isSamePackage(file.Package, symbol.Package)
-}
-
-// getQualifyingPackage checks if ident is the selector in pkg.ident and returns the package alias
-func (sr *SymbolResolver) getQualifyingPackage(ident *ast.Ident, file *types.File) string {
-	var pkgAlias string
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if selector, ok := n.(*ast.SelectorExpr); ok {
-			// Compare by position since we might have different node instances
-			if selector.Sel.Pos() == ident.Pos() && selector.Sel.Name == ident.Name {
-				// This identifier is the selected name (e.g., Symbol in pkg.Symbol)
-				if pkgIdent, ok := selector.X.(*ast.Ident); ok {
-					pkgAlias = pkgIdent.Name
-					return false
-				}
-			}
-		}
-		return true
-	})
-	return pkgAlias
 }
 
 // importAliasRefersToPackage checks if import alias refers to target package

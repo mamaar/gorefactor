@@ -208,6 +208,7 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 	req.UpdateTests = true
 
 	operation := &MoveSymbolOperation{Request: req}
+	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {

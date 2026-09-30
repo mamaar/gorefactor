@@ -44,3 +44,54 @@ func TestMoveSymbol_RemovesOnlyTheNamedDeclarationWhenAnotherNameExtendsIt(t *te
 	}
 	goVets(t, dir, "")
 }
+
+const nonReferencingIdentsSrc = `package src
+
+type Package struct{ Name string }
+
+type File struct {
+	Package *Package
+	Path    string
+}
+
+func (f File) Pkg() *Package { return f.Package }
+
+func (f File) Item() int { return 1 }
+
+func Make() File { return File{Package: &Package{Name: "x"}} }
+
+func Shadow() int {
+	Package := 3
+	return Package + 1
+}
+
+func Labelled() int {
+Package:
+	for i := 0; i < 3; i++ {
+		if i == 1 {
+			break Package
+		}
+	}
+	return 0
+}
+`
+
+func TestMoveSymbol_LeavesFieldsKeysMethodsLabelsAndLocalsNamedLikeTheSymbol(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go": nonReferencingIdentsSrc,
+		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() string { f := src.Make(); return f.Package.Name + src.Package{}.Name }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	if res := moveSymbolCall(t, sess, "Package", "src", "dst"); res.IsError {
+		t.Fatalf("move Package: %s", errText(res))
+	}
+
+	assertFileContains(t, dir, "dst/dst.go", "type Package struct")
+	assertFileContains(t, dir, "src/src.go", "Package *dst.Package")
+	assertFileContains(t, dir, "src/src.go", "File{Package: &dst.Package{")
+	assertFileContains(t, dir, "src/src.go", "Package := 3")
+	assertFileContains(t, dir, "a/a.go", "f.Package.Name + dst.Package{}.Name")
+	goVets(t, dir, "")
+}

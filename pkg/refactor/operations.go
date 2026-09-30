@@ -105,6 +105,14 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 	}
 
+	// References are told from identically named identifiers by go/types object.
+	if sourcePackage.TypesInfo == nil {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("source package %s is not type-checked, so references to %s cannot be told from other identifiers of that name", ref.Package, ref.Name),
+		}
+	}
+
 	// Find the symbol to move
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	symbol, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
