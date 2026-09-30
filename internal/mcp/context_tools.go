@@ -3,53 +3,11 @@ package mcp
 import (
 	"context"
 	"fmt"
-	"maps"
-	"path/filepath"
-	"slices"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/mamaar/gorefactor/pkg/analysis"
-	"github.com/mamaar/gorefactor/pkg/refactor"
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
-
-// packageForFile returns the workspace package that owns sourceFile (matched
-// the same way analysis.ExtractFuncParams matches it: by map key or by
-// File.Path), or nil if no package claims it. Mirrors the lookup pattern used
-// throughout pkg/analysis/funcparams.go, kept local here since only this
-// file's test-exclusion handling needs the owning *pkgtypes.Package rather
-// than just the *pkgtypes.File.
-func packageForFile(ws *pkgtypes.Workspace, sourceFile string) *pkgtypes.Package {
-	for _, pkg := range ws.Packages {
-		if _, ok := pkg.Files[sourceFile]; ok {
-			return pkg
-		}
-		for filePath, f := range pkg.Files {
-			if filePath == sourceFile || f.Path == sourceFile {
-				return pkg
-			}
-		}
-	}
-	return nil
-}
-
-// excludedTestFiles lists pkg's test files left out of type-checking under
-// config, the only configuration the caller looked at.
-func excludedTestFiles(pkg *pkgtypes.Package, config string) []pkgtypes.UncoveredFile {
-	if pkg == nil {
-		return nil
-	}
-	var out []pkgtypes.UncoveredFile
-	for _, name := range slices.Sorted(maps.Keys(pkg.ExcludedTestFiles)) {
-		out = append(out, pkgtypes.UncoveredFile{
-			Path:    filepath.Join(pkg.Dir, name),
-			Configs: []string{config},
-			Reason:  pkg.ExcludedTestFiles[name].Error(),
-		})
-	}
-	return out
-}
 
 // --- add_context_parameter ---
 
@@ -68,156 +26,51 @@ func registerContextTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: `Add ctx context.Context as the first parameter to a function, updating all call sites with a default value (context.TODO() by default).
 Pairs with detect_missing_context_params to find functions that need it.
 
-Set thread: true to thread a real context.Context transitively through every call chain in the workspace that reaches the function, instead of injecting context.TODO() at each of its direct call sites. Climbing stops at the first caller that already has a context.Context in scope — a parameter, a captured variable, or a derivable r.Context() on an *http.Request — and at any root that cannot take one: main, init, Test/Benchmark/Fuzz declarations, closures, and package-level var initializers. Roots get context.TODO() (or t.Context() inside a *testing.T/B/F-scoped function or subtest), never a new parameter. When the seed or something it reaches is a method on a type that implements a workspace-declared interface, the interface declaration and every workspace implementation of it are rewritten together, so the result compiles regardless of which implementation a caller holds. Threading aborts, making no changes at all, if it would need to add a context.Context to a method satisfying an interface declared outside the workspace (e.g. http.Handler, fmt.Stringer), or if the function is ever referenced as a value rather than called (assigned to a variable, passed as a callback, taken as a method value) — both cases would otherwise leave the workspace uncompilable. Threading is planned under every build configuration that covers the workspace (GOOS/GOARCH variants, custom build tags) and merged into one plan, so files only another configuration compiles are rewritten too and a function that gains ctx in one configuration gains it in all; the result lists those configurations as build_configs when there is more than one, and an abort names the configuration it came from. A file in a package the operation reached that no configuration type-checks (a _test.go file with a type error such as an unresolvable import, or a file no configuration can include) is listed in uncovered_files with the configurations that include it and the reason; it is not rewritten, and when it names a function that gained ctx it also appears in skipped_sites to be fixed by hand. Without thread, uncovered_files covers the function's own package under the primary configuration only. The operation aborts when a reached package had all its test files dropped from type-checking without a per-file cause. thread and default_value are mutually exclusive: with thread, each call site resolves its own context expression, so a single fixed default_value has no meaning.`,
+Set thread: true to thread a real context.Context transitively through every call chain in the workspace that reaches the function, instead of injecting context.TODO() at each of its direct call sites. Climbing stops at the first caller that already has a context.Context in scope — a parameter, a captured variable, or a derivable r.Context() on an *http.Request — and at any root that cannot take one: main, init, Test/Benchmark/Fuzz declarations, closures, and package-level var initializers. Roots get context.TODO() (or t.Context() inside a *testing.T/B/F-scoped function or subtest), never a new parameter. When the seed or something it reaches is a method on a type that implements a workspace-declared interface, the interface declaration and every workspace implementation of it are rewritten together, so the result compiles regardless of which implementation a caller holds. Threading aborts, making no changes at all, if it would need to add a context.Context to a method satisfying an interface declared outside the workspace (e.g. http.Handler, fmt.Stringer), or if the function is ever referenced as a value rather than called (assigned to a variable, passed as a callback, taken as a method value) — both cases would otherwise leave the workspace uncompilable. Threading is planned under every build configuration that covers the workspace (GOOS/GOARCH variants, custom build tags) and merged into one plan, so files only another configuration compiles are rewritten too and a function that gains ctx in one configuration gains it in all; the result lists those configurations as build_configs when there is more than one, and an abort names the configuration it came from. A file in a package the operation reached that no configuration type-checks (a _test.go file with a type error such as an unresolvable import, or a file no configuration can include) is listed in uncovered_files with the configurations that include it and the reason; it is not rewritten, and when it names a function that gained ctx it also appears in skipped_sites to be fixed by hand. Without thread the same holds: the function, with propagate its interface declarations and implementations, and the direct call sites are rewritten under every configuration, a declaration that gains ctx in one configuration gains it in all, and a missing function is an error only when no configuration declares it. The operation aborts when a reached package had all its test files dropped from type-checking without a per-file cause. thread and default_value are mutually exclusive: with thread, each call site resolves its own context expression, so a single fixed default_value has no meaning.`,
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AddContextParameterInput) (*mcpsdk.CallToolResult, any, error) {
-		state.RLock()
-
-		ws, err := state.GetWorkspace()
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
-		if in.Thread {
-			if in.DefaultValue != "" {
-				state.RUnlock()
-				return errResult(fmt.Errorf(
-					"default_value is not meaningful with thread: true; each call site resolves its own " +
-						"context expression, so a single fixed default cannot apply to all of them")), nil, nil
-			}
-
-			sourceFile := resolveFile(ws, in.SourceFile)
-
-			// Deliberately does NOT call state.EnsureReferenceIndex / set
-			// CachedIndex, unlike the non-threading path below. That cache may
-			// have been built from a workspace that was loaded but never
-			// type-checked (BuildReferenceIndex silently skips any package
-			// whose TypesPkg/TypesInfo is nil), which would hand the operation
-			// an index with an empty object-identity map — CallSitesOf would
-			// find no callers and threading would "succeed" having changed
-			// nothing. Leaving the request's index unset makes the engine
-			// type-check every package itself and then build a fresh, accurate
-			// index.
-			//
-			// The read lock stays held until the merged plan exists: a watcher
-			// batch takes the write lock and may drop a view being planned in.
-			plan, err := state.GetEngine().ThreadContextAcrossConfigs(pkgtypes.ThreadContextRequest{
-				FunctionName: in.FunctionName,
-				SourceFile:   sourceFile,
-			})
-			if err != nil {
-				state.RUnlock()
-				return errResult(err), nil, nil
-			}
-
-			state.RUnlock()
-
-			result, err := executePlan(state, plan, fmt.Sprintf("thread context through: %s", in.FunctionName), in.DryRun)
-			if err != nil {
-				return errResult(err), nil, nil
-			}
-			return textResult(result), nil, nil
-		}
-
-		idx, err := state.EnsureReferenceIndex(ws)
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
-		sourceFile := resolveFile(ws, in.SourceFile)
-
-		// Find the function declaration and extract existing params
-		funcParams, err := analysis.ExtractFuncParams(ws, sourceFile, in.FunctionName)
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
-		// idx resolves call sites by go/types object identity, so it sees none
-		// in a test file left out of type-checking. Such files are reported on
-		// the plan below; when the package cannot say which they are, a caller
-		// could be left on the old arity without notice.
-		pkg := packageForFile(ws, sourceFile)
-		if pkg != nil && pkg.UnattributedTestErr != nil {
-			state.RUnlock()
+		if in.Thread && in.DefaultValue != "" {
 			return errResult(fmt.Errorf(
-				"cannot add context parameter: every _test.go file of package %s (%d) was left out of "+
-					"type-checking, because dropping the files that carry errors did not leave the rest "+
-					"error-free (%v). Which of them call %s cannot be told, so proceeding could leave "+
-					"them uncompilable without saying where — fix the type errors in those test files "+
-					"and re-run",
-				pkg.ImportPath, len(pkg.ExcludedTestFiles), pkg.UnattributedTestErr, in.FunctionName)), nil, nil
+				"default_value is not meaningful with thread: true; each call site resolves its own " +
+					"context expression, so a single fixed default cannot apply to all of them")), nil, nil
 		}
 
-		// Check if ctx context.Context already exists as first param
-		if len(funcParams) > 0 && funcParams[0].Type == "context.Context" {
-			state.RUnlock()
-			return errResult(fmt.Errorf("function %s already has context.Context as first parameter", in.FunctionName)), nil, nil
-		}
-
-		// Convert to refactor.Parameter and prepend ctx context.Context
-		newParams := make([]refactor.Parameter, 0, len(funcParams)+1)
-		newParams = append(newParams, refactor.Parameter{Name: "ctx", Type: "context.Context"})
-		for _, fp := range funcParams {
-			newParams = append(newParams, refactor.Parameter{Name: fp.Name, Type: fp.Type})
-		}
-
-		defaultValue := in.DefaultValue
-		if defaultValue == "" {
-			defaultValue = "context.TODO()"
-		}
-
-		op := &refactor.ChangeSignatureOperation{
-			FunctionName:         in.FunctionName,
-			SourceFile:           sourceFile,
-			NewParams:            newParams,
-			Scope:                pkgtypes.WorkspaceScope,
-			PropagateToInterface: in.Propagate,
-			DefaultValue:         defaultValue,
-			NewParamPosition:     0,
-			NewReturnPosition:    -1,
-			RemovedReturnIndex:   -1,
-			CachedIndex:          idx,
-			Logger:               state.logger,
-		}
-
-		if err := op.Validate(ws); err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		plan, err := op.Execute(ws)
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
-		// Bug 2 fix: remove internal "ctx := context.Background()" / "ctx := context.TODO()"
-		// statements from the function body.  Now that ctx is a parameter, the internal
-		// root-context creation is a redeclaration that prevents compilation.
-		internalCtxChanges := refactor.RemoveInternalCtxCreation(ws, sourceFile, in.FunctionName)
-		plan.Changes = append(plan.Changes, internalCtxChanges...)
-		for _, c := range internalCtxChanges {
-			found := false
-			for _, f := range plan.AffectedFiles {
-				if f == c.File {
-					found = true
-					break
-				}
-			}
-			if !found {
-				plan.AffectedFiles = append(plan.AffectedFiles, c.File)
-			}
-		}
-
-		plan.Coverage.Uncovered = excludedTestFiles(pkg, state.viewOf(ws).Config.String())
-
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
+		state.RLock()
+		plan, desc, err := planAddContextParameter(state, in)
 		state.RUnlock()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
 
-		result, err := executePlan(state, plan, fmt.Sprintf("add context parameter: %s", in.FunctionName), in.DryRun)
+		result, err := executePlan(state, plan, desc, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 		return textResult(result), nil, nil
 	})
+}
+
+// planAddContextParameter plans in under every build configuration, threading
+// through callers when in.Thread is set. The caller holds the read lock.
+func planAddContextParameter(state *MCPServer, in AddContextParameterInput) (*pkgtypes.RefactoringPlan, string, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, "", err
+	}
+	sourceFile := resolveFile(ws, in.SourceFile)
+	if in.Thread {
+		plan, err := state.GetEngine().ThreadContextAcrossConfigs(pkgtypes.ThreadContextRequest{
+			FunctionName: in.FunctionName,
+			SourceFile:   sourceFile,
+		})
+		return plan, fmt.Sprintf("thread context through: %s", in.FunctionName), err
+	}
+	plan, err := state.GetEngine().AddContextParameterAcrossConfigs(pkgtypes.AddContextParameterRequest{
+		FunctionName: in.FunctionName,
+		SourceFile:   sourceFile,
+		DefaultValue: in.DefaultValue,
+		Propagate:    in.Propagate,
+	})
+	return plan, fmt.Sprintf("add context parameter: %s", in.FunctionName), err
 }

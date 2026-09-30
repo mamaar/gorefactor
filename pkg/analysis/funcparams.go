@@ -53,16 +53,19 @@ func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]
 		}
 	}
 
-	// Extract parameters
-	if funcDecl.Type.Params == nil || len(funcDecl.Type.Params.List) == 0 {
-		return nil, nil
-	}
+	return FuncTypeParams(funcDecl.Type), nil
+}
 
+// FuncTypeParams returns the parameters of a function signature, one entry per
+// name.
+func FuncTypeParams(ft *ast.FuncType) []FuncParam {
+	if ft.Params == nil || len(ft.Params.List) == 0 {
+		return nil
+	}
 	var params []FuncParam
-	for _, field := range funcDecl.Type.Params.List {
+	for _, field := range ft.Params.List {
 		typeStr := ASTExprToString(field.Type)
 		if len(field.Names) == 0 {
-			// Unnamed parameter
 			params = append(params, FuncParam{Name: "", Type: typeStr})
 		} else {
 			for _, name := range field.Names {
@@ -70,7 +73,7 @@ func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]
 			}
 		}
 	}
-	return params, nil
+	return params
 }
 
 // FindFuncDeclByName finds a function or method declaration by name, supporting Type.Method syntax.

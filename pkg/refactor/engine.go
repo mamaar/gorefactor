@@ -400,11 +400,9 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 
 // threadContextPlanner plans context threading in one view.
 type threadContextPlanner struct {
+	viewIndexes
 	engine *DefaultEngine
 	req    types.ThreadContextRequest
-	// indexes holds each view's reference index for the run, so replanning a
-	// view does not rebuild it.
-	indexes map[*analysis.View]*analysis.ReferenceIndex
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
@@ -418,19 +416,12 @@ func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySe
 	return configResult{plan: plan, changed: op.GainedKeys(), reach: op.reach()}, nil
 }
 
-// indexOf type-checks v and builds its reference index on first use. The view's
-// own cached index is not used: it may predate type-checking.
-func (p *threadContextPlanner) indexOf(v *analysis.View) *analysis.ReferenceIndex {
-	if idx := p.indexes[v]; idx != nil {
-		return idx
-	}
-	ensureTypeChecked(v.Parser, v.Workspace)
-	idx := v.Resolver.BuildReferenceIndex()
-	if p.indexes == nil {
-		p.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
-	}
-	p.indexes[v] = idx
-	return idx
+// AddContextParameterAcrossConfigs adds a ctx parameter to a function and passes
+// a default value at its call sites, under every build configuration covering
+// the workspace, and returns one merged plan. A declaration that gains ctx under
+// one configuration gains it under all of them.
+func (e *DefaultEngine) AddContextParameterAcrossConfigs(req types.AddContextParameterRequest) (*types.RefactoringPlan, error) {
+	return e.planAcrossConfigs(&addContextParameterPlanner{engine: e, req: req})
 }
 
 // threadContext plans context threading in ws with the parser and analyzer of

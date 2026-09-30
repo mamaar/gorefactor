@@ -104,6 +104,17 @@ type ThreadContextRequest struct {
 	SourceFile   string // File containing the function declaration
 }
 
+// AddContextParameterRequest adds `ctx context.Context` as the first parameter
+// of FunctionName and passes DefaultValue (context.TODO() when empty) at every
+// call site. Propagate also rewrites interface declarations and the other
+// implementations of the method.
+type AddContextParameterRequest struct {
+	FunctionName string // "Process" or "Type.Method"
+	SourceFile   string // File containing the function declaration
+	DefaultValue string
+	Propagate    bool
+}
+
 type RenameScope int
 
 const (

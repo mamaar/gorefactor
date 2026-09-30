@@ -29,6 +29,27 @@ type configPlanner interface {
 	planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error)
 }
 
+// viewIndexes holds each view's reference index for one run, so replanning a
+// view does not rebuild it.
+type viewIndexes struct {
+	indexes map[*analysis.View]*analysis.ReferenceIndex
+}
+
+// indexOf type-checks v and builds its reference index on first use. The view's
+// own cached index is not used: it may predate type-checking.
+func (c *viewIndexes) indexOf(v *analysis.View) *analysis.ReferenceIndex {
+	if idx := c.indexes[v]; idx != nil {
+		return idx
+	}
+	ensureTypeChecked(v.Parser, v.Workspace)
+	idx := v.Resolver.BuildReferenceIndex()
+	if c.indexes == nil {
+		c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
+	}
+	c.indexes[v] = idx
+	return idx
+}
+
 // planAcrossConfigs runs p under every build configuration of the covering set
 // and merges the per-view plans into one.
 func (e *DefaultEngine) planAcrossConfigs(p configPlanner) (*types.RefactoringPlan, error) {
