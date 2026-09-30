@@ -122,11 +122,18 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 
 	// Find the symbol to move
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.ResolveSymbol(sourcePackage, ref.Name); err != nil {
+	symbol, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
+	if err != nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("symbol not found: %s", ref.Name),
 			Cause:   err,
+		}
+	}
+	if symbol.Kind == types.ConstantSymbol || symbol.Kind == types.VariableSymbol {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("cannot move %s: constants and variables are not supported", ref.Name),
 		}
 	}
 

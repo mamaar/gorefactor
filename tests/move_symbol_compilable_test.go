@@ -306,3 +306,19 @@ func TestMoveByDependencies_SkipsCandidateUsedInAFileNoConfigurationTypeChecks(t
 	assertFileContains(t, dir, "shared/shared.go", "func Free()")
 	goVets(t, dir, "")
 }
+
+func TestMoveSymbol_RefusesConstantsAndVariablesNamingTheLimitation(t *testing.T) {
+	const src = "package src\n\nconst Limit = 3\n\nvar Counter int\n"
+	for _, name := range []string{"Limit", "Counter"} {
+		dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+
+		res := moveSymbolCall(t, sess, name, "src", "dst")
+		sess.Close()
+
+		if !res.IsError || !strings.Contains(errText(res), "constants and variables are not supported") {
+			t.Errorf("move %s = error %v: %s, want a refusal saying constants and variables are not supported", name, res.IsError, errText(res))
+		}
+		assertFileUnchanged(t, dir, "src/src.go", src)
+	}
+}
