@@ -19,7 +19,7 @@ type BatchOperationsInput struct {
 func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "batch_operations",
-		Description: "Execute multiple refactoring operations as an atomic batch. Optionally rolls back all changes if any operation fails.",
+		Description: "Execute multiple refactoring operations as an atomic batch. Optionally rolls back all changes if any operation fails. Acts on the default build configuration only and can miss files excluded by build constraints.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in BatchOperationsInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 

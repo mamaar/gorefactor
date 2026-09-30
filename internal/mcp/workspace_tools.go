@@ -92,7 +92,7 @@ type WorkspaceStatusOutput struct {
 func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "load_workspace",
-		Description: "Load a Go workspace into memory for refactoring. Must be called before any other tool.",
+		Description: "Load a Go workspace into memory for refactoring. Must be called before any other tool. Reports the build configurations covering the workspace as build_configs and the files none of them includes as uncovered_files.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in LoadWorkspaceInput) (*mcpsdk.CallToolResult, any, error) {
 		indexBuilt, err := state.LoadWorkspace(ctx, in.Path)
 		if err != nil {
@@ -115,7 +115,7 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "workspace_status",
-		Description: "Return the current workspace status: loaded state, module name, package count, and package list.",
+		Description: "Return the current workspace status: loaded state, module name, package count, package list, build_configs and uncovered_files.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in WorkspaceStatusInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
