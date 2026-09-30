@@ -387,7 +387,7 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 // chains, stopping only at a caller that already has a context in scope or at
 // a root that cannot take one.
 func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
-	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), req, nil)
+	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil)
 	return plan, err
 }
 
@@ -402,10 +402,13 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 type threadContextPlanner struct {
 	engine *DefaultEngine
 	req    types.ThreadContextRequest
+	// indexes holds each view's reference index for the run, so replanning a
+	// view does not rebuild it.
+	indexes map[*analysis.View]*analysis.ReferenceIndex
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	plan, gained, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.req, linked)
+	plan, gained, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked)
 	if isSymbolNotFound(err) {
 		return configResult{absent: err}, nil
 	}
@@ -415,13 +418,30 @@ func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySe
 	return configResult{plan: plan, changed: gained}, nil
 }
 
+// indexOf type-checks v and builds its reference index on first use. The view's
+// own cached index is not used: it may predate type-checking.
+func (p *threadContextPlanner) indexOf(v *analysis.View) *analysis.ReferenceIndex {
+	if idx := p.indexes[v]; idx != nil {
+		return idx
+	}
+	ensureTypeChecked(v.Parser, v.Workspace)
+	idx := v.Resolver.BuildReferenceIndex()
+	if p.indexes == nil {
+		p.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
+	}
+	p.indexes[v] = idx
+	return idx
+}
+
 // threadContext plans context threading in ws with the parser and analyzer of
 // the view that owns it, seeding the functions linked names next to the
-// request's seed. It also returns the keys of the functions that gain a ctx.
+// request's seed. A nil idx makes the operation build its own reference index.
+// It also returns the keys of the functions that gain a ctx.
 func (e *DefaultEngine) threadContext(
 	ws *types.Workspace,
 	parser *analysis.GoParser,
 	analyzer *analysis.DependencyAnalyzer,
+	idx *analysis.ReferenceIndex,
 	req types.ThreadContextRequest,
 	linked types.SymbolKeySet,
 ) (*types.RefactoringPlan, types.SymbolKeySet, error) {
@@ -429,6 +449,7 @@ func (e *DefaultEngine) threadContext(
 		FunctionName: req.FunctionName,
 		SourceFile:   req.SourceFile,
 		Linked:       linked,
+		CachedIndex:  idx,
 	}
 	// The operation cannot reach EngineConfig through the Operation interface,
 	// so the engine hands it the AllowBreaking flag, mirroring RenameField.

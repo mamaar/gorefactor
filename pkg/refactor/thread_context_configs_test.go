@@ -167,6 +167,10 @@ func TestThreadContextAcrossConfigs_AlternatingSiblingChainNeedsSeveralRounds(t 
 	if rounds < 3 {
 		t.Errorf("rounds = %d, want at least 3", rounds)
 	}
+	op := plan.Operations[0].(*ThreadContextOperation)
+	if len(planner.indexes) != len(views) || op.CachedIndex == nil || op.CachedIndex != planner.indexes[views[0]] {
+		t.Errorf("want one reference index per view, reused across rounds; have %d for %d views", len(planner.indexes), len(views))
+	}
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}
