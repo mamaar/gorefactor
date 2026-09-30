@@ -85,6 +85,54 @@ type UnusedSymbolItem struct {
 	Exported     bool   `json:"exported"`
 	SafeToDelete bool   `json:"safe_to_delete"`
 	Reason       string `json:"reason"`
+	// Configs names the build configurations that declare the symbol. Omitted
+	// when every configuration does.
+	Configs []string `json:"configs,omitempty"`
+	// PossibleUse is where a file no build configuration type-checks names
+	// the symbol.
+	PossibleUse *PossibleUseItem `json:"possible_use,omitempty"`
+}
+
+type PossibleUseItem struct {
+	File    string   `json:"file"`
+	Line    int      `json:"line"`
+	Configs []string `json:"configs,omitempty"`
+	Reason  string   `json:"reason"`
+}
+
+// findUnused runs the unused analysis under every build configuration. The
+// caller holds the read lock.
+func findUnused(state *MCPServer, in UnusedInput) (*refactor.UnusedReport, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	req := refactor.UnusedRequest{IncludeExported: in.IncludeExported}
+	if in.Package != "" {
+		req.Packages = []string{in.Package, types.ResolvePackagePath(ws, in.Package)}
+	}
+	return state.GetEngine().UnusedAcrossConfigs(req)
+}
+
+func unusedItems(findings []refactor.UnusedFinding) []UnusedSymbolItem {
+	items := make([]UnusedSymbolItem, len(findings))
+	for i, f := range findings {
+		items[i] = UnusedSymbolItem{
+			Name:         f.Symbol.Name,
+			Kind:         f.Symbol.Kind.String(),
+			Package:      f.Symbol.Package,
+			File:         f.Symbol.File,
+			Line:         f.Symbol.Line,
+			Exported:     f.Symbol.Exported,
+			SafeToDelete: f.SafeToDelete,
+			Reason:       f.Reason,
+			Configs:      f.Configs,
+		}
+		if use := f.PossibleUse; use != nil {
+			items[i].PossibleUse = &PossibleUseItem{File: use.File, Line: use.Line, Configs: use.Configs, Reason: use.Unverified}
+		}
+	}
+	return items
 }
 
 // --- detect_if_init_assignments ---
@@ -483,60 +531,31 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "unused",
-		Description: "Find unused symbols in the workspace. By default only shows unexported symbols that are safe to delete.",
+		Name: "unused",
+		Description: "Find unused symbols in the workspace. By default only shows unexported symbols that are safe to delete. " +
+			"A symbol counts as unused only when no build configuration (GOOS/GOARCH variants, custom build tags) covering the workspace uses it; " +
+			"one that a file no configuration type-checks mentions is listed under possibly_used instead.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in UnusedInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the report exists: a watcher batch
+		// takes the write lock and may drop a view being analysed.
 		state.RLock()
-		defer state.RUnlock()
-
-		ws, err := state.GetWorkspace()
+		report, err := findUnused(state, in)
+		state.RUnlock()
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
-		analyzer := analysis.NewUnusedAnalyzer(ws, state.logger)
-		if in.IncludeExported {
-			analyzer.SetIncludeExported(true)
+		out := map[string]any{
+			"unused_symbols": unusedItems(report.Unused),
+			"count":          len(report.Unused),
 		}
-
-		var unused []*analysis.UnusedSymbol
-		if in.IncludeExported {
-			unused, err = analyzer.FindUnusedSymbols()
-		} else {
-			unused, err = analyzer.GetUnusedUnexportedSymbols()
+		if len(report.PossiblyUsed) > 0 {
+			out["possibly_used"] = unusedItems(report.PossiblyUsed)
 		}
-		if err != nil {
-			return errResult(err), nil, nil
+		if len(report.Configs) > 1 {
+			out["build_configs"] = report.Configs
 		}
-
-		// Filter by package if specified.
-		if in.Package != "" {
-			var filtered []*analysis.UnusedSymbol
-			for _, u := range unused {
-				if u.Symbol.Package == in.Package || u.Symbol.Package == types.ResolvePackagePath(ws, in.Package) {
-					filtered = append(filtered, u)
-				}
-			}
-			unused = filtered
-		}
-
-		items := make([]UnusedSymbolItem, len(unused))
-		for i, u := range unused {
-			items[i] = UnusedSymbolItem{
-				Name:         u.Symbol.Name,
-				Kind:         u.Symbol.Kind.String(),
-				Package:      u.Symbol.Package,
-				File:         u.Symbol.File,
-				Line:         u.Symbol.Line,
-				Exported:     u.Symbol.Exported,
-				SafeToDelete: u.SafeToDelete,
-				Reason:       u.Reason,
-			}
-		}
-		return textResult(map[string]any{
-			"unused_symbols": items,
-			"count":          len(items),
-		}), nil, nil
+		return textResult(out), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{

@@ -117,29 +117,46 @@ type mention struct {
 
 // firstMention returns the first identifier in src that is one of names.
 func firstMention(src *analysis.SourceFile, names map[string]bool) (mention, bool) {
-	if len(names) == 0 || len(src.Content) == 0 {
+	found := mentions(src, names, true)
+	if len(found) == 0 {
 		return mention{}, false
+	}
+	return found[0], true
+}
+
+// mentions returns the first identifier in src for each of names, in source
+// order, or only the first of all. Comments and string literals do not count.
+func mentions(src *analysis.SourceFile, names map[string]bool, firstOnly bool) []mention {
+	if len(names) == 0 || len(src.Content) == 0 {
+		return nil
 	}
 	tf := token.NewFileSet().AddFile(src.Path, -1, len(src.Content))
 	var s scanner.Scanner
 	s.Init(tf, src.Content, nil, 0)
-	for {
+	var found []mention
+	seen := make(map[string]bool)
+	for len(seen) < len(names) {
 		pos, tok, lit := s.Scan()
 		if tok == token.EOF {
-			return mention{}, false
+			break
 		}
-		if tok != token.IDENT || !names[lit] {
+		if tok != token.IDENT || !names[lit] || seen[lit] {
 			continue
 		}
+		seen[lit] = true
 		at := tf.Position(pos)
-		return mention{name: lit, Reference: types.Reference{
+		found = append(found, mention{name: lit, Reference: types.Reference{
 			File:    src.Path,
 			Offset:  at.Offset,
 			Line:    at.Line,
 			Column:  at.Column,
 			Context: lineAt(src.Content, at.Offset),
-		}}, true
+		}})
+		if firstOnly {
+			break
+		}
 	}
+	return found
 }
 
 func mentionReason(name string, file types.UncoveredFile) string {
@@ -222,20 +239,45 @@ func unverifiedOf(blockers []types.Blocker) []types.Blocker {
 // unverifiedUses returns a blocker at the first identifier of each file no
 // view type-checks that could be a use of a symbol in keys.
 func unverifiedUses(views []*analysis.View, keys types.SymbolKeySet) []types.Blocker {
+	var out []types.Blocker
+	for _, m := range uncheckedMentions(views, keys) {
+		if len(out) == 0 || out[len(out)-1].File != m.site.File {
+			out = append(out, m.site)
+		}
+	}
+	return out
+}
+
+// uncheckedMention is the first place a file no view type-checks names a
+// symbol it could be using.
+type uncheckedMention struct {
+	key  types.SymbolKey
+	site types.Blocker
+}
+
+// uncheckedMentions returns, file by file and in source order, the mentions
+// of the symbols in keys in the files no view type-checks.
+func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []uncheckedMention {
 	if len(keys) == 0 {
 		return nil
 	}
 	dirs := declaringDirs(views, keys)
-	var out []types.Blocker
+	ordered := orderedKeys(keys)
+	var out []uncheckedMention
 	for _, u := range analysis.UncheckedFiles(views, views[0].SourceDirs()) {
 		names := make(map[string]bool)
-		for key, dir := range dirs {
-			if mayUse(u.Source, key, dir) {
+		byName := make(map[string][]types.SymbolKey)
+		for _, key := range ordered {
+			if mayUse(u.Source, key, dirs[key]) {
 				names[key.Name] = true
+				byName[key.Name] = append(byName[key.Name], key)
 			}
 		}
-		if m, ok := firstMention(u.Source, names); ok {
-			out = append(out, types.Blocker{Reference: m.Reference, Configs: configNames(u.Configs), Unverified: u.Reason})
+		for _, m := range mentions(u.Source, names, false) {
+			site := types.Blocker{Reference: m.Reference, Configs: configNames(u.Configs), Unverified: u.Reason}
+			for _, key := range byName[m.name] {
+				out = append(out, uncheckedMention{key: key, site: site})
+			}
 		}
 	}
 	return out

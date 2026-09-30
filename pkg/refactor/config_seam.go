@@ -210,8 +210,7 @@ func (c *viewIndexes) finish() {
 // indexedPlanner is a configPlanner that plans from per-view reference indexes.
 type indexedPlanner interface {
 	configPlanner
-	prepare(views []*analysis.View)
-	finish()
+	viewPreparer
 }
 
 // gatedIndexedPlanner is a gatedPlanner that plans from per-view reference indexes.
@@ -220,22 +219,42 @@ type gatedIndexedPlanner interface {
 	gatedPlanner
 }
 
-// planAcrossConfigs runs p under every build configuration of the covering set
-// and merges the per-view plans into one.
-func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringPlan, error) {
+// viewPreparer is what a run over the covering set's views starts and ends with.
+type viewPreparer interface {
+	prepare(views []*analysis.View)
+	finish()
+}
+
+// beginRun takes the run lock and prepares p for the views of the covering
+// set, which it returns primary first. endRun must follow when it succeeds.
+func (e *DefaultEngine) beginRun(p viewPreparer) ([]*analysis.View, error) {
 	if e.set == nil {
 		return nil, fmt.Errorf("no workspace loaded")
 	}
 	// One run at a time: a run releases the secondary views it planned in.
 	e.configRuns.Lock()
-	defer e.configRuns.Unlock()
-
 	views, err := e.set.Views()
 	if err != nil {
+		e.configRuns.Unlock()
 		return nil, err
 	}
 	p.prepare(views)
-	defer p.finish()
+	return views, nil
+}
+
+func (e *DefaultEngine) endRun(p viewPreparer) {
+	p.finish()
+	e.configRuns.Unlock()
+}
+
+// planAcrossConfigs runs p under every build configuration of the covering set
+// and merges the per-view plans into one.
+func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringPlan, error) {
+	views, err := e.beginRun(p)
+	if err != nil {
+		return nil, err
+	}
+	defer e.endRun(p)
 	plan, rounds, err := planAcrossViews(views, p, maxConfigRounds)
 	if err != nil {
 		return nil, err
@@ -248,18 +267,11 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 // blockersAcrossConfigs returns what stands in the way of p's operation under
 // every build configuration of the covering set, without planning it.
 func (e *DefaultEngine) blockersAcrossConfigs(p gatedIndexedPlanner) ([]types.Blocker, error) {
-	if e.set == nil {
-		return nil, fmt.Errorf("no workspace loaded")
-	}
-	e.configRuns.Lock()
-	defer e.configRuns.Unlock()
-
-	views, err := e.set.Views()
+	views, err := e.beginRun(p)
 	if err != nil {
 		return nil, err
 	}
-	p.prepare(views)
-	defer p.finish()
+	defer e.endRun(p)
 	return blockersAcrossViews(views, p, maxConfigRounds)
 }
 
@@ -377,10 +389,14 @@ func (r *configRun) round() error {
 	return nil
 }
 
-// configError names the build configuration err came from, unless there is
-// only one.
 func (r *configRun) configError(v *analysis.View, err error) error {
-	if len(r.views) == 1 {
+	return viewError(r.views, v, err)
+}
+
+// viewError names the build configuration of v, which err came from, unless
+// views holds only one.
+func viewError(views []*analysis.View, v *analysis.View, err error) error {
+	if len(views) == 1 {
 		return err
 	}
 	return fmt.Errorf("build configuration %s: %w", v.Config, err)

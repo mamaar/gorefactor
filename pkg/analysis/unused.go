@@ -19,6 +19,12 @@ type UnusedAnalyzer struct {
 	workspace       *types.Workspace
 	resolver        *SymbolResolver
 	includeExported bool
+	index           *ReferenceIndex
+}
+
+// SetIndex makes the analyzer use idx instead of building a reference index.
+func (ua *UnusedAnalyzer) SetIndex(idx *ReferenceIndex) {
+	ua.index = idx
 }
 
 // SetIncludeExported controls whether exported symbols are included in the analysis
@@ -48,7 +54,10 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	}
 
 	// Build reference index once for the entire workspace (O(F*A) single pass)
-	idx := ua.resolver.BuildReferenceIndex()
+	idx := ua.index
+	if idx == nil {
+		idx = ua.resolver.BuildReferenceIndex()
+	}
 
 	// Pre-compute set of all interface method names across workspace
 	ifaceMethodNames := ua.collectInterfaceMethodNames()
