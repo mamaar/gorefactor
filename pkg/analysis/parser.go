@@ -484,6 +484,20 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesChecked = false
 }
 
+// releaseTypeChecks invalidates every package of ws once no check session is
+// running. The production-only packages go with them: one kept across a
+// re-check would be a second, distinct copy of declarations checked anew.
+func (p *GoParser) releaseTypeChecks(ws *types.Workspace) {
+	p.checkMu.Lock()
+	defer p.checkMu.Unlock()
+	if p.importer != nil {
+		p.importer.productionOnly = nil
+	}
+	for _, pkg := range ws.Packages {
+		p.InvalidateTypeCheck(pkg)
+	}
+}
+
 // TypeCheckPackage runs go/types type-checking on a package.
 // Results are stored in pkg.TypesInfo, pkg.TypesPkg and pkg.TypesErr, and
 // pkg.TypesChecked is set once the attempt completes — on success AND on

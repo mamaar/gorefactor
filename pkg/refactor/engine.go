@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os/exec"
 	"path/filepath"
+	"sync"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -83,6 +84,9 @@ type DefaultEngine struct {
 	serializer *Serializer
 	config     *EngineConfig
 	logger     *slog.Logger
+
+	// configRuns serializes the runs across build configurations.
+	configRuns sync.Mutex
 }
 
 // EngineConfig contains configuration options for the refactoring engine

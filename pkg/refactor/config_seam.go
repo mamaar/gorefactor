@@ -88,10 +88,15 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 	if e.set == nil {
 		return nil, fmt.Errorf("no workspace loaded")
 	}
+	// One run at a time: a run releases the secondary views it planned in.
+	e.configRuns.Lock()
+	defer e.configRuns.Unlock()
+
 	views, err := e.set.Views()
 	if err != nil {
 		return nil, err
 	}
+	defer releaseSecondaryViews(views)
 	p.prepare(views)
 	plan, rounds, err := planAcrossViews(views, p, maxConfigRounds)
 	if err != nil {
@@ -100,6 +105,14 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 	e.logger.Info("planned across build configurations",
 		"configs", len(views), "rounds", rounds, "changes", len(plan.Changes))
 	return plan, nil
+}
+
+// releaseSecondaryViews drops the type information of every view but the
+// first, which only cross-configuration runs read.
+func releaseSecondaryViews(views []*analysis.View) {
+	for _, v := range views[1:] {
+		v.ReleaseTypeInfo()
+	}
 }
 
 // planAcrossViews replans the views until no view has linked keys it has not

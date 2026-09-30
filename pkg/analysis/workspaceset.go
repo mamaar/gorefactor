@@ -53,6 +53,14 @@ func (v *View) InvalidateReferenceIndex() {
 	v.refIndex = nil
 }
 
+// ReleaseTypeInfo drops the type-check results of every package and the cached
+// reference index. The packages are type-checked again on next use; the
+// third-party packages stay loaded.
+func (v *View) ReleaseTypeInfo() {
+	v.Parser.releaseTypeChecks(v.Workspace)
+	v.InvalidateReferenceIndex()
+}
+
 // Approximate reports whether the view type-checks against the primary view's
 // third-party packages because loading them under its own configuration
 // failed, and that failure. It is known once a type-check has needed them.
