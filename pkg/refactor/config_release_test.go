@@ -1,11 +1,18 @@
 package refactor
 
 import (
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"reflect"
 	"sync"
 	"testing"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/mamaar/gorefactor/pkg/types"
+	"github.com/mamaar/gorefactor/pkg/watch"
 )
 
 func siblingWorkspace() map[string]string {
@@ -80,4 +87,56 @@ func TestPlanAcrossConfigs_ConcurrentRunsPlanTheSame(t *testing.T) {
 			t.Errorf("run %d planned differently:\n got %+v\nwant %+v", i, sortedChanges(plan), sortedChanges(want))
 		}
 	}
+}
+
+// The server runs operations under a read lock and the updater under the write
+// lock; Views is called from either side.
+func TestPlanAcrossConfigs_ConcurrentWithViewsAndUpdater(t *testing.T) {
+	eng, dir := loadConfigsEngine(t, siblingWorkspace())
+	set := eng.WorkspaceSet()
+	updater := watch.NewUpdater(set, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	req := types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/leaf.go"}
+	want, err := eng.ThreadContextAcrossConfigs(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var state sync.RWMutex
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() {
+			for range 4 {
+				state.RLock()
+				plan, err := eng.ThreadContextAcrossConfigs(req)
+				state.RUnlock()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if !reflect.DeepEqual(sortedChanges(plan), sortedChanges(want)) {
+					t.Errorf("planned differently:\n got %+v\nwant %+v", sortedChanges(plan), sortedChanges(want))
+				}
+			}
+		})
+	}
+	wg.Go(func() {
+		for range 8 {
+			if views, err := set.Views(); err != nil || len(views) != 3 {
+				t.Errorf("Views = %d views, %v", len(views), err)
+			}
+		}
+	})
+	wg.Go(func() {
+		// q/q.go holds no change of the plan, so rewriting it moves no offset.
+		file := filepath.Join(dir, "q", "q.go")
+		for i := range 6 {
+			state.Lock()
+			if err := os.WriteFile(file, fmt.Appendf(nil, "package q\n\nconst rev = %d\n", i), 0o644); err != nil {
+				t.Error(err)
+			}
+			updater.HandleChanges([]watch.ChangeEvent{{Path: file, Op: fsnotify.Write}})
+			state.Unlock()
+		}
+	})
+	wg.Wait()
 }
