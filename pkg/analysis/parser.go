@@ -11,7 +11,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -83,17 +82,16 @@ func WithBuildConfig(cfg BuildConfig) ParserOption {
 }
 
 func NewParser(logger *slog.Logger, opts ...ParserOption) *GoParser {
-	fset := token.NewFileSet()
-	p := &GoParser{
-		fileSet:     fset,
-		logger:      logger,
-		buildConfig: DefaultBuildConfig(),
-		sources:     NewSourceTree(fset),
-	}
+	p := newViewParser(logger, NewSourceTree(token.NewFileSet()), DefaultBuildConfig())
 	for _, opt := range opts {
 		opt(p)
 	}
 	return p
+}
+
+// newViewParser returns a parser that selects files from tree under cfg.
+func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoParser {
+	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree}
 }
 
 // BuildConfig returns the configuration files are selected under.
@@ -290,53 +288,71 @@ func (p *GoParser) admits(src *SourceFile) bool {
 	return p.buildConfig.MatchesFile(src)
 }
 
-// ParseWorkspace parses an entire Go workspace/module.
-// Package directories are discovered sequentially, then parsed in parallel
-// using a bounded worker pool (runtime.NumCPU goroutines).
+// ParseWorkspace loads every .go file under rootPath into a fresh source tree
+// and returns the workspace the build config selects from it.
 func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
-	p.logger.Info("parsing workspace", "path", rootPath)
-
-	// Convert to absolute path for consistency
-	absRootPath, err := filepath.Abs(rootPath)
+	absRootPath, err := absWorkspaceRoot(rootPath)
 	if err != nil {
 		p.logger.Error("failed to get absolute path", "path", rootPath, "err", err)
-		return nil, &types.RefactorError{
+		return nil, err
+	}
+	p.sources = NewSourceTree(p.fileSet)
+	p.invalidateCovering()
+	if err := loadSources(p.sources, absRootPath); err != nil {
+		p.logger.Error("workspace discovery failed", "path", rootPath, "err", err)
+		return nil, err
+	}
+	return p.projectWorkspace(absRootPath, readModule(absRootPath)), nil
+}
+
+func absWorkspaceRoot(rootPath string) (string, error) {
+	abs, err := filepath.Abs(rootPath)
+	if err != nil {
+		return "", &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to get absolute path for workspace: %v", err),
 			File:    rootPath,
 		}
 	}
+	return abs, nil
+}
+
+func loadSources(tree *SourceTree, absRoot string) error {
+	if err := tree.Load(absRoot); err != nil {
+		return &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("failed to parse workspace: %v", err),
+			File:    absRoot,
+			Cause:   err,
+		}
+	}
+	return nil
+}
+
+// readModule returns the module declared by absRoot/go.mod, or nil without one.
+func readModule(absRoot string) *types.Module {
+	content, err := os.ReadFile(filepath.Join(absRoot, "go.mod"))
+	if err != nil {
+		return nil
+	}
+	return parseGoMod(content)
+}
+
+// projectWorkspace builds the workspace the build config selects from the
+// source tree, without reading or parsing anything, and binds p's importer to it.
+func (p *GoParser) projectWorkspace(absRoot string, module *types.Module) *types.Workspace {
+	p.logger.Info("projecting workspace", "path", absRoot, "config", p.buildConfig.Key())
 
 	workspace := &types.Workspace{
-		RootPath:     absRootPath,
+		RootPath:     absRoot,
 		Packages:     make(map[string]*types.Package),
 		ImportToPath: make(map[string]string),
 		FileSet:      p.fileSet,
 		BuildConfig:  p.buildConfig.Key(),
 	}
-
-	// Try to find and parse go.mod
-	goModPath := filepath.Join(absRootPath, "go.mod")
-	if modContent, err := os.ReadFile(goModPath); err == nil {
-		module, err := p.parseGoMod(modContent)
-		if err != nil {
-			return nil, err
-		}
-		workspace.Module = module
-	}
-
-	// Phase 1: Load every .go file under the root into a fresh source tree, then
-	// keep the directories that hold at least one file admitted by the build config.
-	p.sources = NewSourceTree(p.fileSet)
-	p.invalidateCovering()
-	if err := p.sources.Load(absRootPath); err != nil {
-		p.logger.Error("workspace discovery failed", "path", rootPath, "err", err)
-		return nil, &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("failed to parse workspace: %v", err),
-			File:    rootPath,
-			Cause:   err,
-		}
+	if module != nil {
+		own := *module
+		workspace.Module = &own
 	}
 
 	var pkgDirs []string
@@ -346,45 +362,20 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		}
 	}
 
-	p.logger.Debug("discovered packages", "count", len(pkgDirs))
-
-	// Phase 2: Parse packages in parallel with bounded concurrency.
-	// Each package parse is independent (reads its own files, creates its own AST nodes).
-	// The shared fileSet is safe for concurrent use via its internal mutex.
-	type pkgResult struct {
-		pkg *types.Package
-		err error
+	proj := &packageProjector{parser: p, dirs: pkgDirs, next: make(chan int, len(pkgDirs)), results: make([]projectedPackage, len(pkgDirs))}
+	for i := range pkgDirs {
+		proj.next <- i
 	}
-
-	results := make([]pkgResult, len(pkgDirs))
-	workers := runtime.NumCPU()
-	if workers > len(pkgDirs) {
-		workers = len(pkgDirs)
-	}
+	close(proj.next)
 
 	var wg sync.WaitGroup
-	dirCh := make(chan int, len(pkgDirs))
-
-	for i := range pkgDirs {
-		dirCh <- i
+	for range workerCount(len(pkgDirs)) {
+		wg.Go(proj.work)
 	}
-	close(dirCh)
-
-	for w := 0; w < workers; w++ {
-		wg.Go(func() {
-			for idx := range dirCh {
-				pkg, err := p.ParsePackage(pkgDirs[idx])
-				results[idx] = pkgResult{pkg: pkg, err: err}
-			}
-		})
-	}
-
 	wg.Wait()
 
-	// Collect results
-	for i, res := range results {
+	for i, res := range proj.results {
 		if res.err != nil {
-			// Log error but continue parsing other packages (same as before)
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
 			continue
 		}
@@ -394,7 +385,6 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		workspace.Packages[res.pkg.Path] = res.pkg
 	}
 
-	// After parsing packages, build import path mapping
 	if workspace.Module != nil {
 		for fsPath, pkg := range workspace.Packages {
 			importPath := computeImportPath(workspace, fsPath)
@@ -403,13 +393,34 @@ func (p *GoParser) ParseWorkspace(rootPath string) (*types.Workspace, error) {
 		}
 	}
 
-	p.logger.Info("workspace parsed successfully", "packages", len(workspace.Packages), "module", workspace.Module)
+	p.logger.Info("workspace projected", "packages", len(workspace.Packages), "module", workspace.Module)
 
-	// Create a single importer instance for this workspace to ensure consistent
-	// stdlib type identities across all TypeCheckPackage calls.
+	// One importer per workspace keeps stdlib type identities consistent across
+	// all TypeCheckPackage calls.
 	p.importer = &workspaceImporter{ws: workspace, fset: workspace.FileSet, parser: p}
 
-	return workspace, nil
+	return workspace
+}
+
+type projectedPackage struct {
+	pkg *types.Package
+	err error
+}
+
+// packageProjector builds the packages of dirs on several goroutines; each
+// worker writes only its own slots of results.
+type packageProjector struct {
+	parser  *GoParser
+	dirs    []string
+	next    chan int
+	results []projectedPackage
+}
+
+func (j *packageProjector) work() {
+	for i := range j.next {
+		pkg, err := j.parser.ParsePackage(j.dirs[i])
+		j.results[i] = projectedPackage{pkg: pkg, err: err}
+	}
 }
 
 // UpdateFile updates AST after file modifications
@@ -441,21 +452,15 @@ func (p *GoParser) UpdateFile(file *types.File) error {
 
 // Helper functions
 
-func (p *GoParser) parseGoMod(content []byte) (*types.Module, error) {
-	lines := strings.Split(string(content), "\n")
-	module := &types.Module{
-		GoMod: string(content),
-	}
-
-	for _, line := range lines {
+func parseGoMod(content []byte) *types.Module {
+	module := &types.Module{GoMod: string(content)}
+	for _, line := range strings.Split(string(content), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "module ") {
 			module.Path = strings.TrimSpace(strings.TrimPrefix(line, "module"))
 		}
-		// Note: Version parsing would be more complex in real implementation
 	}
-
-	return module, nil
+	return module
 }
 
 func (p *GoParser) inferPackagePath(dir, packageName string) string {
