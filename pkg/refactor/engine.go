@@ -696,6 +696,16 @@ func (e *DefaultEngine) InlineMethod(ws *types.Workspace, req types.InlineMethod
 	return plan, nil
 }
 
+// InlineMethodAcrossConfigs inlines a method like InlineMethod, under every
+// build configuration covering the workspace that includes the target file,
+// and returns one merged plan. It refuses when the configurations declare the
+// method with different bodies.
+func (e *DefaultEngine) InlineMethodAcrossConfigs(req types.InlineMethodRequest) (*types.RefactoringPlan, error) {
+	p := &inlineMethodPlanner{req: req}
+	p.name = req.SourceStruct + "." + req.MethodName
+	return e.planAcrossConfigs(p)
+}
+
 // InlineVariable implements variable inlining
 func (e *DefaultEngine) InlineVariable(ws *types.Workspace, req types.InlineVariableRequest) (*types.RefactoringPlan, error) {
 	operation := &InlineVariableOperation{
@@ -757,6 +767,16 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
+}
+
+// InlineFunctionAcrossConfigs inlines a function like InlineFunction, under
+// every build configuration covering the workspace, and returns one merged
+// plan. Without target files every non-test file of each configuration is one.
+// It refuses when the configurations declare the function with different bodies.
+func (e *DefaultEngine) InlineFunctionAcrossConfigs(req types.InlineFunctionRequest) (*types.RefactoringPlan, error) {
+	p := &inlineFunctionPlanner{req: req}
+	p.name = req.FunctionName
+	return e.planAcrossConfigs(p)
 }
 
 // SafeDeleteBlockingReferences reports what would block a SafeDelete for req

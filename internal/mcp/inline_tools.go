@@ -33,32 +33,52 @@ type InlineFunctionInput struct {
 	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
+// planInlineMethod plans in under every build configuration. The caller holds
+// the read lock.
+func planInlineMethod(state *MCPServer, in InlineMethodInput) (*types.RefactoringPlan, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	tgt := in.TargetFile
+	if tgt != "" {
+		tgt = resolveFile(ws, tgt)
+	}
+	return state.GetEngine().InlineMethodAcrossConfigs(types.InlineMethodRequest{
+		MethodName:   in.MethodName,
+		SourceStruct: in.SourceStruct,
+		TargetFile:   tgt,
+	})
+}
+
+// planInlineFunction plans in under every build configuration. The caller
+// holds the read lock.
+func planInlineFunction(state *MCPServer, in InlineFunctionInput) (*types.RefactoringPlan, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	return state.GetEngine().InlineFunctionAcrossConfigs(types.InlineFunctionRequest{
+		FunctionName: in.FunctionName,
+		SourceFile:   resolveFile(ws, in.SourceFile),
+	})
+}
+
 func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "inline_method",
-		Description: "Inline a method: replace all call sites with the method body.",
+		Name: "inline_method",
+		Description: "Inline a method: replace its call sites in the target file with the method body; the method declaration is kept. " +
+			"The target file is planned under every build configuration (GOOS/GOARCH variants, custom build tags) that includes it; the inline is refused when those configurations declare the method with different bodies.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in InlineMethodInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		plan, err := planInlineMethod(state, in)
+		state.RUnlock()
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		tgt := in.TargetFile
-		if tgt != "" {
-			tgt = resolveFile(ws, tgt)
-		}
-		plan, err := state.GetEngine().InlineMethod(ws, types.InlineMethodRequest{
-			MethodName:   in.MethodName,
-			SourceStruct: in.SourceStruct,
-			TargetFile:   tgt,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		result, err := executePlanWithUnlock(state, plan, "inline method "+in.SourceStruct+"."+in.MethodName, in.DryRun)
+		result, err := executePlan(state, plan, "inline method "+in.SourceStruct+"."+in.MethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -66,8 +86,9 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "inline_variable",
-		Description: "Inline a variable: replace all occurrences with its assigned value and remove the declaration.",
+		Name: "inline_variable",
+		Description: "Inline a variable: replace all occurrences in its source file with its assigned value and remove the declaration. " +
+			"Only that file is read and rewritten, and it must be part of the default build configuration.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in InlineVariableInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -92,33 +113,19 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "inline_function",
-		Description: "Inline a function: replace all call sites with the function body.",
+		Name: "inline_function",
+		Description: "Inline a function: replace the calls from its own package with the function body; the function declaration is kept. " +
+			"Call sites are rewritten under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; the inline is refused when configurations declare the function with different bodies.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in InlineFunctionInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		plan, err := planInlineFunction(state, in)
+		state.RUnlock()
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		// Collect all Go files in the workspace as target files for inlining.
-		var targetFiles []string
-		for _, pkg := range ws.Packages {
-			for _, f := range pkg.Files {
-				targetFiles = append(targetFiles, f.Path)
-			}
-		}
-		plan, err := state.GetEngine().InlineFunction(ws, types.InlineFunctionRequest{
-			FunctionName: in.FunctionName,
-			SourceFile:   resolveFile(ws, in.SourceFile),
-			TargetFiles:  targetFiles,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		result, err := executePlanWithUnlock(state, plan, "inline function "+in.FunctionName, in.DryRun)
+		result, err := executePlan(state, plan, "inline function "+in.FunctionName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

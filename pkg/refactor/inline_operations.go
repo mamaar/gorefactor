@@ -19,7 +19,14 @@ type InlineMethodOperation struct {
 	MethodName   string
 	SourceStruct string
 	TargetFile   string
+
+	// CachedIndex, when set, limits the inlined calls to those it resolves to
+	// the method.
+	CachedIndex *analysis.ReferenceIndex
 }
+
+// dropAnalysis forgets the reference index the operation planned from.
+func (op *InlineMethodOperation) dropAnalysis() { op.CachedIndex = nil }
 
 func (op *InlineMethodOperation) Type() types.OperationType {
 	return types.InlineOperation
@@ -107,6 +114,8 @@ func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	if err != nil {
 		return nil, err
 	}
+	methodSymbol, _ := op.methodSymbol(ws)
+	callLocations = referenceSites(ws, op.CachedIndex, methodSymbol).keep(op.TargetFile, callLocations)
 
 	var changes []types.Change
 	for _, location := range callLocations {
@@ -150,34 +159,49 @@ type MethodCall struct {
 	End       int
 	CallText  string
 	Arguments []string
+	// NameOffset is the byte offset of the called identifier.
+	NameOffset int
+}
+
+// callSites holds, per file, the offsets of the identifiers that resolve to
+// the symbol being inlined. A nil callSites accepts every call.
+type callSites map[string]map[int]bool
+
+// referenceSites returns the sites idx resolves to sym, or nil without an index.
+func referenceSites(ws *types.Workspace, idx *analysis.ReferenceIndex, sym *types.Symbol) callSites {
+	if idx == nil || sym == nil {
+		return nil
+	}
+	refs, err := quietResolver(ws).FindReferencesIndexed(sym, idx)
+	if err != nil {
+		return nil
+	}
+	sites := make(callSites)
+	for _, ref := range refs {
+		if sites[ref.File] == nil {
+			sites[ref.File] = make(map[int]bool)
+		}
+		sites[ref.File][ref.Offset] = true
+	}
+	return sites
+}
+
+// keep returns the calls in file whose called identifier is one of the sites.
+func (c callSites) keep(file string, calls []MethodCall) []MethodCall {
+	if c == nil {
+		return calls
+	}
+	var kept []MethodCall
+	for _, call := range calls {
+		if c[file][call.NameOffset] {
+			kept = append(kept, call)
+		}
+	}
+	return kept
 }
 
 func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (MethodImpl, error) {
-	// Find the method symbol and its implementation
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	var methodSymbol *types.Symbol
-	var sourcePackage *types.Package
-
-	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			if structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
-				if structSymbol.Kind == types.TypeSymbol {
-					sourcePackage = pkg
-					// Check if method exists in the package's symbol table
-					if methods, exists := pkg.Symbols.Methods[op.SourceStruct]; exists {
-						for _, method := range methods {
-							if method.Name == op.MethodName {
-								methodSymbol = method
-								break
-							}
-						}
-					}
-					break
-				}
-			}
-		}
-	}
-
+	methodSymbol, sourcePackage := op.methodSymbol(ws)
 	if methodSymbol == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -194,6 +218,28 @@ func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("method implementation not found: %s", op.MethodName),
 	}
+}
+
+// methodSymbol returns the method to inline and the package of its struct,
+// or nil when ws has no such method.
+func (op *InlineMethodOperation) methodSymbol(ws *types.Workspace) (*types.Symbol, *types.Package) {
+	resolver := quietResolver(ws)
+	for _, pkg := range ws.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil || structSymbol.Kind != types.TypeSymbol {
+			continue
+		}
+		for _, method := range pkg.Symbols.Methods[op.SourceStruct] {
+			if method.Name == op.MethodName {
+				return method, pkg
+			}
+		}
+		return nil, pkg
+	}
+	return nil, nil
 }
 
 func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol *types.Symbol) (MethodImpl, error) {
@@ -285,10 +331,11 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 						}
 						
 						calls = append(calls, MethodCall{
-							Start:     start,
-							End:       end,
-							CallText:  callText,
-							Arguments: args,
+							Start:      start,
+							End:        end,
+							CallText:   callText,
+							Arguments:  args,
+							NameOffset: fset.Position(selExpr.Sel.Pos()).Offset,
 						})
 					}
 				}
@@ -801,7 +848,14 @@ type InlineFunctionOperation struct {
 	FunctionName string
 	SourceFile   string
 	TargetFiles  []string
+
+	// CachedIndex, when set, limits the inlined calls to those it resolves to
+	// the function.
+	CachedIndex *analysis.ReferenceIndex
 }
+
+// dropAnalysis forgets the reference index the operation planned from.
+func (op *InlineFunctionOperation) dropAnalysis() { op.CachedIndex = nil }
 
 func (op *InlineFunctionOperation) Type() types.OperationType {
 	return types.InlineOperation
@@ -841,7 +895,8 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 	affectedFiles := make([]string, 0)
 
 	// A bare call can only name the function from inside its own package.
-	sourcePackage := findPackageForFile(ws, op.SourceFile)
+	funcSymbol, sourcePackage := op.functionSymbol(ws)
+	sites := referenceSites(ws, op.CachedIndex, funcSymbol)
 	for _, targetFile := range op.TargetFiles {
 		if findPackageForFile(ws, targetFile) != sourcePackage {
 			continue
@@ -850,6 +905,7 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 		if err != nil {
 			continue // Skip files with errors
 		}
+		calls = sites.keep(targetFile, calls)
 
 		// Replace each call with inlined implementation
 		for _, call := range calls {
@@ -895,13 +951,18 @@ func (op *InlineFunctionOperation) Description() string {
 		op.FunctionName, op.SourceFile, strings.Join(op.TargetFiles, " "))
 }
 
-func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (MethodImpl, error) {
-	var funcSymbol *types.Symbol
-	sourcePackage := findPackageForFile(ws, op.SourceFile)
-	if sourcePackage != nil && sourcePackage.Symbols != nil {
-		funcSymbol = sourcePackage.Symbols.Functions[op.FunctionName]
+// functionSymbol returns the function to inline and the package holding
+// op.SourceFile, or nil when that package declares no such function.
+func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.Symbol, *types.Package) {
+	pkg := findPackageForFile(ws, op.SourceFile)
+	if pkg == nil || pkg.Symbols == nil {
+		return nil, pkg
 	}
+	return pkg.Symbols.Functions[op.FunctionName], pkg
+}
 
+func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (MethodImpl, error) {
+	funcSymbol, sourcePackage := op.functionSymbol(ws)
 	if funcSymbol == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -1014,10 +1075,11 @@ func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, target
 		}
 
 		calls = append(calls, MethodCall{
-			Start:     start,
-			End:       end,
-			CallText:  callText,
-			Arguments: args,
+			Start:      start,
+			End:        end,
+			CallText:   callText,
+			Arguments:  args,
+			NameOffset: fset.Position(ident.Pos()).Offset,
 		})
 		return true
 	})
