@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -308,6 +309,35 @@ func TestView_StdlibResolvesForTheViewsPort(t *testing.T) {
 		checkedPackage(t, v, dir)
 		if approx, err := v.Approximate(); approx {
 			t.Errorf("view %s is approximate: %v", v.Config.Key(), err)
+		}
+	}
+}
+
+func TestWorkspaceSet_ConcurrentViewRequestsBuildEachViewOnce(t *testing.T) {
+	set, root := loadSet(t, taggedRegistryWorkspace())
+	dir := filepath.Join(root, "p")
+	results := make([][]*View, 8)
+	var wg sync.WaitGroup
+	for i := range results {
+		wg.Go(func() {
+			views, err := set.Views()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			for _, v := range views {
+				v.Parser.EnsureTypeChecked(v.Workspace, v.Workspace.Packages[dir])
+				if _, err := v.ReferenceIndex(); err != nil {
+					t.Error(err)
+				}
+			}
+			results[i] = views
+		})
+	}
+	wg.Wait()
+	for _, views := range results[1:] {
+		if !slices.Equal(views, results[0]) {
+			t.Fatal("concurrent Views calls returned different instances")
 		}
 	}
 }
