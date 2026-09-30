@@ -20,6 +20,7 @@ type configResult struct {
 	// absent is set instead of plan when the operation's target does not exist
 	// in the view and no linked key resolves there.
 	absent error
+	reach  reach
 }
 
 // configPlanner plans one operation in one view, given the keys linked from
@@ -152,5 +153,8 @@ func (r *configRun) merge() (*types.RefactoringPlan, error) {
 		return nil, err
 	}
 	merged.Coverage = types.Coverage{Configs: configs}
+	if err := r.reportUncovered(merged); err != nil {
+		return nil, err
+	}
 	return merged, nil
 }

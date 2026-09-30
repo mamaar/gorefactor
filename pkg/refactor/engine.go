@@ -408,14 +408,14 @@ type threadContextPlanner struct {
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	plan, gained, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked)
+	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked)
 	if isSymbolNotFound(err) {
 		return configResult{absent: err}, nil
 	}
 	if err != nil {
 		return configResult{}, err
 	}
-	return configResult{plan: plan, changed: gained}, nil
+	return configResult{plan: plan, changed: op.GainedKeys(), reach: op.reach()}, nil
 }
 
 // indexOf type-checks v and builds its reference index on first use. The view's
@@ -436,7 +436,7 @@ func (p *threadContextPlanner) indexOf(v *analysis.View) *analysis.ReferenceInde
 // threadContext plans context threading in ws with the parser and analyzer of
 // the view that owns it, seeding the functions linked names next to the
 // request's seed. A nil idx makes the operation build its own reference index.
-// It also returns the keys of the functions that gain a ctx.
+// It also returns the operation the plan was built by.
 func (e *DefaultEngine) threadContext(
 	ws *types.Workspace,
 	parser *analysis.GoParser,
@@ -444,7 +444,7 @@ func (e *DefaultEngine) threadContext(
 	idx *analysis.ReferenceIndex,
 	req types.ThreadContextRequest,
 	linked types.SymbolKeySet,
-) (*types.RefactoringPlan, types.SymbolKeySet, error) {
+) (*types.RefactoringPlan, *ThreadContextOperation, error) {
 	operation := &ThreadContextOperation{
 		FunctionName: req.FunctionName,
 		SourceFile:   req.SourceFile,
@@ -493,7 +493,7 @@ func (e *DefaultEngine) threadContext(
 	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
-	return plan, operation.GainedKeys(), nil
+	return plan, operation, nil
 }
 
 // ExtractMethod implements method extraction from code blocks

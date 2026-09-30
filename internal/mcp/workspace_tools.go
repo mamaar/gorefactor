@@ -35,11 +35,13 @@ type BuildConfigInfo struct {
 	Files  int      `json:"files"`
 }
 
-// UncoveredFileInfo is a file no configuration of the covering set includes.
+// UncoveredFileInfo is a file no configuration of the covering set includes,
+// or one that each configuration including it could not type-check.
 type UncoveredFileInfo struct {
-	File       string `json:"file"`
-	Constraint string `json:"constraint,omitempty"`
-	Reason     string `json:"reason"`
+	File       string   `json:"file"`
+	Constraint string   `json:"constraint,omitempty"`
+	Configs    []string `json:"configs,omitempty"`
+	Reason     string   `json:"reason"`
 }
 
 func buildConfigInfos(cov analysis.Covering) []BuildConfigInfo {
@@ -57,13 +59,19 @@ func buildConfigInfos(cov analysis.Covering) []BuildConfigInfo {
 func uncoveredFileInfos(cov analysis.Covering, root string) []UncoveredFileInfo {
 	var out []UncoveredFileInfo
 	for _, u := range cov.Uncovered {
-		rel, err := filepath.Rel(root, u.Path)
-		if err != nil {
-			rel = u.Path
-		}
-		out = append(out, UncoveredFileInfo{File: filepath.ToSlash(rel), Constraint: u.Constraint, Reason: u.Reason})
+		out = append(out, UncoveredFileInfo{File: relativeTo(root, u.Path), Constraint: u.Constraint, Reason: u.Reason})
 	}
 	return out
+}
+
+// relativeTo returns path relative to root with forward slashes, or path
+// itself when it cannot be made relative.
+func relativeTo(root, path string) string {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return path
+	}
+	return filepath.ToSlash(rel)
 }
 
 // --- workspace_status ---

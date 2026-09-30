@@ -24,6 +24,9 @@ type PlanResult struct {
 	// BuildConfigs names the build configurations the plan was computed under,
 	// primary first. Omitted when there is only one.
 	BuildConfigs []string `json:"build_configs,omitempty"`
+	// UncoveredFiles lists the files in the packages the plan reached that no
+	// build configuration type-checks. The plan holds no edits for them.
+	UncoveredFiles []UncoveredFileInfo `json:"uncovered_files,omitempty"`
 
 	// DryRun is true when the plan was previewed rather than applied. Nothing
 	// was written to disk and ModifiedFiles is empty.
@@ -145,6 +148,7 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 		BuildConfigs:  planBuildConfigs(plan),
 		Diffs:         buildDiffs(plan.Changes),
 	}
+	res.UncoveredFiles = planUncoveredFiles(state, plan)
 
 	if err := state.GetEngine().ValidateRefactoring(plan); err != nil {
 		res.Success = false
@@ -188,14 +192,32 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dry
 	}
 
 	return &PlanResult{
-		Description:   desc,
-		AffectedFiles: plan.AffectedFiles,
-		ChangeCount:   len(plan.Changes),
-		ModifiedFiles: plan.AffectedFiles,
-		Success:       true,
-		SkippedSites:  plan.SkippedSites,
-		BuildConfigs:  planBuildConfigs(plan),
+		Description:    desc,
+		AffectedFiles:  plan.AffectedFiles,
+		ChangeCount:    len(plan.Changes),
+		ModifiedFiles:  plan.AffectedFiles,
+		Success:        true,
+		SkippedSites:   plan.SkippedSites,
+		BuildConfigs:   planBuildConfigs(plan),
+		UncoveredFiles: planUncoveredFiles(state, plan),
 	}, nil
+}
+
+// planUncoveredFiles returns plan's uncovered files with paths relative to
+// the workspace root.
+func planUncoveredFiles(state *MCPServer, plan *types.RefactoringPlan) []UncoveredFileInfo {
+	if len(plan.Coverage.Uncovered) == 0 {
+		return nil
+	}
+	root := ""
+	if ws, err := state.GetWorkspace(); err == nil {
+		root = ws.RootPath
+	}
+	out := make([]UncoveredFileInfo, len(plan.Coverage.Uncovered))
+	for i, u := range plan.Coverage.Uncovered {
+		out[i] = UncoveredFileInfo{File: relativeTo(root, u.Path), Configs: u.Configs, Reason: u.Reason}
+	}
+	return out
 }
 
 // planBuildConfigs returns the configurations plan covers when it spans more

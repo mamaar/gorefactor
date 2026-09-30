@@ -2,8 +2,11 @@ package tests_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -74,13 +77,9 @@ func TestProcess(t *testing.T) {
 	}
 }
 
-// testFilesExcludedWorkspace builds a package whose test files cannot all be
-// type-checked together with the package: foo_test.go has a normal, valid
-// call site, but the sibling bad_test.go imports a third-party module that
-// can never resolve (mirroring the diamond-memoization test in
-// pkg/analysis/parser_test.go). That failure costs the WHOLE package's test
-// files their type information — not just bad_test.go's — via
-// (*analysis.GoParser).TypeCheckPackage's "retry without tests" fallback.
+// testFilesExcludedWorkspace builds a package where foo_test.go calls Process
+// and type-checks, and bad_test.go calls it too but imports a package that
+// does not resolve.
 func testFilesExcludedWorkspace(t *testing.T) string {
 	t.Helper()
 	return writeInlineWorkspace(t, map[string]string{
@@ -104,111 +103,196 @@ import (
 	_ "example.com/this-module-does-not-exist/thirdparty"
 )
 
-func TestBad(t *testing.T) {}
+func TestBad(t *testing.T) {
+	Process("y")
+}
 `,
 	})
 }
 
-// TestAddContextParameter_Thread_AbortsWhenTestFilesExcluded covers the
-// residual case the loadExternal/dedup fix cannot help with: there is no
-// external module to discover here, the import in bad_test.go simply does
-// not exist anywhere. Before this guard, that failure was invisible by the
-// time add_context_parameter ran (TypeCheckPackage's fallback retry
-// succeeds without the test files, so TypesErr goes back to nil) and the
-// operation proceeded to silently thread past every call site in the
-// package's test files. It must abort instead, since the seed's signature
-// is about to change and those call sites — invisible to this operation —
-// would be left uncompilable.
-func TestAddContextParameter_Thread_AbortsWhenTestFilesExcluded(t *testing.T) {
-	dir := testFilesExcludedWorkspace(t)
+// unattributedTestsWorkspace builds a package whose test-file errors the
+// type-checker cannot shed within its pass limit.
+func unattributedTestsWorkspace(t *testing.T) string {
+	t.Helper()
+	files := map[string]string{
+		"foo/foo.go":      "package foo\n\nfunc Process(name string) string { return name }\n",
+		"foo/foo_test.go": "package foo\n\nimport \"testing\"\n\nfunc TestProcess(t *testing.T) {\n\tProcess(\"x\")\n}\n",
+		"foo/t0_test.go":  "package foo\n\nimport _ \"example.com/this-module-does-not-exist/thirdparty\"\n\nfunc h0() {}\n",
+	}
+	for i := 1; i <= 4; i++ {
+		files[fmt.Sprintf("foo/t%d_test.go", i)] = fmt.Sprintf("package foo\n\nfunc h%d() { h%d() }\n", i, i-1)
+	}
+	return writeInlineWorkspace(t, files)
+}
 
-	ctx := context.Background()
-	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
-	defer sess.Close()
+type planResultJSON struct {
+	Success        bool `json:"success"`
+	DryRun         bool `json:"dry_run"`
+	UncoveredFiles []struct {
+		File    string   `json:"file"`
+		Configs []string `json:"configs"`
+		Reason  string   `json:"reason"`
+	} `json:"uncovered_files"`
+	SkippedSites []struct {
+		File   string `json:"file"`
+		Line   int    `json:"line"`
+		Reason string `json:"reason"`
+	} `json:"skipped_sites"`
+}
 
-	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
-		Name: "add_context_parameter",
-		Arguments: map[string]any{
-			"function_name": "Process",
-			"source_file":   "foo/foo.go",
-			"thread":        true,
-		},
-	})
+func addContextParameter(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
+	t.Helper()
+	args["function_name"] = "Process"
+	args["source_file"] = "foo/foo.go"
+	result, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
-	if !result.IsError {
-		t.Fatalf("expected an error result when the package's test files could not be type-checked, got success: %s",
-			errText(result))
-	}
-	msg := errText(result)
-	if !strings.Contains(msg, "test file") {
-		t.Errorf("expected error message to mention the excluded test files, got: %s", msg)
-	}
-
-	content, err := os.ReadFile(filepath.Join(dir, "foo", "foo.go"))
-	if err != nil {
-		t.Fatalf("reading foo.go: %v", err)
-	}
-	if strings.Contains(string(content), "context.Context") {
-		t.Errorf("expected no changes to foo.go after an aborted thread request, got:\n%s", content)
-	}
+	return result
 }
 
-// TestAddContextParameter_NoThread_AbortsWhenTestFilesExcluded is the same
-// scenario through the non-threaded path (default_value / context.TODO() at
-// call sites), which is just as unsafe here: it also relies on the
-// reference index to find every call site, and a call site hidden by
-// TestTypesExcluded is just as invisible to it as to the threaded path.
-func TestAddContextParameter_NoThread_AbortsWhenTestFilesExcluded(t *testing.T) {
-	dir := testFilesExcludedWorkspace(t)
+func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSON {
+	t.Helper()
+	if result.IsError {
+		t.Fatalf("CallTool returned error: %s", errText(result))
+	}
+	var out planResultJSON
+	if err := json.Unmarshal([]byte(errText(result)), &out); err != nil {
+		t.Fatalf("decode result: %v\n%s", err, errText(result))
+	}
+	return out
+}
 
-	ctx := context.Background()
-	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
-	defer sess.Close()
-
-	// The non-threaded path, unlike thread: true, never calls
-	// EnsureTypeChecked itself — so force a type-check of package foo first,
-	// the way any other analysis tool naturally would before this one runs.
-	// Without this, TestTypesExcluded would not yet be set and this test
-	// would not be exercising the guard at all.
-	dci, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
+// typeCheckFoo type-checks package foo through another tool: the non-thread
+// path of add_context_parameter does not type-check by itself.
+func typeCheckFoo(t *testing.T, sess *mcptest.Session) {
+	t.Helper()
+	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
 		Name:      "detect_if_init_assignments",
 		Arguments: map[string]any{"package": "example.com/threadmcp/foo"},
 	})
 	if err != nil {
 		t.Fatalf("CallTool detect_if_init_assignments: %v", err)
 	}
-	if dci.IsError {
-		t.Fatalf("detect_if_init_assignments returned error: %s", errText(dci))
+	if res.IsError {
+		t.Fatalf("detect_if_init_assignments returned error: %s", errText(res))
 	}
+}
 
-	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
-		Name: "add_context_parameter",
-		Arguments: map[string]any{
-			"function_name": "Process",
-			"source_file":   "foo/foo.go",
-		},
-	})
-	if err != nil {
-		t.Fatalf("CallTool: %v", err)
+func assertBadTestFileUncovered(t *testing.T, out planResultJSON) {
+	t.Helper()
+	if len(out.UncoveredFiles) != 1 {
+		t.Fatalf("uncovered_files = %+v, want foo/bad_test.go", out.UncoveredFiles)
 	}
+	u := out.UncoveredFiles[0]
+	if u.File != "foo/bad_test.go" || len(u.Configs) != 1 || !strings.Contains(u.Reason, "could not import") {
+		t.Errorf("uncovered file = %+v, want foo/bad_test.go under one configuration with the import error", u)
+	}
+}
+
+func assertUnchanged(t *testing.T, dir, rel string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatalf("reading %s: %v", rel, err)
+	}
+	if strings.Contains(string(content), "context") {
+		t.Errorf("%s was modified:\n%s", rel, content)
+	}
+}
+
+func assertFileContains(t *testing.T, dir, rel, want string) {
+	t.Helper()
+	content, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		t.Fatalf("reading %s: %v", rel, err)
+	}
+	if !strings.Contains(string(content), want) {
+		t.Errorf("%s does not contain %q:\n%s", rel, want, content)
+	}
+}
+
+func TestAddContextParameter_Thread_RewritesGoodTestFileAndReportsExcludedOne(t *testing.T) {
+	dir := testFilesExcludedWorkspace(t)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := decodePlanResult(t, addContextParameter(t, sess, map[string]any{"thread": true}))
+
+	assertFileContains(t, dir, "foo/foo.go", "func Process(ctx context.Context, name string) string")
+	assertFileContains(t, dir, "foo/foo_test.go", `Process(t.Context(), "x")`)
+	assertUnchanged(t, dir, "foo/bad_test.go")
+	assertBadTestFileUncovered(t, out)
+	if len(out.SkippedSites) != 1 || !strings.HasSuffix(out.SkippedSites[0].File, "foo/bad_test.go") || out.SkippedSites[0].Line != 10 {
+		t.Errorf("skipped_sites = %+v, want the Process call at bad_test.go:10", out.SkippedSites)
+	}
+}
+
+func TestAddContextParameter_Thread_DryRunReportsTheSameUncoveredFilesAsApply(t *testing.T) {
+	dir := testFilesExcludedWorkspace(t)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	preview := decodePlanResult(t, addContextParameter(t, sess, map[string]any{"thread": true, "dry_run": true}))
+	if !preview.DryRun {
+		t.Fatal("dry_run not reported")
+	}
+	assertUnchanged(t, dir, "foo/foo.go")
+	applied := decodePlanResult(t, addContextParameter(t, sess, map[string]any{"thread": true}))
+
+	assertBadTestFileUncovered(t, preview)
+	if !reflect.DeepEqual(preview.UncoveredFiles, applied.UncoveredFiles) {
+		t.Errorf("dry run uncovered_files = %+v, apply = %+v", preview.UncoveredFiles, applied.UncoveredFiles)
+	}
+	if !reflect.DeepEqual(preview.SkippedSites, applied.SkippedSites) {
+		t.Errorf("dry run skipped_sites = %+v, apply = %+v", preview.SkippedSites, applied.SkippedSites)
+	}
+}
+
+func TestAddContextParameter_NoThread_RewritesGoodTestFileAndReportsExcludedOne(t *testing.T) {
+	dir := testFilesExcludedWorkspace(t)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+	typeCheckFoo(t, sess)
+
+	out := decodePlanResult(t, addContextParameter(t, sess, map[string]any{}))
+
+	assertFileContains(t, dir, "foo/foo.go", "func Process(ctx context.Context, name string) string")
+	assertFileContains(t, dir, "foo/foo_test.go", `Process(context.TODO(), "x")`)
+	assertBadTestFileUncovered(t, out)
+}
+
+func TestAddContextParameter_Thread_AbortsWhenTestFilesAreUnattributed(t *testing.T) {
+	dir := unattributedTestsWorkspace(t)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	result := addContextParameter(t, sess, map[string]any{"thread": true})
+
 	if !result.IsError {
-		t.Fatalf("expected an error result when the package's test files could not be type-checked, got success: %s",
-			errText(result))
+		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
-	msg := errText(result)
-	if !strings.Contains(msg, "test file") {
-		t.Errorf("expected error message to mention the excluded test files, got: %s", msg)
+	if msg := errText(result); !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
+		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
+	assertUnchanged(t, dir, "foo/foo.go")
+}
 
-	content, err := os.ReadFile(filepath.Join(dir, "foo", "foo.go"))
-	if err != nil {
-		t.Fatalf("reading foo.go: %v", err)
+func TestAddContextParameter_NoThread_AbortsWhenTestFilesAreUnattributed(t *testing.T) {
+	dir := unattributedTestsWorkspace(t)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+	typeCheckFoo(t, sess)
+
+	result := addContextParameter(t, sess, map[string]any{})
+
+	if !result.IsError {
+		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
-	if strings.Contains(string(content), "context.Context") {
-		t.Errorf("expected no changes to foo.go after an aborted non-threaded request, got:\n%s", content)
+	if msg := errText(result); !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
+		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
+	assertUnchanged(t, dir, "foo/foo.go")
 }
 
 // TestAddContextParameter_Thread_TestOnlyImportDiamond is an end-to-end

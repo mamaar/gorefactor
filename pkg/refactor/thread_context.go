@@ -265,10 +265,10 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 	if err != nil {
 		return nil, err
 	}
-	if err := op.testTypesExcludedAbort(plan, visited); err != nil {
+	if err := op.resolve(idx, plan, visited); err != nil {
 		return nil, err
 	}
-	if err := op.resolve(idx, plan, visited); err != nil {
+	if err := op.unattributedTestsAbort(plan); err != nil {
 		return nil, err
 	}
 	return plan, nil
@@ -326,60 +326,57 @@ func isSymbolNotFound(err error) bool {
 	return errors.As(err, &re) && re.Type == pkgtypes.SymbolNotFound
 }
 
-// testTypesExcludedAbort fails when any package the traversal actually
-// touched had its _test.go files excluded from type-checking (see
-// pkgtypes.Package.ExcludedTestFiles). CallSitesOf/NonCallUsesOf resolve
-// references by go/types object identity, so a package in that state is
-// invisible to discover for exactly the call sites that matter most here: a
-// _test.go file in the SAME package as a threaded function very often calls
-// it directly. Proceeding anyway would silently thread past those call
-// sites — the seed's signature changes, but the test file that calls it does
-// not, which does not compile. That is the same "must never hand back a
-// half-threaded, uncompilable workspace" guarantee valueUseAbort and
-// externalInterfaceAbort already give for the cases they cover.
-func (op *ThreadContextOperation) testTypesExcludedAbort(plan *threadPlan, visited map[*gotypes.Func]bool) error {
-	seen := make(map[*pkgtypes.Package]bool)
-	var affected []*funcDecl
-	for f := range visited {
-		fd := plan.Decls[f]
-		if fd == nil || fd.Pkg == nil || seen[fd.Pkg] {
-			continue
-		}
-		seen[fd.Pkg] = true
-		if len(fd.Pkg.ExcludedTestFiles) > 0 {
-			affected = append(affected, fd)
+// unattributedTestsAbort fails when a reached package had all its test files
+// dropped from type-checking: call sites in them are invisible and cannot be
+// listed for the user to fix by hand.
+func (op *ThreadContextOperation) unattributedTestsAbort(plan *threadPlan) error {
+	var blind []*pkgtypes.Package
+	for _, pkg := range plan.reachedPackages() {
+		if pkg.UnattributedTestErr != nil {
+			blind = append(blind, pkg)
 		}
 	}
-	if len(affected) == 0 {
+	if len(blind) == 0 {
 		return nil
 	}
-
-	var b strings.Builder
-	fmt.Fprintf(&b,
-		"cannot thread context: %d package(s) reached by this call chain have _test.go files that could "+
-			"not be type-checked together with the package, so their identifiers are absent from Defs/Uses "+
-			"and any call site in them is invisible to this operation — proceeding would silently miss those "+
-			"call sites and leave the affected test files uncompilable once the signature changes:\n",
-		len(affected))
-	for _, fd := range affected {
-		fmt.Fprintf(&b, "  - %s (%d test file(s) excluded): %v\n",
-			fd.Pkg.ImportPath, len(fd.Pkg.ExcludedTestFiles), firstExcludedErr(fd.Pkg))
-	}
-	b.WriteString("fix the underlying type-check failure (often an unresolvable import in one _test.go " +
-		"file, which currently costs the whole package's tests their type info) and re-run")
-
-	return &pkgtypes.RefactorError{
-		Type:    pkgtypes.InvalidOperation,
-		Message: b.String(),
-	}
+	return unattributedTestsError(blind)
 }
 
-// firstExcludedErr returns the error of pkg's first excluded test file by name.
-func firstExcludedErr(pkg *pkgtypes.Package) error {
-	for _, name := range slices.Sorted(maps.Keys(pkg.ExcludedTestFiles)) {
-		return pkg.ExcludedTestFiles[name]
+// reachedPackages returns, by directory, the packages that hold a function the
+// traversal touched or a call site it rewrites.
+func (plan *threadPlan) reachedPackages() []*pkgtypes.Package {
+	byDir := make(map[string]*pkgtypes.Package)
+	for _, fd := range plan.Decls {
+		if fd.Pkg != nil {
+			byDir[fd.Pkg.Path] = fd.Pkg
+		}
 	}
-	return nil
+	for _, edit := range plan.ArgFor {
+		if pkg := edit.Site.Pkg; pkg != nil {
+			byDir[pkg.Path] = pkg
+		}
+	}
+	out := make([]*pkgtypes.Package, 0, len(byDir))
+	for _, dir := range slices.Sorted(maps.Keys(byDir)) {
+		out = append(out, byDir[dir])
+	}
+	return out
+}
+
+// reach returns the package directories and changed function names of the
+// built plan.
+func (op *ThreadContextOperation) reach() reach {
+	var r reach
+	if op.plan == nil {
+		return r
+	}
+	for _, pkg := range op.plan.reachedPackages() {
+		r.dirs = append(r.dirs, pkg.Path)
+	}
+	for f := range op.plan.Funcs {
+		r.names = append(r.names, f.Name())
+	}
+	return r
 }
 
 // discover is phase 1: the worklist fixpoint that decides WHICH functions gain a
@@ -429,10 +426,6 @@ func (op *ThreadContextOperation) discover(
 			}
 		}
 
-		// Interface expansion seam: filled in by the interface-expansion task,
-		// which will pull in the interface method declaration plus every
-		// workspace implementation when f is a method (and abort on external
-		// interfaces such as http.Handler). Today it is a no-op.
 		extra, err := op.expandInterfaces(f, ws, idx)
 		if err != nil {
 			return nil, err

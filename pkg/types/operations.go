@@ -201,6 +201,16 @@ type RefactoringPlan struct {
 // accounts for.
 type Coverage struct {
 	Configs []string // display names, primary first
+	// Uncovered lists, by path, the files in the packages the plan reached
+	// that no configuration type-checks. Edits they need are not in the plan.
+	Uncovered []UncoveredFile
+}
+
+// UncoveredFile is a file a plan could not account for.
+type UncoveredFile struct {
+	Path    string
+	Configs []string // the configurations that include the file; none when no configuration can
+	Reason  string
 }
 
 // Change represents a specific change to be made
