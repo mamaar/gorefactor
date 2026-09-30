@@ -7,6 +7,7 @@ import (
 	"go/token"
 	gotypes "go/types"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -119,7 +120,7 @@ type mention struct {
 
 // firstMention returns the first identifier in src that is one of names.
 func firstMention(src *analysis.SourceFile, names map[string]bool) (mention, bool) {
-	found := mentions(src, names, true)
+	found := mentions(src, names, nil, true)
 	if len(found) == 0 {
 		return mention{}, false
 	}
@@ -127,8 +128,9 @@ func firstMention(src *analysis.SourceFile, names map[string]bool) (mention, boo
 }
 
 // mentions returns the first identifier in src for each of names, in source
-// order, or only the first of all. Comments and string literals do not count.
-func mentions(src *analysis.SourceFile, names map[string]bool, firstOnly bool) []mention {
+// order, or only the first of all. Comments, string literals and identifiers
+// at the skip offsets do not count.
+func mentions(src *analysis.SourceFile, names map[string]bool, skip map[int]bool, firstOnly bool) []mention {
 	if len(names) == 0 || len(src.Content) == 0 {
 		return nil
 	}
@@ -145,8 +147,11 @@ func mentions(src *analysis.SourceFile, names map[string]bool, firstOnly bool) [
 		if tok != token.IDENT || !names[lit] || seen[lit] {
 			continue
 		}
-		seen[lit] = true
 		at := tf.Position(pos)
+		if skip[at.Offset] {
+			continue
+		}
+		seen[lit] = true
 		found = append(found, mention{name: lit, Reference: types.Reference{
 			File:    src.Path,
 			Offset:  at.Offset,
@@ -263,7 +268,7 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 	if len(keys) == 0 {
 		return nil
 	}
-	dirs := declaringDirs(views, keys)
+	dirs, declared := declarations(views, keys)
 	ordered := orderedKeys(keys)
 	var out []uncheckedMention
 	for _, u := range analysis.UncheckedFiles(views, views[0].SourceDirs()) {
@@ -275,7 +280,7 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 				byName[key.Name] = append(byName[key.Name], key)
 			}
 		}
-		for _, m := range mentions(u.Source, names, false) {
+		for _, m := range mentions(u.Source, names, declared[u.Source.Path], false) {
 			site := types.Blocker{Reference: m.Reference, Configs: configNames(u.Configs), Unverified: u.Reason}
 			for _, key := range byName[m.name] {
 				out = append(out, uncheckedMention{key: key, site: site})
@@ -285,18 +290,25 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 	return out
 }
 
-// declaringDirs returns the directory of the package that declares each key.
-func declaringDirs(views []*analysis.View, keys types.SymbolKeySet) map[types.SymbolKey]string {
+// declarations returns the directory of the package that declares each key
+// and, per file, the offsets of the identifiers declaring the keys in any view.
+func declarations(views []*analysis.View, keys types.SymbolKeySet) (map[types.SymbolKey]string, map[string]map[int]bool) {
 	dirs := make(map[types.SymbolKey]string, len(keys))
+	declared := make(map[string]map[int]bool)
 	for key := range keys {
 		for _, v := range views {
-			if pkg := resolveSymbolPackage(v.Workspace, &types.Symbol{Package: key.PkgPath}); pkg != nil {
-				dirs[key] = pkg.Dir
-				break
+			sym := symbolForKey(v.Workspace, key)
+			if sym == nil {
+				continue
 			}
+			dirs[key] = filepath.Dir(sym.File)
+			if declared[sym.File] == nil {
+				declared[sym.File] = make(map[int]bool)
+			}
+			declared[sym.File][v.Workspace.FileSet.Position(sym.Position).Offset] = true
 		}
 	}
-	return dirs
+	return dirs, declared
 }
 
 // mayUse reports whether a file that is not type-checked could use the symbol

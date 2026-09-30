@@ -171,3 +171,19 @@ func TestUnused_BlankIdentifierIsNotReported(t *testing.T) {
 		t.Errorf("unused = %v, want only dead", got)
 	}
 }
+
+func TestUnused_DeclarationInUncheckedFileIsNotItsOwnPossibleUse(t *testing.T) {
+	out, _ := callUnused(t, map[string]string{
+		"p/f.go":             "package p\n\nfunc F() {}\n",
+		"p/bad_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport (\n\t\"testing\"\n\n\t_ \"example.com/this-module-does-not-exist/thirdparty\"\n)\n\nvar lonely = 1\n\nvar twice = 2\n\nfunc TestBad(t *testing.T) {\n\t_ = twice\n}\n",
+	})
+
+	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"bad_tagx_test.go:lonely"}) {
+		t.Errorf("unused = %v, want only lonely", got)
+	}
+	for _, it := range out.PossiblyUsed {
+		if it.Name == "lonely" {
+			t.Errorf("lonely is possibly used at %+v, want its declaration not to count", it.PossibleUse)
+		}
+	}
+}
