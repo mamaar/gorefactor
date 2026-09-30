@@ -48,7 +48,7 @@ func registerContextTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: `Add ctx context.Context as the first parameter to a function, updating all call sites with a default value (context.TODO() by default).
 Pairs with detect_missing_context_params to find functions that need it.
 
-Set thread: true to thread a real context.Context transitively through every call chain in the workspace that reaches the function, instead of injecting context.TODO() at each of its direct call sites. Climbing stops at the first caller that already has a context.Context in scope — a parameter, a captured variable, or a derivable r.Context() on an *http.Request — and at any root that cannot take one: main, init, Test/Benchmark/Fuzz declarations, closures, and package-level var initializers. Roots get context.TODO() (or t.Context() inside a *testing.T/B/F-scoped function or subtest), never a new parameter. When the seed or something it reaches is a method on a type that implements a workspace-declared interface, the interface declaration and every workspace implementation of it are rewritten together, so the result compiles regardless of which implementation a caller holds. Threading aborts, making no changes at all, if it would need to add a context.Context to a method satisfying an interface declared outside the workspace (e.g. http.Handler, fmt.Stringer), or if the function is ever referenced as a value rather than called (assigned to a variable, passed as a callback, taken as a method value) — both cases would otherwise leave the workspace uncompilable. thread and default_value are mutually exclusive: with thread, each call site resolves its own context expression, so a single fixed default_value has no meaning.`,
+Set thread: true to thread a real context.Context transitively through every call chain in the workspace that reaches the function, instead of injecting context.TODO() at each of its direct call sites. Climbing stops at the first caller that already has a context.Context in scope — a parameter, a captured variable, or a derivable r.Context() on an *http.Request — and at any root that cannot take one: main, init, Test/Benchmark/Fuzz declarations, closures, and package-level var initializers. Roots get context.TODO() (or t.Context() inside a *testing.T/B/F-scoped function or subtest), never a new parameter. When the seed or something it reaches is a method on a type that implements a workspace-declared interface, the interface declaration and every workspace implementation of it are rewritten together, so the result compiles regardless of which implementation a caller holds. Threading aborts, making no changes at all, if it would need to add a context.Context to a method satisfying an interface declared outside the workspace (e.g. http.Handler, fmt.Stringer), or if the function is ever referenced as a value rather than called (assigned to a variable, passed as a callback, taken as a method value) — both cases would otherwise leave the workspace uncompilable. Threading is planned under every build configuration that covers the workspace (GOOS/GOARCH variants, custom build tags) and merged into one plan, so files only another configuration compiles are rewritten too and a function that gains ctx in one configuration gains it in all; the result lists those configurations as build_configs when there is more than one, and an abort names the configuration it came from. thread and default_value are mutually exclusive: with thread, each call site resolves its own context expression, so a single fixed default_value has no meaning.`,
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AddContextParameterInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -75,10 +75,13 @@ Set thread: true to thread a real context.Context transitively through every cal
 			// whose TypesPkg/TypesInfo is nil), which would hand the operation
 			// an index with an empty object-identity map — CallSitesOf would
 			// find no callers and threading would "succeed" having changed
-			// nothing. Leaving the request's index unset makes
-			// DefaultEngine.ThreadContext type-check every package itself and
-			// then build a fresh, accurate index.
-			plan, err := state.GetEngine().ThreadContext(ws, pkgtypes.ThreadContextRequest{
+			// nothing. Leaving the request's index unset makes the engine
+			// type-check every package itself and then build a fresh, accurate
+			// index.
+			//
+			// The read lock stays held until the merged plan exists: a watcher
+			// batch takes the write lock and may drop a view being planned in.
+			plan, err := state.GetEngine().ThreadContextAcrossConfigs(pkgtypes.ThreadContextRequest{
 				FunctionName: in.FunctionName,
 				SourceFile:   sourceFile,
 			})

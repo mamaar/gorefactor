@@ -21,6 +21,9 @@ type PlanResult struct {
 	// SkippedSites lists call sites that could not be automatically rewritten.
 	// Each entry must be updated manually before the build will succeed.
 	SkippedSites []types.SkippedSite `json:"skipped_sites,omitempty"`
+	// BuildConfigs names the build configurations the plan was computed under,
+	// primary first. Omitted when there is only one.
+	BuildConfigs []string `json:"build_configs,omitempty"`
 
 	// DryRun is true when the plan was previewed rather than applied. Nothing
 	// was written to disk and ModifiedFiles is empty.
@@ -139,6 +142,7 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 		Success:       true,
 		DryRun:        true,
 		SkippedSites:  plan.SkippedSites,
+		BuildConfigs:  planBuildConfigs(plan),
 		Diffs:         buildDiffs(plan.Changes),
 	}
 
@@ -190,7 +194,17 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dry
 		ModifiedFiles: plan.AffectedFiles,
 		Success:       true,
 		SkippedSites:  plan.SkippedSites,
+		BuildConfigs:  planBuildConfigs(plan),
 	}, nil
+}
+
+// planBuildConfigs returns the configurations plan covers when it spans more
+// than one.
+func planBuildConfigs(plan *types.RefactoringPlan) []string {
+	if len(plan.Coverage.Configs) < 2 {
+		return nil
+	}
+	return plan.Coverage.Configs
 }
 
 // executePlanWithUnlock releases the read lock before calling executePlan.
