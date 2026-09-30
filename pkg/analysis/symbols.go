@@ -1337,7 +1337,8 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 
 // checkedInfo returns pkg's type information when it covers the identifiers
 // of file, and nil for a package that is not type-checked and for a test file
-// the check left out or checked as another package.
+// the check left out or checked as a package other than pkg or its external
+// test package.
 func checkedInfo(pkg *types.Package, file *types.File) *gotypes.Info {
 	if pkg == nil || pkg.TypesInfo == nil || pkg.TypesInfo.Uses == nil || pkg.TypesPkg == nil {
 		return nil
@@ -1346,7 +1347,8 @@ func checkedInfo(pkg *types.Package, file *types.File) *gotypes.Info {
 		if f != file {
 			continue
 		}
-		if _, excluded := pkg.ExcludedTestFiles[name]; excluded || file.AST.Name.Name != pkg.TypesPkg.Name() {
+		pkgName := file.AST.Name.Name
+		if _, excluded := pkg.ExcludedTestFiles[name]; excluded || (pkgName != pkg.TypesPkg.Name() && pkgName != pkg.TypesPkg.Name()+"_test") {
 			return nil
 		}
 	}
