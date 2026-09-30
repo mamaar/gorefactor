@@ -62,7 +62,7 @@ The server communicates over stdio using the MCP protocol.
 | `change_signature` | Change a function's parameter list and update all callers |
 | `add_context_parameter` | Add a `context.Context` parameter to a function and its callers; with `thread: true`, thread a real context transitively through every call chain in the workspace that reaches it instead |
 | `safe_delete` | Delete a symbol only if it has no references in any build configuration; if it does, asks the human user to confirm before deleting unless `force` or `dry_run` is set. `force` deletes the declaration and reports surviving call sites in `skipped_sites` rather than rewriting them |
-| `batch_operations` | Run multiple refactoring operations atomically (default build configuration only) |
+| `batch_operations` | Run multiple refactoring operations atomically; each step is planned the way its standalone tool plans it |
 
 ### Analysis
 
@@ -110,7 +110,7 @@ The server communicates over stdio using the MCP protocol.
 | `create_facade` | Create a facade package that re-exports symbols |
 | `generate_facades` | Generate facades for a set of packages |
 | `update_facades` | Update existing facades after changes |
-| `move_by_dependencies` | Reorganize packages based on dependency analysis (default build configuration only) |
+| `move_by_dependencies` | Move symbols shared by several packages to a common package; a move that would break a build configuration is skipped and reported |
 | `organize_by_layers` | Organize packages into architectural layers |
 | `fix_cycles` | Break import cycles |
 
@@ -122,7 +122,9 @@ Files are selected with the Go toolchain's own rules: `//go:build` and `// +buil
 
 These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete` and `unused`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
 
-These tools act on the default configuration only and can miss files excluded by build constraints: `batch_operations`, `rename_package`, `move_package`, `move_dir`, `move_packages`, `move_by_dependencies`, `analyze_symbol`, `analyze_dependencies`, `fix_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
+`batch_operations` plans each step as the standalone tool would: `rename_symbol`, `rename_method` and `rename_field` steps under every configuration, `move_symbol` steps as described above, and `rename_package` and `move_package` steps in the default configuration only. Every step is planned against the unmodified workspace, and two steps whose edits overlap fail the batch. `move_by_dependencies` picks its candidates in the default configuration and plans each move like `move_symbol`; a candidate whose move is refused, or conflicts with an earlier one, stays where it is and is listed in `skipped_sites`.
+
+These tools act on the default configuration only and can miss files excluded by build constraints: `rename_package`, `move_package`, `move_dir`, `move_packages`, `analyze_symbol`, `analyze_dependencies`, `fix_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
 
 Plan results from the tools that plan under every configuration carry:
 
