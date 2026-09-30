@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,7 +44,12 @@ func (op *MoveByDependenciesOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
+// Execute plans the dependency analysis. Moving symbols needs an engine and is
+// done by DefaultEngine.MoveByDependencies.
 func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	if !op.Request.AnalyzeOnly {
+		return nil, fmt.Errorf("moving shared symbols is planned by the engine, not by Execute")
+	}
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -73,75 +79,42 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 		}
 	}
 
-	if op.Request.AnalyzeOnly {
-		suggestedMoves := make([]types.SuggestedMove, 0, len(candidates))
-		affectedPackagesSet := make(map[string]bool)
-		var affectedSymbols []*types.Symbol
+	suggestedMoves := make([]types.SuggestedMove, 0, len(candidates))
+	affectedPackagesSet := make(map[string]bool)
+	var affectedSymbols []*types.Symbol
 
-		for _, c := range candidates {
-			from := c.pkg.ImportPath
-			if from == "" {
-				from = c.pkg.Path
-			}
-			to := c.targetImportPath
-			if to == "" {
-				to = c.targetFSPath
-			}
-			suggestedMoves = append(suggestedMoves, types.SuggestedMove{
-				Symbol:              c.symbol.Name,
-				FromPackage:         from,
-				ToPackage:           to,
-				Reason:              fmt.Sprintf("referenced by %d packages: %s", len(c.referencingPackages), strings.Join(c.referencingPackages, ", ")),
-				ReferencingPackages: c.referencingPackages,
-			})
-			affectedPackagesSet[from] = true
-			affectedSymbols = append(affectedSymbols, c.symbol)
-		}
-
-		var affectedPackages []string
-		for pkg := range affectedPackagesSet {
-			affectedPackages = append(affectedPackages, pkg)
-		}
-		sort.Strings(affectedPackages)
-
-		plan.Impact = &types.ImpactAnalysis{
-			SuggestedMoves:   suggestedMoves,
-			PackageCoupling:  packageCoupling,
-			AffectedPackages: affectedPackages,
-			AffectedSymbols:  affectedSymbols,
-		}
-		return plan, nil
-	}
-
-	if op.Request.MoveSharedTo == "" {
-		return nil, fmt.Errorf("MoveSharedTo must be specified when AnalyzeOnly is false")
-	}
-
-	toPackage := op.getTargetFSPath(ws)
 	for _, c := range candidates {
-		moveReq := types.MoveSymbolRequest{
-			SymbolName:   c.symbol.Name,
-			FromPackage:  c.pkg.Path,
-			ToPackage:    toPackage,
-			CreateTarget: true,
-			UpdateTests:  true,
+		from := c.pkg.ImportPath
+		if from == "" {
+			from = c.pkg.Path
 		}
-		moveOp := &MoveSymbolOperation{Request: moveReq}
-		if err := moveOp.Validate(ws); err != nil {
-			continue
+		to := c.targetImportPath
+		if to == "" {
+			to = c.targetFSPath
 		}
-		movePlan, err := moveOp.Execute(ws)
-		if err != nil {
-			continue
-		}
-		plan.Changes = append(plan.Changes, movePlan.Changes...)
-		for _, f := range movePlan.AffectedFiles {
-			if !containsString(plan.AffectedFiles, f) {
-				plan.AffectedFiles = append(plan.AffectedFiles, f)
-			}
-		}
+		suggestedMoves = append(suggestedMoves, types.SuggestedMove{
+			Symbol:              c.symbol.Name,
+			FromPackage:         from,
+			ToPackage:           to,
+			Reason:              fmt.Sprintf("referenced by %d packages: %s", len(c.referencingPackages), strings.Join(c.referencingPackages, ", ")),
+			ReferencingPackages: c.referencingPackages,
+		})
+		affectedPackagesSet[from] = true
+		affectedSymbols = append(affectedSymbols, c.symbol)
 	}
 
+	var affectedPackages []string
+	for pkg := range affectedPackagesSet {
+		affectedPackages = append(affectedPackages, pkg)
+	}
+	sort.Strings(affectedPackages)
+
+	plan.Impact = &types.ImpactAnalysis{
+		SuggestedMoves:   suggestedMoves,
+		PackageCoupling:  packageCoupling,
+		AffectedPackages: affectedPackages,
+		AffectedSymbols:  affectedSymbols,
+	}
 	return plan, nil
 }
 
@@ -208,6 +181,9 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 		}
 	}
 
+	slices.SortFunc(candidates, func(a, b sharedSymbolCandidate) int {
+		return cmp.Or(strings.Compare(a.pkg.Path, b.pkg.Path), strings.Compare(a.symbol.Name, b.symbol.Name))
+	})
 	return candidates
 }
 

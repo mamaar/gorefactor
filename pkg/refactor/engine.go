@@ -1445,8 +1445,14 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 		return nil, fmt.Errorf("move by dependencies operation validation failed: %w", err)
 	}
 
-	// Execute the operation to generate the plan
-	plan, err := operation.Execute(ws)
+	// Analysis runs in the default configuration; each move is checked under all of them
+	var plan *types.RefactoringPlan
+	var err error
+	if req.AnalyzeOnly {
+		plan, err = operation.Execute(ws)
+	} else {
+		plan, err = e.moveSharedSymbols(ws, operation)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move by dependencies plan: %w", err)
 	}

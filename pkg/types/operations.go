@@ -177,7 +177,8 @@ type CallSite struct {
 	Column int
 }
 
-// SkippedSite records a call site that could not be automatically rewritten.
+// SkippedSite records a call site that could not be automatically rewritten,
+// or a declaration an operation left in place.
 type SkippedSite struct {
 	File        string `json:"file"`
 	Line        int    `json:"line"`
@@ -219,8 +220,8 @@ type RefactoringPlan struct {
 	AffectedFiles []string
 	Impact        *ImpactAnalysis
 	Reversible    bool
-	// SkippedSites holds call sites that were too complex to rewrite automatically.
-	// The caller should inspect these and update them manually.
+	// SkippedSites holds call sites that were too complex to rewrite automatically,
+	// or declarations left unmoved. The caller should inspect these and update them manually.
 	SkippedSites  []SkippedSite
 	// Coverage says which build configurations the plan was computed under.
 	// It is empty for a plan made in a single view.
