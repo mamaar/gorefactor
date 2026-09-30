@@ -123,43 +123,43 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Rename a struct field on a specific named type. Updates the field declaration, selector expressions " +
 			"(x.Field), keyed composite literals ({Field: value}), and promoted access through embedding. References are " +
 			"matched by go/types object identity, so fields with the same name on other, unrelated types are left " +
-			"untouched. To rename an embedded (anonymous) field, use rename_symbol on the embedded type instead — an " +
+			"untouched. The rename is planned under every build configuration (GOOS/GOARCH variants, custom build tags) " +
+			"that covers the workspace, so a struct declared once per configuration has its field renamed in each. " +
+			"To rename an embedded (anonymous) field, use rename_symbol on the embedded type instead — an " +
 			"embedded field's name is the type's name, so renaming it is a type rename, not a field rename.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameFieldInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		plan, err := planRenameField(state, in)
+		state.RUnlock()
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		pkgPath := in.PackagePath
-		if pkgPath != "" {
-			pkgPath = types.ResolvePackagePath(ws, pkgPath)
-		}
-		// Deliberately does NOT call state.EnsureReferenceIndex / set CachedIndex,
-		// unlike change_signature above. RenameFieldOperation resolves references
-		// by go/types object identity and fails closed if type info is missing.
-		// EnsureReferenceIndex builds its index without type-checking first, so
-		// handing it in here would make the operation refuse to run.
-		// DefaultEngine.RenameField already type-checks every package before
-		// building the reference index itself, so the engine call alone is
-		// correct and sufficient.
-		plan, err := state.GetEngine().RenameField(ws, types.RenameFieldRequest{
-			TypeName:     in.TypeName,
-			FieldName:    in.FieldName,
-			NewFieldName: in.NewFieldName,
-			PackagePath:  pkgPath,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		result, err := executePlanWithUnlock(state, plan, "rename field "+in.TypeName+"."+in.FieldName+" → "+in.NewFieldName, in.DryRun)
+		result, err := executePlan(state, plan, "rename field "+in.TypeName+"."+in.FieldName+" → "+in.NewFieldName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 		return textResult(result), nil, nil
+	})
+}
+
+// planRenameField plans in under every build configuration. The caller holds
+// the read lock.
+func planRenameField(state *MCPServer, in RenameFieldInput) (*types.RefactoringPlan, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	pkgPath := in.PackagePath
+	if pkgPath != "" {
+		pkgPath = types.ResolvePackagePath(ws, pkgPath)
+	}
+	return state.GetEngine().RenameFieldAcrossConfigs(types.RenameFieldRequest{
+		TypeName:     in.TypeName,
+		FieldName:    in.FieldName,
+		NewFieldName: in.NewFieldName,
+		PackagePath:  pkgPath,
 	})
 }
 

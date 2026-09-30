@@ -402,6 +402,14 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 	return plan, nil
 }
 
+// RenameFieldAcrossConfigs renames a field like RenameField, under every build
+// configuration covering the workspace, and returns one merged plan. A field
+// with the same key as a renamed one is renamed under every configuration that
+// declares it, and the new name must be free under each.
+func (e *DefaultEngine) RenameFieldAcrossConfigs(req types.RenameFieldRequest) (*types.RefactoringPlan, error) {
+	return e.planAcrossConfigs(&renameFieldPlanner{engine: e, req: req})
+}
+
 // ThreadContext implements transitive context.Context threading: it adds
 // `ctx context.Context` to a seed function and every caller up its call
 // chains, stopping only at a caller that already has a context in scope or at

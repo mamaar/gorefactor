@@ -154,6 +154,16 @@ func embeddedFieldTypeName(expr ast.Expr) string {
 	return ""
 }
 
+// fieldSymbol returns the requested field's symbol in pkg, or nil.
+func (op *RenameFieldOperation) fieldSymbol(pkg *types.Package) *types.Symbol {
+	for _, f := range pkg.Symbols.Fields[op.Request.TypeName] {
+		if f.Name == op.Request.FieldName {
+			return f
+		}
+	}
+	return nil
+}
+
 func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 	req := op.Request
 
@@ -194,14 +204,7 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// The field must exist on the struct.
-	var fieldSym *types.Symbol
-	for _, f := range pkg.Symbols.Fields[req.TypeName] {
-		if f.Name == req.FieldName {
-			fieldSym = f
-			break
-		}
-	}
-	if fieldSym == nil {
+	if op.fieldSymbol(pkg) == nil {
 		// Distinguish an embedded field (a type rename in disguise) from a plain
 		// unknown field. Embedded fields are deliberately absent from
 		// Symbols.Fields, so re-read the struct's field list directly.
@@ -275,14 +278,7 @@ func (op *RenameFieldOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		return nil, err
 	}
 
-	// Locate the field symbol.
-	var fieldSym *types.Symbol
-	for _, f := range pkg.Symbols.Fields[req.TypeName] {
-		if f.Name == req.FieldName {
-			fieldSym = f
-			break
-		}
-	}
+	fieldSym := op.fieldSymbol(pkg)
 	if fieldSym == nil {
 		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,

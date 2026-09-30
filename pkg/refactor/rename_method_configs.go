@@ -19,11 +19,11 @@ func (p *renameMethodPlanner) oldName() string { return p.req.MethodName }
 
 func (p *renameMethodPlanner) label() string { return "rename method" }
 
-func (p *renameMethodPlanner) planWorkspace(ws *types.Workspace, _ *analysis.ReferenceIndex, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
-	return planMemberRenames(ws, p, linked)
+func (p *renameMethodPlanner) planWorkspace(ws *types.Workspace, idx *analysis.ReferenceIndex, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
+	return planMemberRenames(ws, idx, p, linked)
 }
 
-func (p *renameMethodPlanner) requestedOp() memberRename {
+func (p *renameMethodPlanner) requestedOp(*analysis.ReferenceIndex) memberRename {
 	req := p.req
 	req.UpdateImplementations = true
 	return &RenameMethodOperation{Request: req}
@@ -31,7 +31,7 @@ func (p *renameMethodPlanner) requestedOp() memberRename {
 
 // linkedOp returns the operation renaming the method key names, or nil when
 // key is not a method of the requested name or ws has no such package.
-func (p *renameMethodPlanner) linkedOp(ws *types.Workspace, key types.SymbolKey) memberRename {
+func (p *renameMethodPlanner) linkedOp(ws *types.Workspace, _ *analysis.ReferenceIndex, key types.SymbolKey) memberRename {
 	pkg := resolveSymbolPackage(ws, &types.Symbol{Package: key.PkgPath})
 	if pkg == nil || key.Recv == "" || key.Name != p.req.MethodName {
 		return nil

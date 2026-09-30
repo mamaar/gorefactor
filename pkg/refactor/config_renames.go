@@ -179,25 +179,25 @@ type memberRename interface {
 type memberRenames interface {
 	// label names the operation in errors, e.g. "rename method".
 	label() string
-	requestedOp() memberRename
+	requestedOp(idx *analysis.ReferenceIndex) memberRename
 	// linkedOp returns the operation renaming the member key names, or nil
 	// when key is not one this rename changes or ws cannot host it.
-	linkedOp(ws *types.Workspace, key types.SymbolKey) memberRename
+	linkedOp(ws *types.Workspace, idx *analysis.ReferenceIndex, key types.SymbolKey) memberRename
 }
 
 // planMemberRenames plans the requested rename in ws and one for each linked
 // key ws declares, and returns the keys they rename. When ws has no target it
 // returns the requested operation's not-found error.
-func planMemberRenames(ws *types.Workspace, s memberRenames, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
+func planMemberRenames(ws *types.Workspace, idx *analysis.ReferenceIndex, s memberRenames, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
 	run := &memberRun{label: s.label(), renamed: make(types.SymbolKeySet)}
-	if err := run.validate(ws, s.requestedOp(), true); err != nil {
+	if err := run.validate(ws, s.requestedOp(idx), true); err != nil {
 		return nil, nil, err
 	}
 	for _, key := range orderedKeys(linked) {
 		if run.renamed.Has(key) {
 			continue
 		}
-		if op := s.linkedOp(ws, key); op != nil {
+		if op := s.linkedOp(ws, idx, key); op != nil {
 			if err := run.validate(ws, op, false); err != nil {
 				return nil, nil, err
 			}
