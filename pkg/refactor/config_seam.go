@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -35,24 +36,55 @@ type viewIndexes struct {
 	indexes map[*analysis.View]*analysis.ReferenceIndex
 }
 
-// indexOf type-checks v and builds its reference index on first use. The view's
-// own cached index is not used: it may predate type-checking.
+// prepare type-checks and indexes the views concurrently.
+func (c *viewIndexes) prepare(views []*analysis.View) {
+	built := make([]*analysis.ReferenceIndex, len(views))
+	var wg sync.WaitGroup
+	for i, v := range views {
+		wg.Add(1)
+		go buildViewIndex(v, &built[i], &wg)
+	}
+	wg.Wait()
+
+	c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex, len(views))
+	for i, v := range views {
+		c.indexes[v] = built[i]
+	}
+}
+
+func buildViewIndex(v *analysis.View, out **analysis.ReferenceIndex, wg *sync.WaitGroup) {
+	defer wg.Done()
+	*out = checkedIndex(v)
+}
+
+// checkedIndex type-checks v and builds its reference index. The view's own
+// cached index is not used: it may predate type-checking.
+func checkedIndex(v *analysis.View) *analysis.ReferenceIndex {
+	ensureTypeChecked(v.Parser, v.Workspace)
+	return v.Resolver.BuildLazyReferenceIndex()
+}
+
+// indexOf returns v's index, building it if prepare did not.
 func (c *viewIndexes) indexOf(v *analysis.View) *analysis.ReferenceIndex {
 	if idx := c.indexes[v]; idx != nil {
 		return idx
 	}
-	ensureTypeChecked(v.Parser, v.Workspace)
-	idx := v.Resolver.BuildReferenceIndex()
 	if c.indexes == nil {
 		c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
 	}
-	c.indexes[v] = idx
-	return idx
+	c.indexes[v] = checkedIndex(v)
+	return c.indexes[v]
+}
+
+// indexedPlanner is a configPlanner that plans from per-view reference indexes.
+type indexedPlanner interface {
+	configPlanner
+	prepare(views []*analysis.View)
 }
 
 // planAcrossConfigs runs p under every build configuration of the covering set
 // and merges the per-view plans into one.
-func (e *DefaultEngine) planAcrossConfigs(p configPlanner) (*types.RefactoringPlan, error) {
+func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringPlan, error) {
 	if e.set == nil {
 		return nil, fmt.Errorf("no workspace loaded")
 	}
@@ -60,6 +92,7 @@ func (e *DefaultEngine) planAcrossConfigs(p configPlanner) (*types.RefactoringPl
 	if err != nil {
 		return nil, err
 	}
+	p.prepare(views)
 	plan, rounds, err := planAcrossViews(views, p, maxConfigRounds)
 	if err != nil {
 		return nil, err

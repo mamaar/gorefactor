@@ -162,3 +162,40 @@ func TestPlanAcrossViews_AbsentViewContributesNothing(t *testing.T) {
 		t.Errorf("plan = %+v", plan)
 	}
 }
+
+func TestViewIndexes_PrepareTypeChecksAndIndexesEveryView(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/p.go":      "package p\n\nfunc P() {}\n",
+		"p/p_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Tagged() { P() }\n",
+		"p/p_win.go":  "//go:build windows\n\npackage p\n\nfunc Win() { P() }\n",
+	})
+	views, err := eng.WorkspaceSet().Views()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(views) != 3 {
+		t.Fatalf("views = %d, want 3", len(views))
+	}
+
+	var c viewIndexes
+	c.prepare(views)
+	seen := make(map[*analysis.ReferenceIndex]bool)
+	for _, v := range views {
+		idx := c.indexes[v]
+		if idx == nil || !idx.HasTypeInfo() {
+			t.Fatalf("view %s: prepare left no typed index", v.Config)
+		}
+		if seen[idx] {
+			t.Errorf("view %s shares its index with another view", v.Config)
+		}
+		seen[idx] = true
+		if c.indexOf(v) != idx {
+			t.Errorf("view %s: indexOf rebuilt the prepared index", v.Config)
+		}
+		for _, pkg := range v.Workspace.Packages {
+			if !pkg.TypesChecked {
+				t.Errorf("view %s: %s was not type-checked", v.Config, pkg.ImportPath)
+			}
+		}
+	}
+}
