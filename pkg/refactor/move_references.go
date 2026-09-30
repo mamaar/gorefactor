@@ -46,27 +46,34 @@ func importSpecText(alias, path string) string {
 
 // planReferenceFile decides how filePath refers to the target package after
 // the move. It reuses an existing import of the target (and its alias); else it
-// imports the target under a name that collides with nothing in the file, and
-// drops the source import when the moved references were its last users.
+// imports the target under a name that collides with nothing in the file. The
+// source import is dropped when the moved references were its last users.
 func planReferenceFile(ws *types.Workspace, filePath string, refs []*types.Reference, sourceImportPath, targetImportPath, targetName string) referenceFileEdit {
 	file := findParsedFile(ws, filePath)
 	if file == nil || file.AST == nil {
 		return referenceFileEdit{qualifier: targetName}
 	}
 
+	sourceSpec := unusedSourceImport(file, refs, sourceImportPath)
+
 	for _, imp := range file.AST.Imports {
 		if strings.Trim(imp.Path.Value, `"`) != targetImportPath {
 			continue
 		}
-		if imp.Name == nil {
-			return referenceFileEdit{qualifier: targetName}
+		qualifier := targetName
+		if imp.Name != nil {
+			qualifier, _ = importLocalName(imp)
 		}
-		if name, _ := importLocalName(imp); name != "" {
-			return referenceFileEdit{qualifier: name}
+		if qualifier == "" {
+			continue
 		}
+		edit := referenceFileEdit{qualifier: qualifier}
+		if sourceSpec != nil {
+			edit.importChanges = []types.Change{removeImportSpec(ws, file, sourceSpec)}
+		}
+		return edit
 	}
 
-	sourceSpec := unusedSourceImport(file, refs, sourceImportPath)
 	alias := chooseImportName(ws, file, sourceSpec, targetImportPath, targetName)
 	explicit := ""
 	if alias != lastPathComponent(targetImportPath) {
@@ -82,9 +89,9 @@ func planReferenceFile(ws *types.Workspace, filePath string, refs []*types.Refer
 	return edit
 }
 
-// unusedSourceImport returns the file's import of the source package when the
-// moved references are all of its uses, so it is unused once they are
-// rewritten; otherwise nil.
+// unusedSourceImport returns the file's named import of the source package
+// when the moved references are all of its uses, so it is unused once they are
+// rewritten; otherwise nil. Blank and dot imports are never returned.
 func unusedSourceImport(file *types.File, refs []*types.Reference, sourceImportPath string) *ast.ImportSpec {
 	for _, imp := range file.AST.Imports {
 		if strings.Trim(imp.Path.Value, `"`) != sourceImportPath {
@@ -92,7 +99,7 @@ func unusedSourceImport(file *types.File, refs []*types.Reference, sourceImportP
 		}
 		name, _ := importLocalName(imp)
 		if name == "" {
-			return nil
+			continue
 		}
 		moved := 0
 		for _, ref := range refs {
@@ -238,5 +245,19 @@ func replaceImportSpec(ws *types.Workspace, file *types.File, spec *ast.ImportSp
 		OldText:     old,
 		NewText:     text,
 		Description: fmt.Sprintf("Replace import of %s with %s in %s", strings.Trim(spec.Path.Value, `"`), path, file.Path),
+	}
+}
+
+// removeImportSpec deletes spec's line.
+func removeImportSpec(ws *types.Workspace, file *types.File, spec *ast.ImportSpec) types.Change {
+	content := file.OriginalContent
+	start, end := lineRange(ws, content, spec.Pos())
+	path := strings.Trim(spec.Path.Value, `"`)
+	return types.Change{
+		File:        file.Path,
+		Start:       start,
+		End:         end,
+		OldText:     string(content[start:end]),
+		Description: fmt.Sprintf("Remove now-unused import %q from %s", path, file.Path),
 	}
 }
