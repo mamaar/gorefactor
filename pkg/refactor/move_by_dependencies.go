@@ -11,7 +11,8 @@ import (
 
 // moveSharedSymbols moves the shared-symbol candidates of op to the target
 // package. Each candidate is first planned alone with MoveSymbolAcrossConfigs;
-// one that fails or is refused stays in place and is listed as a skipped site.
+// one that fails, is refused or leaves a site to update by hand stays in place
+// and is listed as a skipped site.
 // The accepted ones are then planned as a single move, so the target file,
 // the source files and every referrer are edited once for the whole set.
 func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDependenciesOperation) (*types.RefactoringPlan, error) {
@@ -32,13 +33,20 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 
 	var accepted []sharedSymbolCandidate
 	for _, c := range op.identifySharedSymbols(ws) {
-		_, err := e.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
+		plan, err := e.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
 			SymbolName:  c.symbol.Name,
 			FromPackage: c.pkg.Path,
 			ToPackage:   toPackage,
 		})
 		if err != nil {
 			skip(c, err.Error())
+			continue
+		}
+		// A site the plan leaves to be updated by hand would not build after
+		// a move applied in one call.
+		if len(plan.SkippedSites) > 0 {
+			site := plan.SkippedSites[0]
+			skip(c, fmt.Sprintf("%s:%d %s", site.File, site.Line, site.Reason))
 			continue
 		}
 		accepted = append(accepted, c)

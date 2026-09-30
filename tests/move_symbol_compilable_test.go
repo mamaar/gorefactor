@@ -283,3 +283,26 @@ func TestMoveByDependencies_SkipsTheSymbolWhoseCombinationWithAnotherClosesACycl
 	assertFileContains(t, dir, "app/app.go", "func New()")
 	goVets(t, dir, "")
 }
+
+func TestMoveByDependencies_SkipsCandidateUsedInAFileNoConfigurationTypeChecks(t *testing.T) {
+	dir := mbdWorkspace(t, map[string]string{
+		"src/src.go":     "package src\n\nfunc Shared() int { return 1 }\n\nfunc Free() int { return 2 }\n",
+		"a/a.go":         "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.Shared() + src.Free() }\n",
+		"b/b.go":         "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.Shared() + src.Free() }\n",
+		"t/only_test.go": "package t_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/src\"\n)\n\nfunc TestShared(t *testing.T) { _ = src.Shared() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	sites, _ := json.Marshal(out["skipped_sites"])
+	for _, want := range []string{"Shared not moved", "t/only_test.go"} {
+		if !strings.Contains(string(sites), want) {
+			t.Errorf("skipped_sites = %s, want it to mention %q", sites, want)
+		}
+	}
+	assertFileContains(t, dir, "src/src.go", "func Shared()")
+	assertFileContains(t, dir, "shared/shared.go", "func Free()")
+	goVets(t, dir, "")
+}
