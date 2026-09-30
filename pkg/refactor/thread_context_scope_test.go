@@ -424,12 +424,8 @@ func mark() {}
 	}
 }
 
-// TestClassifyRoot_TestHelperIsNotARoot is the most important test in this
-// file: a test *helper* accepting *testing.T is NOT a root, unlike a
-// Test/Benchmark/Fuzz declaration or a t.Run closure. Getting this backwards
-// would silently stop the upward climb at every test helper instead of
-// threading ctx through it like any other function.
-func TestClassifyRoot_TestHelperIsNotARoot(t *testing.T) {
+// A helper taking *testing.T is a root, like a Test declaration.
+func TestClassifyRoot_TestHelperIsRoot(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{
 		"p/pkg.go":      "package p\n",
 		"p/foo_test.go": `package p
@@ -447,9 +443,9 @@ func mark() {}
 	fn := findFuncDecl(pkg, "helper")
 	file := pkg.TestFiles["foo_test.go"]
 
-	_, ok := classifyRoot(pkg, file, fn, nil)
-	if ok {
-		t.Fatalf("helper(t *testing.T) must NOT be classified as a root; it must be climbable like any other function")
+	src, ok := classifyRoot(pkg, file, fn, nil)
+	if !ok || src.Kind != ctxRootLiteral || src.Expr != "t.Context()" {
+		t.Fatalf("expected helper(t *testing.T) to be a root with t.Context(), got %+v ok=%v", src, ok)
 	}
 }
 

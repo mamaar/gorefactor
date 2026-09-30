@@ -20,8 +20,9 @@ import (
 // ThreadContextOperation adds `ctx context.Context` as the first parameter of a
 // seed function and then threads a real context up through every call chain in
 // the workspace that reaches it, stopping only at a caller that already has a
-// context or at a root that cannot take one (main, init, Test/Benchmark/Fuzz
-// declarations, closures, package-level var initializers).
+// context or at a root that cannot take one (main, init, any function or
+// method with a named *testing.T/B/F or testing.TB parameter, closures,
+// package-level var initializers).
 //
 // This file owns the ANALYSIS half: it computes a validated plan-of-record
 // (threadPlan) and emits no changes. Change emission lives in

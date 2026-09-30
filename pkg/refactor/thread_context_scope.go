@@ -174,18 +174,11 @@ func isFakeRootCtxCreation(fn *ast.FuncDecl) (*ast.AssignStmt, bool) {
 
 // classifyRoot reports whether the call site sitting in fn (or, if non-nil,
 // the more specific enclosing FuncLit lit) is a threading root, and if so
-// which literal expression to inject there. fn and file are still needed
-// even when lit is set, to resolve *_test.go-ness and to type-check any
-// test-signature parameters via pkg.TypesInfo.
+// which literal expression to inject there.
 //
-// t.Context() is intentionally root-only here, not a general ctx
-// derivation: a test *helper* like `func helper(t *testing.T, ...)` has a
-// *testing.T in scope but is NOT a root — it must be climbed like any
-// other function and gain its own ctx parameter. Only Test/Benchmark/Fuzz
-// *declarations* and t.Run closures produce t.Context(). Getting this
-// backwards would silently stop the climb at every test helper, which is
-// exactly what findCtxSource must not do for the analogous *http.Request
-// case either (that one IS a general derivation, handled there instead).
+// Any function, method or closure with a named, non-blank *testing.T/B/F or
+// testing.TB parameter is a root and passes <param>.Context(), wherever it is
+// declared; test helpers are roots, not climbed.
 func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, lit *ast.FuncLit) (ctxSource, bool) {
 	if lit != nil {
 		// t.Run(name, func(t *testing.T) { ... }) and similar: a closure
@@ -214,29 +207,21 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 			return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
 		}
 
-		if file != nil && strings.HasSuffix(file.Path, "_test.go") && pkg != nil && pkg.TypesInfo != nil {
-			if p, ok := firstParamIdent(fn.Type); ok {
-				pt := paramType(pkg, p)
-				switch {
-				case fn.Name.Name == "TestMain" && analysis.IsTestingM(pt):
-					// testing.M has no Context() method.
-					return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
-				case hasTestPrefix(fn.Name.Name) && analysis.IsTestingTB(pt):
-					return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
-				}
+		if file != nil && strings.HasSuffix(file.Path, "_test.go") && fn.Name.Name == "TestMain" && pkg != nil && pkg.TypesInfo != nil {
+			if p, ok := firstParamIdent(fn.Type); ok && analysis.IsTestingM(paramType(pkg, p)) {
+				// testing.M has no Context() method.
+				return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
 			}
 		}
 	}
 
-	return ctxSource{}, false
-}
+	if pkg != nil && pkg.TypesInfo != nil {
+		if p, ok := anyTestingTBParam(pkg, fn.Type); ok {
+			return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
+		}
+	}
 
-// hasTestPrefix reports whether name looks like a Test/Benchmark/Fuzz
-// declaration recognized by `go test`.
-func hasTestPrefix(name string) bool {
-	return strings.HasPrefix(name, "Test") ||
-		strings.HasPrefix(name, "Benchmark") ||
-		strings.HasPrefix(name, "Fuzz")
+	return ctxSource{}, false
 }
 
 // firstParamIdent returns the first parameter's identifier, if it is

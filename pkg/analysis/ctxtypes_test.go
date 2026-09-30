@@ -164,6 +164,20 @@ func f(t2 *testing.T, b *testing.B, ff *testing.F, m *testing.M) {}
 	}
 }
 
+func TestIsTestingTBInterface(t *testing.T) {
+	src := `package p
+import "testing"
+func f(tb testing.TB, v testing.T) {}
+`
+	pkg := typeCheckSrc(t, "p", src)
+	if !IsTestingTB(paramType(t, pkg, "f", 0)) {
+		t.Error("expected testing.TB interface to be recognized by IsTestingTB")
+	}
+	if IsTestingTB(paramType(t, pkg, "f", 1)) {
+		t.Error("non-pointer testing.T must not be recognized by IsTestingTB")
+	}
+}
+
 func TestPredicatesNilSafe(t *testing.T) {
 	// Must not panic on nil input.
 	_ = IsContextType(nil)

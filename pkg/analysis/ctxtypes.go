@@ -77,11 +77,12 @@ func IsHTTPRequestPtr(t gotypes.Type) bool {
 	return isPointerToNamed(t, "net/http", "Request")
 }
 
-// IsTestingTB reports whether t is *testing.T, *testing.B, or *testing.F.
-// Note *testing.M (the test-binary entry point) is deliberately excluded;
-// use IsTestingM for that.
+// IsTestingTB reports whether t is *testing.T, *testing.B, *testing.F, or the
+// testing.TB interface. Note *testing.M (the test-binary entry point) is
+// deliberately excluded; use IsTestingM for that.
 func IsTestingTB(t gotypes.Type) bool {
-	return isPointerToNamed(t, "testing", "T") ||
+	return isNamed(t, "testing", "TB") ||
+		isPointerToNamed(t, "testing", "T") ||
 		isPointerToNamed(t, "testing", "B") ||
 		isPointerToNamed(t, "testing", "F")
 }

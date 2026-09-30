@@ -11,9 +11,8 @@ func TestFoo(t *testing.T) {
 	})
 }
 
-// helper accepts a *testing.T but is NOT a Test/Benchmark/Fuzz declaration,
-// so it is not a root: it must be climbed like any other function and gain
-// its own ctx parameter.
+// helper is a root too: a named *testing.T parameter makes it one, so it
+// gains no ctx parameter and passes t.Context().
 func helper(t *testing.T) {
 	t.Helper()
 	Seed()
