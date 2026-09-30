@@ -258,6 +258,8 @@ func TestThreadContextAcrossConfigs_SingleConfigMatchesThreadContext(t *testing.
 	if !slices.Equal(sortedChanges(got), sortedChanges(want)) {
 		t.Errorf("changes differ:\n got %+v\nwant %+v", sortedChanges(got), sortedChanges(want))
 	}
+	slices.Sort(got.AffectedFiles)
+	slices.Sort(want.AffectedFiles)
 	if !slices.Equal(got.AffectedFiles, want.AffectedFiles) {
 		t.Errorf("affected files = %v, want %v", got.AffectedFiles, want.AffectedFiles)
 	}

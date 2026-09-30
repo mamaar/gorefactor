@@ -387,7 +387,7 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 // chains, stopping only at a caller that already has a context in scope or at
 // a root that cannot take one.
 func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
-	plan, _, err := e.threadContext(ws, req, nil)
+	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), req, nil)
 	return plan, err
 }
 
@@ -405,7 +405,7 @@ type threadContextPlanner struct {
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	plan, gained, err := p.engine.threadContext(v.Workspace, p.req, linked)
+	plan, gained, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.req, linked)
 	if isSymbolNotFound(err) {
 		return configResult{absent: err}, nil
 	}
@@ -415,11 +415,15 @@ func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySe
 	return configResult{plan: plan, changed: gained}, nil
 }
 
-// threadContext plans context threading in ws, seeding the functions linked
-// names next to the request's seed, and returns the keys of the functions that
-// gain a ctx.
+// threadContext plans context threading in ws with the parser and analyzer of
+// the view that owns it, seeding the functions linked names next to the
+// request's seed. It also returns the keys of the functions that gain a ctx.
 func (e *DefaultEngine) threadContext(
-	ws *types.Workspace, req types.ThreadContextRequest, linked types.SymbolKeySet,
+	ws *types.Workspace,
+	parser *analysis.GoParser,
+	analyzer *analysis.DependencyAnalyzer,
+	req types.ThreadContextRequest,
+	linked types.SymbolKeySet,
 ) (*types.RefactoringPlan, types.SymbolKeySet, error) {
 	operation := &ThreadContextOperation{
 		FunctionName: req.FunctionName,
@@ -438,14 +442,14 @@ func (e *DefaultEngine) threadContext(
 	// before the operation builds its reference index — otherwise CallSitesOf
 	// would silently find nothing and the operation would "succeed" having
 	// changed nothing. Mirrors RenameField above.
-	e.EnsureTypeChecked(ws)
+	ensureTypeChecked(parser, ws)
 
 	// The operation type-checks packages itself when it needs to build its own
 	// reference index (CachedIndex nil), and doing that requires a parser with
 	// a real importer. A parser built via analysis.NewParser has none, so a
 	// self-made parser would panic partway through type-checking; the parser
 	// of the view that owns ws is bound to ws's importer.
-	operation.Parser = e.parserFor(ws)
+	operation.Parser = parser
 	operation.Logger = e.logger
 
 	// Validate the operation
@@ -460,7 +464,7 @@ func (e *DefaultEngine) threadContext(
 	}
 
 	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
+	impact, err := analyzer.AnalyzeImpact(operation)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to analyze impact: %w", err)
 	}
@@ -930,10 +934,15 @@ func (e *DefaultEngine) ValidateRefactoring(plan *types.RefactoringPlan) error {
 // is a no-op once a package has already been checked, so calling this
 // repeatedly across operations is cheap.
 func (e *DefaultEngine) EnsureTypeChecked(ws *types.Workspace) {
-	if parser := e.parserFor(ws); parser != nil {
-		for _, pkg := range ws.Packages {
-			parser.EnsureTypeChecked(ws, pkg)
-		}
+	ensureTypeChecked(e.parserFor(ws), ws)
+}
+
+func ensureTypeChecked(parser *analysis.GoParser, ws *types.Workspace) {
+	if parser == nil {
+		return
+	}
+	for _, pkg := range ws.Packages {
+		parser.EnsureTypeChecked(ws, pkg)
 	}
 }
 
