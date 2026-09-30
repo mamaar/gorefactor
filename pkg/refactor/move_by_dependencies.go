@@ -9,13 +9,16 @@ import (
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
+// moveSymbolPlanFunc plans a move of symbols across the build configurations.
+type moveSymbolPlanFunc func(types.MoveSymbolRequest) (*types.RefactoringPlan, error)
+
 // moveSharedSymbols moves the shared-symbol candidates of op to the target
 // package. Each candidate is first planned alone with MoveSymbolAcrossConfigs;
 // one that fails, is refused or leaves a site to update by hand stays in place
 // and is listed as a skipped site.
 // The accepted ones are then planned as a single move, so the target file,
 // the source files and every referrer are edited once for the whole set.
-func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDependenciesOperation) (*types.RefactoringPlan, error) {
+func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDependenciesOperation, planMove moveSymbolPlanFunc) (*types.RefactoringPlan, error) {
 	if op.Request.MoveSharedTo == "" {
 		return nil, fmt.Errorf("MoveSharedTo must be specified when AnalyzeOnly is false")
 	}
@@ -33,7 +36,7 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 
 	var accepted []sharedSymbolCandidate
 	for _, c := range op.identifySharedSymbols(ws) {
-		plan, err := e.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
+		plan, err := planMove(types.MoveSymbolRequest{
 			SymbolName:  c.symbol.Name,
 			FromPackage: c.pkg.Path,
 			ToPackage:   toPackage,
@@ -52,20 +55,39 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 		accepted = append(accepted, c)
 	}
 
-	for len(accepted) > 0 {
+	planGroup := func(group []sharedSymbolCandidate) (*types.RefactoringPlan, error) {
 		req := types.MoveSymbolRequest{ToPackage: toPackage}
-		for _, c := range accepted {
+		for _, c := range group {
 			req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: c.pkg.Path, Name: c.symbol.Name})
 		}
-		plan, err := e.MoveSymbolAcrossConfigs(req)
+		return planMove(req)
+	}
+	drop := func(i int, reason string) {
+		skip(accepted[i], reason)
+		accepted = append(accepted[:i:i], accepted[i+1:]...)
+	}
+
+	for len(accepted) > 0 {
+		plan, err := planGroup(accepted)
 		var member *groupMemberError
 		if errors.As(err, &member) && member.index < len(accepted) {
-			skip(accepted[member.index], member.err.Error())
-			accepted = append(accepted[:member.index:member.index], accepted[member.index+1:]...)
+			drop(member.index, member.err.Error())
 			continue
 		}
 		if err != nil {
-			return nil, err
+			// No member is to blame: skip the first candidate whose
+			// addition to the group breaks it.
+			good, bad := 0, len(accepted)
+			for bad-good > 1 {
+				mid := (good + bad) / 2
+				if _, midErr := planGroup(accepted[:mid]); midErr == nil {
+					good = mid
+				} else {
+					bad, err = mid, midErr
+				}
+			}
+			drop(good, err.Error())
+			continue
 		}
 		plan.SkippedSites = append(plan.SkippedSites, skipped...)
 		return plan, nil

@@ -1339,7 +1339,7 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 	if req.AnalyzeOnly {
 		plan, err = operation.Execute(ws)
 	} else {
-		plan, err = e.moveSharedSymbols(ws, operation)
+		plan, err = e.moveSharedSymbols(ws, operation, e.MoveSymbolAcrossConfigs)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move by dependencies plan: %w", err)
