@@ -23,6 +23,10 @@ type moveSymbolPlanner struct {
 	// objections holds what, other than a reference, makes the plan wrong
 	// under some configuration.
 	objections []string
+	// target, targetImports and importers are the target package and the
+	// import edges the primary plan adds.
+	target                   string
+	targetImports, importers []string
 }
 
 type refSite struct {
@@ -76,6 +80,7 @@ func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) 
 	for _, ref := range op.references {
 		p.rewritten[refSite{ref.File, ref.Offset}] = true
 	}
+	p.target, p.targetImports, p.importers = op.target, op.targetImports, op.importers
 	op.moved, op.references = nil, nil
 	return configResult{plan: plan, changed: keySet(p.moved)}, nil
 }
@@ -124,15 +129,8 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			}
 		}
 	}
-	checked := make(map[string]bool)
-	for _, ref := range p.req.Refs() {
-		if checked[ref.Package] {
-			continue
-		}
-		checked[ref.Package] = true
-		if wouldCreateImportCycle(ws, ref.Package, p.req.ToPackage) {
-			p.object(v, "the move would create an import cycle between %s and %s", ref.Package, p.req.ToPackage)
-		}
+	if cycle := importCycle(importGraph(ws), p.target, p.targetImports, p.importers); cycle != nil {
+		p.object(v, "the move would create an import cycle: %s", strings.Join(cycle, " -> "))
 	}
 	return res
 }

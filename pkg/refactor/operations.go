@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,6 +26,12 @@ type MoveSymbolOperation struct {
 	// moved and references hold what Execute moved and the references it found.
 	moved      []*types.Symbol
 	references []*types.Reference
+
+	// target is the target package's path, and targetImports and importers
+	// the packages the move makes it import and the packages that come to
+	// import it.
+	target                   string
+	targetImports, importers []string
 }
 
 func (op *MoveSymbolOperation) Type() types.OperationType {
@@ -158,14 +165,6 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 	}
 
-	// Check that move won't create import cycles
-	if wouldCreateImportCycle(ws, ref.Package, op.Request.ToPackage) {
-		return &types.RefactorError{
-			Type:    types.CyclicDependency,
-			Message: fmt.Sprintf("moving symbol would create import cycle between %s and %s", ref.Package, op.Request.ToPackage),
-		}
-	}
-
 	return nil
 }
 
@@ -192,10 +191,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 	moveSet := make([]*types.Symbol, len(moving))
-	sources := make(map[*types.Symbol]*types.Package, len(moving))
 	for i, m := range moving {
 		moveSet[i] = m.sym
-		sources[m.sym] = m.pkg
 	}
 
 	// Find all references to every symbol being moved together.
@@ -248,7 +245,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moveSet, sources, targetPackage)
+	uses := scanMovedUses(ws, moving)
+	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moving, uses, targetPackage)
 	if err != nil {
 		return nil, err
 	}
@@ -274,6 +272,11 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 				Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.sym.Name, ref.Symbol.Name),
 			}}
 		}
+	}
+
+	op.target = targetPackage.Path
+	if err := op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path); err != nil {
+		return nil, err
 	}
 
 	// Rewrite each surviving reference, file by file, using the qualifier the
@@ -863,13 +866,14 @@ func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, ty
 	return changes
 }
 
-// generateSymbolAdditionChanges builds the change(s) that add every symbol in
-// symbols (the primary moved symbol plus any companion functions — see
+// generateSymbolAdditionChanges builds the change(s) that add every moving
+// symbol (the requested ones plus any companion functions — see
 // move_companions.go) to targetFile, along with whatever imports that code
-// needs (see move_imports.go). sources maps each symbol to the package
-// declaring it.
-func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace, targetFile *types.File, symbols []*types.Symbol, sources map[*types.Symbol]*types.Package, targetPackage *types.Package) ([]types.Change, error) {
-	if len(symbols) == 0 {
+// needs (see move_imports.go). Names the code uses of exported symbols left
+// behind in a source package are qualified with it and that package is
+// imported.
+func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace, targetFile *types.File, moving []*movingSymbol, uses map[*movingSymbol]*movedUses, targetPackage *types.Package) ([]types.Change, error) {
+	if len(moving) == 0 {
 		return nil, fmt.Errorf("no symbols to add to %s", targetPackage.Path)
 	}
 
@@ -884,8 +888,15 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 	var blocks []string
 	var needed []neededImport
 	seenImportPaths := make(map[string]bool)
-	for _, symbol := range symbols {
-		symbolFile := findFileContainingSymbol(sources[symbol], symbol)
+	need := func(imp neededImport) {
+		if !seenImportPaths[imp.path] {
+			seenImportPaths[imp.path] = true
+			needed = append(needed, imp)
+		}
+	}
+	sourceNames := make(map[*types.Package]string)
+	for _, m := range moving {
+		symbol, symbolFile := m.sym, m.file
 		if symbolFile == nil {
 			return nil, fmt.Errorf("could not find source file for symbol %s", symbol.Name)
 		}
@@ -893,26 +904,23 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 			return nil, fmt.Errorf("source file %s has no content loaded", symbolFile.Path)
 		}
 
-		// Extract the symbol's source code
-		symbolCode, err := op.extractSymbolSource(symbolFile, symbol)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to extract symbol source for %s: %v\n", symbol.Name, err)
-			// Fallback to a simple implementation for functions
-			switch symbol.Kind {
-			case types.FunctionSymbol:
-				symbolCode = fmt.Sprintf("func %s(a, b int) int {\n\treturn a + b\n}", symbol.Name)
-			case types.TypeSymbol:
-				// Attempt to generate struct with actual field information
-				structCode, serr := op.generateStructFromSymbol(symbol, symbolFile)
-				if serr != nil {
-					// Final fallback - empty struct
-					symbolCode = fmt.Sprintf("type %s struct {\n\t// Empty struct - original fields could not be extracted\n}", symbol.Name)
-				} else {
-					symbolCode = structCode
-				}
-			default:
-				return nil, fmt.Errorf("failed to extract symbol source: %w", err)
+		qualifiers := make(map[int]string)
+		if len(uses[m].leftBehind) > 0 {
+			name, ok := sourceNames[m.pkg]
+			if !ok {
+				var imp neededImport
+				name, imp = importForSource(ws, targetFile, m.pkg)
+				need(imp)
+				sourceNames[m.pkg] = name
 			}
+			for _, offset := range uses[m].leftBehind {
+				qualifiers[offset] = name + "."
+			}
+		}
+
+		symbolCode, err := op.extractSymbolSource(symbolFile, symbol, qualifiers)
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract symbol source: %w", err)
 		}
 
 		symbolCode = unqualifySelfReferences(symbolFile, symbolCode, targetImportPath)
@@ -927,11 +935,7 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 		// import list (each moved symbol may originate from a different
 		// file within sourcePackage). See move_imports.go.
 		for _, imp := range resolveNeededImports(symbolFile, symbolCode) {
-			if seenImportPaths[imp.path] {
-				continue
-			}
-			seenImportPaths[imp.path] = true
-			needed = append(needed, imp)
+			need(imp)
 		}
 	}
 
@@ -944,7 +948,7 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 		End:         len(targetFile.OriginalContent),
 		OldText:     "",
 		NewText:     combinedCode,
-		Description: fmt.Sprintf("Add %s to %s", symbolNames(symbols), targetPackage.Path),
+		Description: fmt.Sprintf("Add %s to %s", symbolNames(moving), targetPackage.Path),
 	}}
 
 	if importChange := generateNeededImportsChange(ws, targetFile, needed); importChange != nil {
@@ -954,10 +958,36 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 	return changes, nil
 }
 
-func symbolNames(symbols []*types.Symbol) string {
-	names := make([]string, len(symbols))
-	for i, s := range symbols {
-		names[i] = s.Name
+// importForSource returns the name targetFile uses for the source package and
+// the import that provides it: the file's own import of it, else a new one
+// under a name free in the file.
+func importForSource(ws *types.Workspace, targetFile *types.File, source *types.Package) (string, neededImport) {
+	path := packagePathToImportPath(ws, source.Path)
+	if targetFile.AST != nil {
+		for _, imp := range targetFile.AST.Imports {
+			if strings.Trim(imp.Path.Value, `"`) == path {
+				if name, explicit := importLocalName(imp); name != "" {
+					alias := ""
+					if explicit {
+						alias = name
+					}
+					return name, neededImport{alias: alias, path: path}
+				}
+			}
+		}
+	}
+	name := chooseImportName(ws, targetFile, nil, path, source.Name)
+	imp := neededImport{path: path}
+	if name != lastPathComponent(path) {
+		imp.alias = name
+	}
+	return name, imp
+}
+
+func symbolNames(moving []*movingSymbol) string {
+	names := make([]string, len(moving))
+	for i, m := range moving {
+		names[i] = m.sym.Name
 	}
 	return strings.Join(names, ", ")
 }
@@ -1200,20 +1230,6 @@ func findPackageForFile(ws *types.Workspace, filePath string) *types.Package {
 	return nil
 }
 
-func wouldCreateImportCycle(ws *types.Workspace, fromPkg, toPkg string) bool {
-	if ws.Dependencies == nil {
-		return false
-	}
-
-	// Check if toPkg already depends on fromPkg
-	toDeps, exists := ws.Dependencies.PackageDeps[toPkg]
-	if !exists {
-		return false
-	}
-
-	return slices.Contains(toDeps, fromPkg)
-}
-
 func isValidGoIdentifier(name string) bool {
 	if len(name) == 0 {
 		return false
@@ -1414,8 +1430,9 @@ func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, fileP
 	return nil
 }
 
-// extractSymbolSource extracts the source code of a symbol from a file
-func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol) (string, error) {
+// extractSymbolSource extracts the source code of a symbol from a file, with
+// each text in qualifiers (keyed by the file offset it goes before) inserted.
+func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol, qualifiers map[int]string) (string, error) {
 	if file.AST == nil {
 		return "", fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
@@ -1423,23 +1440,51 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 	if !ok {
 		return "", fmt.Errorf("symbol %s not found in file %s", symbol.Name, file.Path)
 	}
-	lines := strings.Split(string(file.OriginalContent), "\n")
-	sourceCode := strings.Join(lines[start:end], "\n")
+	content := file.OriginalContent
+	lineOffset := func(line int) int {
+		offset := 0
+		for range line {
+			i := bytes.IndexByte(content[offset:], '\n')
+			if i < 0 {
+				return len(content) + 1
+			}
+			offset += i + 1
+		}
+		return offset
+	}
+	sourceCode := copyWithInserts(content, lineOffset(start), min(lineOffset(end)-1, len(content)), qualifiers)
 	if grouped {
 		sourceCode = "type " + strings.TrimLeft(sourceCode, " \t")
 	}
 
 	// A type moves with its methods.
 	if symbol.Kind == types.TypeSymbol {
-		if methodsCode := op.extractMethodsForType(file, symbol.Name); methodsCode != "" {
+		if methodsCode := op.extractMethodsForType(file, symbol.Name, qualifiers); methodsCode != "" {
 			sourceCode += "\n\n" + methodsCode
 		}
 	}
 	return sourceCode, nil
 }
 
+// copyWithInserts returns content[start:end] with each text in inserts put
+// before the offset it is keyed by.
+func copyWithInserts(content []byte, start, end int, inserts map[int]string) string {
+	var b strings.Builder
+	last := start
+	for _, offset := range slices.Sorted(maps.Keys(inserts)) {
+		if offset < start || offset >= end {
+			continue
+		}
+		b.Write(content[last:offset])
+		b.WriteString(inserts[offset])
+		last = offset
+	}
+	b.Write(content[last:end])
+	return b.String()
+}
+
 // extractMethodsForType extracts all methods that have the given type as receiver
-func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName string) string {
+func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName string, qualifiers map[int]string) string {
 	var methods []string
 	for _, d := range file.AST.Decls {
 		funcDecl, ok := d.(*ast.FuncDecl)
@@ -1451,7 +1496,7 @@ func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName 
 			first = funcDecl.Doc.Pos()
 		}
 		start, end := int(first-file.AST.FileStart), int(funcDecl.End()-file.AST.FileStart)
-		methods = append(methods, string(file.OriginalContent[start:end]))
+		methods = append(methods, copyWithInserts(file.OriginalContent, start, end, qualifiers))
 	}
 	return strings.Join(methods, "\n\n")
 }
@@ -1518,71 +1563,6 @@ func calculateByteOffset(filePath string, line, column int) int {
 	}
 
 	return offset
-}
-
-func (op *MoveSymbolOperation) generateStructFromSymbol(symbol *types.Symbol, sourceFile *types.File) (string, error) {
-	if sourceFile.AST == nil {
-		return "", fmt.Errorf("no AST available for file %s", sourceFile.Path)
-	}
-
-	// Find the struct definition in the AST
-	var structType *ast.StructType
-	ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
-		if typeSpec, ok := n.(*ast.TypeSpec); ok {
-			if typeSpec.Name.Name == symbol.Name {
-				if st, ok := typeSpec.Type.(*ast.StructType); ok {
-					structType = st
-					return false // Stop searching
-				}
-			}
-		}
-		return true
-	})
-
-	if structType == nil {
-		return "", fmt.Errorf("struct definition not found for %s", symbol.Name)
-	}
-
-	// Build struct with fields
-	var structBuilder strings.Builder
-	structBuilder.WriteString(fmt.Sprintf("type %s struct {\n", symbol.Name))
-
-	if structType.Fields != nil {
-		for _, field := range structType.Fields.List {
-			// Extract field information
-			if len(field.Names) > 0 {
-				for _, name := range field.Names {
-					structBuilder.WriteString(fmt.Sprintf("\t%s ", name.Name))
-					// Add type (simplified - doesn't handle all complex types)
-					if ident, ok := field.Type.(*ast.Ident); ok {
-						structBuilder.WriteString(ident.Name)
-					} else {
-						structBuilder.WriteString("interface{}")
-					}
-
-					// Add struct tags if present
-					if field.Tag != nil {
-						structBuilder.WriteString(" ")
-						structBuilder.WriteString(field.Tag.Value)
-					}
-
-					structBuilder.WriteString("\n")
-				}
-			} else {
-				// Embedded field
-				structBuilder.WriteString("\t")
-				if ident, ok := field.Type.(*ast.Ident); ok {
-					structBuilder.WriteString(ident.Name)
-				} else {
-					structBuilder.WriteString("interface{}")
-				}
-				structBuilder.WriteString("\n")
-			}
-		}
-	}
-
-	structBuilder.WriteString("}")
-	return structBuilder.String(), nil
 }
 
 // Helper methods for RenamePackageOperation
