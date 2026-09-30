@@ -2606,7 +2606,7 @@ func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Worksp
 	}
 
 	// Calculate the byte position for the method name change
-	startByte := int(methodSymbol.Position) - 1 // Convert to 0-based
+	startByte := ws.FileSet.Position(methodSymbol.Position).Offset
 	endByte := startByte + len(op.Request.MethodName)
 
 	return &types.Change{
@@ -2638,7 +2638,7 @@ func (op *RenameMethodOperation) generateMethodReferenceChanges(ws *types.Worksp
 							// For now, we'll create the change (a more sophisticated implementation
 							// would verify the receiver type)
 							pos := selExpr.Sel.Pos()
-							startByte := int(pos) - 1
+							startByte := ws.FileSet.Position(pos).Offset
 							endByte := startByte + len(op.Request.MethodName)
 
 							change := types.Change{
