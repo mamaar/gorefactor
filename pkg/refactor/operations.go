@@ -314,7 +314,11 @@ func (op *RenameSymbolOperation) Validate(ws *types.Workspace) error {
 	if err != nil {
 		return err
 	}
+	return op.validateTargets(ws, targetSymbols)
+}
 
+// validateTargets checks that the new name is valid and free for each symbol.
+func (op *RenameSymbolOperation) validateTargets(ws *types.Workspace, targetSymbols []*types.Symbol) error {
 	// Check that new name is valid Go identifier
 	if !isValidGoIdentifier(op.Request.NewName) {
 		return &types.RefactorError{
@@ -433,12 +437,6 @@ func (op *RenameSymbolOperation) findTargetSymbols(ws *types.Workspace, resolver
 }
 
 func (op *RenameSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	plan := &types.RefactoringPlan{
-		Changes:       make([]types.Change, 0),
-		AffectedFiles: make([]string, 0),
-		Reversible:    true,
-	}
-
 	// Find all symbols to rename
 	var targetSymbols []*types.Symbol
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -461,6 +459,17 @@ func (op *RenameSymbolOperation) Execute(ws *types.Workspace) (*types.Refactorin
 				}
 			}
 		}
+	}
+
+	return op.planSymbols(ws, resolver, targetSymbols)
+}
+
+// planSymbols plans renaming each symbol's definition and references.
+func (op *RenameSymbolOperation) planSymbols(ws *types.Workspace, resolver *analysis.SymbolResolver, targetSymbols []*types.Symbol) (*types.RefactoringPlan, error) {
+	plan := &types.RefactoringPlan{
+		Changes:       make([]types.Change, 0),
+		AffectedFiles: make([]string, 0),
+		Reversible:    true,
 	}
 
 	// Process each symbol

@@ -61,11 +61,16 @@ func (a *planAccum) plan() *types.RefactoringPlan {
 
 // reach returns the directories of every file the plan rewrites and names.
 func (a *planAccum) reach(names []string) reach {
+	return reachOf(a.out, names)
+}
+
+// reachOf returns the directories of every file plan rewrites, and the distinct names.
+func reachOf(plan *types.RefactoringPlan, names []string) reach {
 	var out reach
-	if a.out == nil {
+	if plan == nil {
 		return out
 	}
-	for _, c := range a.out.Changes {
+	for _, c := range plan.Changes {
 		if dir := filepath.Dir(c.File); !slices.Contains(out.dirs, dir) {
 			out.dirs = append(out.dirs, dir)
 		}

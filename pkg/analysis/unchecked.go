@@ -79,6 +79,22 @@ func (v *View) uncheckedReason(f *SourceFile) string {
 	return ""
 }
 
+// ExcludedTestFiles returns the paths of the test files v includes that
+// type-checking left out.
+func (v *View) ExcludedTestFiles() map[string]bool {
+	v.Parser.mu.Lock()
+	defer v.Parser.mu.Unlock()
+	paths := make(map[string]bool)
+	for _, pkg := range v.Workspace.Packages {
+		for name := range pkg.ExcludedTestFiles {
+			if f := pkg.TestFiles[name]; f != nil {
+				paths[f.Path] = true
+			}
+		}
+	}
+	return paths
+}
+
 // staticReason says why no configuration includes f.
 func staticReason(f *SourceFile, primary BuildConfig) string {
 	_, u := requirementFor(f, primary)

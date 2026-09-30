@@ -264,6 +264,14 @@ func (e *DefaultEngine) RenameSymbol(ws *types.Workspace, req types.RenameSymbol
 	return plan, nil
 }
 
+// RenameSymbolAcrossConfigs renames a symbol like RenameSymbol, under every
+// build configuration covering the workspace, and returns one merged plan. A
+// declaration with the same key as a renamed one is renamed under every
+// configuration that declares it, and the new name must be free under each.
+func (e *DefaultEngine) RenameSymbolAcrossConfigs(req types.RenameSymbolRequest) (*types.RefactoringPlan, error) {
+	return e.planAcrossConfigs(&renameSymbolPlanner{req: req})
+}
+
 // RenamePackage implements package renaming
 func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error) {
 	operation := &RenamePackageOperation{Request: req}

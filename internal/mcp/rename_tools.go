@@ -48,32 +48,17 @@ type RenameFieldInput struct {
 func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "rename_symbol",
-		Description: "Rename a symbol (function, type, variable, constant) across the workspace. All references are updated.",
+		Description: "Rename a symbol (function, type, variable, constant) across the workspace. All references are updated, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations is renamed in all of them.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameSymbolInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		plan, err := planRenameSymbol(state, in)
+		state.RUnlock()
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		scope := types.WorkspaceScope
-		pkg := in.Package
-		if pkg != "" {
-			pkg = types.ResolvePackagePath(ws, pkg)
-			scope = types.PackageScope
-		}
-		plan, err := state.GetEngine().RenameSymbol(ws, types.RenameSymbolRequest{
-			SymbolName: in.Symbol,
-			NewName:    in.NewName,
-			Package:    pkg,
-			Scope:      scope,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		result, err := executePlanWithUnlock(state, plan, "rename "+in.Symbol+" → "+in.NewName, in.DryRun)
+		result, err := executePlan(state, plan, "rename "+in.Symbol+" → "+in.NewName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -188,5 +173,26 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 		return textResult(result), nil, nil
+	})
+}
+
+// planRenameSymbol plans in under every build configuration. The caller holds
+// the read lock.
+func planRenameSymbol(state *MCPServer, in RenameSymbolInput) (*types.RefactoringPlan, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	scope := types.WorkspaceScope
+	pkg := in.Package
+	if pkg != "" {
+		pkg = types.ResolvePackagePath(ws, pkg)
+		scope = types.PackageScope
+	}
+	return state.GetEngine().RenameSymbolAcrossConfigs(types.RenameSymbolRequest{
+		SymbolName: in.Symbol,
+		NewName:    in.NewName,
+		Package:    pkg,
+		Scope:      scope,
 	})
 }
