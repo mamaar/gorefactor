@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"io"
 	"log/slog"
 	"slices"
@@ -15,18 +16,18 @@ type renameStrategy interface {
 	// planWorkspace plans the requested renames in ws and those of the linked
 	// keys it declares. It returns the keys of the symbols renamed, and a
 	// SymbolNotFound error when ws has nothing to rename.
-	planWorkspace(ws *types.Workspace, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error)
+	planWorkspace(ws *types.Workspace, idx *analysis.ReferenceIndex, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error)
 	// oldName is the name the rename replaces, as written at use sites.
 	oldName() string
 }
 
 // planRenameView plans a rename in v. The view is type-checked so coverage
-// reporting knows which of its files it left out.
+// reporting knows which of its files it left out, and so s can use idx.
 func planRenameView(c *viewIndexes, s renameStrategy, v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	c.indexOf(v)
+	idx := c.indexOf(v)
 	ws := v.Workspace
 	declared := declaredSymbolKeys(ws)
-	renamed, plan, err := s.planWorkspace(ws, linked)
+	renamed, plan, err := s.planWorkspace(ws, idx, linked)
 	if err != nil {
 		if !isSymbolNotFound(err) {
 			return configResult{}, err
@@ -164,4 +165,80 @@ func keysOf(symbols []*types.Symbol) types.SymbolKeySet {
 		addSymbolKey(keys, sym)
 	}
 	return keys
+}
+
+// memberRename is a rename operation on one method or field.
+type memberRename interface {
+	// validateIn validates the operation in ws and returns the keys of the
+	// members it renames. A target ws lacks is a SymbolNotFound error.
+	validateIn(ws *types.Workspace) (types.SymbolKeySet, error)
+	Execute(ws *types.Workspace) (*types.RefactoringPlan, error)
+}
+
+// memberRenames is what a method or field rename supplies to planMemberRenames.
+type memberRenames interface {
+	// label names the operation in errors, e.g. "rename method".
+	label() string
+	requestedOp() memberRename
+	// linkedOp returns the operation renaming the member key names, or nil
+	// when key is not one this rename changes or ws cannot host it.
+	linkedOp(ws *types.Workspace, key types.SymbolKey) memberRename
+}
+
+// planMemberRenames plans the requested rename in ws and one for each linked
+// key ws declares, and returns the keys they rename. When ws has no target it
+// returns the requested operation's not-found error.
+func planMemberRenames(ws *types.Workspace, s memberRenames, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
+	run := &memberRun{label: s.label(), renamed: make(types.SymbolKeySet)}
+	if err := run.validate(ws, s.requestedOp(), true); err != nil {
+		return nil, nil, err
+	}
+	for _, key := range orderedKeys(linked) {
+		if run.renamed.Has(key) {
+			continue
+		}
+		if op := s.linkedOp(ws, key); op != nil {
+			if err := run.validate(ws, op, false); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	if len(run.ops) == 0 {
+		return nil, nil, fmt.Errorf("%s operation validation failed: %w", run.label, run.notFound)
+	}
+	var acc planAccum
+	for _, op := range run.ops {
+		plan, err := op.Execute(ws)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate %s plan: %w", run.label, err)
+		}
+		acc.add(plan)
+	}
+	return run.renamed, acc.plan(), nil
+}
+
+// memberRun collects the validated operations of one view.
+type memberRun struct {
+	label    string
+	ops      []memberRename
+	renamed  types.SymbolKeySet
+	notFound error // of the requested operation
+}
+
+// validate keeps op when it validates in ws. A missing target is not an error
+// here; only the requested operation's is reported, when no operation is kept.
+func (r *memberRun) validate(ws *types.Workspace, op memberRename, requested bool) error {
+	keys, err := op.validateIn(ws)
+	if isSymbolNotFound(err) {
+		if requested {
+			r.notFound = err
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%s operation validation failed: %w", r.label, err)
+	}
+	r.ops = append(r.ops, op)
+	r.renamed.AddAll(keys)
+	return nil
 }

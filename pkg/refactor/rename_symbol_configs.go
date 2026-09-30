@@ -21,7 +21,7 @@ func (p *renameSymbolPlanner) oldName() string { return p.req.SymbolName }
 
 // planWorkspace renames the requested symbols of ws and the linked ones it
 // declares. The new name must be free for each of them.
-func (p *renameSymbolPlanner) planWorkspace(ws *types.Workspace, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
+func (p *renameSymbolPlanner) planWorkspace(ws *types.Workspace, _ *analysis.ReferenceIndex, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
 	op := &RenameSymbolOperation{Request: p.req}
 	resolver := quietResolver(ws)
 	targets, notFound := op.findTargetSymbols(ws, resolver)
