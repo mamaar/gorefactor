@@ -123,10 +123,12 @@ func requirementFor(f *SourceFile, primary BuildConfig) (BuildConfig, *Uncovered
 	}
 	u.Reason = "unsatisfiable build constraint"
 	if needsIgnore {
-		u.Reason = "//go:build ignore"
+		u.Reason = ignoreReason
 	}
 	return BuildConfig{}, u
 }
+
+const ignoreReason = "//go:build ignore"
 
 func isIgnoreTag(tag string) bool { return tag == "ignore" }
 
