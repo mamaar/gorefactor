@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -711,154 +712,22 @@ func (op *RenamePackageOperation) Description() string {
 // Helper methods for MoveSymbolOperation
 
 func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, symbol *types.Symbol) ([]types.Change, error) {
-	// Find the symbol declaration and generate changes to remove it (and methods if it's a type)
-	var changes []types.Change
-	found := false
-
-	// Check if AST is loaded
 	if file.AST == nil {
-		return changes, fmt.Errorf("AST not loaded for file %s", file.Path)
+		return nil, fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
-
-	lines := strings.Split(string(file.OriginalContent), "\n")
-
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.FuncDecl:
-			if node.Name.Name == symbol.Name {
-				// Find and remove the function
-				for i, line := range lines {
-					if strings.Contains(line, "func "+symbol.Name) {
-						start := i
-
-						// Include doc comments if present - look backwards for comment lines
-					docSearch1:
-						for j := i - 1; j >= 0; j-- {
-							trimmed := strings.TrimSpace(lines[j])
-							switch {
-							case strings.HasPrefix(trimmed, "//"):
-								start = j
-							case trimmed == "":
-								continue
-							default:
-								break docSearch1
-							}
-						}
-
-						end := i + 1
-						braceCount := 0
-						foundOpenBrace := false
-
-						// Find the matching closing brace using proper brace counting
-						for j := i; j < len(lines); j++ {
-							for _, char := range lines[j] {
-								if char == '{' {
-									foundOpenBrace = true
-									braceCount++
-								} else if char == '}' && foundOpenBrace {
-									braceCount--
-									if braceCount == 0 {
-										end = j + 1
-										break
-									}
-								}
-							}
-							if braceCount == 0 && foundOpenBrace {
-								break
-							}
-						}
-						// Calculate byte positions
-						startByte := 0
-						for k := 0; k < start; k++ {
-							startByte += len(lines[k]) + 1 // +1 for newline
-						}
-						endByte := startByte
-						for k := start; k < end; k++ {
-							endByte += len(lines[k]) + 1 // +1 for newline
-						}
-
-						change := types.Change{
-							File:        file.Path,
-							Start:       startByte,
-							End:         endByte,
-							OldText:     strings.Join(lines[start:end], "\n") + "\n",
-							NewText:     "",
-							Description: fmt.Sprintf("Remove function %s", symbol.Name),
-						}
-						changes = append(changes, change)
-						found = true
-						return false
-					}
-				}
-			}
-		case *ast.GenDecl:
-			for _, spec := range node.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.Name.Name == symbol.Name {
-					// Find and remove the type declaration (struct, interface, or other types)
-					for i, line := range lines {
-						// Match "type SymbolName" followed by struct, interface, or any other type definition
-						if strings.Contains(line, "type "+symbol.Name) {
-							start := i
-							end := start + 1
-							braceCount := 0
-							foundOpenBrace := false
-
-							// Find the matching closing brace
-							for j := start; j < len(lines); j++ {
-								for _, char := range lines[j] {
-									if char == '{' {
-										foundOpenBrace = true
-										braceCount++
-									} else if char == '}' && foundOpenBrace {
-										braceCount--
-										if braceCount == 0 {
-											end = j + 1
-											break
-										}
-									}
-								}
-								if braceCount == 0 && foundOpenBrace {
-									break
-								}
-							}
-
-							// Calculate byte positions
-							startByte := 0
-							for k := range start {
-								startByte += len(lines[k]) + 1 // +1 for newline
-							}
-							endByte := startByte
-							for k := start; k < end; k++ {
-								endByte += len(lines[k]) + 1 // +1 for newline
-							}
-
-							change := types.Change{
-								File:        file.Path,
-								Start:       startByte,
-								End:         endByte,
-								OldText:     strings.Join(lines[start:end], "\n") + "\n",
-								NewText:     "",
-								Description: fmt.Sprintf("Remove type %s", symbol.Name),
-							}
-							changes = append(changes, change)
-							found = true
-							return false
-						}
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	if !found {
-		return changes, fmt.Errorf("symbol %s not found in AST of file %s", symbol.Name, file.Path)
+	start, end, _, ok := declLines(file, symbol)
+	if !ok {
+		return nil, fmt.Errorf("symbol %s not found in AST of file %s", symbol.Name, file.Path)
 	}
-
-	// If this is a type, also remove all methods with this type as receiver
+	kind := "function"
 	if symbol.Kind == types.TypeSymbol {
-		methodChanges := op.generateMethodRemovalChanges(file, symbol.Name)
-		changes = append(changes, methodChanges...)
+		kind = "type"
+	}
+	changes := []types.Change{lineRemoval(file, start, end, fmt.Sprintf("Remove %s %s", kind, symbol.Name))}
+
+	// A type goes with its methods.
+	if symbol.Kind == types.TypeSymbol {
+		changes = append(changes, op.generateMethodRemovalChanges(file, symbol.Name)...)
 
 		// Merge overlapping or adjacent changes to avoid conflicts
 		changes = mergeChanges(changes)
@@ -873,6 +742,78 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, sy
 	}
 
 	return changes, nil
+}
+
+// lineRemoval is the change deleting the 0-based lines [start, end) of file.
+func lineRemoval(file *types.File, start, end int, description string) types.Change {
+	lines := strings.Split(string(file.OriginalContent), "\n")
+	startByte := 0
+	for _, line := range lines[:start] {
+		startByte += len(line) + 1
+	}
+	endByte := startByte
+	for _, line := range lines[start:end] {
+		endByte += len(line) + 1
+	}
+	return types.Change{
+		File:        file.Path,
+		Start:       startByte,
+		End:         endByte,
+		OldText:     strings.Join(lines[start:end], "\n") + "\n",
+		Description: description,
+	}
+}
+
+// sourceLine is the 0-based line of pos in file.
+func sourceLine(file *types.File, pos token.Pos) int {
+	return bytes.Count(file.OriginalContent[:int(pos-file.AST.FileStart)], []byte("\n"))
+}
+
+// funcDeclLines is the 0-based line range [start, end) of fn, starting at the
+// comment block above it.
+func funcDeclLines(file *types.File, fn *ast.FuncDecl) (start, end int) {
+	start = sourceLine(file, fn.Pos())
+	lines := strings.Split(string(file.OriginalContent), "\n")
+	first := start
+	for j := first - 1; j >= 0; j-- {
+		trimmed := strings.TrimSpace(lines[j])
+		if strings.HasPrefix(trimmed, "//") {
+			start = j
+		} else if trimmed != "" {
+			break
+		}
+	}
+	return start, sourceLine(file, fn.End()-1) + 1
+}
+
+// declLines locates symbol's top-level declaration in file as the 0-based line
+// range [start, end). grouped reports a type declared inside a "type (...)"
+// block, whose lines then lack the "type" keyword.
+func declLines(file *types.File, symbol *types.Symbol) (start, end int, grouped, ok bool) {
+	for _, decl := range file.AST.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			if d.Recv == nil && d.Name.Name == symbol.Name {
+				start, end = funcDeclLines(file, d)
+				return start, end, false, true
+			}
+		case *ast.GenDecl:
+			if d.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range d.Specs {
+				if spec.(*ast.TypeSpec).Name.Name != symbol.Name {
+					continue
+				}
+				node := ast.Node(d)
+				if d.Lparen.IsValid() {
+					node = spec
+				}
+				return sourceLine(file, node.Pos()), sourceLine(file, node.End()-1) + 1, d.Lparen.IsValid(), true
+			}
+		}
+	}
+	return 0, 0, false, false
 }
 
 // mergeChanges merges overlapping or adjacent changes in the same file
@@ -940,97 +881,14 @@ func mergeChanges(changes []types.Change) []types.Change {
 // generateMethodRemovalChanges generates changes to remove all methods with a given type as receiver
 func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, typeName string) []types.Change {
 	var changes []types.Change
-	lines := strings.Split(string(file.OriginalContent), "\n")
-
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			// Check if this function has a receiver (i.e., it's a method)
-			if funcDecl.Recv != nil && len(funcDecl.Recv.List) > 0 {
-				// Get the receiver type
-				var receiverType string
-				recvField := funcDecl.Recv.List[0]
-
-				switch recvType := recvField.Type.(type) {
-				case *ast.Ident:
-					receiverType = recvType.Name
-				case *ast.StarExpr:
-					if ident, ok := recvType.X.(*ast.Ident); ok {
-						receiverType = ident.Name
-					}
-				}
-
-				// If the receiver matches our type, generate a removal change
-				if receiverType == typeName {
-					methodName := funcDecl.Name.Name
-					// Find the method in the source
-					for i, line := range lines {
-						// Look for the method declaration (including receiver)
-						// Use exact match for method name to avoid matching "Update" when looking for "UpdateLocked"
-						if strings.Contains(line, "func (") && strings.Contains(line, receiverType) &&
-							(strings.Contains(line, " "+methodName+"(") || strings.Contains(line, "*"+receiverType+") "+methodName+"(")) {
-							start := i
-
-							// Include doc comments if present
-						docSearch2:
-							for j := i - 1; j >= 0; j-- {
-								trimmed := strings.TrimSpace(lines[j])
-								switch {
-								case strings.HasPrefix(trimmed, "//"):
-									start = j
-								case trimmed == "":
-									continue
-								default:
-									break docSearch2
-								}
-							}
-
-							// Find the end of the method
-							braceCount := 0
-							foundOpenBrace := false
-
-							for j := i; j < len(lines); j++ {
-								for _, char := range lines[j] {
-									if char == '{' {
-										foundOpenBrace = true
-										braceCount++
-									} else if char == '}' && foundOpenBrace {
-										braceCount--
-										if braceCount == 0 {
-											end := j + 1
-
-											// Calculate byte positions
-											startByte := 0
-											for k := 0; k < start; k++ {
-												startByte += len(lines[k]) + 1
-											}
-											endByte := startByte
-											for k := start; k < end; k++ {
-												endByte += len(lines[k]) + 1
-											}
-
-											change := types.Change{
-												File:        file.Path,
-												Start:       startByte,
-												End:         endByte,
-												OldText:     strings.Join(lines[start:end], "\n") + "\n",
-												NewText:     "",
-												Description: fmt.Sprintf("Remove method %s.%s", typeName, methodName),
-											}
-											changes = append(changes, change)
-											return false
-										}
-									}
-								}
-							}
-							break
-						}
-					}
-				}
-			}
+	for _, d := range file.AST.Decls {
+		funcDecl, ok := d.(*ast.FuncDecl)
+		if !ok || receiverTypeName(funcDecl) != typeName {
+			continue
 		}
-		return true
-	})
-
+		start, end := funcDeclLines(file, funcDecl)
+		changes = append(changes, lineRemoval(file, start, end, fmt.Sprintf("Remove method %s.%s", typeName, funcDecl.Name.Name)))
+	}
 	return changes
 }
 
@@ -1587,114 +1445,25 @@ func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, fileP
 
 // extractSymbolSource extracts the source code of a symbol from a file
 func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol) (string, error) {
-	var sourceCode string
-	found := false
-
-	// Check if AST is loaded
 	if file.AST == nil {
 		return "", fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
-
-	// We need access to the FileSet to convert token positions to byte offsets
-	// For now, let's use a simpler approach: find the struct in the source by line/column
-	lines := strings.Split(string(file.OriginalContent), "\n")
-
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.FuncDecl:
-			if node.Name.Name == symbol.Name {
-				// Find the function by searching for its signature in the source
-				for i, line := range lines {
-					if strings.Contains(line, "func "+symbol.Name) {
-						// Extract the entire function using brace depth tracking
-						start := i
-
-						// Include doc comments if present - look backwards for comment lines
-					docSearch3:
-						for j := i - 1; j >= 0; j-- {
-							trimmed := strings.TrimSpace(lines[j])
-							switch {
-							case strings.HasPrefix(trimmed, "//"):
-								start = j
-							case trimmed == "":
-								continue
-							default:
-								break docSearch3
-							}
-						}
-
-						braceCount := 0
-						foundOpenBrace := false
-
-						// Find the matching closing brace starting from func line
-						for j := i; j < len(lines); j++ {
-							for _, char := range lines[j] {
-								if char == '{' {
-									foundOpenBrace = true
-									braceCount++
-								} else if char == '}' && foundOpenBrace {
-									braceCount--
-									if braceCount == 0 {
-										end := j + 1
-										sourceCode = strings.Join(lines[start:end], "\n")
-										found = true
-										return false
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		case *ast.GenDecl:
-			for _, spec := range node.Specs {
-				if typeSpec, ok := spec.(*ast.TypeSpec); ok && typeSpec.Name.Name == symbol.Name {
-					// Find the type declaration by searching for it in the source (struct, interface, or other types)
-					for i, line := range lines {
-						// Match "type SymbolName" followed by struct, interface, or any other type definition
-						if strings.Contains(line, "type "+symbol.Name) {
-							// Extract the entire type definition
-							start := i
-							braceCount := 0
-							foundOpenBrace := false
-
-							// Find the matching closing brace
-							for j := start; j < len(lines); j++ {
-								for _, char := range lines[j] {
-									if char == '{' {
-										foundOpenBrace = true
-										braceCount++
-									} else if char == '}' && foundOpenBrace {
-										braceCount--
-										if braceCount == 0 {
-											end := j + 1
-											sourceCode = strings.Join(lines[start:end], "\n")
-											found = true
-											return false
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	if !found {
+	start, end, grouped, ok := declLines(file, symbol)
+	if !ok {
 		return "", fmt.Errorf("symbol %s not found in file %s", symbol.Name, file.Path)
 	}
+	lines := strings.Split(string(file.OriginalContent), "\n")
+	sourceCode := strings.Join(lines[start:end], "\n")
+	if grouped {
+		sourceCode = "type " + strings.TrimLeft(sourceCode, " \t")
+	}
 
-	// If this is a type symbol, also extract all methods with this type as receiver
+	// A type moves with its methods.
 	if symbol.Kind == types.TypeSymbol {
-		methodsCode := op.extractMethodsForType(file, symbol.Name)
-		if methodsCode != "" {
+		if methodsCode := op.extractMethodsForType(file, symbol.Name); methodsCode != "" {
 			sourceCode += "\n\n" + methodsCode
 		}
 	}
-
 	return sourceCode, nil
 }
 
@@ -1703,14 +1472,7 @@ func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName 
 	var methods []string
 	for _, d := range file.AST.Decls {
 		funcDecl, ok := d.(*ast.FuncDecl)
-		if !ok || funcDecl.Recv == nil || len(funcDecl.Recv.List) == 0 {
-			continue
-		}
-		recv := funcDecl.Recv.List[0].Type
-		if star, ok := recv.(*ast.StarExpr); ok {
-			recv = star.X
-		}
-		if ident, ok := recv.(*ast.Ident); !ok || ident.Name != typeName {
+		if !ok || receiverTypeName(funcDecl) != typeName {
 			continue
 		}
 		first := funcDecl.Pos()
