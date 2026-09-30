@@ -59,25 +59,7 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 
 	candidates := op.identifySharedSymbols(ws)
 
-	// Build packageCoupling map
-	incomingDeps := computeIncomingDeps(ws)
-	packageCoupling := make(map[string]types.PackageCouplingInfo)
-	for fsPath, pkg := range ws.Packages {
-		symbolCount := 0
-		if pkg.Symbols != nil {
-			symbolCount = len(pkg.Symbols.Functions) + len(pkg.Symbols.Types) +
-				len(pkg.Symbols.Variables) + len(pkg.Symbols.Constants)
-		}
-		outgoingDeps := 0
-		if ws.Dependencies != nil {
-			outgoingDeps = len(ws.Dependencies.PackageImports[fsPath])
-		}
-		packageCoupling[fsPath] = types.PackageCouplingInfo{
-			IncomingDeps: incomingDeps[fsPath],
-			OutgoingDeps: outgoingDeps,
-			SymbolCount:  symbolCount,
-		}
-	}
+	packageCoupling := packageCouplingOf(ws)
 
 	suggestedMoves := make([]types.SuggestedMove, 0, len(candidates))
 	affectedPackagesSet := make(map[string]bool)
