@@ -1421,13 +1421,6 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 		return nil, fmt.Errorf("failed to generate analyze dependencies plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil

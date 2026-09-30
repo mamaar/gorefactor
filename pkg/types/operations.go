@@ -277,6 +277,13 @@ type SuggestedMove struct {
 	ReferencingPackages []string `json:"referencing_packages"`
 }
 
+// BackwardDependency is an import from a more inner layer to a more outer one.
+type BackwardDependency struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Reason string `json:"reason"`
+}
+
 // PackageCouplingInfo holds coupling metrics for a single package
 type PackageCouplingInfo struct {
 	IncomingDeps int `json:"incoming_deps"`
@@ -293,6 +300,7 @@ type ImpactAnalysis struct {
 	ImportChanges    []ImportChange
 	SuggestedMoves   []SuggestedMove                `json:"suggested_moves,omitempty"`
 	PackageCoupling  map[string]PackageCouplingInfo  `json:"package_coupling,omitempty"`
+	BackwardsDependencies []BackwardDependency       `json:"backwards_dependencies,omitempty"`
 }
 
 type Issue struct {

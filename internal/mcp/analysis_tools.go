@@ -1659,7 +1659,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_dependencies",
-		Description: "Analyze the dependency graph of the workspace. Optionally detect backwards dependencies and suggest moves.",
+		Description: "Analyze the dependency graph of the workspace without changing it. Returns package_coupling (import and symbol counts per package) and dependency_graph. detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeDependenciesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -1676,12 +1676,22 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		return textResult(map[string]any{
+		impact := *plan.Impact
+		result := map[string]any{
 			"affected_files":   plan.AffectedFiles,
 			"change_count":     len(plan.Changes),
-			"impact":           plan.Impact,
+			"package_coupling": impact.PackageCoupling,
 			"dependency_graph": ws.Dependencies,
-		}), nil, nil
+		}
+		if in.SuggestMoves {
+			result["suggested_moves"] = impact.SuggestedMoves
+		}
+		if in.DetectBackwards {
+			result["backwards_dependencies"] = impact.BackwardsDependencies
+		}
+		impact.PackageCoupling, impact.SuggestedMoves, impact.BackwardsDependencies = nil, nil, nil
+		result["impact"] = impact
+		return textResult(result), nil, nil
 	})
 }
 

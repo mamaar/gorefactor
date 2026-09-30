@@ -1,7 +1,6 @@
 package refactor
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -57,7 +56,8 @@ func TestAnalyzeDependencies_SuggestsDotImportedSymbolOnUntypeCheckedWorkspace(t
 		t.Fatal(err)
 	}
 
-	if len(plan.Changes) != 1 || !strings.Contains(plan.Changes[0].NewText, "Shared") {
-		t.Errorf("report = %+v, want it to suggest moving Shared", plan.Changes)
+	moves := plan.Impact.SuggestedMoves
+	if len(moves) != 1 || moves[0].Symbol != "Shared" || len(moves[0].ReferencingPackages) != 2 {
+		t.Errorf("suggested moves = %+v, want Shared referenced by two packages", moves)
 	}
 }
