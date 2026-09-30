@@ -3,6 +3,8 @@ package refactor
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -20,6 +22,7 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 	toPackage := op.getTargetFSPath(ws)
 	var skipped []types.SkippedSite
 	skip := func(c sharedSymbolCandidate, reason string) {
+		reason = strings.ReplaceAll(reason, ws.RootPath+string(filepath.Separator), "")
 		skipped = append(skipped, types.SkippedSite{
 			File:   c.symbol.File,
 			Line:   c.symbol.Line,

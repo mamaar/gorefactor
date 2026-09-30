@@ -227,6 +227,37 @@ func TestMoveByDependencies_SameNameFromTwoPackagesMovesOnlyTheFirst(t *testing.
 	goVets(t, dir, "")
 }
 
+func TestMoveByDependencies_SourceFileThatKeepsUsingMovedSymbolAndLosesAnImportVets(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go": "package src\n\nimport \"strings\"\n\nfunc One() string { return strings.ToUpper(\"x\") }\n\nfunc Two() int { return 2 }\n\nfunc Local() int { return Two() + len(One()) }",
+		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.Two() + len(src.One()) + src.Local() }\n",
+		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.Two() + len(src.One()) }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	assertFileContains(t, dir, "shared/shared.go", "func One() string")
+	assertFileContains(t, dir, "shared/shared.go", "func Two() int")
+	goVets(t, dir, "")
+}
+
+func TestMoveByDependencies_LastDeclarationOfFileWithoutTrailingNewlineMoves(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"src/src.go": "package src\n\nfunc One() int { return 1 }\n\nfunc Two() int { return 2 }",
+		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() }\n",
+		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.One() + src.Two() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
+
+	assertFileContains(t, dir, "shared/shared.go", "func Two() int")
+	goVets(t, dir, "")
+}
+
 func TestMoveByDependencies_SymbolAlreadyInTargetPackageIsNotACandidate(t *testing.T) {
 	files := map[string]string{
 		"shared/shared.go": "package shared\n\nfunc Old() int { return 1 }\n",

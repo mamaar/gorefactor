@@ -262,17 +262,11 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 		removals[m.file.Path] = append(removals[m.file.Path], c...)
 	}
+	unusedImports := make(map[string][]*ast.ImportSpec)
 	for _, f := range sourceFiles {
 		plan.Changes = append(plan.Changes, removals[f.Path]...)
 		plan.AffectedFiles = append(plan.AffectedFiles, f.Path)
-
-		// An unused import is a hard compile error, so drop the source
-		// file's imports that only the moved declarations used.
-		unusedImportChanges, err := generateUnusedImportRemovalChanges(ws, f, removals[f.Path])
-		if err != nil {
-			return nil, err
-		}
-		plan.Changes = append(plan.Changes, unusedImportChanges...)
+		unusedImports[f.Path] = unusedImportsAfterRemoval(ws, f, removals[f.Path])
 	}
 
 	// Generate changes to add the moved symbols (and any imports they need)
@@ -331,8 +325,9 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			}
 			bySource[i].refs = append(bySource[i].refs, ref)
 		}
-		edit := planReferenceFile(ws, group.file, bySource, targetImportPath, targetPackage.Name)
+		edit := planReferenceFile(ws, group.file, bySource, unusedImports[group.file], targetImportPath, targetPackage.Name)
 		plan.Changes = append(plan.Changes, edit.importChanges...)
+		delete(unusedImports, group.file)
 		for _, ref := range group.refs {
 			updateChange, err := op.generateReferenceUpdateChange(ref, edit.qualifier)
 			if err != nil {
@@ -342,6 +337,12 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 		if !contains(plan.AffectedFiles, group.file) {
 			plan.AffectedFiles = append(plan.AffectedFiles, group.file)
+		}
+	}
+
+	for _, f := range sourceFiles {
+		for _, spec := range unusedImports[f.Path] {
+			plan.Changes = append(plan.Changes, removeImportSpec(ws, f, spec))
 		}
 	}
 
@@ -861,6 +862,14 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, sy
 
 		// Merge overlapping or adjacent changes to avoid conflicts
 		changes = mergeChanges(changes)
+	}
+
+	// A declaration ending the file without a trailing newline has no newline to remove.
+	for i := range changes {
+		if limit := len(file.OriginalContent); changes[i].End > limit {
+			changes[i].End = limit
+			changes[i].OldText = strings.TrimSuffix(changes[i].OldText, "\n")
+		}
 	}
 
 	return changes, nil

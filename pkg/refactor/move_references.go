@@ -56,15 +56,17 @@ type referenceSource struct {
 // the move. It reuses an existing import of the target (and its alias); else it
 // imports the target under a name that collides with nothing in the file. A
 // source import is dropped when the moved references were its last users.
-func planReferenceFile(ws *types.Workspace, filePath string, sources []referenceSource, targetImportPath, targetName string) referenceFileEdit {
+// unused are imports the file loses its last use of for another reason; they
+// are removed here so the edits to the file's imports do not overlap.
+func planReferenceFile(ws *types.Workspace, filePath string, sources []referenceSource, unused []*ast.ImportSpec, targetImportPath, targetName string) referenceFileEdit {
 	file := findParsedFile(ws, filePath)
 	if file == nil || file.AST == nil {
 		return referenceFileEdit{qualifier: targetName}
 	}
 
-	var dropped []*ast.ImportSpec
+	dropped := slices.Clone(unused)
 	for _, src := range sources {
-		if spec := unusedSourceImport(file, src.refs, src.importPath); spec != nil {
+		if spec := unusedSourceImport(file, src.refs, src.importPath); spec != nil && !slices.Contains(dropped, spec) {
 			dropped = append(dropped, spec)
 		}
 	}

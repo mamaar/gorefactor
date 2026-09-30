@@ -318,7 +318,7 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 // without touching disk. Mirrors serializer.applyChangesToFile's approach
 // (apply in descending Start order so earlier offsets stay valid) but is
 // used here purely to preview what a file will look like post-removal, so
-// generateUnusedImportRemovalChanges can tell which of its imports are still
+// unusedImportsAfterRemoval can tell which of its imports are still
 // needed.
 func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 	sorted := make([]types.Change, len(changes))
@@ -335,19 +335,15 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 	return []byte(result)
 }
 
-// generateUnusedImportRemovalChanges returns changes that delete any import
-// in sourceFile that removeChanges (the declarations being moved out) leaves
-// with no remaining references. Go treats an unused import as a hard
-// compile error, so a source file that loses the only code using one of its
-// imports must have that import removed too, or it stops compiling — the
-// same class of bug as the moved-to file missing imports it needs, just on
-// the source side.
+// unusedImportsAfterRemoval returns the imports of sourceFile that nothing
+// uses once removeChanges (the declarations being moved out) are applied. An
+// unused import is a compile error, so the source file must drop them.
 //
-// Blank (`_`) and dot (`.`) imports are never removed: they're kept for
+// Blank (`_`) and dot (`.`) imports are never returned: they're kept for
 // side effects a plain identifier search can't see.
-func generateUnusedImportRemovalChanges(ws *types.Workspace, sourceFile *types.File, removeChanges []types.Change) ([]types.Change, error) {
+func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, removeChanges []types.Change) []*ast.ImportSpec {
 	if sourceFile == nil || sourceFile.AST == nil || len(removeChanges) == 0 || ws.FileSet == nil {
-		return nil, nil
+		return nil
 	}
 
 	remaining := applyChangesInMemory(sourceFile.OriginalContent, removeChanges)
@@ -356,7 +352,7 @@ func generateUnusedImportRemovalChanges(ws *types.Workspace, sourceFile *types.F
 	if err != nil {
 		// If the post-removal content doesn't parse cleanly, don't try to be
 		// clever about pruning imports — leave it for compilation to report.
-		return nil, nil
+		return nil
 	}
 
 	usedNames := make(map[string]bool)
@@ -371,25 +367,15 @@ func generateUnusedImportRemovalChanges(ws *types.Workspace, sourceFile *types.F
 		return true
 	})
 
-	content := sourceFile.OriginalContent
-	var changes []types.Change
+	var unused []*ast.ImportSpec
 	for _, imp := range sourceFile.AST.Imports {
 		localName, _ := importLocalName(imp)
 		if localName == "" || usedNames[localName] {
 			continue // blank/dot import, or still referenced elsewhere
 		}
-
-		lineStart, lineEnd := lineRange(ws, content, imp.Pos())
-		changes = append(changes, types.Change{
-			File:        sourceFile.Path,
-			Start:       lineStart,
-			End:         lineEnd,
-			OldText:     string(content[lineStart:lineEnd]),
-			NewText:     "",
-			Description: fmt.Sprintf("Remove now-unused import %q from %s", strings.Trim(imp.Path.Value, `"`), sourceFile.Path),
-		})
+		unused = append(unused, imp)
 	}
-	return changes, nil
+	return unused
 }
 
 // lineRange returns the [start, end) byte offsets of the whole line
