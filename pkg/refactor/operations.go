@@ -300,8 +300,15 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	// op.Request.ToPackage, which may still be the caller's raw input.
 	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
 	for _, group := range groupReferencesByFile(survivingReferences) {
-		// References already living in the target package need no qualifier.
 		if refPackage := findPackageForFile(ws, group.file); refPackage != nil && refPackage.Path == targetPackage.Path {
+			changes, err := op.planTargetPackageReferences(ws, group, refSource, uses, targetFile.Path)
+			if err != nil {
+				return nil, err
+			}
+			plan.Changes = append(plan.Changes, changes...)
+			if !contains(plan.AffectedFiles, group.file) {
+				plan.AffectedFiles = append(plan.AffectedFiles, group.file)
+			}
 			continue
 		}
 		var bySource []referenceSource
@@ -336,6 +343,49 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	return plan, nil
+}
+
+// planTargetPackageReferences drops the source-package qualifier from the
+// references to moved symbols in a file of the target package, and the source
+// import they leave unused unless the moved code added to targetFilePath needs it.
+func (op *MoveSymbolOperation) planTargetPackageReferences(ws *types.Workspace, group fileReferences, refSource map[*types.Reference]*types.Package, uses map[*movingSymbol]*movedUses, targetFilePath string) ([]types.Change, error) {
+	var changes []types.Change
+	if file := findParsedFile(ws, group.file); file != nil && file.AST != nil {
+		needed := make(map[string]bool)
+		if group.file == targetFilePath {
+			for m, u := range uses {
+				maps.Copy(needed, u.imports)
+				if len(u.leftBehind) > 0 {
+					needed[packagePathToImportPath(ws, m.pkg.Path)] = true
+				}
+			}
+		}
+		seen := make(map[string]bool)
+		for _, ref := range group.refs {
+			importPath := packagePathToImportPath(ws, refSource[ref].Path)
+			if seen[importPath] || needed[importPath] {
+				continue
+			}
+			seen[importPath] = true
+			var refs []*types.Reference
+			for _, r := range group.refs {
+				if packagePathToImportPath(ws, refSource[r].Path) == importPath {
+					refs = append(refs, r)
+				}
+			}
+			if spec := unusedSourceImport(file, refs, importPath); spec != nil {
+				changes = append(changes, removeImportSpec(ws, file, spec))
+			}
+		}
+	}
+	for _, ref := range group.refs {
+		change, err := op.generateReferenceUpdateChange(ref, "")
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, *change)
+	}
+	return changes, nil
 }
 
 // resolveMoving resolves the requested symbols and, for a struct type, the
@@ -1016,7 +1066,10 @@ func (op *MoveSymbolOperation) generateReferenceUpdateChange(ref *types.Referenc
 	}
 
 	oldRef := ref.Symbol.Name
-	newRef := qualifier + "." + ref.Symbol.Name
+	newRef := ref.Symbol.Name
+	if qualifier != "" {
+		newRef = qualifier + "." + newRef
+	}
 	startPos := ref.Offset
 	endPos := startPos + len(oldRef)
 
