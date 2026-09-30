@@ -10,9 +10,10 @@ import (
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
-// parseOperationString parses a JSON operation string into a types.Operation.
-// The JSON object must contain a "type" field to identify the operation kind.
-func parseOperationString(opStr string) (types.Operation, error) {
+// planStep plans one batch step with the engine method the step's standalone
+// tool uses. The step is a JSON object with a "type" field; ws resolves package
+// paths and is the workspace of the steps that plan in the default configuration only.
+func (e *DefaultEngine) planStep(ws *types.Workspace, opStr string) (*types.RefactoringPlan, error) {
 	var raw map[string]string
 	if err := json.Unmarshal([]byte(opStr), &raw); err != nil {
 		return nil, fmt.Errorf("failed to parse operation JSON: %w", err)
@@ -25,65 +26,85 @@ func parseOperationString(opStr string) (types.Operation, error) {
 
 	switch opType {
 	case "rename_symbol":
-		return &RenameSymbolOperation{
-			Request: types.RenameSymbolRequest{
-				SymbolName: raw["symbol"],
-				NewName:    raw["new_name"],
-				Package:    raw["package"],
-			},
-		}, nil
+		req := types.RenameSymbolRequest{
+			SymbolName: raw["symbol"],
+			NewName:    raw["new_name"],
+			Scope:      types.WorkspaceScope,
+		}
+		if pkg := raw["package"]; pkg != "" {
+			req.Package = types.ResolvePackagePath(ws, pkg)
+			req.Scope = types.PackageScope
+		}
+		return e.RenameSymbolAcrossConfigs(req)
 	case "move_symbol":
-		return &MoveSymbolOperation{
-			Request: types.MoveSymbolRequest{
-				SymbolName:  raw["symbol"],
-				FromPackage: raw["from_package"],
-				ToPackage:   raw["to_package"],
-			},
-		}, nil
+		return e.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
+			SymbolName:  raw["symbol"],
+			FromPackage: types.ResolvePackagePath(ws, raw["from_package"]),
+			ToPackage:   types.ResolvePackagePath(ws, raw["to_package"]),
+		})
 	case "rename_package":
-		return &RenamePackageOperation{
-			Request: types.RenamePackageRequest{
-				OldPackageName: raw["old_name"],
-				NewPackageName: raw["new_name"],
-				PackagePath:    raw["package_path"],
-				UpdateImports:  true,
-			},
-		}, nil
+		resolved := types.ResolvePackagePath(ws, raw["package_path"])
+		oldName := raw["old_name"]
+		if pkg := ws.Packages[resolved]; oldName == "" && pkg != nil {
+			oldName = pkg.Name
+		}
+		return e.RenamePackage(ws, types.RenamePackageRequest{
+			OldPackageName: oldName,
+			NewPackageName: raw["new_name"],
+			PackagePath:    resolved,
+			UpdateImports:  true,
+		})
 	case "move_package":
-		return &MovePackageOperation{
-			Request: types.MovePackageRequest{
-				SourcePackage: raw["source"],
-				TargetPackage: raw["target"],
-				UpdateImports: true,
-			},
-		}, nil
+		return e.MovePackage(ws, types.MovePackageRequest{
+			SourcePackage: types.ResolvePackagePath(ws, raw["source"]),
+			TargetPackage: raw["target"],
+			UpdateImports: true,
+		})
 	case "rename_method":
-		return &RenameInterfaceMethodOperation{
-			Request: types.RenameInterfaceMethodRequest{
-				InterfaceName:         raw["type_name"],
-				MethodName:            raw["method_name"],
-				NewMethodName:         raw["new_method_name"],
-				PackagePath:           raw["package_path"],
-				UpdateImplementations: true,
-			},
-		}, nil
+		return e.RenameMethodAcrossConfigs(types.RenameMethodRequest{
+			TypeName:              raw["type_name"],
+			MethodName:            raw["method_name"],
+			NewMethodName:         raw["new_method_name"],
+			PackagePath:           resolveOptionalPackage(ws, raw["package_path"]),
+			UpdateImplementations: true,
+		})
 	case "rename_field":
-		return &RenameFieldOperation{
-			Request: types.RenameFieldRequest{
-				TypeName:     raw["type_name"],
-				FieldName:    raw["field_name"],
-				NewFieldName: raw["new_field_name"],
-				PackagePath:  raw["package_path"],
-			},
-		}, nil
+		return e.RenameFieldAcrossConfigs(types.RenameFieldRequest{
+			TypeName:     raw["type_name"],
+			FieldName:    raw["field_name"],
+			NewFieldName: raw["new_field_name"],
+			PackagePath:  resolveOptionalPackage(ws, raw["package_path"]),
+		})
 	default:
 		return nil, fmt.Errorf("unknown operation type: %s", opType)
 	}
 }
 
+func resolveOptionalPackage(ws *types.Workspace, path string) string {
+	if path == "" {
+		return ""
+	}
+	return types.ResolvePackagePath(ws, path)
+}
+
+// planSteps plans every step against ws and merges the plans. It fails on the
+// first step that does not plan, naming it by its position.
+func (e *DefaultEngine) planSteps(ws *types.Workspace, steps []string) (*types.RefactoringPlan, error) {
+	plans := make([]*types.RefactoringPlan, 0, len(steps))
+	for i, step := range steps {
+		plan, err := e.planStep(ws, step)
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", i+1, err)
+		}
+		plans = append(plans, plan)
+	}
+	return MergeStepPlans(plans)
+}
+
 // BatchOperationOperation implements executing multiple operations atomically
 type BatchOperationOperation struct {
 	Request types.BatchOperationRequest
+	engine  *DefaultEngine
 }
 
 func (op *BatchOperationOperation) Type() types.OperationType {
@@ -102,58 +123,11 @@ func (op *BatchOperationOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *BatchOperationOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	// Parse all operation strings first so we fail fast on bad input.
-	operations := make([]types.Operation, 0, len(op.Request.Operations))
-	for i, opStr := range op.Request.Operations {
-		parsed, err := parseOperationString(opStr)
-		if err != nil {
-			return nil, fmt.Errorf("operation %d: %w", i+1, err)
-		}
-		operations = append(operations, parsed)
+	plan, err := op.engine.planSteps(ws, op.Request.Operations)
+	if err != nil {
+		return nil, err
 	}
-
-	plan := &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       make([]types.Change, 0),
-		AffectedFiles: make([]string, 0),
-		Reversible:    true,
-	}
-
-	if op.Request.DryRun {
-		// Validate each and return descriptions only.
-		for i, parsed := range operations {
-			if err := parsed.Validate(ws); err != nil {
-				return nil, fmt.Errorf("operation %d validation failed: %w", i+1, err)
-			}
-			plan.Changes = append(plan.Changes, types.Change{
-				Description: fmt.Sprintf("Step %d: %s", i+1, parsed.Description()),
-			})
-		}
-		return plan, nil
-	}
-
-	// Execute each operation sequentially, collecting all changes.
-	fileSet := make(map[string]bool)
-	for i, parsed := range operations {
-		if err := parsed.Validate(ws); err != nil {
-			return nil, fmt.Errorf("operation %d validation failed: %w", i+1, err)
-		}
-		result, err := parsed.Execute(ws)
-		if err != nil {
-			if op.Request.RollbackOnFailure {
-				return nil, fmt.Errorf("operation %d failed (no changes applied): %w", i+1, err)
-			}
-			return nil, fmt.Errorf("operation %d failed: %w", i+1, err)
-		}
-		plan.Changes = append(plan.Changes, result.Changes...)
-		for _, f := range result.AffectedFiles {
-			if !fileSet[f] {
-				plan.AffectedFiles = append(plan.AffectedFiles, f)
-				fileSet[f] = true
-			}
-		}
-	}
-
+	plan.Operations = []types.Operation{op}
 	return plan, nil
 }
 
@@ -227,6 +201,7 @@ type RefactoringPlanFile struct {
 // ExecuteOperation implements executing a previously created plan
 type ExecuteOperation struct {
 	Request types.ExecuteOperationRequest
+	engine  *DefaultEngine
 }
 
 func (op *ExecuteOperation) Type() types.OperationType {
@@ -262,17 +237,8 @@ func (op *ExecuteOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 		return nil, fmt.Errorf("failed to parse plan file: %w", err)
 	}
 
-	plan := &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       make([]types.Change, 0),
-		AffectedFiles: make([]string, 0),
-		Reversible:    true,
-	}
-
-	// Convert each PlanStep to an operation, validate, and execute.
-	fileSet := make(map[string]bool)
+	steps := make([]string, 0, len(planFile.Steps))
 	for i, step := range planFile.Steps {
-		// Marshal step args back to JSON for parseOperationString
 		stepArgs := make(map[string]string)
 		maps.Copy(stepArgs, step.Args)
 		stepArgs["type"] = step.Type
@@ -280,30 +246,14 @@ func (op *ExecuteOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 		if err != nil {
 			return nil, fmt.Errorf("step %d: failed to marshal: %w", i+1, err)
 		}
-
-		parsed, err := parseOperationString(string(stepJSON))
-		if err != nil {
-			return nil, fmt.Errorf("step %d: %w", i+1, err)
-		}
-
-		if err := parsed.Validate(ws); err != nil {
-			return nil, fmt.Errorf("step %d validation failed: %w", i+1, err)
-		}
-
-		result, err := parsed.Execute(ws)
-		if err != nil {
-			return nil, fmt.Errorf("step %d execution failed: %w", i+1, err)
-		}
-
-		plan.Changes = append(plan.Changes, result.Changes...)
-		for _, f := range result.AffectedFiles {
-			if !fileSet[f] {
-				plan.AffectedFiles = append(plan.AffectedFiles, f)
-				fileSet[f] = true
-			}
-		}
+		steps = append(steps, string(stepJSON))
 	}
 
+	plan, err := op.engine.planSteps(ws, steps)
+	if err != nil {
+		return nil, err
+	}
+	plan.Operations = []types.Operation{op}
 	return plan, nil
 }
 

@@ -1574,35 +1574,20 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 	return plan, nil
 }
 
-// BatchOperations implements executing multiple operations atomically
+// BatchOperations plans every step of a batch with the engine method of the
+// step's standalone tool and returns one merged plan. Steps that edit the same
+// span of a file fail the batch.
 func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error) {
-	operation := &BatchOperationOperation{Request: req}
+	operation := &BatchOperationOperation{Request: req, engine: e}
 
-	// A batch may contain operations that resolve references by go/types object
-	// identity (rename_field), which fail closed without type info. Type-checking
-	// is lazy, and EnsureTypeChecked is a no-op once a package is checked.
-	e.EnsureTypeChecked(ws)
-
-	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
 		return nil, fmt.Errorf("batch operations validation failed: %w", err)
 	}
 
-	// Execute the operation to generate the plan
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate batch operations plan: %w", err)
 	}
-
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
-	plan.Operations = []types.Operation{operation}
-
 	return plan, nil
 }
 
@@ -1637,7 +1622,7 @@ func (e *DefaultEngine) CreatePlan(ws *types.Workspace, req types.PlanOperationR
 func (e *DefaultEngine) ExecutePlanFromFile(req types.ExecuteOperationRequest) (*types.RefactoringPlan, error) {
 	// Note: this method signature differs from the interface ExecutePlan method
 	// to avoid confusion with executing an in-memory plan
-	operation := &ExecuteOperation{Request: req}
+	operation := &ExecuteOperation{Request: req, engine: e}
 
 	// Load the plan file first to get workspace info
 	// This is a simplified approach - in reality we'd need better workspace management

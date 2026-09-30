@@ -18,9 +18,14 @@ type BatchOperationsInput struct {
 
 func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "batch_operations",
-		Description: "Execute multiple refactoring operations as an atomic batch. Optionally rolls back all changes if any operation fails. Acts on the default build configuration only and can miss files excluded by build constraints.",
+		Name: "batch_operations",
+		Description: "Execute multiple refactoring operations as an atomic batch. Every step is planned against the unmodified workspace and nothing is written unless all steps plan; steps whose edits overlap fail the batch. " +
+			"rename_symbol, rename_method and rename_field steps are planned under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace, " +
+			"and move_symbol is planned for the default configuration and checked under the others, as in the standalone tools. " +
+			"rename_package and move_package steps act on the default build configuration only and can miss files excluded by build constraints.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in BatchOperationsInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
 
 		ws, err := state.GetWorkspace()

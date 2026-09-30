@@ -172,3 +172,101 @@ func describeSpan(c types.Change) string {
 	}
 	return fmt.Sprintf("[%d,%d)", c.Start, c.End)
 }
+
+// MergeStepPlans concatenates the plans of the steps of a batch, in step
+// order. Two steps that edit the same span of a file are an error: every step
+// is planned against the unmodified workspace, so their edits cannot both apply.
+// Coverage, skipped sites and impact are carried over with duplicates dropped.
+func MergeStepPlans(steps []*types.RefactoringPlan) (*types.RefactoringPlan, error) {
+	out := &types.RefactoringPlan{
+		Changes:       []types.Change{},
+		AffectedFiles: []string{},
+		Reversible:    true,
+	}
+	if err := findStepConflict(steps); err != nil {
+		return nil, err
+	}
+	seenFiles := make(map[string]bool)
+	seenSites := make(map[types.SkippedSite]bool)
+	seenConfigs := make(map[string]bool)
+	seenUncovered := make(map[string]bool)
+	seenTypeErrors := make(map[types.PackageTypeError]bool)
+	impact := &types.ImpactAnalysis{}
+	seenPkgs := make(map[string]bool)
+	for _, p := range steps {
+		out.Changes = append(out.Changes, p.Changes...)
+		out.Reversible = out.Reversible && p.Reversible
+		for _, f := range p.AffectedFiles {
+			if !seenFiles[f] {
+				seenFiles[f] = true
+				out.AffectedFiles = append(out.AffectedFiles, f)
+			}
+		}
+		for _, s := range p.SkippedSites {
+			if !seenSites[s] {
+				seenSites[s] = true
+				out.SkippedSites = append(out.SkippedSites, s)
+			}
+		}
+		for _, c := range p.Coverage.Configs {
+			if !seenConfigs[c] {
+				seenConfigs[c] = true
+				out.Coverage.Configs = append(out.Coverage.Configs, c)
+			}
+		}
+		for _, u := range p.Coverage.Uncovered {
+			if !seenUncovered[u.Path] {
+				seenUncovered[u.Path] = true
+				out.Coverage.Uncovered = append(out.Coverage.Uncovered, u)
+			}
+		}
+		for _, e := range p.Coverage.TypeErrors {
+			if !seenTypeErrors[e] {
+				seenTypeErrors[e] = true
+				out.Coverage.TypeErrors = append(out.Coverage.TypeErrors, e)
+			}
+		}
+		if p.Impact == nil {
+			continue
+		}
+		impact.AffectedSymbols = append(impact.AffectedSymbols, p.Impact.AffectedSymbols...)
+		impact.PotentialIssues = append(impact.PotentialIssues, p.Impact.PotentialIssues...)
+		impact.ImportChanges = append(impact.ImportChanges, p.Impact.ImportChanges...)
+		for _, pkg := range p.Impact.AffectedPackages {
+			if !seenPkgs[pkg] {
+				seenPkgs[pkg] = true
+				impact.AffectedPackages = append(impact.AffectedPackages, pkg)
+			}
+		}
+	}
+	impact.AffectedFiles = out.AffectedFiles
+	out.Impact = impact
+	return out, nil
+}
+
+// findStepConflict returns an error naming the first two steps whose changes conflict.
+func findStepConflict(steps []*types.RefactoringPlan) error {
+	serializer := NewSerializer()
+	for i, a := range steps {
+		for j := i + 1; j < len(steps); j++ {
+			for _, ca := range a.Changes {
+				for _, cb := range steps[j].Changes {
+					if ca.File != cb.File {
+						continue
+					}
+					if identityOf(ca) != identityOf(cb) && !changesConflict(serializer, ca, cb) {
+						continue
+					}
+					return &types.RefactorError{
+						Type: types.InvalidOperation,
+						Message: fmt.Sprintf(
+							"step %d and step %d conflict in %s: step %d proposes %q %s, step %d proposes %q %s",
+							i+1, j+1, ca.File, i+1, ca.Description, describeSpan(ca), j+1, cb.Description, describeSpan(cb)),
+						File: ca.File,
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
