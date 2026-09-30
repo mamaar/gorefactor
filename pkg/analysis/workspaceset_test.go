@@ -296,3 +296,18 @@ func TestView_FailedExternalLoadFallsBackToPrimary(t *testing.T) {
 		t.Errorf("primary Approximate = %v, %v", approx, err)
 	}
 }
+
+func TestView_StdlibResolvesForTheViewsPort(t *testing.T) {
+	set, root := loadSet(t, map[string]string{
+		"p/p.go":         "package p\n",
+		"p/l_linux.go":   "package p\n\nimport \"syscall\"\n\nvar E syscall.EpollEvent\n",
+		"p/h_windows.go": "package p\n\nimport \"syscall\"\n\nvar H syscall.Handle\n",
+	})
+	dir := filepath.Join(root, "p")
+	for _, v := range []*View{set.Primary(), viewWithGOOS(t, set, "windows")} {
+		checkedPackage(t, v, dir)
+		if approx, err := v.Approximate(); approx {
+			t.Errorf("view %s is approximate: %v", v.Config.Key(), err)
+		}
+	}
+}

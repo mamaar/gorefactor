@@ -34,6 +34,8 @@ func normalizeTags(tags []string) []string {
 	return slices.Compact(out)
 }
 
+func (c BuildConfig) isPort(goos, goarch string) bool { return c.GOOS == goos && c.GOARCH == goarch }
+
 // Key returns a stable identity string such as "darwin/arm64/cgo/fts5,gcp".
 func (c BuildConfig) Key() string {
 	cgo := "nocgo"

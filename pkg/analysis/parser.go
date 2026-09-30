@@ -791,14 +791,15 @@ func (imp *workspaceImporter) loadExternal() {
 		return
 	}
 
-	if !imp.hasExternalImports() {
+	if imp.parser.buildConfig.isPort(runtime.GOOS, runtime.GOARCH) && !imp.hasExternalImports() {
 		// Nothing in this workspace imports a third-party module, so the whole
 		// point of the load — resolving module-cache packages that
 		// importer.Default() cannot see — does not apply. Skipping matters
 		// because packages.Load shells out to the go tool: paying that on a
 		// workspace whose imports are entirely stdlib and local is pure
 		// overhead, and the test suite builds dozens of exactly such synthetic
-		// workspaces.
+		// workspaces. Any other port needs the load even for the stdlib:
+		// importer.Default() only serves the host's.
 		return
 	}
 
@@ -899,7 +900,7 @@ func (imp *workspaceImporter) loadExternal() {
 // any port but the host's, which would need a C cross toolchain.
 func externalLoadSettings(cfg BuildConfig, hostOS, hostArch string) (env, flags []string) {
 	cgo := "0"
-	if cfg.Cgo && cfg.GOOS == hostOS && cfg.GOARCH == hostArch {
+	if cfg.Cgo && cfg.isPort(hostOS, hostArch) {
 		cgo = "1"
 	}
 	env = []string{"GOPROXY=off", "GOOS=" + cfg.GOOS, "GOARCH=" + cfg.GOARCH, "CGO_ENABLED=" + cgo}
