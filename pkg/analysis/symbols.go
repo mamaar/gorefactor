@@ -6,7 +6,9 @@ import (
 	"go/token"
 	gotypes "go/types"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"unicode"
@@ -48,6 +50,24 @@ type objectEntry struct {
 type ReferenceIndex struct {
 	nameIndex    map[string][]indexEntry
 	workspaceIdx *workspaceIndex
+
+	// pending builds nameIndex on first use; nil once it has, and for an index
+	// whose names were given.
+	namesOnce sync.Once
+	pending   *nameIndexBuilder
+}
+
+// names returns the name index, building it if that was deferred.
+func (idx *ReferenceIndex) names() map[string][]indexEntry {
+	idx.namesOnce.Do(idx.buildNames)
+	return idx.nameIndex
+}
+
+func (idx *ReferenceIndex) buildNames() {
+	if idx.pending != nil {
+		idx.nameIndex = idx.pending.run()
+		idx.pending = nil
+	}
 }
 
 // SymbolResolver handles symbol resolution and reference finding
@@ -57,6 +77,10 @@ type SymbolResolver struct {
 	cache         *SymbolCache
 	diagnostics   *DiagnosticEngine
 	logger        *slog.Logger
+
+	// inspectors is shared with the other views of the workspace set; nil for
+	// a resolver made outside one.
+	inspectors *inspectorCache
 }
 
 func NewSymbolResolver(ws *types.Workspace, logger *slog.Logger) *SymbolResolver {
@@ -162,82 +186,91 @@ func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Referen
 }
 
 // BuildReferenceIndex builds a reverse index mapping identifier names to their
-// occurrences across all files in the workspace. This performs one AST walk per file
-// and pre-computes declaration and selector information, eliminating the need for
-// repeated nested AST walks in identifierRefersToSymbol/getQualifyingPackage/isDeclarationContext.
+// occurrences across all files in the workspace, and an index by go/types
+// object for the packages that are type-checked.
 func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
+	idx := sr.BuildLazyReferenceIndex()
+	sr.logger.Info("reference index built successfully",
+		"name_entries", len(idx.names()),
+		"workspace_packages", len(idx.workspaceIdx.packages))
+	return idx
+}
+
+// BuildLazyReferenceIndex is BuildReferenceIndex with the name index built on
+// first use, from the type information the packages have now.
+func (sr *SymbolResolver) BuildLazyReferenceIndex() *ReferenceIndex {
 	sr.logger.Info("building reference index", "packages", len(sr.workspace.Packages))
+	return &ReferenceIndex{pending: sr.newNameIndexBuilder(), workspaceIdx: sr.buildWorkspaceIndex()}
+}
 
-	idx := &ReferenceIndex{nameIndex: sr.buildNameIndex()}
-
-	// Build workspaceIndex: group files by package, build per-package indexes in parallel
-	wsIdx := newWorkspaceIndex(sr.workspace.FileSet)
-	type pkgWork struct {
-		pkg   *types.Package
-		files []*ast.File
-	}
-	var pkgWorkList []pkgWork
+// buildWorkspaceIndex indexes the identifiers of every type-checked package by
+// go/types object, one package per goroutine.
+func (sr *SymbolResolver) buildWorkspaceIndex() *workspaceIndex {
+	b := &objectIndexBuilder{resolver: sr}
 	for _, pkg := range sr.workspace.Packages {
 		if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 			continue
 		}
-		var astFiles []*ast.File
-		for _, f := range pkg.Files {
-			if f.AST != nil {
-				astFiles = append(astFiles, f.AST)
-			}
-		}
-		for _, f := range pkg.TestFiles {
-			if f.AST != nil {
-				astFiles = append(astFiles, f.AST)
-			}
-		}
-		if len(astFiles) > 0 {
-			pkgWorkList = append(pkgWorkList, pkgWork{pkg: pkg, files: astFiles})
+		if files := indexedFiles(pkg); len(files) > 0 {
+			b.jobs = append(b.jobs, objectIndexJob{pkg: pkg, files: files})
 		}
 	}
 
-	if len(pkgWorkList) > 0 {
-		pkgResults := make([]*packageIndex, len(pkgWorkList))
-		var wg2 sync.WaitGroup
-		for i, pw := range pkgWorkList {
-			wg2.Add(1)
-			go func(i int, pw pkgWork) {
-				defer wg2.Done()
-				ins := inspector.New(pw.files)
-				pkgResults[i] = newPackageIndex(ins, pw.pkg.TypesPkg, pw.pkg.TypesInfo)
-			}(i, pw)
-		}
-		wg2.Wait()
+	var wg sync.WaitGroup
+	for i := range b.jobs {
+		wg.Add(1)
+		go b.build(i, &wg)
+	}
+	wg.Wait()
 
-		// Merge results into workspaceIndex (single-threaded)
-		for i, pw := range pkgWorkList {
-			wsIdx.packages[pw.pkg.TypesPkg] = pkgResults[i]
-			// Register file mappings
-			for _, f := range pw.pkg.Files {
-				if f.AST != nil {
-					tf := sr.workspace.FileSet.File(f.AST.Pos())
-					if tf != nil {
-						wsIdx.tokenToFile[tf] = f
-					}
-				}
-			}
-			for _, f := range pw.pkg.TestFiles {
-				if f.AST != nil {
-					tf := sr.workspace.FileSet.File(f.AST.Pos())
-					if tf != nil {
-						wsIdx.tokenToFile[tf] = f
-					}
-				}
+	wsIdx := newWorkspaceIndex(sr.workspace.FileSet)
+	for _, job := range b.jobs {
+		wsIdx.packages[job.pkg.TypesPkg] = job.index
+		for _, f := range job.files {
+			if tf := sr.workspace.FileSet.File(f.AST.Pos()); tf != nil {
+				wsIdx.tokenToFile[tf] = f
 			}
 		}
 	}
-	idx.workspaceIdx = wsIdx
+	return wsIdx
+}
 
-	sr.logger.Info("reference index built successfully",
-		"name_entries", len(idx.nameIndex),
-		"workspace_packages", len(wsIdx.packages))
-	return idx
+// indexedFiles returns pkg's parsed files, non-test before test and each group
+// in name order, so that every view lists the same files the same way.
+func indexedFiles(pkg *types.Package) []*types.File {
+	var files []*types.File
+	for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+		for _, name := range slices.Sorted(maps.Keys(group)) {
+			if f := group[name]; f.AST != nil {
+				files = append(files, f)
+			}
+		}
+	}
+	return files
+}
+
+type objectIndexJob struct {
+	pkg   *types.Package
+	files []*types.File
+	index *packageIndex
+}
+
+// objectIndexBuilder builds one packageIndex per job; each goroutine writes
+// only its own job.
+type objectIndexBuilder struct {
+	resolver *SymbolResolver
+	jobs     []objectIndexJob
+}
+
+func (b *objectIndexBuilder) build(i int, wg *sync.WaitGroup) {
+	defer wg.Done()
+	job := &b.jobs[i]
+	asts := make([]*ast.File, len(job.files))
+	for j, f := range job.files {
+		asts[j] = f.AST
+	}
+	ins := b.resolver.inspectors.get(job.pkg.Dir, asts)
+	job.index = newPackageIndex(ins, job.pkg.TypesPkg, job.pkg.TypesInfo)
 }
 
 // indexFileLocal performs a single AST walk over a file using the cursor-based
@@ -311,22 +344,38 @@ func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string]
 	)
 }
 
-// buildNameIndex indexes every identifier of the workspace by name, one
-// package per job.
-func (sr *SymbolResolver) buildNameIndex() map[string][]indexEntry {
-	pkgs := make([]*types.Package, 0, len(sr.workspace.Packages))
-	for _, pkg := range sr.workspace.Packages {
-		pkgs = append(pkgs, pkg)
-	}
-	sr.logger.Debug("indexing packages", "package_count", len(pkgs))
+// nameIndexJob is one package as it was when the index was requested.
+type nameIndexJob struct {
+	info  *gotypes.Info // nil when the package was not type-checked
+	files []*types.File
+}
 
-	b := &nameIndexBuilder{resolver: sr, pkgs: pkgs, next: make(chan int, len(pkgs))}
-	for i := range pkgs {
+// nameIndexBuilder indexes every identifier of the workspace by name, one
+// package per job on several goroutines; each worker writes only its own map
+// of locals.
+type nameIndexBuilder struct {
+	resolver *SymbolResolver
+	jobs     []nameIndexJob
+	next     chan int
+	locals   []map[string][]indexEntry
+}
+
+func (sr *SymbolResolver) newNameIndexBuilder() *nameIndexBuilder {
+	b := &nameIndexBuilder{resolver: sr}
+	for _, pkg := range sr.workspace.Packages {
+		b.jobs = append(b.jobs, nameIndexJob{info: pkg.TypesInfo, files: indexedFiles(pkg)})
+	}
+	return b
+}
+
+func (b *nameIndexBuilder) run() map[string][]indexEntry {
+	b.next = make(chan int, len(b.jobs))
+	for i := range b.jobs {
 		b.next <- i
 	}
 	close(b.next)
 
-	b.locals = make([]map[string][]indexEntry, workerCount(len(pkgs)))
+	b.locals = make([]map[string][]indexEntry, workerCount(len(b.jobs)))
 	var wg sync.WaitGroup
 	for w := range b.locals {
 		b.locals[w] = make(map[string][]indexEntry)
@@ -344,28 +393,16 @@ func (sr *SymbolResolver) buildNameIndex() map[string][]indexEntry {
 	return merged
 }
 
-// nameIndexBuilder indexes packages on several goroutines; each worker writes
-// only its own map of locals.
-type nameIndexBuilder struct {
-	resolver *SymbolResolver
-	pkgs     []*types.Package
-	next     chan int
-	locals   []map[string][]indexEntry
-}
-
 func (b *nameIndexBuilder) work(w int, wg *sync.WaitGroup) {
 	defer wg.Done()
 	local := b.locals[w]
 	for i := range b.next {
-		pkg := b.pkgs[i]
-		if pkg.TypesInfo != nil {
-			b.resolver.indexPackageTyped(pkg, local)
+		job := b.jobs[i]
+		if job.info != nil {
+			b.resolver.indexPackageTyped(job, local)
 			continue
 		}
-		for _, f := range pkg.Files {
-			b.resolver.indexFileLocal(f, local)
-		}
-		for _, f := range pkg.TestFiles {
+		for _, f := range job.files {
 			b.resolver.indexFileLocal(f, local)
 		}
 	}
@@ -388,23 +425,19 @@ func (f *typedFile) visit(n ast.Node) bool {
 	return true
 }
 
-// indexPackageTyped adds an entry for every identifier pkg's type information
-// defines or resolves, with its go/types object for pointer-equality matching.
-func (sr *SymbolResolver) indexPackageTyped(pkg *types.Package, nameIndex map[string][]indexEntry) {
+// indexPackageTyped adds an entry for every identifier the package's type
+// information defines or resolves, with its go/types object for
+// pointer-equality matching.
+func (sr *SymbolResolver) indexPackageTyped(job nameIndexJob, nameIndex map[string][]indexEntry) {
 	fset := sr.workspace.FileSet
-	files := make(map[*token.File]*typedFile, len(pkg.Files)+len(pkg.TestFiles))
-	for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
-		for _, f := range group {
-			if f.AST == nil {
-				continue
-			}
-			tf := &typedFile{file: f, qualifiers: make(map[token.Pos]string)}
-			ast.Inspect(f.AST, tf.visit)
-			files[fset.File(f.AST.Pos())] = tf
-		}
+	files := make(map[*token.File]*typedFile, len(job.files))
+	for _, f := range job.files {
+		tf := &typedFile{file: f, qualifiers: make(map[token.Pos]string)}
+		ast.Inspect(f.AST, tf.visit)
+		files[fset.File(f.AST.Pos())] = tf
 	}
 
-	for ident, obj := range pkg.TypesInfo.Defs {
+	for ident, obj := range job.info.Defs {
 		if obj == nil {
 			continue
 		}
@@ -420,7 +453,7 @@ func (sr *SymbolResolver) indexPackageTyped(pkg *types.Package, nameIndex map[st
 		})
 	}
 
-	for ident, obj := range pkg.TypesInfo.Uses {
+	for ident, obj := range job.info.Uses {
 		if obj == nil {
 			continue
 		}
@@ -448,7 +481,7 @@ func (idx *ReferenceIndex) ObjectEntries(obj gotypes.Object) []objectEntry {
 
 // NameEntries returns all name index entries for a given identifier name.
 func (idx *ReferenceIndex) NameEntries(name string) ([]indexEntry, bool) {
-	entries, ok := idx.nameIndex[name]
+	entries, ok := idx.names()[name]
 	return entries, ok
 }
 
@@ -473,7 +506,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 	}
 
 	// Fall back to name-based path
-	entries, ok := idx.nameIndex[symbol.Name]
+	entries, ok := idx.names()[symbol.Name]
 	if !ok {
 		return nil, nil
 	}
@@ -714,7 +747,7 @@ func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *
 	}
 
 	// Fall back to name-based path
-	entries, ok := idx.nameIndex[symbol.Name]
+	entries, ok := idx.names()[symbol.Name]
 	if !ok {
 		return false
 	}

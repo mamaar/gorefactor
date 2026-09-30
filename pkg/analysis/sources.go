@@ -31,13 +31,16 @@ type SourceTree struct {
 	mu     sync.RWMutex
 	byDir  map[string][]*SourceFile // sorted by name
 	byPath map[string]*SourceFile
+
+	inspectors *inspectorCache
 }
 
 func NewSourceTree(fset *token.FileSet) *SourceTree {
 	return &SourceTree{
-		fset:   fset,
-		byDir:  make(map[string][]*SourceFile),
-		byPath: make(map[string]*SourceFile),
+		fset:       fset,
+		byDir:      make(map[string][]*SourceFile),
+		byPath:     make(map[string]*SourceFile),
+		inspectors: newInspectorCache(),
 	}
 }
 

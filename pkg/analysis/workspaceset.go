@@ -37,7 +37,7 @@ func (v *View) ReferenceIndex() (*ReferenceIndex, error) {
 	v.refMu.Lock()
 	defer v.refMu.Unlock()
 	if v.refIndex == nil {
-		idx := v.Resolver.BuildReferenceIndex()
+		idx := v.Resolver.BuildLazyReferenceIndex()
 		if idx == nil {
 			return nil, fmt.Errorf("failed to build reference index")
 		}
@@ -114,6 +114,7 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	}
 
 	resolver := NewSymbolResolver(ws, s.logger)
+	resolver.inspectors = s.tree.inspectors
 	for _, pkg := range ws.Packages {
 		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
 			s.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
