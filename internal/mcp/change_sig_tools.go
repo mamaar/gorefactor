@@ -37,50 +37,45 @@ func registerChangeSignatureTools(s *mcpsdk.Server, state *MCPServer) {
 - remove_param: remove a parameter (provide params list without the removed param)
 - add_return: add a new return value (provide returns list with the new type included)
 - remove_return: remove a return value (provide returns list without the removed type)
-All call sites are updated automatically.`,
+All call sites are updated automatically, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations gets the same change, and an abort names the configuration it came from.`,
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ChangeSignatureInput) (*mcpsdk.CallToolResult, any, error) {
+		// The read lock stays held until the merged plan exists: a watcher
+		// batch takes the write lock and may drop a view being planned in.
 		state.RLock()
-
-		ws, err := state.GetWorkspace()
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
-		idx, err := state.EnsureReferenceIndex(ws)
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
-		newParams := make([]refactor.Parameter, len(in.Params))
-		for i, p := range in.Params {
-			newParams[i] = refactor.Parameter{Name: p.Name, Type: p.Type}
-		}
-
-		plan, err := state.GetEngine().ChangeSignature(ws, refactor.ChangeSignatureRequest{
-			FunctionName:         in.FunctionName,
-			SourceFile:           resolveFile(ws, in.SourceFile),
-			NewParams:            newParams,
-			NewReturns:           in.Returns,
-			Scope:                types.WorkspaceScope,
-			PropagateToInterface: in.Propagate,
-			DefaultValue:         in.DefaultValue,
-			NewParamPosition:     in.Position,
-			Subcommand:           in.Subcommand,
-			CachedIndex:          idx,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-
+		plan, err := planChangeSignature(state, in)
 		state.RUnlock()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
 
 		result, err := executePlan(state, plan, fmt.Sprintf("change signature: %s %s", in.Subcommand, in.FunctionName), in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 		return textResult(result), nil, nil
+	})
+}
+
+// planChangeSignature plans in under every build configuration. The caller
+// holds the read lock.
+func planChangeSignature(state *MCPServer, in ChangeSignatureInput) (*types.RefactoringPlan, error) {
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, err
+	}
+	newParams := make([]refactor.Parameter, len(in.Params))
+	for i, p := range in.Params {
+		newParams[i] = refactor.Parameter{Name: p.Name, Type: p.Type}
+	}
+	return state.GetEngine().ChangeSignatureAcrossConfigs(refactor.ChangeSignatureRequest{
+		FunctionName:         in.FunctionName,
+		SourceFile:           resolveFile(ws, in.SourceFile),
+		NewParams:            newParams,
+		NewReturns:           in.Returns,
+		Scope:                types.WorkspaceScope,
+		PropagateToInterface: in.Propagate,
+		DefaultValue:         in.DefaultValue,
+		NewParamPosition:     in.Position,
+		Subcommand:           in.Subcommand,
 	})
 }

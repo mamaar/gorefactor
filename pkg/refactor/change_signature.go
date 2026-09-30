@@ -41,6 +41,48 @@ type ChangeSignatureRequest struct {
 	Subcommand string
 }
 
+// operation returns the operation the request describes. The subcommand sets
+// the return-change sentinels: -1 means "not a return change", since 0 would
+// read as "insert at" or "remove" index 0.
+func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatureOperation {
+	newParamPos := -1
+	if req.DefaultValue != "" && req.NewParamPosition >= 0 {
+		newParamPos = req.NewParamPosition
+	}
+
+	newReturnPosition := -1
+	removedReturnIndex := -1
+	defaultReturnValue := ""
+
+	switch req.Subcommand {
+	case "add_return":
+		// NewReturns is the full new list, the added return last.
+		if len(req.NewReturns) > 0 {
+			newReturnPosition = len(req.NewReturns) - 1
+			defaultReturnValue = zeroValueForType(req.NewReturns[newReturnPosition])
+		}
+	case "remove_return":
+		// NewReturns is the list after removal, so the removed return was the one past its end.
+		removedReturnIndex = len(req.NewReturns)
+	}
+
+	return &ChangeSignatureOperation{
+		FunctionName:         req.FunctionName,
+		SourceFile:           req.SourceFile,
+		NewParams:            req.NewParams,
+		NewReturns:           req.NewReturns,
+		Scope:                req.Scope,
+		PropagateToInterface: req.PropagateToInterface,
+		DefaultValue:         req.DefaultValue,
+		NewParamPosition:     newParamPos,
+		NewReturnPosition:    newReturnPosition,
+		RemovedReturnIndex:   removedReturnIndex,
+		DefaultReturnValue:   defaultReturnValue,
+		CachedIndex:          req.CachedIndex,
+		Logger:               logger,
+	}
+}
+
 // ChangeSignatureOperation implements changing function/method signatures
 type ChangeSignatureOperation struct {
 	FunctionName string
@@ -127,7 +169,7 @@ func (op *ChangeSignatureOperation) Validate(ws *pkgtypes.Workspace) error {
 	}
 	if sourceFile == nil {
 		return &pkgtypes.RefactorError{
-			Type:    pkgtypes.FileSystemError,
+			Type:    pkgtypes.SymbolNotFound,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}

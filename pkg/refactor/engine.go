@@ -783,50 +783,7 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 
 // ChangeSignature implements changing function/method signatures
 func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
-	newParamPos := -1
-	if req.DefaultValue != "" && req.NewParamPosition >= 0 {
-		newParamPos = req.NewParamPosition
-	}
-
-	// Compute return-change sentinels from the subcommand.
-	// These must be initialised to -1 ("not a return-change operation") so that
-	// updateReturnStatements / updateAssignmentLHS skip their work when the
-	// caller only changed parameters.  The zero value (0) would be incorrectly
-	// interpreted as "insert at position 0" or "remove index 0".
-	newReturnPosition := -1
-	removedReturnIndex := -1
-	defaultReturnValue := ""
-
-	switch req.Subcommand {
-	case "add_return":
-		// The caller provides the full new return list (old returns + the new one).
-		// The new return sits at the last position (appended).
-		if len(req.NewReturns) > 0 {
-			newReturnPosition = len(req.NewReturns) - 1
-			defaultReturnValue = zeroValueForType(req.NewReturns[newReturnPosition])
-		}
-	case "remove_return":
-		// Determine which index was removed by comparing old and new lists.
-		// The caller provides the list *after* removal, so the removed index is
-		// inferred as the first position that no longer exists (i.e., len(NewReturns)).
-		removedReturnIndex = len(req.NewReturns) // last old return was removed
-	}
-
-	operation := &ChangeSignatureOperation{
-		FunctionName:         req.FunctionName,
-		SourceFile:           req.SourceFile,
-		NewParams:            req.NewParams,
-		NewReturns:           req.NewReturns,
-		Scope:                req.Scope,
-		PropagateToInterface: req.PropagateToInterface,
-		DefaultValue:         req.DefaultValue,
-		NewParamPosition:     newParamPos,
-		NewReturnPosition:    newReturnPosition,
-		RemovedReturnIndex:   removedReturnIndex,
-		DefaultReturnValue:   defaultReturnValue,
-		CachedIndex:          req.CachedIndex,
-		Logger:               e.logger,
-	}
+	operation := req.operation(e.logger)
 
 	if err := operation.Validate(ws); err != nil {
 		return nil, fmt.Errorf("change signature operation validation failed: %w", err)
@@ -846,6 +803,14 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
+}
+
+// ChangeSignatureAcrossConfigs changes a signature like ChangeSignature, under
+// every build configuration covering the workspace, and returns one merged
+// plan. A declaration with the same key as a changed one is changed under every
+// configuration that declares it.
+func (e *DefaultEngine) ChangeSignatureAcrossConfigs(req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
+	return e.planAcrossConfigs(&changeSignaturePlanner{engine: e, req: req})
 }
 
 // BatchRefactor executes multiple refactoring operations as a batch
