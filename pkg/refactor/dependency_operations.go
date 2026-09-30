@@ -225,15 +225,15 @@ func (op *MoveByDependenciesOperation) getTargetImportPath(ws *types.Workspace) 
 	return ""
 }
 
-// buildFilePackageIndex returns a map of file path → Package for all files in the workspace.
+// buildFilePackageIndex returns a map of absolute file path → Package for all files in the workspace.
 func buildFilePackageIndex(ws *types.Workspace) map[string]*types.Package {
 	index := make(map[string]*types.Package)
 	for _, pkg := range ws.Packages {
-		for path := range pkg.Files {
-			index[path] = pkg
+		for _, f := range pkg.Files {
+			index[f.Path] = pkg
 		}
-		for path := range pkg.TestFiles {
-			index[path] = pkg
+		for _, f := range pkg.TestFiles {
+			index[f.Path] = pkg
 		}
 	}
 	return index
