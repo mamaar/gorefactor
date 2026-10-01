@@ -4,6 +4,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
 // threadPlanFor builds a type-checked workspace, runs the analysis, and returns
@@ -13,8 +15,14 @@ import (
 // would make every other test here vacuous.
 func threadPlanFor(t *testing.T, files map[string]string, sourceFile, funcName string) *threadPlan {
 	t.Helper()
+	return threadPlanStopping(t, files, sourceFile, funcName, nil)
+}
+
+// threadPlanStopping is threadPlanFor with a user-declared stop set.
+func threadPlanStopping(t *testing.T, files map[string]string, sourceFile, funcName string, stops pkgtypes.SymbolKeySet) *threadPlan {
+	t.Helper()
 	ws := buildScopeWorkspace(t, files)
-	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile}
+	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile, StopAt: stops}
 	if _, err := op.Execute(ws); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -27,13 +35,19 @@ func threadPlanFor(t *testing.T, files map[string]string, sourceFile, funcName s
 // threadErrFor runs the analysis expecting it to abort, and returns the error.
 func threadErrFor(t *testing.T, files map[string]string, sourceFile, funcName string, typeCheck bool) error {
 	t.Helper()
+	return threadErrStopping(t, files, sourceFile, funcName, typeCheck, nil)
+}
+
+// threadErrStopping is threadErrFor with a user-declared stop set.
+func threadErrStopping(t *testing.T, files map[string]string, sourceFile, funcName string, typeCheck bool, stops pkgtypes.SymbolKeySet) error {
+	t.Helper()
 	ws := buildScopeWorkspace(t, files)
 	if !typeCheck {
 		// LoadWorkspace on its own does not type-check, which is exactly the
 		// silent-no-op condition the HasTypeInfo guard exists to catch.
 		_, ws = writeRenameFieldWorkspace(t, files)
 	}
-	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile}
+	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile, StopAt: stops}
 	_, err := op.Execute(ws)
 	if err == nil {
 		t.Fatalf("expected Execute to abort, got nil error")

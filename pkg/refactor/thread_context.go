@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -57,6 +58,10 @@ type ThreadContextOperation struct {
 	// Each one this workspace declares is seeded alongside the seed, so platform
 	// siblings and the call sites they share stay in agreement.
 	Linked pkgtypes.SymbolKeySet
+
+	// StopAt names functions the climb must not add a ctx to. Each acts as a
+	// root: its calls pass an in-scope ctx or context.TODO().
+	StopAt pkgtypes.SymbolKeySet
 
 	plan *threadPlan // populated by Validate/Execute
 
@@ -134,6 +139,9 @@ type threadPlan struct {
 	// per call and is exactly where an argument is inserted) to the expression to
 	// pass there.
 	ArgFor map[token.Pos]*callEdit
+	// Stops holds the declared stops whose presence changed the outcome: the
+	// climb reached them and would otherwise have added a ctx.
+	Stops map[*gotypes.Func]bool
 }
 
 // dropAnalysis forgets the index, declarations and plan-of-record the
@@ -207,8 +215,31 @@ func (op *ThreadContextOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Ref
 		Operations:    []pkgtypes.Operation{op},
 		Changes:       changes,
 		AffectedFiles: removeDuplicateStrings(affectedFiles),
+		SkippedSites:  op.stopSites(),
 		Reversible:    true,
 	}, nil
+}
+
+// stopSites reports each effective stop as a skipped declaration, in file and
+// line order.
+func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
+	var sites []pkgtypes.SkippedSite
+	for f := range op.plan.Stops {
+		fd := op.declIndex[f]
+		if fd == nil || fd.File == nil {
+			continue
+		}
+		sites = append(sites, pkgtypes.SkippedSite{
+			File:    fd.File.Path,
+			Line:    offsetLine(fd.File, fd.Decl.Pos()),
+			Reason:  "stop_at: the context climb stopped here; calls inside pass the in-scope ctx or context.TODO()",
+			Snippet: funcLabel(f),
+		})
+	}
+	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
+		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Snippet, b.Snippet))
+	})
+	return sites
 }
 
 // assertNoOverlappingChanges groups changes by file and reports an error
@@ -270,6 +301,7 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		Decls:  make(map[*gotypes.Func]*funcDecl),
 		Fake:   make(map[*gotypes.Func]*ast.AssignStmt),
 		ArgFor: make(map[token.Pos]*callEdit),
+		Stops:  make(map[*gotypes.Func]bool),
 	}
 
 	visited, err := op.discover(ws, idx, plan, seeds)
@@ -295,10 +327,31 @@ func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace) ([]*gotypes.Func
 		if len(linked) == 0 || !isSymbolNotFound(err) {
 			return nil, err
 		}
-		return linked, nil
+		return op.rejectStopSeeds(linked)
 	}
 	op.seed = seed
-	return append([]*gotypes.Func{seed}, linked...), nil
+	return op.rejectStopSeeds(append([]*gotypes.Func{seed}, linked...))
+}
+
+// rejectStopSeeds fails when a seed is a declared stop: it is the function that
+// gains the parameter, so it cannot also be where the climb stops.
+func (op *ThreadContextOperation) rejectStopSeeds(seeds []*gotypes.Func) ([]*gotypes.Func, error) {
+	for _, f := range seeds {
+		if op.isStop(f) {
+			return nil, &pkgtypes.RefactorError{
+				Type: pkgtypes.InvalidOperation,
+				Message: fmt.Sprintf("cannot thread context through %s: it is the function that gains the "+
+					"parameter and is also declared as a stop. No changes were made.", funcLabel(f)),
+			}
+		}
+	}
+	return seeds, nil
+}
+
+// isStop reports whether f is a declared stop.
+func (op *ThreadContextOperation) isStop(f *gotypes.Func) bool {
+	key, ok := pkgtypes.SymbolKeyOf(f)
+	return ok && op.StopAt.Has(key)
 }
 
 // linkedFuncs returns the declared functions whose key is in Linked.
@@ -441,10 +494,20 @@ func (op *ThreadContextOperation) discover(
 		if err != nil {
 			return nil, err
 		}
+		for _, e := range extra {
+			if op.isStop(e) {
+				return nil, &pkgtypes.RefactorError{
+					Type: pkgtypes.InvalidOperation,
+					Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
+						"declared as a stop; the interface method would gain ctx while %s does not, so the "+
+						"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
+				}
+			}
+		}
 		queue = append(queue, extra...)
 
 		for _, site := range idx.CallSitesOf(f) {
-			caller, climb, err := op.climbTarget(idx, site)
+			caller, climb, err := op.climbTarget(idx, plan, site)
 			if err != nil {
 				return nil, err
 			}
@@ -459,7 +522,7 @@ func (op *ThreadContextOperation) discover(
 // climbTarget decides, for a single call site of a function that is gaining a
 // ctx, whether the enclosing function must itself be climbed (and thus gain a
 // ctx parameter of its own).
-func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, site analysis.CallSite) (*gotypes.Func, bool, error) {
+func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan *threadPlan, site analysis.CallSite) (*gotypes.Func, bool, error) {
 	// A call inside a closure is a threading root by product decision: a closure
 	// may outlive or run outside its lexical caller (go/defer/callback), so its
 	// enclosing FuncDecl is not a reliable place to source a context from.
@@ -510,6 +573,11 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, site
 	caller, err := op.callerObject(site)
 	if err != nil {
 		return nil, false, err
+	}
+
+	if op.isStop(caller) {
+		plan.Stops[caller] = true
+		return nil, false, nil
 	}
 
 	// The caller is about to gain a ctx parameter, but it already declares one
@@ -587,7 +655,16 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 		return src.Expr, nil
 	}
 
-	// 5. Phase 1 climbed through this site, so its enclosing function must be in
+	// 5. A declared stop with no context in scope.
+	if site.Fn != nil && site.Lit == nil {
+		if caller, err := op.callerObject(site); err != nil {
+			return "", err
+		} else if op.isStop(caller) {
+			return "context.TODO()", nil
+		}
+	}
+
+	// 6. Phase 1 climbed through this site, so its enclosing function must be in
 	//    Funcs and case 1 must have matched. Report the inconsistency rather than
 	//    quietly emitting context.TODO(), which would drop a real chain on the
 	//    floor while reporting success.
