@@ -3,6 +3,7 @@ package analysis
 import (
 	"cmp"
 	"fmt"
+	"go/ast"
 	"log/slog"
 	"slices"
 
@@ -107,13 +108,12 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 
 func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }
 
-// collectInterfaceMethodNames builds a set of all method names declared in interfaces
-// across the workspace. This is computed once and used for O(1) lookups in
-// mightImplementInterface instead of repeated AST walks.
+// collectInterfaceMethodNames returns the names of the methods declared by any
+// interface type in the workspace, named or not, plus well-known standard
+// library ones. A method with such a name may be called through an interface.
 func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 	names := make(map[string]bool)
 
-	// Always include well-known interface methods
 	for _, common := range []string{
 		"String", "Error", "Read", "Write", "Close", "Len", "Less", "Swap",
 		"MarshalJSON", "UnmarshalJSON", "MarshalBinary", "UnmarshalBinary",
@@ -122,25 +122,30 @@ func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 		names[common] = true
 	}
 
+	c := &interfaceMethodCollector{names: names}
 	for _, pkg := range ua.workspace.Packages {
-		if pkg.Symbols == nil {
-			continue
-		}
-		for _, symbol := range pkg.Symbols.Types {
-			if symbol.Kind != types.InterfaceSymbol {
-				continue
-			}
-			ifaceMethods, err := ua.resolver.getInterfaceMethods(symbol)
-			if err != nil {
-				continue
-			}
-			for _, m := range ifaceMethods {
-				names[m.Name] = true
-			}
+		for _, file := range indexedFiles(pkg) {
+			ast.Walk(c, file.AST)
 		}
 	}
-
 	return names
+}
+
+// interfaceMethodCollector adds the method names of every interface type it
+// visits to names.
+type interfaceMethodCollector struct{ names map[string]bool }
+
+func (c *interfaceMethodCollector) Visit(n ast.Node) ast.Visitor {
+	iface, ok := n.(*ast.InterfaceType)
+	if !ok || iface.Methods == nil {
+		return c
+	}
+	for _, field := range iface.Methods.List {
+		for _, name := range field.Names {
+			c.names[name.Name] = true
+		}
+	}
+	return c
 }
 
 // isTestFunction checks if a function is a test function

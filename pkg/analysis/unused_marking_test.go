@@ -383,3 +383,28 @@ func TestFindUnusedSymbols_AliasNamedOnlyByDeadMethodReceiverIsReported(t *testi
 		assertNotReported(t, facts, "a.go:b")
 	}
 }
+
+// assertMethodThroughInterfaceLiteralIsLive checks that a live type's methods
+// foo and bar, named only by an interface written in use, keep leaf alive.
+func assertMethodThroughInterfaceLiteralIsLive(t *testing.T, use string) {
+	t.Helper()
+	src := "package p\n\ntype T struct{}\n\nfunc (T) foo() { leaf() }\n\nfunc (T) bar() { leaf() }\n\nfunc leaf() {}\n\n" + use
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:foo", "a.go:bar", "a.go:leaf")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:foo", "a.go:bar", "a.go:leaf")
+}
+
+func TestFindUnusedSymbols_MethodCalledThroughAnonymousInterfaceParameterKeepsItsCalleesAlive(t *testing.T) {
+	assertMethodThroughInterfaceLiteralIsLive(t, "func use(x interface{ foo(); bar() }) { x.foo(); x.bar() }\n\nfunc main() { use(T{}) }\n")
+}
+
+func TestFindUnusedSymbols_MethodCalledThroughFunctionLocalInterfaceKeepsItsCalleesAlive(t *testing.T) {
+	assertMethodThroughInterfaceLiteralIsLive(t, "func main() {\n\ttype i interface{ foo(); bar() }\n\tvar x i = T{}\n\tx.foo()\n\tx.bar()\n}\n")
+}
+
+func TestFindUnusedSymbols_MethodCalledThroughInlineTypeConstraintKeepsItsCalleesAlive(t *testing.T) {
+	assertMethodThroughInterfaceLiteralIsLive(t, "func use[X interface{ foo(); bar() }](x X) { x.foo(); x.bar() }\n\nfunc main() { use(T{}) }\n")
+}
+
+func TestFindUnusedSymbols_MethodCalledThroughAnonymousInterfaceFieldKeepsItsCalleesAlive(t *testing.T) {
+	assertMethodThroughInterfaceLiteralIsLive(t, "type holder struct{ x interface{ foo(); bar() } }\n\nfunc main() {\n\th := holder{x: T{}}\n\th.x.foo()\n\th.x.bar()\n}\n")
+}
