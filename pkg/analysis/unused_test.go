@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"io"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,6 +84,8 @@ func consumer() {
 	_ = usedVar
 	_ = usedConst
 }
+
+func main() { consumer() }
 `
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -116,6 +119,21 @@ func consumer() {
 	}
 
 	return workspace
+}
+
+type unusedFact struct {
+	Reason       string
+	SafeToDelete bool
+}
+
+// unusedFacts keys results by "<file basename>:<symbol name>".
+func unusedFacts(unused []*UnusedSymbol) map[string]unusedFact {
+	facts := make(map[string]unusedFact, len(unused))
+	for _, u := range unused {
+		key := filepath.Base(u.Symbol.File) + ":" + u.Symbol.Name
+		facts[key] = unusedFact{Reason: u.Reason, SafeToDelete: u.SafeToDelete}
+	}
+	return facts
 }
 
 func TestNewUnusedAnalyzer(t *testing.T) {
@@ -154,14 +172,9 @@ func TestFindUnusedSymbols_UnexportedOnly(t *testing.T) {
 		t.Error("Expected to find some unused unexported symbols")
 	}
 
-	// Check that known unused unexported symbols are found
-	foundNames := make(map[string]bool)
-	for _, u := range unused {
-		foundNames[u.Symbol.Name] = true
-	}
-
+	facts := unusedFacts(unused)
 	for _, name := range []string{"anotherUnused", "unusedType", "unusedVar", "unusedConst"} {
-		if !foundNames[name] {
+		if _, ok := facts["testpkg.go:"+name]; !ok {
 			t.Errorf("Expected to find unused symbol %q", name)
 		}
 	}
