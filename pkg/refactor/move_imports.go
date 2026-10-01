@@ -3,8 +3,8 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
-	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"maps"
 	"slices"
 	"sort"
@@ -317,6 +317,10 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 // uses once removeChanges (the declarations being moved out) are applied. An
 // unused import is a compile error, so the source file must drop them.
 //
+// A type-checked file is judged by its package-name uses outside the removed
+// ranges. Without type info only an explicitly named import can be judged, by
+// its alias; an unnamed one is kept, as its name is a guess.
+//
 // Blank (`_`) and dot (`.`) imports are never returned: they're kept for
 // side effects a plain identifier search can't see.
 func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, removeChanges []types.Change) []*ast.ImportSpec {
@@ -324,36 +328,67 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 		return nil
 	}
 
-	remaining := applyChangesInMemory(sourceFile.OriginalContent, removeChanges)
-
-	remainingAST, err := parser.ParseFile(token.NewFileSet(), sourceFile.Path, remaining, 0)
-	if err != nil {
-		// If the post-removal content doesn't parse cleanly, don't try to be
-		// clever about pruning imports — leave it for compilation to report.
-		return nil
+	// remaining reports whether pos lies in sourceFile outside the removed ranges.
+	remaining := func(pos token.Pos) bool {
+		at := ws.FileSet.Position(pos)
+		return at.Filename == sourceFile.Path && !slices.ContainsFunc(removeChanges, func(c types.Change) bool {
+			return c.File == at.Filename && at.Offset >= c.Start && at.Offset < c.End
+		})
 	}
-
-	usedNames := make(map[string]bool)
-	ast.Inspect(remainingAST, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
+	var stillUsed func(imp *ast.ImportSpec) bool
+	if info := typeInfoOf(ws, sourceFile); info != nil {
+		stillUsed = func(imp *ast.ImportSpec) bool {
+			path := strings.Trim(imp.Path.Value, `"`)
+			for ident, obj := range info.Uses {
+				pkgName, ok := obj.(*gotypes.PkgName)
+				if !ok || pkgName.Imported().Path() != path || !remaining(ident.Pos()) {
+					continue
+				}
+				if imp.Name == nil && pkgName.Name() == pkgName.Imported().Name() || imp.Name != nil && pkgName.Name() == imp.Name.Name {
+					return true
+				}
+			}
+			return false
 		}
-		if ident, ok := sel.X.(*ast.Ident); ok {
-			usedNames[ident.Name] = true
+	} else {
+		stillUsed = func(imp *ast.ImportSpec) bool {
+			if imp.Name == nil {
+				return true
+			}
+			used := false
+			ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == imp.Name.Name && remaining(id.Pos()) {
+						used = true
+					}
+				}
+				return !used
+			})
+			return used
 		}
-		return true
-	})
+	}
 
 	var unused []*ast.ImportSpec
 	for _, imp := range sourceFile.AST.Imports {
-		localName, _ := importLocalName(imp)
-		if localName == "" || usedNames[localName] {
-			continue // blank/dot import, or still referenced elsewhere
+		if imp.Name != nil && (imp.Name.Name == "_" || imp.Name.Name == ".") || stillUsed(imp) {
+			continue
 		}
 		unused = append(unused, imp)
 	}
 	return unused
+}
+
+// typeInfoOf returns the type info of file's package when file was
+// type-checked with it, else nil.
+func typeInfoOf(ws *types.Workspace, file *types.File) *gotypes.Info {
+	pkg := findPackageForFile(ws, file.Path)
+	if pkg == nil || pkg.TypesInfo == nil {
+		return nil
+	}
+	if _, ok := pkg.TypesInfo.Defs[file.AST.Name]; !ok {
+		return nil
+	}
+	return pkg.TypesInfo
 }
 
 // lineRange returns the [start, end) byte offsets of the whole line

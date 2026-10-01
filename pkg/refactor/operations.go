@@ -425,7 +425,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			i := slices.IndexFunc(bySource, func(s referenceSource) bool { return s.importPath == importPath })
 			if i < 0 {
 				i = len(bySource)
-				bySource = append(bySource, referenceSource{importPath: importPath})
+				bySource = append(bySource, referenceSource{importPath: importPath, name: refSource[ref].Name})
 			}
 			bySource[i].refs = append(bySource[i].refs, ref)
 		}
@@ -484,7 +484,7 @@ func (op *MoveSymbolOperation) planTargetPackageReferences(ws *types.Workspace, 
 					refs = append(refs, r)
 				}
 			}
-			if spec := unusedSourceImport(file, refs, importPath); spec != nil {
+			if spec := unusedSourceImport(file, refs, importPath, refSource[ref].Name); spec != nil {
 				changes = append(changes, removeImportSpec(ws, file, spec))
 			}
 		}

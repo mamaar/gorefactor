@@ -47,9 +47,10 @@ func importSpecText(alias, path string) string {
 }
 
 // referenceSource is the references in one file to symbols moved out of the
-// package imported at importPath.
+// package imported at importPath, whose own name is name.
 type referenceSource struct {
 	importPath string
+	name       string
 	refs       []*types.Reference
 }
 
@@ -67,7 +68,7 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 
 	dropped := slices.Clone(unused)
 	for _, src := range sources {
-		if spec := unusedSourceImport(file, src.refs, src.importPath); spec != nil && !slices.Contains(dropped, spec) {
+		if spec := unusedSourceImport(file, src.refs, src.importPath, src.name); spec != nil && !slices.Contains(dropped, spec) {
 			dropped = append(dropped, spec)
 		}
 	}
@@ -109,16 +110,20 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 	return edit
 }
 
-// unusedSourceImport returns the file's named import of the source package
-// when the moved references are all of its uses, so it is unused once they are
-// rewritten; otherwise nil. Blank and dot imports are never returned.
-func unusedSourceImport(file *types.File, refs []*types.Reference, sourceImportPath string) *ast.ImportSpec {
+// unusedSourceImport returns the file's import of the source package, whose
+// own name is sourceName, when the moved references are all of its uses, so it
+// is unused once they are rewritten; otherwise nil. Blank and dot imports are
+// never returned.
+func unusedSourceImport(file *types.File, refs []*types.Reference, sourceImportPath, sourceName string) *ast.ImportSpec {
 	for _, imp := range file.AST.Imports {
 		if strings.Trim(imp.Path.Value, `"`) != sourceImportPath {
 			continue
 		}
-		name, _ := importLocalName(imp)
-		if name == "" {
+		name := sourceName
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		if name == "_" || name == "." {
 			continue
 		}
 		moved := 0
