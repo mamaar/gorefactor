@@ -103,6 +103,7 @@ func (u *WorkspaceUpdater) removePackage(v *analysis.View, pkg *types.Package, s
 	if pkg.ImportPath != "" {
 		delete(v.Workspace.ImportToPath, pkg.ImportPath)
 	}
+	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
 	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
 		u.logger.Error("remove: dependency graph rebuild failed", "dir", pkg.Dir, "err", err)
@@ -161,6 +162,7 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 		v.Workspace.ImportToPath[pkg.ImportPath] = pkg.Path
 	}
 
+	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
 	if _, err := v.Resolver.BuildSymbolTable(pkg); err != nil {
 		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)

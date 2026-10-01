@@ -332,3 +332,26 @@ func TestUpdater_RemovingPackageDropsItFromDependencyGraph(t *testing.T) {
 		t.Errorf("PackageDeps[b] = %v, still lists removed %s", g.PackageDeps[bDir], aDir)
 	}
 }
+
+func TestUpdater_CreatedPackageClosingACycleIsReportedNotRecursed(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	parser := u.set.Primary().Parser
+	write := func(rel, content string, op fsnotify.Op) {
+		path := filepath.Join(dir, rel)
+		_ = os.MkdirAll(filepath.Dir(path), 0755)
+		_ = os.WriteFile(path, []byte(content), 0644)
+		u.HandleChanges([]ChangeEvent{{Path: path, Op: op}})
+	}
+
+	write("pkg/a/a.go", "package a\n\nimport \"example.com/test/pkg/b\"\n\nfunc Hello() { b.Bye() }\n", fsnotify.Write)
+	write("pkg/d/d.go", "package d\n\nimport \"example.com/test/pkg/a\"\n\nfunc D() { a.Hello() }\n", fsnotify.Create)
+	parser.EnsureTypeChecked(u.Workspace(), u.FindPackage(filepath.Join(dir, "pkg", "d")))
+	write("pkg/b/b.go", "package b\n\nimport \"example.com/test/pkg/a\"\n\nfunc Bye() { a.Hello() }\n", fsnotify.Create)
+
+	pkgB := u.FindPackage(filepath.Join(dir, "pkg", "b"))
+	parser.EnsureTypeChecked(u.Workspace(), pkgB)
+
+	if len(pkgB.ProductionErrs) == 0 {
+		t.Fatal("no production error for the import cycle")
+	}
+}
