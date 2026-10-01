@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -13,10 +14,37 @@ import (
 // --- move_symbol ---
 
 type MoveSymbolInput struct {
-	Symbol      string `json:"symbol" jsonschema:"symbol name to move"`
-	FromPackage string `json:"from_package" jsonschema:"source package path (relative to workspace root)"`
-	ToPackage   string `json:"to_package" jsonschema:"target package path (relative to workspace root)"`
-	DryRun      bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+	Symbol      string   `json:"symbol,omitempty" jsonschema:"name of the one symbol to move; give exactly one of symbol and symbols"`
+	Symbols     []string `json:"symbols,omitempty" jsonschema:"names of several symbols of from_package to move together; give exactly one of symbol and symbols"`
+	FromPackage string   `json:"from_package" jsonschema:"source package path (relative to workspace root)"`
+	ToPackage   string   `json:"to_package" jsonschema:"target package path (relative to workspace root)"`
+	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+}
+
+// request is the move the input asks for, or an error when it names no symbol
+// or both symbol and symbols.
+func (in MoveSymbolInput) request(ws *types.Workspace) (types.MoveSymbolRequest, error) {
+	if (in.Symbol == "") == (len(in.Symbols) == 0) {
+		return types.MoveSymbolRequest{}, fmt.Errorf("give exactly one of symbol and symbols")
+	}
+	from := types.ResolvePackagePath(ws, in.FromPackage)
+	req := types.MoveSymbolRequest{
+		SymbolName:  in.Symbol,
+		FromPackage: from,
+		ToPackage:   types.ResolvePackagePath(ws, in.ToPackage),
+	}
+	for _, name := range in.Symbols {
+		req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: from, Name: name})
+	}
+	return req, nil
+}
+
+// label names the symbols the input moves.
+func (in MoveSymbolInput) label() string {
+	if in.Symbol != "" {
+		return in.Symbol
+	}
+	return strings.Join(in.Symbols, ", ")
 }
 
 // --- move_package ---
@@ -58,17 +86,21 @@ func planMoveSymbol(state *MCPServer, in MoveSymbolInput) (*types.RefactoringPla
 	if err != nil {
 		return nil, err
 	}
-	return state.GetEngine().MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
-		SymbolName:  in.Symbol,
-		FromPackage: types.ResolvePackagePath(ws, in.FromPackage),
-		ToPackage:   types.ResolvePackagePath(ws, in.ToPackage),
-	})
+	req, err := in.request(ws)
+	if err != nil {
+		return nil, err
+	}
+	return state.GetEngine().MoveSymbolAcrossConfigs(req)
 }
 
 func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "move_symbol",
 		Description: "Move a symbol (function, type, variable, constant) from one package to another. Updates all references across the workspace. " +
+			"Give one name as symbol, or several as symbols to move them together. " +
+			"Names declared together must be moved together through symbols: the constants of an iota group (or any group that repeats an expression implicitly) and the names of one declaration such as var a, b = f(). " +
+			"Moving a variable moves its initializer's side effects to the target package's init. " +
+			"A type does not take its constants along: name them in the same call, or the move is refused as an import cycle when its methods use constants left behind. " +
 			"The move is planned for the default build configuration and checked under every other one (GOOS/GOARCH variants, custom build tags) that covers the workspace; " +
 			"it is refused when a file outside the default configuration references or declares the symbol.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
@@ -76,7 +108,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			if r := recover(); r != nil {
 				stack := debug.Stack()
 				state.logger.Error("panic in move_symbol handler",
-					"symbol", in.Symbol,
+					"symbol", in.label(),
 					"from", in.FromPackage,
 					"to", in.ToPackage,
 					"panic", fmt.Sprintf("%v", r),
@@ -90,7 +122,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		planResult, err := executePlan(state, plan, "move symbol "+in.Symbol, in.DryRun)
+		planResult, err := executePlan(state, plan, "move symbol "+in.label(), in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
