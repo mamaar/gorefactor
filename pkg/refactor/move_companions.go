@@ -287,8 +287,74 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		if len(found) > 0 {
 			return found[firstStrandedUse(found)].error(m.pkg.Path)
 		}
+		if err := checkSplitInterfaceImplementers(ws, m.pkg, moving); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// checkSplitInterfaceImplementers refuses a move that separates a named
+// interface with an unexported method from a type that implements it: the
+// method can satisfy the interface only from the package that declares it.
+// Pairs are taken in name order.
+func checkSplitInterfaceImplementers(ws *types.Workspace, pkg *types.Package, moving []*movingSymbol) error {
+	scope := pkg.TypesPkg.Scope()
+	moverOf := func(obj gotypes.Object) *movingSymbol {
+		pos := ws.FileSet.Position(obj.Pos())
+		return movingAt(moving, pos.Filename, pos.Offset)
+	}
+	for _, ifaceName := range scope.Names() {
+		ifaceObj, ok := scope.Lookup(ifaceName).(*gotypes.TypeName)
+		if !ok || ifaceObj.IsAlias() {
+			continue
+		}
+		iface, ok := ifaceObj.Type().Underlying().(*gotypes.Interface)
+		if named, isNamed := ifaceObj.Type().(*gotypes.Named); !ok || !isNamed || named.TypeParams().Len() > 0 {
+			continue
+		}
+		method := firstUnexportedMethod(iface, pkg.TypesPkg)
+		if method == nil {
+			continue
+		}
+		for _, typeName := range scope.Names() {
+			typeObj, ok := scope.Lookup(typeName).(*gotypes.TypeName)
+			if !ok || typeObj == ifaceObj || typeObj.IsAlias() {
+				continue
+			}
+			named, ok := typeObj.Type().(*gotypes.Named)
+			if !ok || named.TypeParams().Len() > 0 || gotypes.IsInterface(named) || !typeImplements(named, iface) {
+				continue
+			}
+			typeMover, ifaceMover := moverOf(typeObj), moverOf(ifaceObj)
+			if (typeMover == nil) == (ifaceMover == nil) {
+				continue
+			}
+			message := fmt.Sprintf("cannot move %s: it implements %s through the unexported method %s, and %s stays in package %s",
+				typeName, ifaceName, method.Name(), ifaceName, pkg.Path)
+			blamed := typeMover
+			if typeMover == nil {
+				blamed = ifaceMover
+				message = fmt.Sprintf("cannot move %s: %s implements it through the unexported method %s, and %s stays in package %s",
+					ifaceName, typeName, method.Name(), typeName, pkg.Path)
+			}
+			return &groupMemberError{index: blamed.owner, err: &types.RefactorError{Type: types.VisibilityViolation, Message: message}}
+		}
+	}
+	return nil
+}
+
+// firstUnexportedMethod returns the first method of iface, by name, that is
+// unexported and declared in pkg; nil when there is none.
+func firstUnexportedMethod(iface *gotypes.Interface, pkg *gotypes.Package) *gotypes.Func {
+	var first *gotypes.Func
+	for i := range iface.NumMethods() {
+		m := iface.Method(i)
+		if !m.Exported() && m.Pkg() == pkg && (first == nil || m.Name() < first.Name()) {
+			first = m
+		}
+	}
+	return first
 }
 
 // strandedUse is a use of an unexported member that crosses the boundary of
