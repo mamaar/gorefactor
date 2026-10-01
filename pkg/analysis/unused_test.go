@@ -221,25 +221,6 @@ func TestFindUnusedSymbols_IncludeExported(t *testing.T) {
 	}
 }
 
-func TestGetUnusedUnexportedSymbols(t *testing.T) {
-	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	safeToDelete, err := analyzer.GetUnusedUnexportedSymbols()
-	if err != nil {
-		t.Fatalf("GetUnusedUnexportedSymbols failed: %v", err)
-	}
-
-	for _, u := range safeToDelete {
-		if u.Symbol.Exported {
-			t.Errorf("GetUnusedUnexportedSymbols returned exported symbol %s", u.Symbol.Name)
-		}
-		if !u.SafeToDelete {
-			t.Errorf("GetUnusedUnexportedSymbols returned symbol not safe to delete: %s", u.Symbol.Name)
-		}
-	}
-}
-
 func TestFindUnusedSymbols_SkipsSpecialFunctions(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))

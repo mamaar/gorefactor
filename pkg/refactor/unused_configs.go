@@ -3,6 +3,7 @@ package refactor
 import (
 	"cmp"
 	"go/token"
+	"math"
 	"path/filepath"
 	"slices"
 
@@ -81,16 +82,47 @@ type unusedDecl struct {
 	unresolved *types.Blocker
 }
 
+// merge folds in the finding of another view: the declaration is safe to delete
+// only if every view says so, and keeps the strongest cause.
+func (d *unusedDecl) merge(u *analysis.UnusedSymbol) {
+	d.SafeToDelete = d.SafeToDelete && u.SafeToDelete
+	if u.Cause > d.Cause {
+		d.Cause, d.Reason = u.Cause, u.Reason
+	}
+	d.Referrers = appendSymbols(d.Referrers, u.Referrers, analysis.MaxReferrers)
+	d.UnusedCallers = appendSymbols(d.UnusedCallers, u.UnusedCallers, math.MaxInt)
+}
+
+// appendSymbols appends the symbols of more that dst lacks, up to limit in all.
+func appendSymbols(dst, more []*types.Symbol, limit int) []*types.Symbol {
+	for _, s := range more {
+		if len(dst) >= limit {
+			break
+		}
+		if !declaredIn(dst, s) {
+			dst = append(dst, s)
+		}
+	}
+	return dst
+}
+
+// declaredIn reports whether list holds the declaration of s, which other
+// views know under their own symbol.
+func declaredIn(list []*types.Symbol, s *types.Symbol) bool {
+	for _, other := range list {
+		if other.File == s.File && other.Position == s.Position {
+			return true
+		}
+	}
+	return false
+}
+
 // visit records what v reports unused and marks the rest of its symbols used.
 func (r *unusedRun) visit(v *analysis.View) error {
 	a := analysis.NewUnusedAnalyzer(v.Workspace, r.engine.logger)
 	a.SetIncludeExported(r.req.IncludeExported)
 	a.SetIndex(r.indexOf(v))
-	find := a.GetUnusedUnexportedSymbols
-	if r.req.IncludeExported {
-		find = a.FindUnusedSymbols
-	}
-	unused, err := find()
+	unused, err := a.FindUnusedSymbols()
 	if err != nil {
 		return err
 	}
@@ -105,6 +137,8 @@ func (r *unusedRun) visit(v *analysis.View) error {
 			d = &unusedDecl{UnusedSymbol: *u}
 			d.key, d.keyed = symbolKeyOf(u.Symbol)
 			r.decls[site] = d
+		} else {
+			d.merge(u)
 		}
 		d.configs = append(d.configs, v.Config.String())
 		if d.keyed {
@@ -147,6 +181,8 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 		out.Configs[i] = v.Config.String()
 	}
 
+	r.keepCalleesOfUsedCallers()
+
 	var kept []*unusedDecl
 	keys := make(types.SymbolKeySet)
 	for _, d := range r.decls {
@@ -183,6 +219,31 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 		out.Unused = append(out.Unused, f)
 	}
 	return out
+}
+
+// keepCalleesOfUsedCallers marks as used each declaration whose only users are
+// unused code, one of which is used in another view. It repeats until no
+// declaration changes, as a kept declaration can in turn keep its own callees.
+func (r *unusedRun) keepCalleesOfUsedCallers() {
+	for changed := true; changed; {
+		changed = false
+		for _, d := range r.decls {
+			if !d.keyed || r.used.Has(d.key) || d.Cause != analysis.CauseOnlyUnusedCode || !r.anyCallerUsed(d) {
+				continue
+			}
+			r.used[d.key] = struct{}{}
+			changed = true
+		}
+	}
+}
+
+func (r *unusedRun) anyCallerUsed(d *unusedDecl) bool {
+	for _, c := range d.UnusedCallers {
+		if key, ok := symbolKeyOf(c); ok && r.used.Has(key) {
+			return true
+		}
+	}
+	return false
 }
 
 // unusedEverywhere reports whether no view uses d: its key is not used, or

@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -82,5 +83,96 @@ func TestUnusedAcrossConfigs_PackagesFilterKeepsOnlyThose(t *testing.T) {
 	}
 	if got := unusedNames(report.Unused); !reflect.DeepEqual(got, []string{"q.go:deadQ"}) {
 		t.Errorf("unused = %v, want only deadQ", got)
+	}
+}
+
+func findingNamed(findings []UnusedFinding, file, name string) *UnusedFinding {
+	for i := range findings {
+		if filepath.Base(findings[i].Symbol.File) == file && findings[i].Symbol.Name == name {
+			return &findings[i]
+		}
+	}
+	return nil
+}
+
+func TestUnusedAcrossConfigs_DefaultModeReportsFindingsThatAreNotSafeToDelete(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/p.go": "package p\n\nfunc helper() {}\n\nfunc deadCaller() { helper() }\n",
+	})
+
+	report, err := eng.UnusedAcrossConfigs(UnusedRequest{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := findingNamed(report.Unused, "p.go", "helper")
+	if helper == nil {
+		t.Fatalf("unused = %v, want helper reported", unusedNames(report.Unused))
+	}
+	if helper.Cause != analysis.CauseOnlyUnusedCode || helper.SafeToDelete {
+		t.Errorf("helper: cause %v, safe %v, want only unused code and not safe", helper.Cause, helper.SafeToDelete)
+	}
+	caller := findingNamed(report.Unused, "p.go", "deadCaller")
+	if caller == nil || !caller.SafeToDelete {
+		t.Errorf("deadCaller = %+v, want reported and safe to delete", caller)
+	}
+}
+
+func TestUnusedAcrossConfigs_TestReferenceInOneConfigMakesTheFindingNotSafeToDelete(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/p.go":           "package p\n\nfunc helper() {}\n",
+		"p/p_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestHelper(t *testing.T) { helper() }\n",
+	})
+
+	report, err := eng.UnusedAcrossConfigs(UnusedRequest{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper := findingNamed(report.Unused, "p.go", "helper")
+	if helper == nil {
+		t.Fatalf("unused = %v, want helper reported", unusedNames(report.Unused))
+	}
+	if helper.Cause != analysis.CauseOnlyTests || helper.SafeToDelete || helper.Reason != "Only referenced from tests" {
+		t.Errorf("helper: cause %v, reason %q, safe %v, want only tests and not safe", helper.Cause, helper.Reason, helper.SafeToDelete)
+	}
+	if len(helper.Referrers) != 1 || helper.Referrers[0].Name != "TestHelper" {
+		t.Errorf("referrers = %v, want TestHelper", helper.Referrers)
+	}
+}
+
+func TestUnusedAcrossConfigs_CalleeOfDeadSiblingWhoseKeyIsUsedElsewhereIsNotReported(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/f_default.go": "//go:build !tagx\n\npackage p\n\nfunc f() { g() }\n",
+		"p/g_default.go": "//go:build !tagx\n\npackage p\n\nfunc g() {}\n",
+		"p/f_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc f() {}\n",
+		"p/use_tagx.go":  "//go:build tagx\n\npackage p\n\nfunc Use() { f() }\n",
+	})
+
+	report, err := eng.UnusedAcrossConfigs(UnusedRequest{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unusedNames(report.Unused); len(got) != 0 {
+		t.Errorf("unused = %v, want none: f is used under tagx and g only by f", got)
+	}
+}
+
+func TestUnusedAcrossConfigs_ProductionUseUnderOneTagKeepsCalleeUnreportedDespiteDeadCallerElsewhere(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, map[string]string{
+		"p/g.go":         "package p\n\nfunc g() {}\n",
+		"p/c_default.go": "//go:build !tagx\n\npackage p\n\nfunc caller() { g() }\n",
+		"p/c_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc caller() { g() }\n",
+		"p/use_tagx.go":  "//go:build tagx\n\npackage p\n\nfunc Use() { caller() }\n",
+	})
+
+	report, err := eng.UnusedAcrossConfigs(UnusedRequest{})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := unusedNames(report.Unused); len(got) != 0 {
+		t.Errorf("unused = %v, want none", got)
 	}
 }

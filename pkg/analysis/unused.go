@@ -40,6 +40,9 @@ type UnusedSymbol struct {
 	// Referrers are up to five declarations that refer to the symbol without
 	// keeping it alive: unused code and tests.
 	Referrers []*types.Symbol
+	// UnusedCallers are all the non-test declarations that refer to the symbol,
+	// or to a method of it from outside the type. All of them are unused too.
+	UnusedCallers []*types.Symbol
 }
 
 // UnusedAnalyzer finds unused symbols in the workspace
@@ -90,7 +93,7 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	m := &marker{ua: ua, live: make(map[*usageNode]bool, len(g.nodes)), ifaceMethodNames: ua.collectInterfaceMethodNames()}
 	m.markFrom(g)
 
-	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live)}
+	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live), callers: deadCallers(g, m.live)}
 	var unused []*UnusedSymbol
 	for _, n := range g.nodes {
 		if u := r.symbolOf(n); u != nil {
@@ -102,12 +105,7 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	return unused, nil
 }
 
-func compareUnused(a, b *UnusedSymbol) int {
-	return cmp.Or(
-		cmp.Compare(a.Symbol.File, b.Symbol.File),
-		cmp.Compare(a.Symbol.Position, b.Symbol.Position),
-	)
-}
+func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }
 
 // collectInterfaceMethodNames builds a set of all method names declared in interfaces
 // across the workspace. This is computed once and used for O(1) lookups in
@@ -165,23 +163,6 @@ func (ua *UnusedAnalyzer) isTestFunction(symbol *types.Symbol) bool {
 	}
 
 	return false
-}
-
-// GetUnusedUnexportedSymbols returns only unexported unused symbols that are safe to delete
-func (ua *UnusedAnalyzer) GetUnusedUnexportedSymbols() ([]*UnusedSymbol, error) {
-	allUnused, err := ua.FindUnusedSymbols()
-	if err != nil {
-		return nil, err
-	}
-
-	var safeToDelete []*UnusedSymbol
-	for _, unused := range allUnused {
-		if unused.SafeToDelete && !unused.Symbol.Exported {
-			safeToDelete = append(safeToDelete, unused)
-		}
-	}
-
-	return safeToDelete, nil
 }
 
 // FormatUnusedSymbol formats an unused symbol for display
@@ -279,6 +260,24 @@ type unusedReport struct {
 	// outside holds, for a type, the strongest cause among references to its
 	// methods from outside the type.
 	outside map[*usageNode]UnusedCause
+	// callers holds, per dead node, the non-test nodes that refer to it.
+	callers map[*usageNode][]*usageNode
+}
+
+// deadCallers inverts the reference edges that lead to dead nodes.
+func deadCallers(g *usageGraph, live map[*usageNode]bool) map[*usageNode][]*usageNode {
+	callers := make(map[*usageNode][]*usageNode)
+	for _, n := range g.nodes {
+		if n.test {
+			continue
+		}
+		for _, target := range n.out {
+			if !live[target] && !slices.Contains(callers[target], n) {
+				callers[target] = append(callers[target], n)
+			}
+		}
+	}
+	return callers
 }
 
 // outsideCallers finds, per dead receiver type, how its methods are referred
@@ -312,11 +311,12 @@ func (r *unusedReport) symbolOf(n *usageNode) *UnusedSymbol {
 
 	cause := r.causeOf(n)
 	return &UnusedSymbol{
-		Symbol:       s,
-		SafeToDelete: !s.Exported && cause <= CauseOnlyDeclarations,
-		Cause:        cause,
-		Reason:       cause.String(),
-		Referrers:    r.referrersOf(n),
+		Symbol:        s,
+		SafeToDelete:  !s.Exported && cause <= CauseOnlyDeclarations,
+		Cause:         cause,
+		Reason:        cause.String(),
+		Referrers:     r.referrersOf(n),
+		UnusedCallers: r.unusedCallersOf(n),
 	}
 }
 
@@ -367,13 +367,13 @@ func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 	return CauseNoReferences
 }
 
-// referrersOf returns up to maxReferrers declarations that refer to n, or to a
+// referrersOf returns up to MaxReferrers declarations that refer to n, or to a
 // method of n when they are outside the type.
 func (r *unusedReport) referrersOf(n *usageNode) []*types.Symbol {
 	var out []*types.Symbol
 	for _, src := range append([]*usageNode{n}, n.methods...) {
 		for _, ref := range src.referrers {
-			if len(out) == maxReferrers {
+			if len(out) == MaxReferrers {
 				return out
 			}
 			if ref.symbol == nil || ref.recv == n || slices.Contains(out, ref.symbol) {
@@ -383,4 +383,24 @@ func (r *unusedReport) referrersOf(n *usageNode) []*types.Symbol {
 		}
 	}
 	return out
+}
+
+// unusedCallersOf returns the non-test declarations that refer to n, or to a
+// method of n when they are outside the type, ordered by position.
+func (r *unusedReport) unusedCallersOf(n *usageNode) []*types.Symbol {
+	var out []*types.Symbol
+	for _, src := range append([]*usageNode{n}, n.methods...) {
+		for _, ref := range r.callers[src] {
+			if ref.symbol == nil || ref == n || ref.recv == n || slices.Contains(out, ref.symbol) {
+				continue
+			}
+			out = append(out, ref.symbol)
+		}
+	}
+	slices.SortFunc(out, compareSymbols)
+	return out
+}
+
+func compareSymbols(a, b *types.Symbol) int {
+	return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Position, b.Position))
 }

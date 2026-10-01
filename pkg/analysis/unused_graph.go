@@ -10,7 +10,8 @@ import (
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
-const maxReferrers = 5
+// MaxReferrers caps UnusedSymbol.Referrers.
+const MaxReferrers = 5
 
 // usageNode is one top-level declaration name.
 type usageNode struct {
@@ -282,7 +283,7 @@ func addUse(referrer, target *usageNode) {
 		return
 	}
 
-	if len(target.referrers) < maxReferrers && !slices.Contains(target.referrers, referrer) {
+	if len(target.referrers) < MaxReferrers && !slices.Contains(target.referrers, referrer) {
 		target.referrers = append(target.referrers, referrer)
 	}
 
