@@ -809,3 +809,16 @@ func BenchmarkMemoryUsage_TypeIndex(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkFindUnusedSymbols(b *testing.B) {
+	workspace := createTypedBenchmarkWorkspace(b, 100)
+	analyzer := NewUnusedAnalyzer(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	analyzer.SetIncludeExported(true)
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		if _, err := analyzer.FindUnusedSymbols(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
