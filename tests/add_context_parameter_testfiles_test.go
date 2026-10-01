@@ -126,8 +126,12 @@ func unattributedTestsWorkspace(t *testing.T) string {
 }
 
 type planResultJSON struct {
-	Success        bool `json:"success"`
-	DryRun         bool `json:"dry_run"`
+	Success       bool   `json:"success"`
+	DryRun        bool   `json:"dry_run"`
+	BlockingIssue string `json:"blocking_issue"`
+	Diffs         []struct {
+		File string `json:"file"`
+	} `json:"diffs"`
 	UncoveredFiles []struct {
 		File    string   `json:"file"`
 		Configs []string `json:"configs"`

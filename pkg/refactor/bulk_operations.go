@@ -135,7 +135,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		// Replace package declaration. For an external test file
 		// (package <name>_test) the same prefix replace correctly yields
 		// <targetPkgName>_test.
-		newContent := strings.Replace(content, "package "+sourcePackage.Name, "package "+targetPkgName, 1)
+		newContent := rewritePackageClause(ws, file, content, sourcePackage.Name, targetPkgName)
 		// Rewrite the package's own import path within the moved content. This
 		// is a no-op for ordinary files (a package never imports itself) but
 		// is essential for an external test file (package <name>_test), which
