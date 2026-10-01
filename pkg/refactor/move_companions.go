@@ -14,9 +14,8 @@ import (
 // This file implements the "companion declarations" logic for MoveSymbolOperation.
 //
 // Background: move_symbol already moves a type's method set along with the
-// type itself (see generateMethodRemovalChanges / extractMethodsForType in
-// operations.go) — the tool's documented contract is that moving a type moves
-// its full method set, not just the bare declaration. But a type's
+// type itself (see methodEntries in operations.go) — the tool's documented
+// contract is that moving a type moves its full method set, not just the bare declaration. But a type's
 // constructor (idiomatically `func NewFoo(...) *Foo { return &Foo{...} }`)
 // is a plain package-level function, not a method, so it was never
 // considered part of that bundle. If the constructor builds the struct via
@@ -414,7 +413,7 @@ func (u strandedUse) error(sourcePackage string) error {
 		return &groupMemberError{index: u.user.owner, err: &types.RefactorError{
 			Type: types.VisibilityViolation,
 			Message: fmt.Sprintf("%s cannot move: it uses %s, which is unexported and stays in package %s; move %s along or export it first",
-				u.user.sym.Name, u.name, sourcePackage, u.name),
+				u.user.name(), u.name, sourcePackage, u.name),
 			File: u.file,
 			Line: u.line,
 		}}
@@ -422,7 +421,7 @@ func (u strandedUse) error(sourcePackage string) error {
 	return &groupMemberError{index: u.owner.owner, err: &types.RefactorError{
 		Type: types.VisibilityViolation,
 		Message: fmt.Sprintf("%s cannot move: unexported %s moves with it but is used by code that stays in package %s; move that code along or export %s first",
-			u.owner.sym.Name, u.name, sourcePackage, u.name),
+			u.owner.name(), u.name, sourcePackage, u.name),
 		File: u.file,
 		Line: u.line,
 	}}

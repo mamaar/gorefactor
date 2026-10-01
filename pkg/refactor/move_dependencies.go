@@ -159,6 +159,6 @@ func (op *MoveSymbolOperation) checkImportCycles(ws *types.Workspace, moving []*
 	return &groupMemberError{index: blamed.owner, err: &types.RefactorError{
 		Type: types.CyclicDependency,
 		Message: fmt.Sprintf("moving %s to %s would create an import cycle: %s",
-			blamed.sym.Name, names[0], strings.Join(names, " -> ")),
+			blamed.name(), names[0], strings.Join(names, " -> ")),
 	}}
 }

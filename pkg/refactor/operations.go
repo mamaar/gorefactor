@@ -176,13 +176,23 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 }
 
 // movingSymbol is a declaration the operation moves, the package it leaves and
-// the index of the requested symbol that brought it along.
+// the index of the requested symbol that brought it along. A method of a moving
+// type is an entry of its own, with typ the entry of that type.
 type movingSymbol struct {
 	sym     *types.Symbol
 	pkg     *types.Package
 	file    *types.File
 	owner   int
+	typ     *movingSymbol
 	removal []types.Change
+}
+
+// name is what error messages call the entry: its type for a method.
+func (m *movingSymbol) name() string {
+	if m.typ != nil {
+		return m.typ.sym.Name
+	}
+	return m.sym.Name
 }
 
 func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
@@ -197,15 +207,16 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	if err != nil {
 		return nil, err
 	}
-	moveSet := make([]*types.Symbol, len(moving))
-	for i, m := range moving {
-		moveSet[i] = m.sym
-	}
-
-	// Find all references to every symbol being moved together.
+	// Find all references to every symbol being moved together. A method is
+	// reached through its type, so only the requested symbols are searched.
+	var moveSet []*types.Symbol
 	var allReferences []*types.Reference
 	refSource := make(map[*types.Reference]*types.Package)
 	for _, m := range moving {
+		if m.typ != nil {
+			continue
+		}
+		moveSet = append(moveSet, m.sym)
 		refs, err := resolver.FindReferences(m.sym)
 		if err != nil {
 			return nil, err
@@ -225,7 +236,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		if m.file == nil {
 			continue
 		}
-		c, err := op.generateSymbolRemovalChanges(m.file, m.sym)
+		c, err := op.generateSymbolRemovalChanges(m)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +294,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			// whose symbol has moved.
 			return nil, &groupMemberError{index: owner.owner, err: &types.RefactorError{
 				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.sym.Name, ref.Symbol.Name),
+				Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.name(), ref.Symbol.Name),
 			}}
 		}
 	}
@@ -417,10 +428,78 @@ func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *anal
 				}}
 			}
 			seen[s], names[s.Name] = true, true
-			moving = append(moving, &movingSymbol{sym: s, pkg: pkg, file: findFileContainingSymbol(pkg, s), owner: i})
+			entry := &movingSymbol{sym: s, pkg: pkg, file: findFileContainingSymbol(pkg, s), owner: i}
+			moving = append(moving, entry)
+			if s.Kind != types.TypeSymbol {
+				continue
+			}
+			methods, err := methodEntries(ws, entry)
+			if err != nil {
+				return nil, &groupMemberError{index: i, err: err}
+			}
+			moving = append(moving, methods...)
 		}
 	}
 	return moving, nil
+}
+
+// filesByPath returns first, if any, followed by the other files by path.
+func filesByPath(files map[string]*types.File, first *types.File) []*types.File {
+	var rest []*types.File
+	for _, f := range files {
+		if f != first {
+			rest = append(rest, f)
+		}
+	}
+	slices.SortFunc(rest, func(a, b *types.File) int { return strings.Compare(a.Path, b.Path) })
+	if first != nil {
+		return append([]*types.File{first}, rest...)
+	}
+	return rest
+}
+
+// methodEntries returns an entry for each method of the type moving, from the
+// type's own file first and then the package's other files by path. A method
+// in an in-package test file cannot move and is refused.
+func methodEntries(ws *types.Workspace, typ *movingSymbol) ([]*movingSymbol, error) {
+	typeName := typ.sym.Name
+	for _, file := range filesByPath(typ.pkg.TestFiles, nil) {
+		if file.AST == nil || file.AST.Name.Name != typ.pkg.Name {
+			continue
+		}
+		for _, decl := range file.AST.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && receiverTypeName(fd) == typeName {
+				rel, err := filepath.Rel(ws.RootPath, file.Path)
+				if err != nil {
+					rel = file.Path
+				}
+				line := ws.FileSet.Position(fd.Name.Pos()).Line
+				return nil, &types.RefactorError{
+					Type:    types.InvalidOperation,
+					Message: fmt.Sprintf("cannot move %s: its method %s is declared in the test file %s:%d; move or remove it first", typeName, fd.Name.Name, filepath.ToSlash(rel), line),
+					File:    file.Path,
+					Line:    line,
+				}
+			}
+		}
+	}
+
+	files := filesByPath(typ.pkg.Files, typ.file)
+	var methods []*movingSymbol
+	for _, file := range files {
+		if file == nil || file.AST == nil {
+			continue
+		}
+		for _, decl := range file.AST.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || receiverTypeName(fd) != typeName {
+				continue
+			}
+			sym := &types.Symbol{Name: fd.Name.Name, Kind: types.MethodSymbol, File: file.Path, Position: fd.Name.Pos()}
+			methods = append(methods, &movingSymbol{sym: sym, pkg: typ.pkg, file: file, owner: typ.owner, typ: typ})
+		}
+	}
+	return methods, nil
 }
 
 // movingAt returns the moved symbol whose removal covers offset in file.
@@ -750,7 +829,8 @@ func (op *RenamePackageOperation) Description() string {
 
 // Helper methods for MoveSymbolOperation
 
-func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, symbol *types.Symbol) ([]types.Change, error) {
+func (op *MoveSymbolOperation) generateSymbolRemovalChanges(m *movingSymbol) ([]types.Change, error) {
+	file, symbol := m.file, m.sym
 	if file.AST == nil {
 		return nil, fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
@@ -758,19 +838,14 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, sy
 	if !ok {
 		return nil, fmt.Errorf("symbol %s not found in AST of file %s", symbol.Name, file.Path)
 	}
-	kind := "function"
-	if symbol.Kind == types.TypeSymbol {
-		kind = "type"
+	description := fmt.Sprintf("Remove function %s", symbol.Name)
+	switch {
+	case m.typ != nil:
+		description = fmt.Sprintf("Remove method %s.%s", m.typ.sym.Name, symbol.Name)
+	case symbol.Kind == types.TypeSymbol:
+		description = fmt.Sprintf("Remove type %s", symbol.Name)
 	}
-	changes := []types.Change{lineRemoval(file, start, end, fmt.Sprintf("Remove %s %s", kind, symbol.Name))}
-
-	// A type goes with its methods.
-	if symbol.Kind == types.TypeSymbol {
-		changes = append(changes, op.generateMethodRemovalChanges(file, symbol.Name)...)
-
-		// Merge overlapping or adjacent changes to avoid conflicts
-		changes = mergeChanges(changes)
-	}
+	changes := []types.Change{lineRemoval(file, start, end, description)}
 
 	// A declaration ending the file without a trailing newline has no newline to remove.
 	for i := range changes {
@@ -842,82 +917,6 @@ func declLines(file *types.File, pos token.Pos) (start, end int, keyword string,
 		}
 	}
 	return 0, 0, "", false
-}
-
-// mergeChanges merges overlapping or adjacent changes in the same file
-// Changes are sorted by start position and merged if they overlap or are adjacent
-func mergeChanges(changes []types.Change) []types.Change {
-	if len(changes) <= 1 {
-		return changes
-	}
-
-	// Verify all changes are for the same file
-	firstFile := changes[0].File
-	for i := 1; i < len(changes); i++ {
-		if changes[i].File != firstFile {
-			// Cannot merge changes from different files - return as-is
-			return changes
-		}
-	}
-
-	// Sort changes by start position
-	sortedChanges := make([]types.Change, len(changes))
-	copy(sortedChanges, changes)
-
-	// Simple bubble sort by Start position
-	for i := range sortedChanges {
-		for j := i + 1; j < len(sortedChanges); j++ {
-			if sortedChanges[j].Start < sortedChanges[i].Start {
-				sortedChanges[i], sortedChanges[j] = sortedChanges[j], sortedChanges[i]
-			}
-		}
-	}
-
-	// Merge overlapping or adjacent changes
-	var merged []types.Change
-	current := sortedChanges[0]
-
-	for i := 1; i < len(sortedChanges); i++ {
-		next := sortedChanges[i]
-
-		// Check if changes overlap or are adjacent
-		if next.Start <= current.End {
-			// Merge: extend current to include next
-			if next.End > current.End {
-				current.End = next.End
-			}
-			// Update description to reflect merged changes
-			if !strings.Contains(current.Description, next.Description) {
-				current.Description = fmt.Sprintf("%s; %s", current.Description, next.Description)
-			}
-			// Note: OldText needs to be recalculated from file content when changes are merged
-			// The executor will handle this based on Start and End positions
-			current.OldText = "" // Clear old text - it will be recalculated
-		} else {
-			// No overlap, save current and move to next
-			merged = append(merged, current)
-			current = next
-		}
-	}
-
-	// Don't forget the last change
-	merged = append(merged, current)
-
-	return merged
-}
-
-// generateMethodRemovalChanges generates changes to remove all methods with a given type as receiver
-func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, typeName string) []types.Change {
-	var changes []types.Change
-	for _, d := range file.AST.Decls {
-		funcDecl, ok := d.(*ast.FuncDecl)
-		if !ok || receiverTypeName(funcDecl) != typeName {
-			continue
-		}
-		start, end, _, _ := declLines(file, funcDecl.Name.Pos())
-		changes = append(changes, lineRemoval(file, start, end, fmt.Sprintf("Remove method %s.%s", typeName, funcDecl.Name.Name)))
-	}
-	return changes
 }
 
 // generateSymbolAdditionChanges builds the change(s) that add every moving
@@ -1039,9 +1038,11 @@ func importForSource(ws *types.Workspace, targetFile *types.File, source *types.
 }
 
 func symbolNames(moving []*movingSymbol) string {
-	names := make([]string, len(moving))
-	for i, m := range moving {
-		names[i] = m.sym.Name
+	var names []string
+	for _, m := range moving {
+		if m.typ == nil {
+			names = append(names, m.sym.Name)
+		}
 	}
 	return strings.Join(names, ", ")
 }
@@ -1480,13 +1481,6 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 		lines[spec] = keyword + " " + strings.TrimLeft(lines[spec], " \t")
 		sourceCode = strings.Join(lines, "\n")
 	}
-
-	// A type moves with its methods.
-	if symbol.Kind == types.TypeSymbol {
-		if methodsCode := op.extractMethodsForType(file, symbol.Name, qualifiers); methodsCode != "" {
-			sourceCode += "\n\n" + methodsCode
-		}
-	}
 	return sourceCode, nil
 }
 
@@ -1522,20 +1516,6 @@ func copyWithInserts(content []byte, start, end int, inserts map[int]string) str
 	}
 	b.Write(content[last:end])
 	return b.String()
-}
-
-// extractMethodsForType extracts all methods that have the given type as receiver
-func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName string, qualifiers map[int]string) string {
-	var methods []string
-	for _, d := range file.AST.Decls {
-		funcDecl, ok := d.(*ast.FuncDecl)
-		if !ok || receiverTypeName(funcDecl) != typeName {
-			continue
-		}
-		start, end, _, _ := declLines(file, funcDecl.Name.Pos())
-		methods = append(methods, copyLines(file.OriginalContent, start, end, qualifiers))
-	}
-	return strings.Join(methods, "\n\n")
 }
 
 // packagePathToImportPath converts an absolute package path to a Go import path
