@@ -27,13 +27,6 @@ type OrganizeByLayersInput struct {
 	DryRun              bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
-// --- fix_cycles ---
-
-type FixCyclesInput struct {
-	AutoFix bool `json:"auto_fix,omitempty" jsonschema:"attempt to automatically fix detected cycles"`
-	DryRun  bool `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
-}
-
 func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_by_dependencies",
@@ -102,36 +95,21 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "fix_cycles",
-		Description: "Detect and fix circular dependencies in the package graph.",
-	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixCyclesInput) (*mcpsdk.CallToolResult, any, error) {
+		Name:        "detect_cycles",
+		Description: "Report production import cycles and import cycles through in-package test files, as import paths. Read-only; default build configuration only.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in struct{}) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
+		defer state.RUnlock()
 
 		ws, err := state.GetWorkspace()
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		plan, err := state.GetEngine().FixCycles(ws, types.FixCyclesRequest{
-			Workspace: ws.RootPath,
-			AutoFix:   in.AutoFix,
-		})
-		if err != nil {
-			state.RUnlock()
-			return errResult(err), nil, nil
-		}
-		if !in.AutoFix {
-			state.RUnlock()
-			return textResult(map[string]any{
-				"description":  "cycle detection",
-				"cycles_found": len(plan.Changes),
-				"impact":       plan.Impact,
-			}), nil, nil
-		}
-		result, err := executePlanWithUnlock(state, plan, "fix cycles", in.DryRun)
-		if err != nil {
-			return errResult(err), nil, nil
-		}
-		return textResult(result), nil, nil
+		cycles, testCycles := state.GetEngine().DetectCycles(ws)
+		return textResult(map[string]any{
+			"cycles_found": len(cycles),
+			"cycles":       cycles,
+			"test_cycles":  testCycles,
+		}), nil, nil
 	})
 }

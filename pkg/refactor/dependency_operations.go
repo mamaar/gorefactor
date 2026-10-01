@@ -476,121 +476,38 @@ func (op *OrganizeByLayersOperation) classifyPackage(packagePath string) string 
 	return "Unclassified"
 }
 
-// FixCyclesOperation implements detecting and fixing circular dependencies
-type FixCyclesOperation struct {
-	Request types.FixCyclesRequest
-}
-
-func (op *FixCyclesOperation) Type() types.OperationType {
-	return types.FixCyclesOperation
-}
-
-func (op *FixCyclesOperation) Description() string {
-	return fmt.Sprintf("Fix circular dependencies in workspace %s", op.Request.Workspace)
-}
-
-func (op *FixCyclesOperation) Validate(ws *types.Workspace) error {
-	if op.Request.Workspace == "" {
-		return fmt.Errorf("workspace path cannot be empty")
+// detectCycles returns the production and in-package-test import cycles as
+// closed import-path lists, building the dependency graph if it is missing.
+func detectCycles(ws *types.Workspace) (cycles, testCycles [][]string) {
+	ensureDependencyGraph(ws)
+	if ws.Dependencies == nil {
+		return [][]string{}, [][]string{}
 	}
-	return nil
+	return importPathCycles(ws, ws.Dependencies.ImportCycles), importPathCycles(ws, ws.Dependencies.TestImportCycles)
 }
 
-func (op *FixCyclesOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	plan := &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       make([]types.Change, 0),
-		AffectedFiles: make([]string, 0),
-		Reversible:    true,
-	}
-
-	// Detect cycles first
-	cycles := op.detectCycles(ws)
-
-	// Generate report
-	reportContent := op.generateCycleReport(cycles)
-	reportFile := op.Request.OutputReport
-	if reportFile == "" {
-		reportFile = filepath.Join(op.Request.Workspace, "cycles_report.md")
-	}
-
-	plan.Changes = append(plan.Changes, types.Change{
-		File:        reportFile,
-		Start:       0,
-		End:         0,
-		OldText:     "",
-		NewText:     reportContent,
-		Description: "Generate circular dependency report",
-	})
-
-	plan.AffectedFiles = append(plan.AffectedFiles, reportFile)
-
-	// If auto-fix is requested and cycles exist, attempt fixes
-	if op.Request.AutoFix && len(cycles) > 0 {
-		for _, cycle := range cycles {
-			fixes := op.generateCycleFixes(cycle)
-			plan.Changes = append(plan.Changes, fixes...)
-			for _, fix := range fixes {
-				if !containsString(plan.AffectedFiles, fix.File) {
-					plan.AffectedFiles = append(plan.AffectedFiles, fix.File)
-				}
-			}
+// importPathCycles rewrites filesystem-path cycles as import paths, falling
+// back to the path relative to the workspace root.
+func importPathCycles(ws *types.Workspace, cycles [][]string) [][]string {
+	out := make([][]string, 0, len(cycles))
+	for _, cycle := range cycles {
+		named := make([]string, len(cycle))
+		for i, fsPath := range cycle {
+			named[i] = importPathOf(ws, fsPath)
 		}
+		out = append(out, named)
 	}
-
-	return plan, nil
+	return out
 }
 
-func (op *FixCyclesOperation) detectCycles(ws *types.Workspace) [][]string {
-	if ws.Dependencies != nil && len(ws.Dependencies.ImportCycles) > 0 {
-		return ws.Dependencies.ImportCycles
+func importPathOf(ws *types.Workspace, fsPath string) string {
+	if pkg := ws.Packages[fsPath]; pkg != nil && pkg.ImportPath != "" {
+		return pkg.ImportPath
 	}
-	// Dependencies not yet built — build them now
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	analyzer := analysis.NewDependencyAnalyzer(ws, logger)
-	graph, err := analyzer.BuildDependencyGraph()
-	if err != nil {
-		return nil
+	if rel, err := filepath.Rel(ws.RootPath, fsPath); err == nil {
+		return filepath.ToSlash(rel)
 	}
-	return graph.ImportCycles
-}
-
-func (op *FixCyclesOperation) generateCycleReport(cycles [][]string) string {
-	var report strings.Builder
-
-	report.WriteString("# Circular Dependencies Report\n\n")
-	report.WriteString(fmt.Sprintf("Analyzed workspace: %s\n", op.Request.Workspace))
-	report.WriteString(fmt.Sprintf("Found %d circular dependencies\n\n", len(cycles)))
-
-	if len(cycles) > 0 {
-		report.WriteString("## Detected Cycles\n\n")
-		for i, cycle := range cycles {
-			report.WriteString(fmt.Sprintf("### Cycle %d\n\n", i+1))
-			report.WriteString("```\n")
-			for j, pkg := range cycle {
-				if j > 0 {
-					report.WriteString(" → ")
-				}
-				report.WriteString(pkg)
-			}
-			if len(cycle) > 0 {
-				report.WriteString(" → " + cycle[0]) // Complete the cycle
-			}
-			report.WriteString("\n```\n\n")
-		}
-	} else {
-		report.WriteString("✅ No circular dependencies detected!\n")
-	}
-
-	return report.String()
-}
-
-func (op *FixCyclesOperation) generateCycleFixes(cycle []string) []types.Change {
-	// Cycle breaking requires moving code, extracting interfaces, or dependency
-	// injection — transformations too destructive to automate safely.
-	// The value of fix_cycles is the detection (via detectCycles), not auto-fix.
-	_ = cycle
-	return nil
+	return fsPath
 }
 
 // AnalyzeDependenciesOperation implements analyzing dependency flow
@@ -775,9 +692,4 @@ func (op *AnalyzeDependenciesOperation) generateSuggestedMoves(ws *types.Workspa
 		return moves[i].Symbol < moves[j].Symbol
 	})
 	return moves
-}
-
-// Helper functions
-func containsString(slice []string, item string) bool {
-	return slices.Contains(slice, item)
 }

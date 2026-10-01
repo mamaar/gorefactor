@@ -31,7 +31,6 @@ const (
 	ConvertAliasesOperation
 	MoveByDependenciesOperation
 	OrganizeByLayersOperation
-	FixCyclesOperation
 	AnalyzeDependenciesOperation
 	BatchOperations
 	RenameFieldOperationType
@@ -493,13 +492,6 @@ type OrganizeByLayersRequest struct {
 	InfrastructureLayer string // e.g., "pkg/"
 	ApplicationLayer string // e.g., "internal/"
 	ReorderImports bool // Whether to reorder imports according to layers
-}
-
-// FixCyclesRequest represents detecting and fixing circular dependencies
-type FixCyclesRequest struct {
-	Workspace    string
-	AutoFix      bool // If true, attempt automatic fixes
-	OutputReport string // Optional: file to write cycle analysis report
 }
 
 // AnalyzeDependenciesRequest represents analyzing dependency flow

@@ -55,7 +55,7 @@ type RefactorEngine interface {
 	// Dependency graph operations
 	MoveByDependencies(ws *types.Workspace, req types.MoveByDependenciesRequest) (*types.RefactoringPlan, error)
 	OrganizeByLayers(ws *types.Workspace, req types.OrganizeByLayersRequest) (*types.RefactoringPlan, error)
-	FixCycles(ws *types.Workspace, req types.FixCyclesRequest) (*types.RefactoringPlan, error)
+	DetectCycles(ws *types.Workspace) (cycles, testCycles [][]string)
 	AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error)
 	
 	// Batch operations
@@ -1397,31 +1397,10 @@ func (e *DefaultEngine) OrganizeByLayers(ws *types.Workspace, req types.Organize
 	return plan, nil
 }
 
-// FixCycles implements detecting and fixing circular dependencies
-func (e *DefaultEngine) FixCycles(ws *types.Workspace, req types.FixCyclesRequest) (*types.RefactoringPlan, error) {
-	operation := &FixCyclesOperation{Request: req}
-
-	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
-		return nil, fmt.Errorf("fix cycles operation validation failed: %w", err)
-	}
-
-	// Execute the operation to generate the plan
-	plan, err := operation.Execute(ws)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate fix cycles plan: %w", err)
-	}
-
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
-	plan.Operations = []types.Operation{operation}
-
-	return plan, nil
+// DetectCycles reports production import cycles and import cycles through
+// in-package test files as closed lists of import paths. It changes nothing.
+func (e *DefaultEngine) DetectCycles(ws *types.Workspace) (cycles, testCycles [][]string) {
+	return detectCycles(ws)
 }
 
 // AnalyzeDependencies implements analyzing dependency flow
