@@ -130,13 +130,16 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 
 	// Find the symbol to move
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	_, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
+	symbol, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
 	if err != nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("symbol not found: %s", ref.Name),
 			Cause:   err,
 		}
+	}
+	if err := memberRefusal(sourcePackage, symbol); err != nil {
+		return err
 	}
 	// Check that target package exists or can be created
 	if !op.Request.CreateTarget {
@@ -174,6 +177,33 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 	}
 
 	return nil
+}
+
+// memberRefusal refuses a method or struct field, which move only with their type.
+func memberRefusal(pkg *types.Package, symbol *types.Symbol) error {
+	var members map[string][]*types.Symbol
+	var what string
+	switch symbol.Kind {
+	case types.MethodSymbol:
+		members, what = pkg.Symbols.Methods, "method"
+	case types.StructFieldSymbol:
+		members, what = pkg.Symbols.Fields, "field"
+	default:
+		return nil
+	}
+	owner := ""
+	if symbol.Parent != nil {
+		owner = symbol.Parent.Name
+	}
+	for typeName, syms := range members {
+		if slices.Contains(syms, symbol) {
+			owner = typeName
+		}
+	}
+	return &types.RefactorError{
+		Type:    types.InvalidOperation,
+		Message: fmt.Sprintf("cannot move %s: it is a %s of %s and moves with its type; move %s instead", symbol.Name, what, owner, owner),
+	}
 }
 
 // movingSymbol is a declaration the operation moves, the package it leaves and
