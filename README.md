@@ -71,7 +71,7 @@ The server communicates over stdio using the MCP protocol.
 | `analyze_symbol` | Analyze a symbol's usage, references, and dependencies |
 | `analyze_dependencies` | Analyze package dependency structure |
 | `complexity` | Compute cyclomatic complexity for functions |
-| `unused` | Find symbols that no build configuration uses |
+| `unused` | Find symbols that no build configuration uses; references from tests and from unused code do not count |
 
 ### Code Quality Detection & Auto-Fix
 
@@ -120,7 +120,7 @@ Files are selected with the Go toolchain's own rules: `//go:build` and `// +buil
 
 `load_workspace` and `workspace_status` report the set as `build_configs` (name, GOOS, GOARCH, cgo, tags and the number of files only that configuration adds) and list `uncovered_files`: files no configuration can include, such as `//go:build ignore`, an unsatisfiable constraint, or a file that does not parse.
 
-These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete` and `unused`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
+These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete` and `unused`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it, where references from `_test.go` files and from unused code do not count. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
 
 `batch_operations` plans each step as the standalone tool would: `rename_symbol`, `rename_method` and `rename_field` steps under every configuration, `move_symbol` steps as described above, and `rename_package` and `move_package` steps in the default configuration only. Every step is planned against the unmodified workspace, and two steps whose edits overlap fail the batch. `move_by_dependencies` picks its candidates in the default configuration and plans each like `move_symbol`; every candidate that passes is then moved in one combined plan, whatever its source package. A candidate whose move is refused, or that uses a symbol moved in the same call from another package, stays where it is and is listed in `skipped_sites`.
 
@@ -132,7 +132,7 @@ Plan results from the tools that plan under every configuration carry:
 - `uncovered_files`: files in the reached packages that no configuration could type-check, with the configurations that include them and the reason. The plan holds no edits for them. A file that mentions a changed symbol also appears in `skipped_sites` and must be updated by hand.
 - `type_errors`: reached packages that have type errors in non-test files, per configuration. Uses inside the erroring code may be missing from the plan.
 
-`unused` returns `build_configs` when there is more than one, and `possibly_used` for symbols that a file no configuration type-checks, or an unresolved name in a file with a type error, may use.
+Each `unused` item has a `reason` (`No references found`, `Only referenced in declarations`, `Receiver type is unused`, `Only referenced from tests`, `Only referenced from unused code`); `safe_to_delete` is false for the last three, and `referenced_from` lists the tests or unused callers to remove first. `unused` returns `build_configs` when there is more than one, and `possibly_used` for symbols that a file no configuration type-checks, or an unresolved name in a file with a type error, may use.
 
 Test files are excluded from type-checking one file at a time, and only those that themselves have type errors. A reached package is refused when dropping its erroring test files does not leave the remaining ones error-free, because then the files that use the changed symbols cannot be identified.
 
