@@ -399,6 +399,38 @@ func TestThreadContext_Stops(t *testing.T) {
 	compareGoldenFiles(t, "thread_context_stops", tmpDir)
 }
 
+func TestThreadContext_StopsAtWrapperKeepingGeneratedBridgeUntouched(t *testing.T) {
+	tmpDir := copyFixture(t, "thread_context_generated")
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, tmpDir)
+
+	plan, err := eng.ThreadContext(ws, types.ThreadContextRequest{
+		FunctionName: "MapSearch",
+		SourceFile:   filepath.Join(tmpDir, "search", "search.go"),
+		StopAt:       []string{"NativeBridgeWrapper.MapSearch"},
+	})
+	if err != nil {
+		t.Fatalf("ThreadContext: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	compareGoldenFiles(t, "thread_context_generated", tmpDir)
+
+	gen := filepath.Join("bridge", "bridge_gen.go")
+	want, err := os.ReadFile(filepath.Join("testdata", "thread_context_generated", gen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(tmpDir, gen))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("%s was modified:\n%s", gen, got)
+	}
+}
+
 func TestThreadContext_Interface(t *testing.T) {
 	tmpDir := copyFixture(t, "thread_context_interface")
 	eng := createEngine(t)

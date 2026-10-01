@@ -1,0 +1,9 @@
+package search
+
+import (
+	"context"
+)
+
+func MapSearch(ctx context.Context, query string) string {
+	return "result:" + query
+}

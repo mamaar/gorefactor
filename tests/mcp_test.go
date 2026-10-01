@@ -186,6 +186,17 @@ func TestMCPTools(t *testing.T) {
 			},
 		},
 		{
+			name: "thread_context_generated", fixture: "thread_context_generated", tool: "add_context_parameter",
+			args: func(dir string) map[string]any {
+				return map[string]any{
+					"function_name": "MapSearch",
+					"source_file":   filepath.Join(dir, "search", "search.go"),
+					"thread":        true,
+					"stop_at":       []string{"NativeBridgeWrapper.MapSearch"},
+				}
+			},
+		},
+		{
 			name: "thread_context_interface", fixture: "thread_context_interface", tool: "add_context_parameter",
 			args: func(dir string) map[string]any {
 				return map[string]any{"function_name": "MemStore.Save", "source_file": "main.go", "thread": true}

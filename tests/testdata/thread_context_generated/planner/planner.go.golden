@@ -1,0 +1,11 @@
+package planner
+
+import (
+	"context"
+
+	"tests/thread_context_generated/search"
+)
+
+func Plan(ctx context.Context, query string) string {
+	return search.MapSearch(ctx, query)
+}

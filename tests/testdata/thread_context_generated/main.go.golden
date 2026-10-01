@@ -1,0 +1,15 @@
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"tests/thread_context_generated/bridge"
+	"tests/thread_context_generated/planner"
+)
+
+func main() {
+	fmt.Println(planner.Plan(context.TODO(), "route"))
+	adapter := bridge.NewNativeBridgeAdapter(&bridge.NativeBridgeWrapper{})
+	fmt.Println(adapter.Search("route"))
+}
