@@ -22,6 +22,9 @@ type SourceFile struct {
 	Content []byte
 	AST     *ast.File // may be nil, or partial when Err is set
 	Err     error     // read or parse error
+
+	// Generated is set when AST carries a Go generated-code header.
+	Generated bool
 }
 
 // SourceTree records every .go file under a root, parsed into one FileSet.
@@ -177,6 +180,7 @@ func (t *SourceTree) readFile(dir, name string) *SourceFile {
 		return f
 	}
 	f.AST, f.Err = parser.ParseFile(t.fset, f.Path, f.Content, parser.ParseComments)
+	f.Generated = f.AST != nil && ast.IsGenerated(f.AST)
 	return f
 }
 

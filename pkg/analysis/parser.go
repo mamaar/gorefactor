@@ -116,6 +116,7 @@ func (p *GoParser) ParseFile(filename string) (*types.File, error) {
 		AST:             astFile,
 		OriginalContent: content,
 		Modifications:   make([]types.Modification, 0),
+		Generated:       ast.IsGenerated(astFile),
 	}
 
 	return file, nil
@@ -195,6 +196,7 @@ func (p *GoParser) addSource(pkg *types.Package, src *SourceFile) {
 		AST:             src.AST,
 		OriginalContent: src.Content,
 		Modifications:   make([]types.Modification, 0),
+		Generated:       src.Generated,
 	}
 	if strings.HasSuffix(src.Name, "_test.go") {
 		pkg.TestFiles[src.Name] = file

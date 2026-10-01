@@ -77,6 +77,7 @@ type File struct {
 	AST             *ast.File
 	OriginalContent []byte
 	Modifications   []Modification
+	Generated       bool // carries a Go generated-code header
 }
 
 // Module represents Go module information
