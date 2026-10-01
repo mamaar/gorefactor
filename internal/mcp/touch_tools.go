@@ -23,6 +23,7 @@ type TouchFileResult struct {
 	File   string `json:"file"`
 	Status string `json:"status"` // "modified", "unchanged", "skipped", "error"
 	Error  string `json:"error,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type TouchOutput struct {
@@ -34,7 +35,7 @@ type TouchOutput struct {
 func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "touch",
-		Description: "Organize imports and format .go files without running the refactoring engine. Lightweight: no type checking, no plan generation — just read → organize imports → gofmt → write.",
+		Description: "Organize imports and format .go files without running the refactoring engine. Lightweight: no type checking, no plan generation — just read → organize imports → gofmt → write. Files with a generated-code header are skipped.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in TouchInput) (*mcpsdk.CallToolResult, any, error) {
 		if len(in.Files) == 0 {
 			return errResult(fmt.Errorf("files list is empty")), nil, nil
@@ -82,6 +83,11 @@ func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 			original, err := os.ReadFile(absPath)
 			if err != nil {
 				results = append(results, TouchFileResult{File: file, Status: "error", Error: err.Error()})
+				continue
+			}
+
+			if refactor.IsGeneratedSource(absPath, original) {
+				results = append(results, TouchFileResult{File: file, Status: "skipped", Reason: "generated-code header (DO NOT EDIT)"})
 				continue
 			}
 
