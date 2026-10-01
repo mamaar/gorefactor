@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"go/ast"
+	"slices"
 	"sort"
 	"strings"
 
@@ -70,4 +71,47 @@ func localImports(ws *types.Workspace, path string, files map[string]*types.File
 
 func isExternalTestFile(f *ast.File) bool {
 	return strings.HasSuffix(f.Name.Name, "_test")
+}
+
+// Importers returns the filesystem paths of the packages that import any of
+// paths, directly or through other packages, by any of their files including
+// external test files. The paths themselves are not included unless another
+// of them imports them.
+func Importers(ws *types.Workspace, paths []string) []string {
+	importedBy := make(map[string][]string, len(ws.Packages))
+	for path, pkg := range ws.Packages {
+		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+			for _, file := range group {
+				for _, to := range fileImports(ws, file) {
+					importedBy[to] = append(importedBy[to], path)
+				}
+			}
+		}
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for work := slices.Clone(paths); len(work) > 0; work = work[1:] {
+		for _, from := range importedBy[work[0]] {
+			if !seen[from] {
+				seen[from] = true
+				out = append(out, from)
+				work = append(work, from)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func fileImports(ws *types.Workspace, file *types.File) []string {
+	if file.AST == nil {
+		return nil
+	}
+	var out []string
+	for _, imp := range file.AST.Imports {
+		if to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok {
+			out = append(out, to)
+		}
+	}
+	return out
 }

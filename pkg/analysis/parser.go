@@ -496,6 +496,22 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesChecked = false
 }
 
+// InvalidateImporters invalidates the type information of every package of ws
+// that imports one of the packages at paths, directly or not, and the
+// production-only packages built against the old ones. Their go/types objects
+// belong to the replaced check, so keeping them would split one declaration
+// into two objects.
+func (p *GoParser) InvalidateImporters(ws *types.Workspace, paths []string) {
+	p.checkMu.Lock()
+	defer p.checkMu.Unlock()
+	if p.importer != nil {
+		p.importer.productionOnly = nil
+	}
+	for _, path := range Importers(ws, paths) {
+		p.InvalidateTypeCheck(ws.Packages[path])
+	}
+}
+
 // releaseTypeChecks invalidates every package of ws once no check session is
 // running. The production-only packages go with them: one kept across a
 // re-check would be a second, distinct copy of declarations checked anew.

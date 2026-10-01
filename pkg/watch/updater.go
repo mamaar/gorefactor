@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -48,9 +49,15 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 
 	views := u.set.BuiltViews()
 	for _, v := range views {
+		dirs := changedDirs(changes)
+		// Importers are found before and after the change: a removed package
+		// is only in the first graph, a created one only in the second.
+		v.Parser.InvalidateImporters(v.Workspace, dirs)
 		for _, c := range changes {
 			u.handleChange(v, c)
 		}
+		v.Parser.InvalidateImporters(v.Workspace, dirs)
+		u.invalidateImporterCaches(v, dirs)
 		v.InvalidateReferenceIndex()
 	}
 
@@ -59,6 +66,25 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 		"views", len(views),
 		"elapsed", time.Since(start).Round(time.Millisecond),
 	)
+}
+
+// changedDirs returns the distinct directories of the changed files.
+func changedDirs(changes []syncedChange) []string {
+	dirs := make([]string, 0, len(changes))
+	for _, c := range changes {
+		if !slices.Contains(dirs, c.dir) {
+			dirs = append(dirs, c.dir)
+		}
+	}
+	return dirs
+}
+
+// invalidateImporterCaches drops the resolver caches of the packages that
+// import a changed directory, whose resolved references name replaced symbols.
+func (u *WorkspaceUpdater) invalidateImporterCaches(v *analysis.View, dirs []string) {
+	for _, path := range analysis.Importers(v.Workspace, dirs) {
+		v.Resolver.InvalidateCacheForPackage(path)
+	}
 }
 
 func actionName(op fsnotify.Op) string {
