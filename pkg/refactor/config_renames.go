@@ -21,6 +21,13 @@ type renameStrategy interface {
 	oldName() string
 }
 
+// renameRefuser is a renameStrategy that refuses a view whose type errors hide uses.
+type renameRefuser interface {
+	// refuseIn returns the error that stops the rename of the keys in v. It
+	// reads v's type information, so it runs before v is dropped.
+	refuseIn(v *analysis.View, renamed types.SymbolKeySet) error
+}
+
 // planRenameView plans a rename in v. The view is type-checked so coverage
 // reporting knows which of its files it left out, and so s can use idx.
 func planRenameView(c *viewIndexes, s renameStrategy, v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
@@ -36,6 +43,11 @@ func planRenameView(c *viewIndexes, s renameStrategy, v *analysis.View, linked t
 		return configResult{absent: err, declared: declared}, nil
 	}
 	plan = withoutFiles(plan, v.ExcludedTestFiles())
+	if r, ok := s.(renameRefuser); ok {
+		if err := r.refuseIn(v, renamed); err != nil {
+			return configResult{}, err
+		}
+	}
 	res := configResult{plan: plan, changed: renamed, reach: reachOf(plan, []string{s.oldName()}), declared: declared}
 	c.planned(v, plan)
 	return res, nil

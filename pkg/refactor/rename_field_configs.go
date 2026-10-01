@@ -1,6 +1,9 @@
 package refactor
 
 import (
+	"fmt"
+	"path/filepath"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -60,4 +63,29 @@ func (op *RenameFieldOperation) validateIn(ws *types.Workspace) (types.SymbolKey
 	keys := make(types.SymbolKeySet)
 	addSymbolKey(keys, op.fieldSymbol(pkg))
 	return keys, nil
+}
+
+// refuseIn refuses the rename when an identifier named like the field is left
+// unresolved in a file of v with a type error and could use a renamed field.
+func (p *renameFieldPlanner) refuseIn(v *analysis.View, renamed types.SymbolKeySet) error {
+	var blockers []types.Blocker
+	for _, m := range unresolvedMentions(v, map[string]bool{p.req.FieldName: true}) {
+		for key := range renamed {
+			sym := symbolForKey(v.Workspace, key)
+			if sym != nil && mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(sym.File)) {
+				b := m.blocker()
+				b.Configs = []string{v.Config.String()}
+				blockers = append(blockers, b)
+				break
+			}
+		}
+	}
+	if len(blockers) == 0 {
+		return nil
+	}
+	return &types.RefactorError{
+		Type: types.InvalidOperation,
+		Message: fmt.Sprintf("cannot rename field %s.%s: %d use(s) could not be resolved because their files have type errors, so renaming could leave them uncompilable; fix the errors and re-run:%s",
+			p.req.TypeName, p.req.FieldName, len(blockers), blockerNotes(blockers)),
+	}
 }
