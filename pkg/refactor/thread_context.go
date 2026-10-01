@@ -867,7 +867,7 @@ func lookupVarAt(pkg *pkgtypes.Package, name string, pos token.Pos) *gotypes.Var
 	if pkg == nil || pkg.TypesPkg == nil {
 		return nil
 	}
-	inner := pkg.TypesPkg.Scope().Innermost(pos)
+	_, inner := scopeAt(pkg, pos)
 	if inner == nil {
 		return nil
 	}

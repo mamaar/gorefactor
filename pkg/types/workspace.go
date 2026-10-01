@@ -39,6 +39,11 @@ type Package struct {
 	// packages that had zero parseable files to check at all.
 	TypesPkg *gotypes.Package
 
+	// ExternalTestTypesPkg is the separately checked `package x_test` of this
+	// directory, whose scope tree TypesPkg does not contain. Nil when there are
+	// no external test files or none checked.
+	ExternalTestTypesPkg *gotypes.Package
+
 	// TypesChecked reports whether a type-check attempt has run to completion,
 	// success or failure. This is the memoisation guard used by
 	// (*analysis.GoParser).EnsureTypeChecked/TypeCheckPackage and by

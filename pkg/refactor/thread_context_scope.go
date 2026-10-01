@@ -48,7 +48,7 @@ func findCtxSource(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExpr) 
 		return ctxSource{Kind: ctxUnknown}, false
 	}
 
-	pkgScope := pkg.TypesPkg.Scope()
+	pkgScope, inner := scopeAt(pkg, call.Pos())
 
 	var scopes []*gotypes.Scope
 	// Climb from the innermost scope containing the call upward, but stop
@@ -56,7 +56,7 @@ func findCtxSource(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExpr) 
 	// context.Context` belongs to the package, not to whoever is calling
 	// into this function — picking it up here would thread a shared
 	// global instead of a caller-supplied context.
-	for s := pkgScope.Innermost(call.Pos()); s != nil && s != pkgScope; s = s.Parent() {
+	for s := inner; s != nil && s != pkgScope; s = s.Parent() {
 		scopes = append(scopes, s)
 	}
 
@@ -351,8 +351,25 @@ func paramVisibleAt(pkg *pkgtypes.Package, param *ast.Ident, pos token.Pos) bool
 		return false
 	}
 	want := pkg.TypesInfo.Defs[param]
-	_, got := pkg.TypesPkg.Scope().Innermost(pos).LookupParent(param.Name, pos)
+	_, inner := scopeAt(pkg, pos)
+	_, got := inner.LookupParent(param.Name, pos)
 	return want != nil && got == want
+}
+
+// scopeAt returns the package scope covering pos and the innermost scope
+// within it that contains pos (nil when pos lies in no scope of that package).
+// A position in an external test file belongs to the external test package.
+func scopeAt(pkg *pkgtypes.Package, pos token.Pos) (pkgScope, inner *gotypes.Scope) {
+	for _, tp := range []*gotypes.Package{pkg.ExternalTestTypesPkg, pkg.TypesPkg} {
+		if tp == nil {
+			continue
+		}
+		pkgScope = tp.Scope()
+		if inner = pkgScope.Innermost(pos); inner != nil {
+			return pkgScope, inner
+		}
+	}
+	return pkgScope, nil
 }
 
 // paramType resolves the go/types type of a parameter identifier via the

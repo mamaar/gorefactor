@@ -489,6 +489,7 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	defer p.mu.Unlock()
 	pkg.TypesInfo = nil
 	pkg.TypesPkg = nil
+	pkg.ExternalTestTypesPkg = nil
 	pkg.TypesErr = nil
 	pkg.ExcludedTestFiles = nil
 	pkg.ProductionErrs = nil
@@ -548,6 +549,7 @@ func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
 	for _, pkg := range ws.Packages {
 		pkg.TypesInfo = nil
 		pkg.TypesPkg = nil
+		pkg.ExternalTestTypesPkg = nil
 	}
 }
 
@@ -635,6 +637,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// it unconditionally — dependents can use best-effort info instead of
 	// nothing at all.
 	pkg.TypesPkg = res.pkg
+	pkg.ExternalTestTypesPkg = nil
 	pkg.TypesInfo = res.info
 	pkg.TypesErr = res.err
 	pkg.ExcludedTestFiles = res.excluded
@@ -877,6 +880,7 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 		// nowhere to merge into.
 		return
 	}
+	pkg.ExternalTestTypesPkg = res.pkg
 	for ident, obj := range res.info.Defs {
 		pkg.TypesInfo.Defs[ident] = obj
 	}
