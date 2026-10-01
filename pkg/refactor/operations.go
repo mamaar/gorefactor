@@ -167,19 +167,29 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 	}
 
-	// Check for name conflicts in target package
-	if targetPackage, exists := ws.Packages[op.Request.ToPackage]; exists {
-		if targetPackage.Symbols != nil {
-			if _, err := resolver.ResolveSymbol(targetPackage, ref.Name); err == nil {
-				return &types.RefactorError{
-					Type:    types.NameConflict,
-					Message: fmt.Sprintf("symbol %s already exists in target package %s", ref.Name, op.Request.ToPackage),
-				}
-			}
+	if op.existsInTarget(ws, ref.Name) {
+		return &types.RefactorError{
+			Type:    types.NameConflict,
+			Message: fmt.Sprintf("symbol %s already exists in target package %s", ref.Name, op.Request.ToPackage),
 		}
 	}
 
 	return nil
+}
+
+// existsInTarget reports whether the target package declares a package-level
+// name; a method of the same name does not count.
+func (op *MoveSymbolOperation) existsInTarget(ws *types.Workspace, name string) bool {
+	target, exists := ws.Packages[op.Request.ToPackage]
+	if !exists || target.Symbols == nil {
+		return false
+	}
+	for _, group := range []map[string]*types.Symbol{target.Symbols.Functions, target.Symbols.Types, target.Symbols.Variables, target.Symbols.Constants} {
+		if group[name] != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // memberRefusal refuses a method or struct field, which move only with their type.
@@ -510,6 +520,12 @@ func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *anal
 		for _, s := range append([]*types.Symbol{symbol}, companions...) {
 			if seen[s] {
 				continue
+			}
+			if s != symbol && op.existsInTarget(ws, s.Name) {
+				return nil, &groupMemberError{index: i, err: &types.RefactorError{
+					Type:    types.NameConflict,
+					Message: fmt.Sprintf("cannot move %s: its constructor %s already exists in package %s", symbol.Name, s.Name, ws.Packages[op.Request.ToPackage].Name),
+				}}
 			}
 			if names[s.Name] {
 				return nil, &groupMemberError{index: i, err: &types.RefactorError{

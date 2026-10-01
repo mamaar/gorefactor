@@ -60,3 +60,22 @@ func TestMoveSymbolAcrossConfigs_PlanningCreatesNothingAndLeavesTheWorkspaceAsIt
 		t.Errorf("plan has no change creating dst/dst.go with the moved function: %+v", plan.Changes)
 	}
 }
+
+func TestMoveSymbolOperation_RefusesACompanionCollidingWithASymbolFromAnotherPackage(t *testing.T) {
+	eng, dir := loadConfigsEngine(t, map[string]string{
+		"a/a.go": "package a\n\ntype Foo struct{ n int }\n\nfunc NewFoo() *Foo { return &Foo{n: 1} }\n",
+		"b/b.go": "package b\n\nfunc NewFoo() int { return 1 }\n",
+	})
+
+	_, err := eng.MoveSymbolAcrossConfigs(types.MoveSymbolRequest{
+		ToPackage: filepath.Join(dir, "dst"),
+		Symbols: []types.QualifiedSymbol{
+			{Package: filepath.Join(dir, "a"), Name: "Foo"},
+			{Package: filepath.Join(dir, "b"), Name: "NewFoo"},
+		},
+	})
+
+	if err == nil || !strings.Contains(err.Error(), "NewFoo would collide with another symbol of the same name") {
+		t.Errorf("err = %v, want a refusal naming the colliding NewFoo", err)
+	}
+}
