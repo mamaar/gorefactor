@@ -8,6 +8,7 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -157,6 +158,11 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	res.UncoveredFiles = planUncoveredFiles(state, plan)
 	res.TypeErrors = planTypeErrors(plan)
 
+	if err := refactor.GeneratedFileEdits(plan.Changes); err != nil {
+		res.Success = false
+		res.BlockingIssue = err.Error()
+		return res
+	}
 	if err := state.GetEngine().ValidateRefactoring(plan); err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
