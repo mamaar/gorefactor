@@ -22,6 +22,8 @@ type Parameter struct {
 	Type string
 }
 
+func (p Parameter) isNamed() bool { return p.Name != "" }
+
 // ChangeSignatureRequest contains the inputs for a change-signature engine call.
 type ChangeSignatureRequest struct {
 	FunctionName         string
@@ -613,13 +615,16 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 
 	// Add parameters
 	signature.WriteString("(")
+	named := slices.ContainsFunc(op.NewParams, Parameter.isNamed)
 	for i, param := range op.NewParams {
 		if i > 0 {
 			signature.WriteString(", ")
 		}
-		if param.Name != "" {
-			signature.WriteString(param.Name)
-			signature.WriteString(" ")
+		switch {
+		case param.Name != "":
+			signature.WriteString(param.Name + " ")
+		case named:
+			signature.WriteString("_ ") // Go rejects a list that mixes named and unnamed
 		}
 		signature.WriteString(param.Type)
 	}

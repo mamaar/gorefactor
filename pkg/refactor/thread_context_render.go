@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	gotypes "go/types"
 	"slices"
 	"strings"
@@ -96,7 +97,7 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 			return nil, fmt.Errorf(
 				"internal error: %s is in threadPlan.Funcs but has no resolvable signature", funcLabel(f))
 		}
-		changes = append(changes, insertCtxParam(ws, fd.File, ft, name))
+		changes = append(changes, insertCtxParam(ws, fd.File, ft, name, bodyUsesCtx(plan, f, fd))...)
 		needsContext[fd.File.Path] = true
 	}
 
@@ -206,15 +207,7 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 			continue
 		}
 
-		ast.Inspect(fd.Decl.Body, func(n ast.Node) bool {
-			if _, isLit := n.(*ast.FuncLit); isLit {
-				return false
-			}
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !isRootContextCall(call) {
-				return true
-			}
-
+		for _, call := range internalRootContextCalls(fd.Decl.Body) {
 			start := ws.FileSet.Position(call.Pos()).Offset
 			end := ws.FileSet.Position(call.End()).Offset
 			old := string(fd.File.OriginalContent[start:end])
@@ -227,10 +220,7 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 				Description: fmt.Sprintf(
 					"Replace fabricated %s with the new %s parameter in %s", old, name, funcLabel(f)),
 			})
-			// context.TODO()/context.Background() take no arguments, so there
-			// is nothing nested inside to visit.
-			return false
-		})
+		}
 	}
 
 	kept := changes[:0]
@@ -253,6 +243,29 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 	return kept
 }
 
+// internalRootContextCalls returns the root context calls of body outside
+// nested function literals.
+func internalRootContextCalls(body *ast.BlockStmt) []*ast.CallExpr {
+	var calls []*ast.CallExpr
+	ast.Inspect(body, func(n ast.Node) bool {
+		if _, isLit := n.(*ast.FuncLit); isLit {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !isRootContextCall(call) {
+			return true
+		}
+		calls = append(calls, call)
+		// A root context call takes no arguments, so nothing nested inside.
+		return false
+	})
+	return calls
+}
+
+func hasInternalRootContext(body *ast.BlockStmt) bool {
+	return len(internalRootContextCalls(body)) > 0
+}
+
 // overlapsAny reports whether c intersects any change in others, using the
 // same definition of overlap as assertNoOverlappingChanges and
 // Serializer.changesOverlap.
@@ -265,29 +278,59 @@ func overlapsAny(c pkgtypes.Change, others []pkgtypes.Change) bool {
 	return false
 }
 
-// insertCtxParam builds the zero-width Change that adds `<name> context.Context`
-// as the first parameter of ft.
+// insertCtxParam builds the zero-width Changes that add `<name> context.Context`
+// as the first parameter of ft, a function or interface method type.
 //
-// ft is an *ast.FuncType — not an *ast.FuncDecl — so this same helper serves
-// both a normal function/method declaration (fd.Decl.Type) and an interface
-// method declaration (fd.IfaceFuncType), whose parameters live on an
-// *ast.FuncType hanging off an *ast.Field in an *ast.InterfaceType rather
-// than off a FuncDecl. The caller reads the right one via funcDecl.FuncType()
-// (thread_context.go), so this helper never needs to know which kind it got.
-func insertCtxParam(ws *pkgtypes.Workspace, file *pkgtypes.File, ft *ast.FuncType, name string) pkgtypes.Change {
-	offset := ws.FileSet.Position(ft.Params.Opening).Offset + 1
+// Go forbids mixing named and unnamed parameters. Over an unnamed list the
+// context stays unnamed unless the body uses it, in which case it is named and
+// every other parameter becomes `_`.
+func insertCtxParam(ws *pkgtypes.Workspace, file *pkgtypes.File, ft *ast.FuncType, name string, used bool) []pkgtypes.Change {
+	list := ft.Params.List
+	unnamed := len(list) > 0 && len(list[0].Names) == 0
 	text := name + " context.Context"
-	if len(ft.Params.List) > 0 {
+	if unnamed && !used {
+		text = "context.Context"
+	}
+	if len(list) > 0 {
 		text += ", "
 	}
-	return pkgtypes.Change{
-		File:        file.Path,
-		Start:       offset,
-		End:         offset,
-		OldText:     "",
-		NewText:     text,
-		Description: fmt.Sprintf("Add %s context.Context parameter", name),
+	head := ft.Params.Opening + 1
+	var rest []pkgtypes.Change
+	if unnamed && used {
+		for i, field := range list {
+			if i == 0 && field.Type.Pos() == head {
+				text += "_ " // one insertion: two at an offset would not keep their order
+				continue
+			}
+			rest = append(rest, ctxInsertion(ws, file, field.Type.Pos(), "_ ", "Name unused parameter"))
+		}
 	}
+	changes := []pkgtypes.Change{ctxInsertion(ws, file, head, text, fmt.Sprintf("Add %s context.Context parameter", name))}
+	return append(changes, rest...)
+}
+
+func ctxInsertion(ws *pkgtypes.Workspace, file *pkgtypes.File, at token.Pos, text, description string) pkgtypes.Change {
+	offset := ws.FileSet.Position(at).Offset
+	return pkgtypes.Change{File: file.Path, Start: offset, End: offset, NewText: text, Description: description}
+}
+
+// bodyUsesCtx reports whether the rendering refers to f's injected parameter
+// name in its body: as an argument at a call site, or in place of a fabricated
+// context.
+func bodyUsesCtx(plan *threadPlan, f *gotypes.Func, fd *funcDecl) bool {
+	if fd.Decl == nil || fd.Decl.Body == nil {
+		return false
+	}
+	if plan.Fake[f] != nil || hasInternalRootContext(fd.Decl.Body) {
+		return true
+	}
+	name := plan.Funcs[f]
+	for _, edit := range plan.ArgFor {
+		if edit.Site.Fn == fd.Decl && edit.Expr == name {
+			return true
+		}
+	}
+	return false
 }
 
 // renderCallEdit decides the Change (if any) for one recorded call-site

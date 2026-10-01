@@ -55,8 +55,8 @@ func (p *addContextParameterPlanner) run(r *signatureRun, t funcTarget, requeste
 	if !requested && hasLeadingCtx(params) {
 		return nil
 	}
-	op := p.operation(t, params)
 	ws := r.view.Workspace
+	op := p.operation(t, params, bodyNeedsCtxName(ws, t))
 	if err := op.Validate(ws); err != nil {
 		return err
 	}
@@ -70,8 +70,19 @@ func (p *addContextParameterPlanner) run(r *signatureRun, t funcTarget, requeste
 	return nil
 }
 
-func (p *addContextParameterPlanner) operation(t funcTarget, current []analysis.FuncParam) *ChangeSignatureOperation {
+// bodyNeedsCtxName reports whether the body of t refers to a ctx parameter once
+// the creation statements it replaces are removed.
+func bodyNeedsCtxName(ws *types.Workspace, t funcTarget) bool {
+	return len(RemoveInternalCtxCreation(ws, t.file, t.name)) > 0
+}
+
+// operation adds the ctx parameter to current. Over a list of unnamed
+// parameters it stays unnamed unless the body needs the name.
+func (p *addContextParameterPlanner) operation(t funcTarget, current []analysis.FuncParam, needsName bool) *ChangeSignatureOperation {
 	params := []Parameter{{Name: ctxParamName, Type: ctxParamType}}
+	if len(current) > 0 && current[0].Name == "" && !needsName {
+		params[0].Name = ""
+	}
 	for _, fp := range current {
 		params = append(params, Parameter{Name: fp.Name, Type: fp.Type})
 	}
