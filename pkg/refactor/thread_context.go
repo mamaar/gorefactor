@@ -1071,7 +1071,7 @@ func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.
 	return canonicalFunc(obj), nil
 }
 
-// fileHit is a source file matched by findSourceFile, paired with its package.
+// fileHit is a source file matched by matchSourceFiles, paired with its package.
 type fileHit struct {
 	file *pkgtypes.File
 	pkg  *pkgtypes.Package
@@ -1082,26 +1082,9 @@ type fileHit struct {
 // suffix match is only consulted when nothing matched exactly, and is rejected
 // when it is ambiguous rather than picking one arbitrarily.
 func (op *ThreadContextOperation) findSourceFile(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, error) {
-	var exact, loose []fileHit
-
-	want := filepath.ToSlash(op.SourceFile)
-	for _, pkg := range ws.Packages {
-		for key, f := range allNamedFilesOf(pkg) {
-			if f.AST == nil {
-				continue
-			}
-			switch {
-			case f.Path == op.SourceFile || key == op.SourceFile:
-				exact = append(exact, fileHit{file: f, pkg: pkg})
-			case strings.HasSuffix(filepath.ToSlash(f.Path), "/"+want):
-				loose = append(loose, fileHit{file: f, pkg: pkg})
-			}
-		}
-	}
-
-	hits := exact
-	if len(hits) == 0 {
-		hits = loose
+	var hits []fileHit
+	if op.SourceFile != "" {
+		hits = matchSourceFiles(ws, op.SourceFile)
 	}
 	switch len(hits) {
 	case 1:
@@ -1119,6 +1102,37 @@ func (op *ThreadContextOperation) findSourceFile(ws *pkgtypes.Workspace) (*pkgty
 				"ambiguous source file %q: matches %d files; pass a full path", op.SourceFile, len(hits)),
 			File: op.SourceFile,
 		}
+	}
+}
+
+// matchSourceFiles returns the parsed files of ws matching path: an exact path
+// or loader key, else those whose path ends in it. An empty path matches every
+// parsed file.
+func matchSourceFiles(ws *pkgtypes.Workspace, path string) []fileHit {
+	var all, exact, loose []fileHit
+	want := filepath.ToSlash(path)
+	for _, pkg := range ws.Packages {
+		for key, f := range allNamedFilesOf(pkg) {
+			if f.AST == nil {
+				continue
+			}
+			h := fileHit{file: f, pkg: pkg}
+			all = append(all, h)
+			switch {
+			case f.Path == path || key == path:
+				exact = append(exact, h)
+			case strings.HasSuffix(filepath.ToSlash(f.Path), "/"+want):
+				loose = append(loose, h)
+			}
+		}
+	}
+	switch {
+	case path == "":
+		return all
+	case len(exact) > 0:
+		return exact
+	default:
+		return loose
 	}
 }
 

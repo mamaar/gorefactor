@@ -63,8 +63,7 @@ func stopMatches(wss []*pkgtypes.Workspace, file, name string) []stopMatch {
 	typeName, method, isMethod := strings.Cut(name, ".")
 	var out []stopMatch
 	for _, ws := range wss {
-		files := stopCandidateFiles(ws, file)
-		for _, h := range files {
+		for _, h := range matchSourceFiles(ws, file) {
 			rel := h.file.Path
 			if r, err := filepath.Rel(ws.RootPath, h.file.Path); err == nil {
 				rel = filepath.ToSlash(r)
@@ -94,34 +93,4 @@ func stopMatches(wss []*pkgtypes.Workspace, file, name string) []stopMatch {
 		}
 	}
 	return out
-}
-
-// stopCandidateFiles returns the parsed files of ws, or only those matching
-// file under findSourceFile's rules: exact path or loader key, else unique-suffix.
-func stopCandidateFiles(ws *pkgtypes.Workspace, file string) []fileHit {
-	var all, exact, loose []fileHit
-	want := filepath.ToSlash(file)
-	for _, pkg := range ws.Packages {
-		for key, f := range allNamedFilesOf(pkg) {
-			if f.AST == nil {
-				continue
-			}
-			h := fileHit{file: f, pkg: pkg}
-			all = append(all, h)
-			switch {
-			case f.Path == file || key == file:
-				exact = append(exact, h)
-			case strings.HasSuffix(filepath.ToSlash(f.Path), "/"+want):
-				loose = append(loose, h)
-			}
-		}
-	}
-	switch {
-	case file == "":
-		return all
-	case len(exact) > 0:
-		return exact
-	default:
-		return loose
-	}
 }
