@@ -56,10 +56,18 @@ type MoveSymbolRequest struct {
 	Symbols []QualifiedSymbol
 }
 
-// Refs returns the symbols the request moves.
+// Refs returns the symbols the request moves, each package and name once.
 func (r MoveSymbolRequest) Refs() []QualifiedSymbol {
 	if len(r.Symbols) > 0 {
-		return r.Symbols
+		seen := make(map[QualifiedSymbol]bool, len(r.Symbols))
+		refs := make([]QualifiedSymbol, 0, len(r.Symbols))
+		for _, ref := range r.Symbols {
+			if !seen[ref] {
+				seen[ref] = true
+				refs = append(refs, ref)
+			}
+		}
+		return refs
 	}
 	return []QualifiedSymbol{{Package: r.FromPackage, Name: r.SymbolName}}
 }
