@@ -711,31 +711,15 @@ func BenchmarkFindReferencesIndexed_NamePath(b *testing.B) {
 	}
 }
 
-func BenchmarkHasNonDeclarationReference_ObjectPath(b *testing.B) {
+func BenchmarkBuildUsageGraph(b *testing.B) {
 	workspace := createTypedBenchmarkWorkspace(b, 20)
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	idx := resolver.BuildReferenceIndex()
 
-	var symbol *types.Symbol
-	for _, pkg := range workspace.Packages {
-		if pkg.Symbols != nil {
-			for _, s := range pkg.Symbols.Functions {
-				symbol = s
-				break
-			}
-		}
-		if symbol != nil {
-			break
-		}
-	}
-	if symbol == nil {
-		b.Fatal("No function symbol found")
-	}
-
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = resolver.HasNonDeclarationReference(symbol, idx)
+		_ = buildUsageGraph(workspace, resolver, idx)
 	}
 }
 

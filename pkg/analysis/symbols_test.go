@@ -690,9 +690,9 @@ func Bar() { Foo() }
 		t.Error("Expected at least one reference to Foo via name path")
 	}
 
-	// HasNonDeclarationReference should work via name path
-	if !resolver.HasNonDeclarationReference(fooSymbol, idx) {
-		t.Error("Expected HasNonDeclarationReference to return true for Foo")
+	// The usage graph should record the use via the name path
+	if !hasUse(ws, resolver, idx, fooSymbol) {
+		t.Error("Expected the usage graph to record a use of Foo")
 	}
 }
 
@@ -817,9 +817,8 @@ func Caller() string { return pkga.SharedFunc() }
 		t.Error("Expected at least one cross-package reference to SharedFunc")
 	}
 
-	// Verify HasNonDeclarationReference also works
-	if !resolver.HasNonDeclarationReference(sharedFunc, idx) {
-		t.Error("Expected HasNonDeclarationReference to find cross-package usage")
+	if !hasUse(ws, resolver, idx, sharedFunc) {
+		t.Error("Expected the usage graph to record the cross-package use")
 	}
 }
 
@@ -1190,9 +1189,8 @@ func Caller() string { return pkga.SharedFunc() }
 		t.Error("Expected at least one cross-package reference to SharedFunc")
 	}
 
-	// HasNonDeclarationReference should work
-	if !resolver.HasNonDeclarationReference(sharedFunc, idx) {
-		t.Error("Expected HasNonDeclarationReference to find cross-package usage")
+	if !hasUse(ws, resolver, idx, sharedFunc) {
+		t.Error("Expected the usage graph to record the cross-package use")
 	}
 }
 
@@ -1502,4 +1500,10 @@ func TestBuildSymbolTable_EachInterfaceIsRecordedOnce(t *testing.T) {
 	if st.Fields["S"][0].Parent != st.Types["S"] {
 		t.Error("field Parent is not the retained type symbol")
 	}
+}
+
+// hasUse reports whether the usage graph of ws records a reference to symbol.
+func hasUse(ws *types.Workspace, resolver *SymbolResolver, idx *ReferenceIndex, symbol *types.Symbol) bool {
+	n := buildUsageGraph(ws, resolver, idx).nodes[symbol.Position]
+	return n != nil && n.prodRefs+n.testRefs > 0
 }

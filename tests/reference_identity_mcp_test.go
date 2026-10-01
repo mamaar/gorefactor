@@ -17,7 +17,7 @@ func crossTestImportWorkspace() map[string]string {
 		"a/a_test.go": "package a\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/b\"\n)\n\nfunc TestA(t *testing.T) { _ = b.B() }\n",
 		"b/b.go":      "package b\n\nfunc B() int { return 2 }\n",
 		"b/b_test.go": "package b\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/a\"\n)\n\nfunc TestB(t *testing.T) { _ = a.Foo() }\n",
-		"c/c.go":      "package c\n\nimport \"example.com/threadmcp/a\"\n\nfunc C() int { return a.Foo() }\n",
+		"c/c.go":      "package c\n\nimport \"example.com/threadmcp/a\"\n\nfunc C() int { return a.Foo() }\n\nfunc init() { _ = C() }\n",
 	}
 }
 
@@ -69,6 +69,6 @@ func TestUnused_DoesNotListSymbolUsedFromPackagesReachedDuringAnotherPackagesChe
 	out := callJSON(t, sess, "unused", map[string]any{"include_exported": true})
 
 	if text, _ := json.Marshal(out["unused_symbols"]); strings.Contains(string(text), `"Foo"`) {
-		t.Errorf("unused lists Foo, which c and b_test use: %s", text)
+		t.Errorf("unused lists Foo, which the live C in c uses: %s", text)
 	}
 }

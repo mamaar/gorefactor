@@ -717,39 +717,6 @@ func (sr *SymbolResolver) findPackageForSymbol(symbol *types.Symbol) *types.Pack
 	return pkg
 }
 
-// HasNonDeclarationReference checks if a symbol has at least one non-declaration reference
-// in the index. Returns true as soon as one is found (early exit for unused detection).
-func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *ReferenceIndex) bool {
-	targetObj := sr.resolveTypesObject(symbol)
-
-	// Workspace-index fast-path
-	if targetObj != nil && idx.workspaceIdx != nil && len(idx.workspaceIdx.packages) > 0 {
-		if idx.workspaceIdx.hasNonDeclarationReference(targetObj) {
-			return true
-		}
-		// workspaceIndex covers all typed packages; if it found nothing, check
-		// whether we even have entries for this object before falling through.
-		if entries := idx.workspaceIdx.findReferences(targetObj); len(entries) > 0 {
-			return false
-		}
-		// Object not found in workspaceIndex — fall through to name-based path
-	}
-
-	// Fall back to name-based path
-	entries, ok := idx.names()[symbol.Name]
-	if !ok {
-		return false
-	}
-
-	for i := range entries {
-		if sr.isNonDeclarationReference(&entries[i], symbol, targetObj) {
-			return true
-		}
-	}
-
-	return false
-}
-
 // isNonDeclarationReference reports whether entry is a reference to symbol
 // other than a declaration. targetObj is symbol's go/types object, or nil.
 func (sr *SymbolResolver) isNonDeclarationReference(entry *indexEntry, symbol *types.Symbol, targetObj gotypes.Object) bool {

@@ -253,21 +253,6 @@ func (wi *workspaceIndex) findReferences(obj gotypes.Object) []objectEntry {
 	return entries
 }
 
-// hasNonDeclarationReference reports whether obj has at least one non-declaration
-// reference in the workspace (early-exit for unused detection).
-func (wi *workspaceIndex) hasNonDeclarationReference(obj gotypes.Object) bool {
-	if wi == nil || len(wi.packages) == 0 {
-		return false
-	}
-
-	for _, pix := range wi.packages {
-		for range pix.Uses(obj) {
-			return true
-		}
-	}
-	return false
-}
-
 // cursorToEntry converts a cursor to an objectEntry by resolving its position
 // to a *types.File via the token file mapping.
 func (wi *workspaceIndex) cursorToEntry(cur inspector.Cursor, isDecl bool) (objectEntry, bool) {
