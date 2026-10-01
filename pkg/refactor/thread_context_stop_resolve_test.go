@@ -9,7 +9,7 @@ import (
 
 const stopResolveModule = "example.com/m/foo"
 
-func stopKey(recv, name string) pkgtypes.SymbolKey {
+func fooKey(recv, name string) pkgtypes.SymbolKey {
 	return pkgtypes.SymbolKey{PkgPath: stopResolveModule, Recv: recv, Name: name}
 }
 
@@ -52,13 +52,13 @@ func TestResolveStopAt_Shapes(t *testing.T) {
 		entry string
 		want  pkgtypes.SymbolKey
 	}{
-		{"Save", stopKey("", "Save")},
-		{"Ptr.Save", stopKey("Ptr", "Save")},
-		{"Ptr.Load", stopKey("Ptr", "Load")},
-		{"Box.Get", stopKey("Box", "Get")},
-		{"Store.Save", stopKey("Store", "Save")},
-		{"foo/other.go:Other.Save", stopKey("Other", "Save")},
-		{"foo/foo.go:Save", stopKey("", "Save")},
+		{"Save", fooKey("", "Save")},
+		{"Ptr.Save", fooKey("Ptr", "Save")},
+		{"Ptr.Load", fooKey("Ptr", "Load")},
+		{"Box.Get", fooKey("Box", "Get")},
+		{"Store.Save", fooKey("Store", "Save")},
+		{"foo/other.go:Other.Save", fooKey("Other", "Save")},
+		{"foo/foo.go:Save", fooKey("", "Save")},
 	}
 	for _, tc := range cases {
 		t.Run(tc.entry, func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestResolveStopAt_SameSymbolInTwoViewsIsOneKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || !got.Has(stopKey("Ptr", "Save")) {
+	if len(got) != 1 || !got.Has(fooKey("Ptr", "Save")) {
 		t.Fatalf("got %v", got)
 	}
 }
