@@ -6,9 +6,10 @@ import (
 )
 
 func TestMoveSymbolRequestRefsDropsRepeatedPackageAndNameButKeepsSameNameFromAnotherPackage(t *testing.T) {
-	req := MoveSymbolRequest{Symbols: []QualifiedSymbol{{"a", "X"}, {"b", "X"}, {"a", "X"}, {"a", "Y"}}}
+	ref := func(pkg, name string) QualifiedSymbol { return QualifiedSymbol{Package: pkg, Name: name} }
+	req := MoveSymbolRequest{Symbols: []QualifiedSymbol{ref("a", "X"), ref("b", "X"), ref("a", "X"), ref("a", "Y")}}
 
-	want := []QualifiedSymbol{{"a", "X"}, {"b", "X"}, {"a", "Y"}}
+	want := []QualifiedSymbol{ref("a", "X"), ref("b", "X"), ref("a", "Y")}
 	if got := req.Refs(); !slices.Equal(got, want) {
 		t.Errorf("Refs() = %v, want %v", got, want)
 	}
