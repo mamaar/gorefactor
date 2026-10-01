@@ -1089,7 +1089,7 @@ func (imp *workspaceImporter) warmImports(file *types.File) {
 	for _, spec := range file.AST.Imports {
 		path := strings.Trim(spec.Path.Value, `"`)
 		if _, local := imp.ws.ImportToPath[path]; !local {
-			imp.ext.lookup(path)
+			_, _ = imp.ext.lookup(path)
 		}
 	}
 }
@@ -1288,8 +1288,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// which is GOPATH-based and cannot see anything in the module cache — on
 	// a real workspace that fails on essentially every third-party import.
 	imp.extOnce.Do(imp.loadExternal)
-	if pkg := imp.ext.lookup(path); pkg != nil {
-		return pkg, nil
+	if pkg, err := imp.ext.lookup(path); pkg != nil || err != nil {
+		return pkg, err
 	}
 
 	// Last resort: stdlib/export data via the GOPATH-based importer. Reached

@@ -1,8 +1,11 @@
 package analysis
 
 import (
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/tools/go/packages"
@@ -67,5 +70,57 @@ func TestExternal_SizesFollowTheViewsArchitecture(t *testing.T) {
 		if got := pkg.TypesPkg.Scope().Lookup("V").Type().String(); got != want {
 			t.Errorf("GOARCH=%s: V has type %s, want %s", goarch, got, want)
 		}
+	}
+}
+
+// excludedCause returns the recorded reason the check of dir left out file.
+func excludedCause(t *testing.T, v *View, dir, file string) string {
+	t.Helper()
+	pkg := v.Workspace.Packages[dir]
+	v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+	cause := pkg.ExcludedTestFiles[file]
+	if cause == nil {
+		t.Fatalf("%s was not excluded; excluded: %v, TypesErr: %v", file, pkg.ExcludedTestFiles, pkg.TypesErr)
+	}
+	return cause.Error()
+}
+
+func TestExternal_PackageListedWithoutNameReportsItsListingError(t *testing.T) {
+	set, root := loadSet(t, map[string]string{
+		"p/p.go":      "package p\n\nfunc P() {}\n",
+		"p/p_test.go": "package p\n\nimport \"example.org/absent\"\n\nvar _ = absent.New\n",
+	})
+	absent := &packages.Package{ID: "example.org/absent", PkgPath: "example.org/absent",
+		Errors: []packages.Error{{Msg: "module lookup disabled by GOPROXY=off", Kind: packages.ListError}}}
+	set.Primary().Parser.loadPackages = (&recordingLoader{pkgs: []*packages.Package{absent}}).load
+
+	cause := excludedCause(t, set.Primary(), filepath.Join(root, "p"), "p_test.go")
+
+	if !strings.Contains(cause, "could not import example.org/absent") || !strings.Contains(cause, "module lookup disabled by GOPROXY=off") {
+		t.Errorf("cause must carry the listing error, got: %s", cause)
+	}
+	if strings.Contains(cause, "invalid package name") {
+		t.Errorf("cause must not blame the package name, got: %s", cause)
+	}
+}
+
+func TestExternal_ModuleMissingFromTheModuleCacheIsNamedAsSuch(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":      "package p\n\nfunc P() {}\n",
+		"p/p_test.go": "package p\n\nimport \"example.org/absent\"\n\nvar _ = absent.New\n",
+	})
+	gomod := "module example.com/w\n\ngo 1.22\n\nrequire example.org/absent v1.0.0\n"
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	set, err := LoadWorkspaceSet(root, setPrimary, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cause := excludedCause(t, set.Primary(), filepath.Join(root, "p"), "p_test.go")
+
+	if !strings.Contains(cause, "could not import example.org/absent") || strings.Contains(cause, "invalid package name") {
+		t.Errorf("cause must say why example.org/absent could not be loaded, got: %s", cause)
 	}
 }

@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -64,14 +65,17 @@ func (s *externalSet) add(byID map[string]*externalPackage, meta *packages.Packa
 }
 
 // lookup returns the types of the package listed for path, or nil when the
-// load listed none.
-func (s *externalSet) lookup(path string) *gotypes.Package {
+// load listed none. A package the load listed but could not read is an error.
+func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	n := s.byPath[path]
 	if n == nil {
-		return nil
+		return nil, nil
+	}
+	if err := n.listingError(); err != nil {
+		return nil, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -79,7 +83,20 @@ func (s *externalSet) lookup(path string) *gotypes.Package {
 		s.parse(n)
 		s.check(n)
 	}
-	return n.types
+	return n.types, nil
+}
+
+// listingError returns why the load could not read n, which it then lists
+// without a package name: its module is not in the module cache, the path
+// names no package, or build constraints exclude every file.
+func (n *externalPackage) listingError() error {
+	if n.meta.Types != nil || n.meta.Name != "" {
+		return nil
+	}
+	if len(n.meta.Errors) > 0 {
+		return errors.New(n.meta.Errors[0].Msg)
+	}
+	return fmt.Errorf("the package listing has no name and no files for %s", n.meta.PkgPath)
 }
 
 // parse parses the files of n and of every unchecked package it reaches.
@@ -197,6 +214,9 @@ func (i *externalImporter) Import(path string) (*gotypes.Package, error) {
 	dep := i.pkg.imports[path]
 	if dep == nil {
 		return nil, fmt.Errorf("no metadata for %s", path)
+	}
+	if err := dep.listingError(); err != nil {
+		return nil, err
 	}
 	i.set.check(dep)
 	if dep.types == nil {
