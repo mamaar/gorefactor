@@ -7,7 +7,6 @@ import (
 	"go/types"
 	"io"
 	"log/slog"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -66,10 +65,6 @@ func (v *Validator) ValidatePlanWithConfig(plan *refactorTypes.RefactoringPlan, 
 	compilationIssues := v.validateCompilation(plan)
 	allIssues = append(allIssues, compilationIssues...)
 
-	// Check for import cycles
-	cycleIssues := v.validateImportCycles(plan)
-	allIssues = append(allIssues, cycleIssues...)
-
 	// Return validation error if any critical issues found, unless AllowBreaking is enabled
 	criticalIssues := v.filterCriticalIssues(allIssues)
 	if len(criticalIssues) > 0 && !config.AllowBreaking {
@@ -85,114 +80,6 @@ func (v *Validator) ValidatePlanWithConfig(plan *refactorTypes.RefactoringPlan, 
 	plan.Impact.PotentialIssues = append(plan.Impact.PotentialIssues, allIssues...)
 
 	return nil
-}
-
-// ValidateMove validates a move operation specifically
-func (v *Validator) ValidateMove(ws *refactorTypes.Workspace, req refactorTypes.MoveSymbolRequest) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// Check source symbol exists and is moveable
-	sourcePackage, exists := ws.Packages[req.FromPackage]
-	if !exists {
-		// Build list of available packages for helpful error message
-		var availablePackages []string
-		for pkgPath := range ws.Packages {
-			availablePackages = append(availablePackages, pkgPath)
-		}
-
-		var description strings.Builder
-		description.WriteString(fmt.Sprintf("source package not found: %s\nAvailable packages:\n", req.FromPackage))
-		if len(availablePackages) == 0 {
-			description.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
-		} else {
-			for _, pkgPath := range availablePackages {
-				if pkg, exists := ws.Packages[pkgPath]; exists {
-					description.WriteString(fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name))
-				} else {
-					description.WriteString(fmt.Sprintf("  - %s\n", pkgPath))
-				}
-			}
-		}
-
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: description.String(),
-			Severity:    refactorTypes.Error,
-		})
-		return issues
-	}
-
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	symbol, err := resolver.ResolveSymbol(sourcePackage, req.SymbolName)
-	if err != nil {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("symbol not found: %s", req.SymbolName),
-			Severity:    refactorTypes.Error,
-		})
-		return issues
-	}
-
-	// Check if symbol is moveable
-	if !v.isSymbolMoveable(symbol) {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("symbol %s cannot be moved (unsupported type or has dependencies)", req.SymbolName),
-			Severity:    refactorTypes.Error,
-		})
-	}
-
-	// Check target package accessibility
-	targetPackage, targetExists := ws.Packages[req.ToPackage]
-	if !targetExists && !req.CreateTarget {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("target package not found and CreateTarget is false: %s", req.ToPackage),
-			Severity:    refactorTypes.Error,
-		})
-		return issues
-	}
-
-	// Check for name conflicts in target
-	if targetExists && targetPackage.Symbols != nil {
-		if _, err := resolver.ResolveSymbol(targetPackage, req.SymbolName); err == nil {
-			issues = append(issues, refactorTypes.Issue{
-				Type:        refactorTypes.IssueNameConflict,
-				Description: fmt.Sprintf("symbol %s already exists in target package %s", req.SymbolName, req.ToPackage),
-				Severity:    refactorTypes.Error,
-			})
-		}
-	}
-
-	// Check for import cycle creation
-	if v.wouldCreateImportCycle(ws, req.FromPackage, req.ToPackage) {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueImportCycle,
-			Description: fmt.Sprintf("moving symbol would create import cycle between %s and %s", req.FromPackage, req.ToPackage),
-			Severity:    refactorTypes.Error,
-		})
-	}
-
-	// Check visibility rules (unexported symbols crossing packages)
-	if !symbol.Exported && req.FromPackage != req.ToPackage {
-		references, err := resolver.FindReferences(symbol)
-		if err == nil {
-			for _, ref := range references {
-				refPackage := v.findPackageForFile(ws, ref.File)
-				if refPackage != nil && refPackage.Path != req.ToPackage {
-					issues = append(issues, refactorTypes.Issue{
-						Type:        refactorTypes.IssueVisibilityError,
-						Description: fmt.Sprintf("unexported symbol %s cannot be accessed from package %s after move", symbol.Name, refPackage.Path),
-						File:        ref.File,
-						Line:        ref.Line,
-						Severity:    refactorTypes.Error,
-					})
-				}
-			}
-		}
-	}
-
-	return issues
 }
 
 // ValidateRename validates a rename operation specifically
@@ -393,59 +280,6 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 	}
 
 	return issues
-}
-
-func (v *Validator) validateImportCycles(plan *refactorTypes.RefactoringPlan) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// Check for import changes that might create cycles
-	if plan.Impact != nil {
-		for _, importChange := range plan.Impact.ImportChanges {
-			if importChange.Action == refactorTypes.AddImport {
-				// This is simplified - would need full dependency analysis
-				if strings.Contains(importChange.NewImport, "cycle") {
-					issues = append(issues, refactorTypes.Issue{
-						Type:        refactorTypes.IssueImportCycle,
-						Description: fmt.Sprintf("potential import cycle with: %s", importChange.NewImport),
-						File:        importChange.File,
-						Severity:    refactorTypes.Warning,
-					})
-				}
-			}
-		}
-	}
-
-	return issues
-}
-
-func (v *Validator) isSymbolMoveable(symbol *refactorTypes.Symbol) bool {
-	// Check if symbol can be safely moved
-	switch symbol.Kind {
-	case refactorTypes.FunctionSymbol, refactorTypes.TypeSymbol, refactorTypes.ConstantSymbol, refactorTypes.VariableSymbol:
-		return true
-	case refactorTypes.MethodSymbol:
-		// Methods can only be moved with their receiver type
-		return false
-	case refactorTypes.StructFieldSymbol:
-		// Struct fields cannot be moved independently
-		return false
-	default:
-		return false
-	}
-}
-
-func (v *Validator) wouldCreateImportCycle(ws *refactorTypes.Workspace, fromPkg, toPkg string) bool {
-	if ws.Dependencies == nil {
-		return false
-	}
-
-	// Check if toPkg already depends on fromPkg
-	toDeps, exists := ws.Dependencies.PackageDeps[toPkg]
-	if !exists {
-		return false
-	}
-
-	return slices.Contains(toDeps, fromPkg)
 }
 
 func (v *Validator) isValidGoIdentifier(name string) bool {
