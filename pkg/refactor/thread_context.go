@@ -460,6 +460,7 @@ func (op *ThreadContextOperation) discover(
 ) (map[*gotypes.Func]bool, error) {
 	visited := make(map[*gotypes.Func]bool)
 	queue := slices.Clone(seeds)
+	gen := newGeneratedReach()
 
 	for len(queue) > 0 {
 		f := queue[0]
@@ -478,6 +479,11 @@ func (op *ThreadContextOperation) discover(
 						"its package may have failed to type-check", funcLabel(f)),
 			}
 		}
+		// Before anything is planned or expanded: nothing inside generated code
+		// may raise an abort that hides this one.
+		if gen.isGaining(f, fd) {
+			continue
+		}
 		plan.Decls[f] = fd
 
 		if !funcHasContextParam(f) {
@@ -485,7 +491,8 @@ func (op *ThreadContextOperation) discover(
 			if stmt, ok := isFakeRootCtxCreation(fd.Decl); ok {
 				plan.Fake[f] = stmt
 			}
-			if err := op.valueUseAbort(ws, idx, f); err != nil {
+			uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
+			if err := op.valueUseAbort(ws, f, uses); err != nil {
 				return nil, err
 			}
 		}
@@ -504,17 +511,25 @@ func (op *ThreadContextOperation) discover(
 				}
 			}
 		}
+		gen.expanded(f, extra)
 		queue = append(queue, extra...)
 
 		for _, site := range idx.CallSitesOf(f) {
+			if gen.isCallSite(f, site, op.siteLine(site)) {
+				continue
+			}
 			caller, climb, err := op.climbTarget(idx, plan, site)
 			if err != nil {
 				return nil, err
 			}
 			if climb {
+				gen.climbed(f, caller)
 				queue = append(queue, caller)
 			}
 		}
+	}
+	if err := op.generatedAbort(ws, gen, seeds); err != nil {
+		return nil, err
 	}
 	return visited, nil
 }
@@ -762,10 +777,9 @@ func (op *ThreadContextOperation) expandInterfaces(
 // remainder by hand is strictly worse than not starting.
 func (op *ThreadContextOperation) valueUseAbort(
 	ws *pkgtypes.Workspace,
-	idx *analysis.ReferenceIndex,
 	f *gotypes.Func,
+	uses []analysis.ValueUse,
 ) error {
-	uses := idx.NonCallUsesOf(f)
 	if len(uses) == 0 {
 		return nil
 	}
