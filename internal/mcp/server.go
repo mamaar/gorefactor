@@ -94,20 +94,28 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	s.cancel = cancel
 
 	ch := make(chan []watch.ChangeEvent, 4)
-	go func() {
-		if err := w.Run(watchCtx, ch); err != nil && watchCtx.Err() == nil {
-			s.logger.Error("watcher error", "err", err)
-		}
-	}()
-	go func() {
-		for events := range ch {
-			s.mu.Lock()
-			s.updater.HandleChanges(events)
-			s.mu.Unlock()
-		}
-	}()
+	go s.runWatcher(watchCtx, w, ch)
+	go s.applyWatchedChanges(ch)
 
 	return indexBuilt, nil
+}
+
+// runWatcher feeds w's batches into ch until ctx is cancelled, then closes ch
+// so applyWatchedChanges exits.
+func (s *MCPServer) runWatcher(ctx context.Context, w *watch.Watcher, ch chan<- []watch.ChangeEvent) {
+	defer close(ch)
+	if err := w.Run(ctx, ch); err != nil && ctx.Err() == nil {
+		s.logger.Error("watcher error", "err", err)
+	}
+}
+
+// applyWatchedChanges applies each batch received on ch to the workspace.
+func (s *MCPServer) applyWatchedChanges(ch <-chan []watch.ChangeEvent) {
+	for events := range ch {
+		s.mu.Lock()
+		s.updater.HandleChanges(events)
+		s.mu.Unlock()
+	}
 }
 
 // GetWorkspace returns the primary view's workspace or an error if none is loaded.

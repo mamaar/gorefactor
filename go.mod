@@ -5,7 +5,7 @@ go 1.26
 toolchain go1.26.5
 
 require (
-	github.com/fsnotify/fsnotify v1.9.0
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	golang.org/x/text v0.35.0
 	golang.org/x/tools v0.43.0
