@@ -547,7 +547,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Find unused symbols in the workspace. A symbol is reported when no build configuration (GOOS/GOARCH variants, custom build tags) covering the workspace uses it. " +
 			"References from _test.go files do not count for symbols declared in non-test files, and neither do references from code that is itself unused. " +
 			"By default only unexported symbols are reported; include_exported adds exported ones, judged by use within the workspace only. " +
-			"safe_to_delete: false means safe_delete will refuse until the referenced_from entries (tests or unused callers) are gone. " +
+			"safe_to_delete is true only for an unexported symbol with no references outside its own declaration. When referenced_from is present, those tests or unused callers must go first and safe_delete refuses while they exist. Exported symbols are never marked safe, because use outside the workspace is not visible. " +
 			"A symbol that a file no configuration type-checks mentions, or that is named unresolved in a file with a type error, is listed under possibly_used instead.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in UnusedInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the report exists: a watcher batch

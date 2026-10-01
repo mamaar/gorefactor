@@ -222,8 +222,8 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 }
 
 // keepCalleesOfUsedCallers marks as used each declaration whose only users are
-// unused code, one of which is used in another view. It repeats until no
-// declaration changes, as a kept declaration can in turn keep its own callees.
+// unused code, one of which is used in another view or, in the default mode, is
+// merely unreported for being exported. Repeats until nothing changes.
 func (r *unusedRun) keepCalleesOfUsedCallers() {
 	for changed := true; changed; {
 		changed = false

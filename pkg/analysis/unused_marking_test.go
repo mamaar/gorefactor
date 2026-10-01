@@ -70,7 +70,12 @@ func assertNotReported(t *testing.T, facts map[string]unusedFact, keys ...string
 
 func assertSafe(t *testing.T, facts map[string]unusedFact, key string, want bool) {
 	t.Helper()
-	if f, ok := facts[key]; ok && f.SafeToDelete != want {
+	f, ok := facts[key]
+	if !ok {
+		t.Errorf("%s not reported; got %v", key, facts)
+		return
+	}
+	if f.SafeToDelete != want {
 		t.Errorf("%s SafeToDelete = %v, want %v", key, f.SafeToDelete, want)
 	}
 }
