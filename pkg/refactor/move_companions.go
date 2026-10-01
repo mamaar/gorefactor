@@ -129,8 +129,9 @@ func compositeLitRequiresSamePackage(lit *ast.CompositeLit, unexportedFields map
 }
 
 // findCompanionFuncDecls returns the top-level (non-method) function
-// declarations in the package's production files that return typeName and
-// construct it via a composite literal requiring same-package access. These are idiomatic
+// declarations in the package's production files that construct typeName via
+// a composite literal requiring same-package access. Outside the type's own
+// file, only functions returning typeName or *typeName qualify. These are idiomatic
 // constructors that must move together with the type. The type's own file
 // comes first in declaration order, then the other files by path.
 func findCompanionFuncDecls(pkg *types.Package, typeFile *types.File, typeName string, unexportedFields map[string]bool) []*ast.FuncDecl {
@@ -155,7 +156,7 @@ func findCompanionFuncDecls(pkg *types.Package, typeFile *types.File, typeName s
 			if !ok || fn.Recv != nil || fn.Body == nil {
 				continue // only plain functions; methods already move with the type
 			}
-			if returnsType(fn, typeName) && containsSamePackageCompositeLit(fn.Body, typeName, unexportedFields) {
+			if (file == typeFile || returnsType(fn, typeName)) && containsSamePackageCompositeLit(fn.Body, typeName, unexportedFields) {
 				companions = append(companions, fn)
 			}
 		}

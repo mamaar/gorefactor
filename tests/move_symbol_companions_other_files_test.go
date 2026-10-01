@@ -100,3 +100,14 @@ func TestMoveSymbolRefusesConstructorInTestFile(t *testing.T) {
 	}
 	assertFileContains(t, dir, "src/t.go", "type T struct")
 }
+
+func TestMoveSymbolMovesSameFileFunctionBuildingTypeWithoutReturningIt(t *testing.T) {
+	dir, isErr, msg := moveTypeAcrossFiles(t, map[string]string{
+		"src/t.go": "package src\n\ntype T struct{ n int }\n\nfunc Peek() int { return T{n: 1}.n }\n",
+	}, "T")
+	if isErr {
+		t.Fatalf("move: %s", msg)
+	}
+	assertFileContains(t, dir, "dst/dst.go", "func Peek()")
+	goVets(t, dir, "")
+}
