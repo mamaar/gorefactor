@@ -17,6 +17,7 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 	t.Helper()
 	eng, dir := loadConfigsEngine(t, map[string]string{"src/src.go": srcText})
 	ws := eng.WorkspaceSet().Primary().Workspace
+	eng.EnsureTypeChecked(ws)
 	req := types.MoveSymbolRequest{ToPackage: filepath.Join(dir, "dst"), CreateTarget: true}
 	for _, n := range names {
 		req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: filepath.Join(dir, "src"), Name: n})
@@ -120,5 +121,38 @@ func TestMoveSymbol_FullyMovedGroupAtEndOfFileWithoutTrailingNewline(t *testing.
 	}
 	if !strings.HasPrefix(src, "package src\n\nfunc Keep() {}\n") {
 		t.Errorf("source = %q", src)
+	}
+}
+
+func TestMoveSymbol_ConstantGroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {
+	src, dst := moveGroupNames(t, "package src\n\n// Group doc.\nconst (\n\t// A doc.\n\tA = 1\n\n\t// B doc.\n\tB = 2\n)\n\nfunc Keep() {}\n", "A", "B")
+
+	if want := "package src\n\nfunc Keep() {}\n"; src != want {
+		t.Errorf("source = %q, want %q", src, want)
+	}
+	if !strings.Contains(dst, "// A doc.\nconst A = 1") || !strings.Contains(dst, "// B doc.\nconst B = 2") {
+		t.Errorf("target lacks the constants with their docs:\n%s", dst)
+	}
+}
+
+func TestMoveSymbol_VariableGroupWithMultiNameSpecMovesAndLeavesNoShell(t *testing.T) {
+	src, dst := moveGroupNames(t, "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n\nvar (\n\ta, b = Pair()\n\tc    int\n)\n", "a", "b", "c")
+
+	if want := "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n"; src != want {
+		t.Errorf("source = %q, want %q", src, want)
+	}
+	if !strings.Contains(dst, "var a, b = src.Pair()") || !strings.Contains(dst, "var c ") {
+		t.Errorf("target lacks the variables:\n%s", dst)
+	}
+}
+
+func TestMoveSymbol_IotaGroupMovesVerbatimAndLeavesNothingBehind(t *testing.T) {
+	src, dst := moveGroupNames(t, "package src\n\nfunc Keep() {}\n\n// Doc.\nconst (\n\tA = iota\n\tB\n\t_\n\tC\n)\n", "A", "B", "C")
+
+	if want := "package src\n\nfunc Keep() {}\n"; src != want {
+		t.Errorf("source = %q, want %q", src, want)
+	}
+	if !strings.Contains(dst, "// Doc.\nconst (\n\tA = iota\n\tB\n\t_\n\tC\n)") {
+		t.Errorf("target lacks the verbatim group:\n%s", dst)
 	}
 }

@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -120,9 +121,16 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 	}
 
+	if ref.Name == "_" {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: "cannot move _: a blank name moves with the declaration that holds it, so name the other names of that declaration",
+		}
+	}
+
 	// Find the symbol to move
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	symbol, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
+	_, err := resolver.ResolveSymbol(sourcePackage, ref.Name)
 	if err != nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -130,13 +138,6 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 			Cause:   err,
 		}
 	}
-	if symbol.Kind == types.ConstantSymbol || symbol.Kind == types.VariableSymbol {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("cannot move %s: constants and variables are not supported", ref.Name),
-		}
-	}
-
 	// Check that target package exists or can be created
 	if !op.Request.CreateTarget {
 		if _, exists := ws.Packages[op.Request.ToPackage]; !exists {
@@ -177,14 +178,17 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 
 // movingSymbol is a declaration the operation moves, the package it leaves and
 // the index of the requested symbol that brought it along. A method of a moving
-// type is an entry of its own, with typ the entry of that type.
+// type is an entry of its own, with typ the entry of that type. Names declared
+// in one unit (see valueUnit) are entries of their own too; all but the first
+// have sharedWith the first, which alone removes and copies the unit.
 type movingSymbol struct {
-	sym     *types.Symbol
-	pkg     *types.Package
-	file    *types.File
-	owner   int
-	typ     *movingSymbol
-	removal []types.Change
+	sym        *types.Symbol
+	pkg        *types.Package
+	file       *types.File
+	owner      int
+	typ        *movingSymbol
+	sharedWith *movingSymbol
+	removal    []types.Change
 }
 
 // name is what error messages call the entry: its type for a method.
@@ -451,6 +455,9 @@ func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *anal
 			}
 			moving = append(moving, methods...)
 		}
+	}
+	if err := groupValueUnits(moving); err != nil {
+		return nil, err
 	}
 	return moving, nil
 }
@@ -843,6 +850,9 @@ func (op *RenamePackageOperation) Description() string {
 
 func (op *MoveSymbolOperation) generateSymbolRemovalChanges(m *movingSymbol) ([]types.Change, error) {
 	file, symbol := m.file, m.sym
+	if m.sharedWith != nil {
+		return nil, nil
+	}
 	if file.AST == nil {
 		return nil, fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
@@ -856,6 +866,10 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(m *movingSymbol) ([]
 		description = fmt.Sprintf("Remove method %s.%s", m.typ.sym.Name, symbol.Name)
 	case symbol.Kind == types.TypeSymbol:
 		description = fmt.Sprintf("Remove type %s", symbol.Name)
+	case symbol.Kind == types.ConstantSymbol:
+		description = fmt.Sprintf("Remove constant %s", symbol.Name)
+	case symbol.Kind == types.VariableSymbol:
+		description = fmt.Sprintf("Remove variable %s", symbol.Name)
 	}
 	return []types.Change{lineRemoval(file, start, end, description)}, nil
 }
@@ -867,8 +881,9 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(m *movingSymbol) ([]
 func widenGroupRemovals(moving []*movingSymbol) {
 	byName := make(map[token.Pos]*movingSymbol)
 	for _, m := range moving {
-		if m.file != nil && m.typ == nil && len(m.removal) == 1 {
-			byName[m.sym.Position] = m
+		carrier := cmp.Or(m.sharedWith, m)
+		if m.file != nil && m.typ == nil && len(carrier.removal) == 1 {
+			byName[m.sym.Position] = carrier
 		}
 	}
 	done := make(map[*types.File]bool)
@@ -879,16 +894,21 @@ func widenGroupRemovals(moving []*movingSymbol) {
 		done[m.file] = true
 		for _, decl := range m.file.AST.Decls {
 			d, ok := decl.(*ast.GenDecl)
-			if !ok || !d.Lparen.IsValid() || len(d.Specs) < 2 {
+			if !ok || !d.Lparen.IsValid() || len(d.Specs) < 2 || d.Tok == token.IMPORT || d.Tok != token.TYPE && !selfContained(d) {
 				continue
 			}
 			members := make([]*movingSymbol, 0, len(d.Specs))
 			for _, spec := range d.Specs {
-				ts, isType := spec.(*ast.TypeSpec)
-				if !isType || byName[ts.Name.Pos()] == nil || byName[ts.Name.Pos()].file != m.file {
+				var mover *movingSymbol
+				for _, id := range specNames(spec) {
+					if byName[id.Pos()] != nil && byName[id.Pos()].file == m.file {
+						mover = byName[id.Pos()]
+					}
+				}
+				if mover == nil {
 					break
 				}
-				members = append(members, byName[ts.Name.Pos()])
+				members = append(members, mover)
 			}
 			if len(members) != len(d.Specs) {
 				continue
@@ -920,10 +940,28 @@ func widenGroupRemovals(moving []*movingSymbol) {
 
 // specFirst is the first position of spec, including its doc comment.
 func specFirst(spec ast.Spec) token.Pos {
-	if ts, ok := spec.(*ast.TypeSpec); ok && ts.Doc != nil {
-		return ts.Doc.Pos()
+	switch s := spec.(type) {
+	case *ast.TypeSpec:
+		if s.Doc != nil {
+			return s.Doc.Pos()
+		}
+	case *ast.ValueSpec:
+		if s.Doc != nil {
+			return s.Doc.Pos()
+		}
 	}
 	return spec.Pos()
+}
+
+// specNames returns the identifiers spec declares.
+func specNames(spec ast.Spec) []*ast.Ident {
+	if vs, ok := spec.(*ast.ValueSpec); ok {
+		return vs.Names
+	}
+	if ts, ok := spec.(*ast.TypeSpec); ok {
+		return []*ast.Ident{ts.Name}
+	}
+	return nil
 }
 
 // lineRemoval is the change deleting the 0-based lines [start, end) of file.
@@ -977,12 +1015,11 @@ func declLines(file *types.File, pos token.Pos) (start, end int, keyword string,
 			}
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
-				ts, isType := spec.(*ast.TypeSpec)
-				if !isType || ts.Name.Pos() != pos {
+				if !slices.ContainsFunc(specNames(spec), func(id *ast.Ident) bool { return id.Pos() == pos }) {
 					continue
 				}
-				if d.Lparen.IsValid() && len(d.Specs) > 1 {
-					start, end = span(ts.Doc, ts)
+				if d.Lparen.IsValid() && len(d.Specs) > 1 && (d.Tok == token.TYPE || selfContained(d)) {
+					start, end = span(specDoc(spec), spec)
 					return start, end, d.Tok.String(), true
 				}
 				start, end = span(d.Doc, d)
@@ -991,6 +1028,17 @@ func declLines(file *types.File, pos token.Pos) (start, end int, keyword string,
 		}
 	}
 	return 0, 0, "", false
+}
+
+// specDoc is the doc comment of spec, or nil.
+func specDoc(spec ast.Spec) *ast.CommentGroup {
+	switch s := spec.(type) {
+	case *ast.TypeSpec:
+		return s.Doc
+	case *ast.ValueSpec:
+		return s.Doc
+	}
+	return nil
 }
 
 // generateSymbolAdditionChanges builds the change(s) that add every moving
@@ -1023,6 +1071,9 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 
 	var blocks []string
 	for _, m := range moving {
+		if m.sharedWith != nil {
+			continue
+		}
 		symbolCode, err := op.extractSymbolSource(m.file, m.sym, qualifierEdits(ws, m, uses[m], names, targetImportPath))
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract symbol source: %w", err)
