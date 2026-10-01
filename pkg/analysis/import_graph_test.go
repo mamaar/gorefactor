@@ -56,22 +56,35 @@ func TestImporters_FollowsProductionTestAndExternalTestImportsTransitively(t *te
 	}
 }
 
-func TestInvalidateImporters_DropsProductionOnlyPackages(t *testing.T) {
+func TestInvalidateImporters_DropsProductionOnlyPackagesOfTheInvalidated(t *testing.T) {
 	set, root := loadSet(t, map[string]string{
 		"a/a.go": "package a\n\nvar A = 1\n",
 		"b/b.go": "package b\n\nimport \"example.com/w/a\"\n\nvar B = a.A\n",
+		"c/c.go": "package c\n\nvar C = 1\n",
 	})
 	v := set.Primary()
-	pkg := v.Workspace.Packages[filepath.Join(root, "b")]
-	v.Parser.EnsureTypeChecked(v.Workspace, pkg)
-	v.Parser.importer.productionOnly = map[*types.Package]*gotypes.Package{pkg: nil}
+	pkgs := make(map[string]*types.Package)
+	for _, name := range []string{"a", "b", "c"} {
+		pkgs[name] = v.Workspace.Packages[filepath.Join(root, name)]
+		v.Parser.EnsureTypeChecked(v.Workspace, pkgs[name])
+	}
+	rescued := map[*types.Package]*gotypes.Package{pkgs["a"]: nil, pkgs["b"]: nil, pkgs["c"]: nil}
+	v.Parser.importer.productionOnly = rescued
 
 	v.Parser.InvalidateImporters(v.Workspace, []string{filepath.Join(root, "a")})
 
-	if v.Parser.importer.productionOnly != nil {
-		t.Error("production-only packages survived the invalidation")
+	for _, name := range []string{"a", "b"} {
+		if _, kept := rescued[pkgs[name]]; kept {
+			t.Errorf("production-only package of %s survived the invalidation", name)
+		}
+		if pkgs[name].TypesChecked {
+			t.Errorf("package %s kept its type information", name)
+		}
 	}
-	if pkg.TypesChecked {
-		t.Error("importer b kept its type information")
+	if _, kept := rescued[pkgs["c"]]; !kept {
+		t.Error("production-only package of c, which does not import a, was dropped while c stays checked against it")
+	}
+	if !pkgs["c"].TypesChecked {
+		t.Error("package c does not import a and must keep its type information")
 	}
 }

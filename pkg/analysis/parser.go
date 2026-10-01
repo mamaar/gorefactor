@@ -496,19 +496,25 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesChecked = false
 }
 
-// InvalidateImporters invalidates the type information of every package of ws
-// that imports one of the packages at paths, directly or not, and the
-// production-only packages built against the old ones. Their go/types objects
-// belong to the replaced check, so keeping them would split one declaration
-// into two objects.
+// InvalidateImporters invalidates the type information of the packages at
+// paths and of every package of ws that imports one of them, directly or not,
+// together with their production-only packages.
+//
+// The invalidated set must stay closed under "imports": a package kept while
+// one it imports is checked anew, or while the production-only package it was
+// handed is dropped, would hold a second go/types package for one import path.
 func (p *GoParser) InvalidateImporters(ws *types.Workspace, paths []string) {
 	p.checkMu.Lock()
 	defer p.checkMu.Unlock()
-	if p.importer != nil {
-		p.importer.productionOnly = nil
-	}
-	for _, path := range Importers(ws, paths) {
-		p.InvalidateTypeCheck(ws.Packages[path])
+	for _, path := range slices.Concat(paths, Importers(ws, paths)) {
+		pkg := ws.Packages[path]
+		if pkg == nil {
+			continue
+		}
+		if p.importer != nil {
+			delete(p.importer.productionOnly, pkg)
+		}
+		p.InvalidateTypeCheck(pkg)
 	}
 }
 
