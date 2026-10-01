@@ -141,6 +141,9 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 	if err := memberRefusal(sourcePackage, symbol); err != nil {
 		return err
 	}
+	if err := embedRefusal(sourcePackage, symbol); err != nil {
+		return err
+	}
 	// Check that target package exists or can be created
 	if !op.Request.CreateTarget {
 		if _, exists := ws.Packages[op.Request.ToPackage]; !exists {
@@ -204,6 +207,47 @@ func memberRefusal(pkg *types.Package, symbol *types.Symbol) error {
 		Type:    types.InvalidOperation,
 		Message: fmt.Sprintf("cannot move %s: it is a %s of %s and moves with its type; move %s instead", symbol.Name, what, owner, owner),
 	}
+}
+
+// embedRefusal refuses a constant or variable carrying a //go:embed directive:
+// its files stay in the source directory and its blank "embed" import is not
+// carried over.
+func embedRefusal(pkg *types.Package, symbol *types.Symbol) error {
+	if symbol.Kind != types.ConstantSymbol && symbol.Kind != types.VariableSymbol {
+		return nil
+	}
+	file := findFileContainingSymbol(pkg, symbol)
+	if file == nil {
+		return nil
+	}
+	unit := findValueUnit(file, symbol.Position)
+	if unit == nil {
+		return nil
+	}
+	docs := []*ast.CommentGroup{unit.spec.Doc}
+	if unit.whole {
+		docs = nil
+		for _, spec := range unit.decl.Specs {
+			docs = append(docs, spec.(*ast.ValueSpec).Doc)
+		}
+	}
+	if unit.whole || !unit.decl.Lparen.IsValid() {
+		docs = append(docs, unit.decl.Doc)
+	}
+	for _, doc := range docs {
+		if doc == nil {
+			continue
+		}
+		for _, c := range doc.List {
+			if strings.HasPrefix(c.Text, "//go:embed") {
+				return &types.RefactorError{
+					Type:    types.InvalidOperation,
+					Message: fmt.Sprintf("cannot move %s: it carries a //go:embed directive, whose files are relative to package %s; move it by hand", symbol.Name, pkg.Name),
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // movingSymbol is a declaration the operation moves, the package it leaves and
