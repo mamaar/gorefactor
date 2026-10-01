@@ -96,7 +96,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "detect_cycles",
-		Description: "Report production import cycles and import cycles through in-package test files, as import paths. Read-only; default build configuration only.",
+		Description: "Report production import cycles and import cycles through in-package test files, as import paths. Each entry is one path per group of mutually importing packages, so a package in the group may not appear in it. Read-only; default build configuration only.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in struct{}) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()

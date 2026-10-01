@@ -424,7 +424,7 @@ type AnalyzeDependenciesInput struct {
 func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_symbol",
-		Description: "Analyze a symbol: find its definition, properties, and all references across the workspace.",
+		Description: "Analyze a symbol: find its definition, properties, and all references across the workspace. Only package-level symbols are addressable; function-local constants, types and variables are not.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeSymbolInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -1659,7 +1659,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_dependencies",
-		Description: "Analyze the dependency graph of the workspace without changing it. Returns package_coupling (import and symbol counts per package) and dependency_graph. detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages.",
+		Description: "Analyze the dependency graph of the workspace without changing it. Returns package_coupling (import and symbol counts per package) and dependency_graph: PackageImports (package directory to the import paths of its non-test files), PackageDeps (package directory to the directories of the workspace packages it depends on, transitively, through non-test files), and ImportCycles and TestImportCycles (closed paths of package directories). detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeDependenciesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()

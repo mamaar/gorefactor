@@ -48,7 +48,7 @@ type RenameFieldInput struct {
 func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "rename_symbol",
-		Description: "Rename a symbol (function, type, variable, constant) across the workspace. All references are updated, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations is renamed in all of them.",
+		Description: "Rename a symbol (function, type, variable, constant) across the workspace. All references are updated, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations is renamed in all of them. Only package-level symbols are addressable; function-local constants, types and variables are not.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameSymbolInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher
 		// batch takes the write lock and may drop a view being planned in.
