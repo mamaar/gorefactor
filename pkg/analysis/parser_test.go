@@ -1814,6 +1814,43 @@ func TestParser_TypeCheckPackage_ProductionCycleIsReportedNotRecursed(t *testing
 	assertCycleReported(t, pkgB, "FB", "example.com/w/a", "example.com/w/b")
 }
 
+func TestParser_TypeCheckPackage_ProductionSelfImportIsReportedNotRecursed(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"a/a.go": "package a\n\nimport \"example.com/w/a\"\n\nfunc FA() { a.FA() }\n",
+	})
+	p, ws := loadWithConfig(t, root, DefaultBuildConfig())
+	pkgA := ws.Packages[filepath.Join(root, "a")]
+
+	p.TypeCheckPackage(ws, pkgA)
+
+	assertCycleReported(t, pkgA, "FA", "example.com/w/a -> example.com/w/a")
+}
+
+func TestParser_TypeCheckPackage_TestFileSelfImportTerminates(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"in-package test file": {
+			"a/a.go":      "package a\n\nfunc FA() {}\n",
+			"a/a_test.go": "package a\n\nimport \"example.com/w/a\"\n\nfunc TestA() { a.FA() }\n",
+		},
+		"external test package": {
+			"a/a.go":      "package a\n\nfunc FA() {}\n",
+			"a/a_test.go": "package a_test\n\nimport \"example.com/w/a\"\n\nfunc TestA() { a.FA() }\n",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := writeWorkspace(t, files)
+			p, ws := loadWithConfig(t, root, DefaultBuildConfig())
+			pkgA := ws.Packages[filepath.Join(root, "a")]
+
+			p.TypeCheckPackage(ws, pkgA)
+
+			if !pkgA.TypesChecked {
+				t.Fatal("package not checked")
+			}
+		})
+	}
+}
+
 func TestParser_TypeCheckPackage_ThreePackageProductionCycleNamesEveryMember(t *testing.T) {
 	root := writeWorkspace(t, map[string]string{
 		"a/a.go": "package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n",

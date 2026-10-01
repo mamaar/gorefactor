@@ -1283,9 +1283,9 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 // NOT touch (pkg.TypesPkg/TypesInfo/TypesChecked).
 //
 // This check can recurse into Import for what pkg's production files import.
-// It terminates because Import rejects a production import cycle (see
-// productionCycleError) before recursing, so the walk never re-enters a
-// package still being resolved on the stack.
+// It terminates because Import rejects a production import cycle, a package
+// importing itself included (see productionCycleError), before recursing, so
+// the walk never re-enters a package still being resolved on the stack.
 func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotypes.Package, error) {
 	if cached, ok := imp.productionOnly[pkg]; ok {
 		return cached, nil
@@ -1407,13 +1407,17 @@ func (c *prodCycles) path(from, to string) []string {
 
 // productionCycleError returns an import-cycle error when the package being
 // checked (top of checkStack) imports pkg from production code and pkg reaches
-// it back through production code. Edges through test files never qualify.
+// it back through production code, or is pkg and imports itself from production
+// code. Edges through test files never qualify.
 func (imp *workspaceImporter) productionCycleError(pkg *types.Package) error {
 	stack := imp.parser.checkStack
 	if len(stack) == 0 {
 		return nil
 	}
 	importer := stack[len(stack)-1]
+	if importer == pkg && importsItself(pkg) {
+		return fmt.Errorf("import cycle not allowed: %s -> %s", pkg.ImportPath, pkg.ImportPath)
+	}
 	c := imp.prodCycles.Load()
 	if c == nil {
 		c = newProdCycles(imp.ws)
@@ -1427,6 +1431,18 @@ func (imp *workspaceImporter) productionCycleError(pkg *types.Package) error {
 		names = append(names, imp.importPathOf(fs))
 	}
 	return fmt.Errorf("import cycle not allowed: %s", strings.Join(names, " -> "))
+}
+
+// importsItself reports whether a production file of pkg imports pkg.
+func importsItself(pkg *types.Package) bool {
+	for _, f := range productionASTs(pkg) {
+		for _, spec := range f.Imports {
+			if strings.Trim(spec.Path.Value, "\"`") == pkg.ImportPath {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (imp *workspaceImporter) importPathOf(fsPath string) string {
