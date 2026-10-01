@@ -284,6 +284,9 @@ type Change struct {
 	// ignored for a delete. A file targeted by a Delete change must not also
 	// have other (edit) changes in the same plan.
 	Delete bool
+	// Relocation marks a change that belongs to relocating a whole file or
+	// package (a move or a package rename).
+	Relocation bool
 }
 
 // SuggestedMove represents a symbol that would benefit from being moved

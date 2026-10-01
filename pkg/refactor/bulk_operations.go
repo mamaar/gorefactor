@@ -77,6 +77,14 @@ func (op *MovePackageOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
+// markRelocation flags every change of plan as part of a whole-file or package relocation.
+func markRelocation(plan *types.RefactoringPlan) *types.RefactoringPlan {
+	for i := range plan.Changes {
+		plan.Changes[i].Relocation = true
+	}
+	return plan
+}
+
 func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
@@ -192,7 +200,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		}
 	}
 
-	return plan, nil
+	return markRelocation(plan), nil
 }
 
 // MoveDirOperation implements moving directory structures
@@ -377,7 +385,7 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 		}
 	}
 
-	return plan, nil
+	return markRelocation(plan), nil
 }
 
 // rewritePackageClause returns content with the package clause identifier

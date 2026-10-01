@@ -741,7 +741,7 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 		}
 	}
 
-	return plan, nil
+	return markRelocation(plan), nil
 }
 
 func (op *RenamePackageOperation) Description() string {
