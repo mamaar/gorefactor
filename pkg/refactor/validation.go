@@ -149,6 +149,16 @@ func (v *Validator) ValidateRename(ws *refactorTypes.Workspace, req refactorType
 	for _, symbol := range targetSymbols {
 		conflictIssues := v.checkRenameConflicts(ws, symbol, req.NewName)
 		issues = append(issues, conflictIssues...)
+		if refs, err := resolver.FindReferences(symbol); err == nil {
+			if err := checkShadowedAtReferences(ws, symbol, refs, req.NewName); err != nil {
+				issues = append(issues, refactorTypes.Issue{
+					Type:        refactorTypes.IssueNameConflict,
+					Description: err.(*refactorTypes.RefactorError).Message,
+					File:        symbol.File,
+					Severity:    refactorTypes.Error,
+				})
+			}
+		}
 	}
 
 	// Check for interface compliance issues

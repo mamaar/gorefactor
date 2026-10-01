@@ -723,6 +723,10 @@ func (op *RenameSymbolOperation) planSymbols(ws *types.Workspace, resolver *anal
 			return nil, err
 		}
 
+		if err := checkShadowedAtReferences(ws, symbol, references, op.Request.NewName); err != nil {
+			return nil, err
+		}
+
 		// Update symbol definition
 		defChange := op.generateDefinitionRenameChange(symbol, op.Request.NewName)
 		plan.Changes = append(plan.Changes, defChange)
