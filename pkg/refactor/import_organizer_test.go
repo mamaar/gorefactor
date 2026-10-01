@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"go/format"
 	"strings"
 	"testing"
 )
@@ -343,5 +344,198 @@ func main() {}
 
 	if bufioIdx > fmtIdx || fmtIdx > osIdx || osIdx > stringsIdx {
 		t.Errorf("expected alphabetical order: bufio < fmt < os < strings in:\n%s", result)
+	}
+}
+
+func TestOrganizeImports_KeepsDocCommentWithSpec(t *testing.T) {
+	src := `package main
+
+import (
+	"bytes"
+	//nolint:gosec
+	"crypto/md5"
+	"context"
+	"encoding/json"
+)
+
+func main() {}
+`
+	want := `package main
+
+import (
+	"bytes"
+	"context"
+	//nolint:gosec
+	"crypto/md5"
+	"encoding/json"
+)
+
+func main() {}
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestOrganizeImports_KeepsEveryTrailingComment(t *testing.T) {
+	src := `package main
+
+import (
+	"os" // first /* second */
+	"fmt" // printing
+)
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	for _, want := range []string{`"fmt" // printing`, `"os" // first /* second */`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestOrganizeImports_KeepsDocOnBlankIdentifierImport(t *testing.T) {
+	src := `package main
+
+import (
+	"fmt"
+	// for go:embed
+	_ "embed"
+)
+`
+	want := `package main
+
+import (
+	// for go:embed
+	_ "embed"
+	"fmt"
+)
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestOrganizeImports_KeepsFreeStandingGroupComment(t *testing.T) {
+	src := `package main
+
+import (
+	"fmt"
+
+	// third-party dependencies
+
+	"github.com/x/y"
+)
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	if got != src {
+		t.Errorf("got:\n%s\nwant:\n%s", got, src)
+	}
+}
+
+func TestOrganizeImports_KeepsCommentsBetweenImportDecls(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+// kept
+import "os"
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	if !strings.Contains(got, "// kept\n\t\"os\"") {
+		t.Errorf("comment lost or detached:\n%s", got)
+	}
+}
+
+func TestOrganizeImports_KeepsCommentBeforeClosingParen(t *testing.T) {
+	src := `package main
+
+import (
+	"fmt"
+	// "os"
+)
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	if !strings.Contains(got, `// "os"`) {
+		t.Errorf("comment lost:\n%s", got)
+	}
+}
+
+func TestOrganizeImports_KeepsCgoPreambleAboveImportC(t *testing.T) {
+	src := `package main
+
+// #include <stdio.h>
+import "C"
+
+import (
+	"os"
+	// used for exit
+	"fmt"
+)
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	if !strings.Contains(got, "// #include <stdio.h>\nimport (\n\t\"C\"\n") {
+		t.Errorf("cgo preamble detached:\n%s", got)
+	}
+	if !strings.Contains(got, "// used for exit\n\t\"fmt\"") {
+		t.Errorf("doc comment detached:\n%s", got)
+	}
+}
+
+func TestOrganizeImports_Idempotent(t *testing.T) {
+	srcs := []string{
+		`package main
+
+import (
+	"os" // trailing
+	// doc
+	"fmt"
+
+	// group note
+
+	"github.com/x/y"
+	_ "embed" // blank
+	// dangling
+)
+`,
+		`package main
+
+import "fmt"
+
+// kept
+import "os"
+`,
+	}
+	for _, src := range srcs {
+		once := OrganizeImports(src, "example.com/m", nil)
+		twice := OrganizeImports(once, "example.com/m", nil)
+		if once != twice {
+			t.Errorf("not idempotent:\nonce:\n%s\ntwice:\n%s", once, twice)
+		}
+	}
+}
+
+func TestOrganizeImports_KeepsEveryCommentAfterFormat(t *testing.T) {
+	src := `package main
+
+import (
+	"bytes"
+	//nolint:gosec
+	"crypto/md5"
+	"encoding/json" // j
+	// for go:embed
+	_ "embed"
+)
+`
+	got := OrganizeImports(src, "example.com/m", nil)
+	formatted, err := format.Source([]byte(got))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"//nolint:gosec\n\t\"crypto/md5\"", `"encoding/json" // j`, "// for go:embed\n\t_ \"embed\""} {
+		if !strings.Contains(string(formatted), want) {
+			t.Errorf("missing %q in:\n%s", want, formatted)
+		}
 	}
 }

@@ -852,3 +852,23 @@ func TestApplyChanges_AllowsFileGeneratedByGorefactor(t *testing.T) {
 		t.Fatalf("gorefactor-generated file should stay editable, got: %v", err)
 	}
 }
+
+func TestApplyChangesToFile_AddedImportKeepsNeighbourComment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.go")
+	src := "package a\n\nimport (\n\t\"bytes\"\n\t//nolint:gosec\n\t\"crypto/md5\"\n\t\"encoding/json\"\n)\n"
+	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insert := strings.Index(src, "\t\"bytes\"\n") + len("\t\"bytes\"\n")
+	s := NewSerializer()
+	s.SetModuleInfo("example.com/m", nil)
+	err := s.applyChangesToFile(path, []refactorTypes.Change{{File: path, Start: insert, End: insert, NewText: "\t\"context\"\n"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	want := "package a\n\nimport (\n\t\"bytes\"\n\t\"context\"\n\t//nolint:gosec\n\t\"crypto/md5\"\n\t\"encoding/json\"\n)\n"
+	if string(got) != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

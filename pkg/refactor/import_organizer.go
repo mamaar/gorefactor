@@ -22,7 +22,17 @@ const (
 type importEntry struct {
 	alias   string // "", ".", "_", or a named alias
 	path    string // the quoted import path (without quotes)
-	comment string // any trailing inline comment
+	comment string // trailing comments on the spec's line
+	leading []commentBlock
+}
+
+// commentBlock is a comment group rendered on its own lines above a spec.
+// blankBefore and blankAfter record the blank lines that separated it from its
+// neighbours, so free-standing groups keep their spacing.
+type commentBlock struct {
+	lines       []string
+	blankBefore bool
+	blankAfter  bool
 }
 
 // OrganizeImports rewrites the import block(s) in src so that imports are
@@ -44,6 +54,9 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 	var firstImportPos token.Pos
 	var lastImportEnd token.Pos
 	importDeclCount := 0
+
+	var specs []*ast.ImportSpec
+	attached := make(map[*ast.CommentGroup]bool)
 
 	for _, decl := range f.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
@@ -68,32 +81,28 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 				continue
 			}
 
-			path := strings.Trim(ispec.Path.Value, `"`)
-			alias := ""
-			if ispec.Name != nil {
-				alias = ispec.Name.Name
-			}
-
-			comment := ""
-			if ispec.Comment != nil {
-				for _, c := range ispec.Comment.List {
-					comment = c.Text
-				}
-			}
-
-			entry := importEntry{alias: alias, path: path, comment: comment}
-
-			if path == "C" {
-				cgoEntries = append(cgoEntries, entry)
-			} else {
-				entries = append(entries, entry)
-			}
+			specs = append(specs, ispec)
+			attached[ispec.Doc] = true
+			attached[ispec.Comment] = true
 		}
 	}
 
-	if importDeclCount == 0 || len(entries) == 0 && len(cgoEntries) == 0 {
+	if importDeclCount == 0 || len(specs) == 0 {
 		return src
 	}
+
+	lines := strings.Split(src, "\n")
+	free := freeStandingComments(f, firstImportPos, lastImportEnd, attached)
+	for _, ispec := range specs {
+		entry := newImportEntry(ispec)
+		entry.leading, free = takeLeadingBlocks(fset, lines, ispec, free)
+		if entry.path == "C" {
+			cgoEntries = append(cgoEntries, entry)
+		} else {
+			entries = append(entries, entry)
+		}
+	}
+	tail := commentBlocks(fset, lines, free)
 
 	// Classify and group.
 	groups := make(map[ImportGroup][]importEntry)
@@ -110,7 +119,7 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 	}
 
 	// Render the new import block.
-	newBlock := renderImportBlock(groups, cgoEntries)
+	newBlock := renderImportBlock(groups, cgoEntries, tail)
 
 	// Replace the old import declarations with the new block.
 	startOff := fset.Position(firstImportPos).Offset
@@ -122,6 +131,71 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 
 	result := src[:startOff] + newBlock + src[endOff:]
 	return result
+}
+
+// newImportEntry returns the sortable entry for spec, without leading comments.
+func newImportEntry(spec *ast.ImportSpec) importEntry {
+	e := importEntry{path: strings.Trim(spec.Path.Value, `"`)}
+	if spec.Name != nil {
+		e.alias = spec.Name.Name
+	}
+	if spec.Comment != nil {
+		texts := make([]string, len(spec.Comment.List))
+		for i, c := range spec.Comment.List {
+			texts[i] = c.Text
+		}
+		e.comment = strings.Join(texts, " ")
+	}
+	return e
+}
+
+// freeStandingComments returns the comment groups inside [start, end] that are
+// not a spec's doc or trailing comment.
+func freeStandingComments(f *ast.File, start, end token.Pos, attached map[*ast.CommentGroup]bool) []*ast.CommentGroup {
+	var free []*ast.CommentGroup
+	for _, g := range f.Comments {
+		if g.Pos() >= start && g.End() <= end && !attached[g] {
+			free = append(free, g)
+		}
+	}
+	return free
+}
+
+// takeLeadingBlocks splits off the free-standing groups that precede spec and
+// returns them followed by spec's own doc comment, plus the groups left over.
+func takeLeadingBlocks(fset *token.FileSet, lines []string, spec *ast.ImportSpec, free []*ast.CommentGroup) ([]commentBlock, []*ast.CommentGroup) {
+	n := 0
+	for n < len(free) && free[n].End() <= spec.Pos() {
+		n++
+	}
+	blocks := commentBlocks(fset, lines, free[:n])
+	if spec.Doc != nil {
+		doc := commentBlocks(fset, lines, []*ast.CommentGroup{spec.Doc})[0]
+		doc.blankAfter = false
+		blocks = append(blocks, doc)
+	}
+	return blocks, free[n:]
+}
+
+// commentBlocks converts comment groups to blocks, recording from the source
+// lines whether a blank line sat directly before or after each group.
+func commentBlocks(fset *token.FileSet, lines []string, groups []*ast.CommentGroup) []commentBlock {
+	blocks := make([]commentBlock, len(groups))
+	for i, g := range groups {
+		for _, c := range g.List {
+			blocks[i].lines = append(blocks[i].lines, c.Text)
+		}
+		first := fset.Position(g.Pos()).Line
+		last := fset.Position(g.End()).Line
+		blocks[i].blankBefore = isBlankLine(lines, first-1)
+		blocks[i].blankAfter = isBlankLine(lines, last+1)
+	}
+	return blocks
+}
+
+// isBlankLine reports whether the 1-based line n exists and is blank.
+func isBlankLine(lines []string, n int) bool {
+	return n >= 1 && n <= len(lines) && strings.TrimSpace(lines[n-1]) == ""
 }
 
 // classifyImport determines which group an import path belongs to.
@@ -152,8 +226,8 @@ func classifyImport(importPath, modulePath string, workspaceModules []string) Im
 
 // renderImportBlock produces the text for a complete import(...) declaration
 // with groups separated by blank lines.  cgoEntries (import "C") are placed
-// first in their own group.
-func renderImportBlock(groups map[ImportGroup][]importEntry, cgoEntries []importEntry) string {
+// first in their own group; tail holds comments that followed the last spec.
+func renderImportBlock(groups map[ImportGroup][]importEntry, cgoEntries []importEntry, tail []commentBlock) string {
 	var b strings.Builder
 	b.WriteString("import (\n")
 
@@ -162,34 +236,67 @@ func renderImportBlock(groups map[ImportGroup][]importEntry, cgoEntries []import
 
 	// Cgo imports come first, separated from everything else.
 	if len(cgoEntries) > 0 {
-		for _, e := range cgoEntries {
-			b.WriteString("\t")
-			writeImportLine(&b, e)
-			b.WriteString("\n")
-		}
+		writeImportGroup(&b, cgoEntries)
 		wroteGroup = true
 	}
 
 	for _, g := range groupOrder {
-		entries, ok := groups[g]
-		if !ok || len(entries) == 0 {
+		entries := groups[g]
+		if len(entries) == 0 {
 			continue
 		}
 
 		if wroteGroup {
 			b.WriteString("\n")
 		}
-
-		for _, e := range entries {
-			b.WriteString("\t")
-			writeImportLine(&b, e)
-			b.WriteString("\n")
-		}
+		writeImportGroup(&b, entries)
 		wroteGroup = true
+	}
+
+	for _, blk := range tail {
+		writeCommentBlock(&b, blk)
 	}
 
 	b.WriteString(")")
 	return b.String()
+}
+
+// writeImportGroup writes the entries of one group, one per line.
+func writeImportGroup(b *strings.Builder, entries []importEntry) {
+	for _, e := range entries {
+		for _, blk := range e.leading {
+			writeCommentBlock(b, blk)
+		}
+		b.WriteString("\t")
+		writeImportLine(b, e)
+		b.WriteString("\n")
+	}
+}
+
+// writeCommentBlock writes blk on its own lines, keeping the blank lines that
+// surrounded it unless the output already has one there.
+func writeCommentBlock(b *strings.Builder, blk commentBlock) {
+	if blk.blankBefore {
+		writeBlankLine(b)
+	}
+	for _, l := range blk.lines {
+		b.WriteString("\t")
+		b.WriteString(l)
+		b.WriteString("\n")
+	}
+	if blk.blankAfter {
+		writeBlankLine(b)
+	}
+}
+
+// writeBlankLine ends the current line with an empty one, unless the output
+// already ends in a blank line or the opening "import (".
+func writeBlankLine(b *strings.Builder) {
+	out := b.String()
+	if strings.HasSuffix(out, "\n\n") || strings.HasSuffix(out, "(\n") {
+		return
+	}
+	b.WriteString("\n")
 }
 
 // writeImportLine writes a single import line (alias + path + optional comment).
