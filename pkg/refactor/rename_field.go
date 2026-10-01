@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	gotypes "go/types"
-	"io"
-	"log/slog"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -13,10 +11,10 @@ import (
 
 // RenameFieldOperation renames a struct field on a named type and updates every
 // reference to it. Reference discovery is done exclusively through
-// SymbolResolver.FindFieldReferences, which resolves the field's go/types object
+// SymbolResolver.FindMemberReferences, which resolves the field's go/types object
 // and matches by object identity. It never falls back to name matching (which
 // would rewrite unrelated identically-named identifiers across the workspace),
-// and propagates FindFieldReferences' fail-closed error unchanged.
+// and propagates FindMemberReferences' fail-closed error unchanged.
 type RenameFieldOperation struct {
 	Request     types.RenameFieldRequest
 	CachedIndex *analysis.ReferenceIndex // optional pre-built index
@@ -37,19 +35,14 @@ func (op *RenameFieldOperation) Description() string {
 		op.Request.TypeName, op.Request.FieldName, op.Request.NewFieldName)
 }
 
-func (op *RenameFieldOperation) logger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
-
-// initResolver builds (or reuses) the reference index. The batch path constructs
-// the op with a nil CachedIndex, so the fallback branch must exist.
-func (op *RenameFieldOperation) initResolver(ws *types.Workspace) (*analysis.SymbolResolver, *analysis.ReferenceIndex) {
-	resolver := analysis.NewSymbolResolver(ws, op.logger())
-	idx := op.CachedIndex
-	if idx == nil {
-		idx = resolver.BuildReferenceIndex()
+// resolverAndIndex returns a resolver for ws and cached, or a freshly built
+// index when cached is nil.
+func resolverAndIndex(ws *types.Workspace, cached *analysis.ReferenceIndex) (*analysis.SymbolResolver, *analysis.ReferenceIndex) {
+	resolver := quietResolver(ws)
+	if cached == nil {
+		cached = resolver.BuildReferenceIndex()
 	}
-	return resolver, idx
+	return resolver, cached
 }
 
 // findOwningPackage locates the package that declares Request.TypeName. If
@@ -286,11 +279,11 @@ func (op *RenameFieldOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		}
 	}
 
-	resolver, idx := op.initResolver(ws)
+	resolver, idx := resolverAndIndex(ws, op.CachedIndex)
 
 	// Object-identity reference discovery. Fail closed on any error — never
 	// degrade to a name match, which would corrupt unrelated identifiers.
-	refs, err := resolver.FindFieldReferences(fieldSym, idx)
+	refs, err := resolver.FindMemberReferences(fieldSym, idx)
 	if err != nil {
 		return nil, err
 	}

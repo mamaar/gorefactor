@@ -1199,7 +1199,7 @@ func Caller() string { return pkga.SharedFunc() }
 // createFieldRefTestWorkspace builds a type-checked single-package workspace
 // containing two unrelated structs that both declare a field named "Name",
 // plus a struct with a field that is never referenced. Used by the
-// FindFieldReferences tests.
+// FindMemberReferences tests.
 func createFieldRefTestWorkspace(t *testing.T) (*types.Workspace, *SymbolResolver, *types.Package) {
 	t.Helper()
 	fileSet := token.NewFileSet()
@@ -1274,10 +1274,10 @@ func Build() {
 	return ws, resolver, pkg
 }
 
-// TestFindFieldReferences_ErrorWhenTypesInfoNil verifies the load-bearing
-// fail-closed guarantee: with no type information available, FindFieldReferences
+// TestFindMemberReferences_ErrorWhenTypesInfoNil verifies the load-bearing
+// fail-closed guarantee: with no type information available, FindMemberReferences
 // returns an error and NOT an empty-but-successful (name-fallback) result.
-func TestFindFieldReferences_ErrorWhenTypesInfoNil(t *testing.T) {
+func TestFindMemberReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	_, resolver, pkg := createFieldRefTestWorkspace(t)
 
 	// Build the index while type info is present so the workspace index itself
@@ -1295,7 +1295,7 @@ func TestFindFieldReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	// Remove type info to trigger the fail-closed guard.
 	pkg.TypesInfo = nil
 
-	refs, err := resolver.FindFieldReferences(field, idx)
+	refs, err := resolver.FindMemberReferences(field, idx)
 	if err == nil {
 		t.Fatalf("expected an error when TypesInfo is nil, got nil (refs=%d)", len(refs))
 	}
@@ -1307,10 +1307,10 @@ func TestFindFieldReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	}
 }
 
-// TestFindFieldReferences_EmptyIsNotError verifies that a field with zero uses
+// TestFindMemberReferences_EmptyIsNotError verifies that a field with zero uses
 // resolves to its object and returns an empty slice with no error — this must be
 // distinguished from the nil-object failure case.
-func TestFindFieldReferences_EmptyIsNotError(t *testing.T) {
+func TestFindMemberReferences_EmptyIsNotError(t *testing.T) {
 	_, resolver, pkg := createFieldRefTestWorkspace(t)
 	idx := resolver.BuildReferenceIndex()
 
@@ -1319,7 +1319,7 @@ func TestFindFieldReferences_EmptyIsNotError(t *testing.T) {
 		t.Fatal("expected to resolve Unused.Ghost field symbol")
 	}
 
-	refs, err := resolver.FindFieldReferences(ghost, idx)
+	refs, err := resolver.FindMemberReferences(ghost, idx)
 	if err != nil {
 		t.Fatalf("expected no error for an unreferenced field, got: %v", err)
 	}
@@ -1328,10 +1328,10 @@ func TestFindFieldReferences_EmptyIsNotError(t *testing.T) {
 	}
 }
 
-// TestFindFieldReferences_DoesNotConflateSameNamedFields verifies that
-// FindFieldReferences for User.Name returns only User.Name uses and never a
+// TestFindMemberReferences_DoesNotConflateSameNamedFields verifies that
+// FindMemberReferences for User.Name returns only User.Name uses and never a
 // reference to the identically-named Product.Name field.
-func TestFindFieldReferences_DoesNotConflateSameNamedFields(t *testing.T) {
+func TestFindMemberReferences_DoesNotConflateSameNamedFields(t *testing.T) {
 	_, resolver, pkg := createFieldRefTestWorkspace(t)
 	idx := resolver.BuildReferenceIndex()
 
@@ -1341,13 +1341,13 @@ func TestFindFieldReferences_DoesNotConflateSameNamedFields(t *testing.T) {
 		t.Fatalf("expected to resolve both User.Name and Product.Name (user=%v product=%v)", userName, productName)
 	}
 
-	userRefs, err := resolver.FindFieldReferences(userName, idx)
+	userRefs, err := resolver.FindMemberReferences(userName, idx)
 	if err != nil {
-		t.Fatalf("FindFieldReferences(User.Name) failed: %v", err)
+		t.Fatalf("FindMemberReferences(User.Name) failed: %v", err)
 	}
-	productRefs, err := resolver.FindFieldReferences(productName, idx)
+	productRefs, err := resolver.FindMemberReferences(productName, idx)
 	if err != nil {
-		t.Fatalf("FindFieldReferences(Product.Name) failed: %v", err)
+		t.Fatalf("FindMemberReferences(Product.Name) failed: %v", err)
 	}
 
 	if len(userRefs) == 0 {

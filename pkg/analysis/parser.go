@@ -596,7 +596,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	}
 
 	// Include in-package test files so identifiers declared or used in _test.go
-	// land in Defs/Uses. Without them, object-identity lookups (FindFieldReferences)
+	// land in Defs/Uses. Without them, object-identity lookups (FindMemberReferences)
 	// silently miss every test-file reference. External test packages (package x_test)
 	// carry a different package name and cannot be checked in the same pass.
 	pkgName := files[0].Name.Name

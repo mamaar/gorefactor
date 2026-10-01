@@ -41,12 +41,16 @@ type ifaceSurvey struct {
 	impls     []*gotypes.Named
 }
 
-// interfaceSurvey builds (and memoizes) the survey.
+// interfaceSurvey returns the operation's survey, building it on first use.
 func (op *ThreadContextOperation) interfaceSurvey(ws *pkgtypes.Workspace) *ifaceSurvey {
-	if op.ifaceCache != nil {
-		return op.ifaceCache
+	if op.ifaceCache == nil {
+		op.ifaceCache = surveyInterfaces(ws)
 	}
+	return op.ifaceCache
+}
 
+// surveyInterfaces surveys the interfaces and implementation types of ws.
+func surveyInterfaces(ws *pkgtypes.Workspace) *ifaceSurvey {
 	inWorkspace := workspacePkgPredicate(ws)
 	survey := &ifaceSurvey{}
 	seenIface := make(map[*gotypes.Named]bool)
@@ -130,7 +134,6 @@ func (op *ThreadContextOperation) interfaceSurvey(ws *pkgtypes.Workspace) *iface
 		}
 	}
 
-	op.ifaceCache = survey
 	return survey
 }
 
@@ -218,20 +221,25 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 // matters most — http.Handler, io.Writer, sort.Interface — where the damage is
 // silent. Nothing warns; the type simply stops satisfying the interface.
 func (op *ThreadContextOperation) externalInterfaceAbort(ws *pkgtypes.Workspace, f *gotypes.Func) error {
-	recv := methodRecvType(f)
-	if recv == nil {
-		return nil
-	}
-	for _, ext := range op.interfaceSurvey(ws).external {
-		if interfaceMethodNamed(ext.iface, f.Name()) == nil {
-			continue
-		}
-		if !typeImplements(recv, ext.iface) {
-			continue
-		}
+	if ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f); ok {
 		return op.externalIfaceError(f, ext)
 	}
 	return nil
+}
+
+// externalInterfaceOf returns the first interface declared outside the
+// workspace that declares a method of f's name and that f's receiver satisfies.
+func (s *ifaceSurvey) externalInterfaceOf(f *gotypes.Func) (ifaceCandidate, bool) {
+	recv := methodRecvType(f)
+	if recv == nil {
+		return ifaceCandidate{}, false
+	}
+	for _, ext := range s.external {
+		if interfaceMethodNamed(ext.iface, f.Name()) != nil && typeImplements(recv, ext.iface) {
+			return ext, true
+		}
+	}
+	return ifaceCandidate{}, false
 }
 
 func (op *ThreadContextOperation) externalIfaceError(f *gotypes.Func, ext ifaceCandidate) error {
@@ -255,13 +263,9 @@ func (op *ThreadContextOperation) externalIfaceError(f *gotypes.Func, ext ifaceC
 // implementationsOf returns the method named methodName on every workspace type
 // that satisfies iface. The seed's own receiver is not filtered out: it is
 // already in the visited set by the time this runs, so discover drops it.
-func (op *ThreadContextOperation) implementationsOf(
-	survey *ifaceSurvey,
-	iface *gotypes.Interface,
-	methodName string,
-) []*gotypes.Func {
+func (s *ifaceSurvey) implementationsOf(iface *gotypes.Interface, methodName string) []*gotypes.Func {
 	var out []*gotypes.Func
-	for _, named := range survey.impls {
+	for _, named := range s.impls {
 		if !typeImplements(named, iface) {
 			continue
 		}
@@ -380,4 +384,28 @@ func asInterfaceType(t gotypes.Type) (*gotypes.Interface, bool) {
 	}
 	iface, ok := t.Underlying().(*gotypes.Interface)
 	return iface, ok
+}
+
+// expansionOf returns the functions that must change alongside f: for a
+// concrete method, the workspace interface methods it satisfies; for an
+// interface method, every workspace implementation of it. Each hop reaches the
+// other direction in turn, so a worklist over it covers an interface, its
+// implementations and the interfaces those satisfy.
+func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
+	recv := methodRecvType(f)
+	if recv == nil {
+		return nil
+	}
+	if iface, ok := asInterfaceType(recv); ok {
+		return s.implementationsOf(iface, f.Name())
+	}
+	var out []*gotypes.Func
+	for _, cand := range s.workspace {
+		m := interfaceMethodNamed(cand.iface, f.Name())
+		if m == nil || !typeImplements(recv, cand.iface) {
+			continue
+		}
+		out = append(out, canonicalFunc(m))
+	}
+	return out
 }

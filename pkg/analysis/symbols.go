@@ -607,7 +607,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 // []*types.Reference. It skips the symbol's own declaration position and any
 // declaration entries, and optionally filters to allowedPackages. This is the
 // shared conversion used by both FindReferencesIndexedFiltered (the fast path)
-// and FindFieldReferences (the fail-closed field path), so both populate
+// and FindMemberReferences (the fail-closed member path), so both populate
 // Offset/File/Line/Column identically.
 func (sr *SymbolResolver) objectEntriesToReferences(symbol *types.Symbol, objEntries []objectEntry, allowedPackages map[string]*types.Package) []*types.Reference {
 	var references []*types.Reference
@@ -649,63 +649,57 @@ func (sr *SymbolResolver) objectEntriesToReferences(symbol *types.Symbol, objEnt
 	return references
 }
 
-// FindFieldReferences resolves symbol to its go/types object and returns every
-// non-declaration reference via the workspace index. It never falls back to
-// name-based matching: for a struct field that would rewrite unrelated
-// identically-named identifiers.
+// FindMemberReferences resolves a method or field symbol to its go/types object
+// and returns every non-declaration reference via the workspace index. It never
+// falls back to name matching: that would rewrite unrelated identically-named
+// identifiers.
 //
-// It fails closed. Any condition that would prevent go/types-backed resolution
-// (missing package or type info, an unresolvable object, or an empty/absent
-// workspace index) is returned as a *types.RefactorError rather than degrading
-// to a name match or a silently-empty result. An empty (but non-nil-object)
-// result set is legitimate — a field with zero uses — and returns (nil, nil).
-func (sr *SymbolResolver) FindFieldReferences(symbol *types.Symbol, idx *ReferenceIndex) ([]*types.Reference, error) {
-	// The workspace type index must be present and populated; without it there
-	// is no object-identity path and name matching would corrupt source.
+// It fails closed: missing package or type info, an unresolvable object or an
+// absent workspace index is a *types.RefactorError, not an empty result. A
+// member with zero uses returns (nil, nil).
+func (sr *SymbolResolver) FindMemberReferences(symbol *types.Symbol, idx *ReferenceIndex) ([]*types.Reference, error) {
+	noun := "field"
+	if symbol.Kind == types.MethodSymbol {
+		noun = "method"
+	}
 	if idx == nil || idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
 		return nil, &types.RefactorError{
 			Type: types.InvalidOperation,
 			Message: fmt.Sprintf(
-				"cannot safely find references to field %q: the workspace type index is unavailable; struct-field renames require a fully type-checked workspace",
-				symbol.Name),
+				"cannot safely find references to %s %q: the workspace type index is unavailable; %s renames require a fully type-checked workspace",
+				noun, symbol.Name, noun),
 			File:   symbol.File,
 			Line:   symbol.Line,
 			Column: symbol.Column,
 		}
 	}
 
-	// The symbol's package must be present and type-checked.
 	pkg := sr.findPackageForSymbol(symbol)
 	if pkg == nil || pkg.TypesInfo == nil {
 		return nil, &types.RefactorError{
 			Type: types.InvalidOperation,
 			Message: fmt.Sprintf(
-				"cannot safely find references to field %q: type information for package %q is unavailable; struct-field renames require a fully type-checked workspace",
-				symbol.Name, symbol.Package),
+				"cannot safely find references to %s %q: type information for package %q is unavailable; %s renames require a fully type-checked workspace",
+				noun, symbol.Name, symbol.Package, noun),
 			File:   symbol.File,
 			Line:   symbol.Line,
 			Column: symbol.Column,
 		}
 	}
 
-	// Resolve to the go/types object. A nil object here means we cannot
-	// distinguish this field from same-named identifiers, so we must not fall
-	// back to a name walk — fail closed instead.
 	obj := sr.resolveTypesObject(symbol)
 	if obj == nil {
 		return nil, &types.RefactorError{
 			Type: types.SymbolNotFound,
 			Message: fmt.Sprintf(
-				"cannot resolve field %q to a type-checked object; struct-field renames require full type information to avoid rewriting unrelated identifiers of the same name",
-				symbol.Name),
+				"cannot resolve %s %q to a type-checked object; %s renames require full type information to avoid rewriting unrelated identifiers of the same name",
+				noun, symbol.Name, noun),
 			File:   symbol.File,
 			Line:   symbol.Line,
 			Column: symbol.Column,
 		}
 	}
 
-	// Object resolved: an empty result is a legitimate "field is never used",
-	// not an error.
 	objEntries := idx.workspaceIdx.findReferences(obj)
 	return sr.objectEntriesToReferences(symbol, objEntries, nil), nil
 }

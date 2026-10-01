@@ -308,8 +308,9 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 
 // RenameMethod implements renaming methods on specific types (structs or interfaces)
 func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethodRequest) (*types.RefactoringPlan, error) {
-	// Apply sensible defaults
-	req.UpdateImplementations = true
+	// Method references resolve by go/types object identity, which needs a
+	// type-checked workspace.
+	e.EnsureTypeChecked(ws)
 
 	operation := &RenameMethodOperation{Request: req}
 
@@ -356,7 +357,7 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 	// Struct-field renames resolve references by go/types object identity, which
 	// requires a type-checked workspace. Type-checking is lazy (LoadWorkspace does
 	// not perform it), so ensure every package is checked before the operation
-	// builds its reference index — otherwise FindFieldReferences fails closed.
+	// builds its reference index — otherwise FindMemberReferences fails closed.
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation

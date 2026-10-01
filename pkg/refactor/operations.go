@@ -1874,9 +1874,14 @@ func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, imp
 	return true, nil, nil
 }
 
-// RenameMethodOperation implements renaming methods on specific types (structs or interfaces)
+// RenameMethodOperation renames a method of a struct or interface type. Uses
+// are found by go/types object identity. The method, the workspace interface
+// methods it satisfies and the implementations of those are renamed together.
 type RenameMethodOperation struct {
-	Request types.RenameMethodRequest
+	Request     types.RenameMethodRequest
+	CachedIndex *analysis.ReferenceIndex // optional pre-built index
+
+	members []*types.Symbol // memoized by renamedMembers
 }
 
 func (op *RenameMethodOperation) Type() types.OperationType {
@@ -1884,11 +1889,8 @@ func (op *RenameMethodOperation) Type() types.OperationType {
 }
 
 func (op *RenameMethodOperation) Validate(ws *types.Workspace) error {
-	typeSymbol, _, err := op.target(ws)
-	if err != nil {
-		return err
-	}
-	return op.validateNames(ws, typeSymbol)
+	_, err := op.validateIn(ws)
+	return err
 }
 
 // target finds the type (struct or interface) and the method on it.
@@ -1927,72 +1929,48 @@ func (op *RenameMethodOperation) validateNames(ws *types.Workspace, typeSymbol *
 }
 
 func (op *RenameMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
+	members, err := op.renamedMembers(ws)
+	if err != nil {
+		return nil, err
+	}
+	resolver, idx := resolverAndIndex(ws, op.CachedIndex)
+
 	var changes []types.Change
 	var affectedFiles []string
-
-	// Find the type symbol
-	typeSymbol, err := op.findType(ws)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find the method symbol
-	methodSymbol, err := op.findMethodOnType(ws, typeSymbol)
-	if err != nil {
-		return nil, err
-	}
-
-	// Generate change for method definition
-	definitionChange, err := op.generateMethodDefinitionChange(ws, typeSymbol, methodSymbol)
-	if err != nil {
-		return nil, err
-	}
-	if definitionChange != nil {
-		changes = append(changes, *definitionChange)
-		if !contains(affectedFiles, definitionChange.File) {
-			affectedFiles = append(affectedFiles, definitionChange.File)
-		}
-	}
-
-	// Generate changes for all method calls/references
-	referenceChanges, err := op.generateMethodReferenceChanges(ws, typeSymbol, methodSymbol)
-	if err != nil {
-		return nil, err
-	}
-	changes = append(changes, referenceChanges...)
-	for _, change := range referenceChanges {
-		if !contains(affectedFiles, change.File) {
-			affectedFiles = append(affectedFiles, change.File)
-		}
-	}
-
-	// If this is an interface and UpdateImplementations is true,
-	// also rename the method on all implementations
-	if typeSymbol.Kind == types.InterfaceSymbol && op.Request.UpdateImplementations {
-		implChanges, err := op.generateImplementationChanges(ws)
+	for _, member := range members {
+		definition, err := op.generateMethodDefinitionChange(ws, member, member)
 		if err != nil {
 			return nil, err
 		}
-		changes = append(changes, implChanges...)
-		for _, change := range implChanges {
-			if !contains(affectedFiles, change.File) {
-				affectedFiles = append(affectedFiles, change.File)
-			}
+		changes = append(changes, *definition)
+		affectedFiles = append(affectedFiles, definition.File)
+
+		refs, err := resolver.FindMemberReferences(member, idx)
+		if err != nil {
+			return nil, err
+		}
+		for _, ref := range refs {
+			changes = append(changes, types.Change{
+				File:        ref.File,
+				Start:       ref.Offset,
+				End:         ref.Offset + len(op.Request.MethodName),
+				OldText:     op.Request.MethodName,
+				NewText:     op.Request.NewMethodName,
+				Description: fmt.Sprintf("Rename reference to method %s to %s", op.Request.MethodName, op.Request.NewMethodName),
+			})
+			affectedFiles = append(affectedFiles, ref.File)
 		}
 	}
 
 	return &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       changes,
-		AffectedFiles: affectedFiles,
+		AffectedFiles: slices.Compact(slices.Sorted(slices.Values(affectedFiles))),
 		Reversible:    true,
 	}, nil
 }
 
 func (op *RenameMethodOperation) Description() string {
-	if op.Request.UpdateImplementations {
-		return fmt.Sprintf("Rename method %s.%s to %s (including implementations)", op.Request.TypeName, op.Request.MethodName, op.Request.NewMethodName)
-	}
 	return fmt.Sprintf("Rename method %s.%s to %s", op.Request.TypeName, op.Request.MethodName, op.Request.NewMethodName)
 }
 
@@ -2123,82 +2101,4 @@ func (op *RenameMethodOperation) generateMethodDefinitionChange(ws *types.Worksp
 		NewText:     op.Request.NewMethodName,
 		Description: fmt.Sprintf("Rename method definition %s to %s", op.Request.MethodName, op.Request.NewMethodName),
 	}, nil
-}
-
-func (op *RenameMethodOperation) generateMethodReferenceChanges(ws *types.Workspace, typeSymbol *types.Symbol, methodSymbol *types.Symbol) ([]types.Change, error) {
-	var changes []types.Change
-
-	// Find all method calls and references across the workspace
-	for _, pkg := range ws.Packages {
-		for _, file := range allFilesOf(pkg) {
-			if file.AST == nil {
-				continue
-			}
-
-			// Look for method calls on this type
-			ast.Inspect(file.AST, func(n ast.Node) bool {
-				if callExpr, ok := n.(*ast.CallExpr); ok {
-					if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
-						if selExpr.Sel.Name == op.Request.MethodName {
-							// This is a potential method call - we need to verify it's on our type
-							// For now, we'll create the change (a more sophisticated implementation
-							// would verify the receiver type)
-							pos := selExpr.Sel.Pos()
-							startByte := ws.FileSet.Position(pos).Offset
-							endByte := startByte + len(op.Request.MethodName)
-
-							change := types.Change{
-								File:        file.Path,
-								Start:       startByte,
-								End:         endByte,
-								OldText:     op.Request.MethodName,
-								NewText:     op.Request.NewMethodName,
-								Description: fmt.Sprintf("Rename method call %s to %s", op.Request.MethodName, op.Request.NewMethodName),
-							}
-							changes = append(changes, change)
-						}
-					}
-				}
-				return true
-			})
-		}
-	}
-
-	return changes, nil
-}
-
-func (op *RenameMethodOperation) generateImplementationChanges(ws *types.Workspace) ([]types.Change, error) {
-	var changes []types.Change
-	for _, method := range op.implementationMethods(ws) {
-		change, err := op.generateMethodDefinitionChange(ws, method, method)
-		if err != nil {
-			return nil, err
-		}
-		if change != nil {
-			changes = append(changes, *change)
-		}
-	}
-	return changes, nil
-}
-
-// implementationMethods returns the methods named like the request's on the
-// workspace's struct types.
-func (op *RenameMethodOperation) implementationMethods(ws *types.Workspace) []*types.Symbol {
-	var methods []*types.Symbol
-	for _, pkg := range ws.Packages {
-		if pkg.Symbols == nil {
-			continue
-		}
-		for typeName, typeSymbol := range pkg.Symbols.Types {
-			if typeSymbol.Kind != types.TypeSymbol {
-				continue
-			}
-			for _, method := range pkg.Symbols.Methods[typeName] {
-				if method.Name == op.Request.MethodName {
-					methods = append(methods, method)
-				}
-			}
-		}
-	}
-	return methods
 }

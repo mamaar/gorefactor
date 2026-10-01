@@ -80,11 +80,10 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 		step.plan = func() (*types.RefactoringPlan, error) { return e.MovePackage(ws, req) }
 	case "rename_method":
 		req := types.RenameMethodRequest{
-			TypeName:              raw["type_name"],
-			MethodName:            raw["method_name"],
-			NewMethodName:         raw["new_method_name"],
-			PackagePath:           resolveOptionalPackage(ws, raw["package_path"]),
-			UpdateImplementations: true,
+			TypeName:      raw["type_name"],
+			MethodName:    raw["method_name"],
+			NewMethodName: raw["new_method_name"],
+			PackagePath:   resolveOptionalPackage(ws, raw["package_path"]),
 		}
 		step.packages = []string{req.PackagePath}
 		step.plan = func() (*types.RefactoringPlan, error) { return e.RenameMethodAcrossConfigs(req) }

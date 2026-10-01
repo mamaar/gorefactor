@@ -100,8 +100,13 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "rename_method",
-		Description: "Rename a method on a specific type (struct or interface). Updates all call sites and, for interfaces, all implementations, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace.",
+		Name: "rename_method",
+		Description: "Rename a method on a specific type (struct or interface). Uses are matched by go/types object identity: " +
+			"calls, method values and method expressions of that method, including promoted calls through embedding; same-named " +
+			"package functions and methods of other types are left untouched. The workspace interface methods the method " +
+			"satisfies and their implementations are renamed with it; the rename is refused when the method satisfies an " +
+			"interface declared outside the workspace (e.g. fmt.Stringer). Planned under every build configuration " +
+			"(GOOS/GOARCH variants, custom build tags) that covers the workspace.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameMethodInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher
 		// batch takes the write lock and may drop a view being planned in.

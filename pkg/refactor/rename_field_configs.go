@@ -68,8 +68,15 @@ func (op *RenameFieldOperation) validateIn(ws *types.Workspace) (types.SymbolKey
 // refuseIn refuses the rename when an identifier named like the field is left
 // unresolved in a file of v with a type error and could use a renamed field.
 func (p *renameFieldPlanner) refuseIn(v *analysis.View, renamed types.SymbolKeySet) error {
+	return refuseUnresolvedMembers(v, renamed, "field", p.req.TypeName, p.req.FieldName)
+}
+
+// refuseUnresolvedMembers refuses the rename of the members in renamed when an
+// identifier named name is left unresolved in a file of v with a type error and
+// could use one of them. kind is "field" or "method".
+func refuseUnresolvedMembers(v *analysis.View, renamed types.SymbolKeySet, kind, typeName, name string) error {
 	var blockers []types.Blocker
-	for _, m := range unresolvedMentions(v, map[string]bool{p.req.FieldName: true}) {
+	for _, m := range unresolvedMentions(v, map[string]bool{name: true}) {
 		for key := range renamed {
 			sym := symbolForKey(v.Workspace, key)
 			if sym != nil && mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(sym.File)) {
@@ -85,7 +92,7 @@ func (p *renameFieldPlanner) refuseIn(v *analysis.View, renamed types.SymbolKeyS
 	}
 	return &types.RefactorError{
 		Type: types.InvalidOperation,
-		Message: fmt.Sprintf("cannot rename field %s.%s: %d use(s) could not be resolved because their files have type errors, so renaming could leave them uncompilable; fix the errors and re-run:%s",
-			p.req.TypeName, p.req.FieldName, len(blockers), blockerNotes(blockers)),
+		Message: fmt.Sprintf("cannot rename %s %s.%s: %d use(s) could not be resolved because their files have type errors, so renaming could leave them uncompilable; fix the errors and re-run:%s",
+			kind, typeName, name, len(blockers), blockerNotes(blockers)),
 	}
 }

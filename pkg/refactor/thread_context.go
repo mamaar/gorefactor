@@ -737,35 +737,7 @@ func (op *ThreadContextOperation) expandInterfaces(
 		return nil, err
 	}
 
-	recv := methodRecvType(f)
-	if recv == nil {
-		return nil, nil // a plain function satisfies no interface
-	}
-
-	survey := op.interfaceSurvey(ws)
-
-	// f is itself an interface method: pull in every workspace implementation, so
-	// the concrete methods are rewritten alongside the declaration they satisfy.
-	if iface, ok := asInterfaceType(recv); ok {
-		return op.implementationsOf(survey, iface, f.Name()), nil
-	}
-
-	// f is a concrete method on T: every workspace interface that declares f's
-	// name and that T actually satisfies must be rewritten too. Only the
-	// interface method is returned here, not T's sibling implementations —
-	// enqueueing the interface method is sufficient, because the branch above
-	// expands it into every implementation when it is dequeued. Returning the
-	// siblings here as well would be pure duplication that the visited set
-	// discards.
-	var out []*gotypes.Func
-	for _, cand := range survey.workspace {
-		m := interfaceMethodNamed(cand.iface, f.Name())
-		if m == nil || !typeImplements(recv, cand.iface) {
-			continue
-		}
-		out = append(out, canonicalFunc(m))
-	}
-	return out, nil
+	return op.interfaceSurvey(ws).expansionOf(f), nil
 }
 
 // valueUseAbort fails when f is referenced as a value rather than called.
