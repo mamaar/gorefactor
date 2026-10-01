@@ -476,12 +476,7 @@ func (op *ThreadContextOperation) discover(
 
 		fd := op.declIndex[f]
 		if fd == nil {
-			return nil, &pkgtypes.RefactorError{
-				Type: pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf(
-					"cannot thread context: no declaration found in the workspace for %s; "+
-						"its package may have failed to type-check", funcLabel(f)),
-			}
+			return nil, missingDeclError(ws, f)
 		}
 		// Before anything is planned or expanded: nothing inside generated code
 		// may raise an abort that hides this one.
@@ -536,6 +531,42 @@ func (op *ThreadContextOperation) discover(
 		return nil, err
 	}
 	return visited, nil
+}
+
+// missingDeclError reports a worklist entry with no indexed declaration: what
+// was looked up, where it is declared and why the index does not hold it.
+func missingDeclError(ws *pkgtypes.Workspace, f *gotypes.Func) error {
+	pos := ws.FileSet.Position(f.Pos())
+	pkgPath := "(none)"
+	if f.Pkg() != nil {
+		pkgPath = f.Pkg().Path()
+	}
+	return &pkgtypes.RefactorError{
+		Type: pkgtypes.InvalidOperation,
+		Message: fmt.Sprintf(
+			"cannot thread context: no declaration is indexed for %s, declared at %s:%d in package %s: %s",
+			funcLabel(f), pos.Filename, pos.Line, pkgPath, missingDeclReason(ws, f)),
+		File: pos.Filename,
+		Line: pos.Line,
+	}
+}
+
+// missingDeclReason says why buildFuncDeclIndex holds no declaration for f.
+func missingDeclReason(ws *pkgtypes.Workspace, f *gotypes.Func) string {
+	if f.Pkg() == nil {
+		return "it belongs to no package"
+	}
+	pkg := ws.Packages[ws.ImportToPath[strings.TrimSuffix(f.Pkg().Path(), "_test")]]
+	switch {
+	case pkg == nil:
+		return "the workspace has no package with that import path"
+	case pkg.TypesInfo == nil:
+		return "the package has no type information"
+	case f.Pkg() != pkg.TypesPkg && f.Pkg() != pkg.ExternalTestTypesPkg:
+		return "the object belongs to a copy of the package checked for its importers, not to the package's own check"
+	default:
+		return "the package is type-checked, but defines no package-level function, method or interface method there"
+	}
 }
 
 // climbTarget decides, for a single call site of a function that is gaining a

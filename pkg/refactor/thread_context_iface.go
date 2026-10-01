@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"go/ast"
 	gotypes "go/types"
+	"slices"
 	"strings"
 
+	"github.com/mamaar/gorefactor/pkg/analysis"
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -39,6 +41,13 @@ type ifaceSurvey struct {
 	workspace []ifaceCandidate
 	external  []ifaceCandidate
 	impls     []*gotypes.Named
+
+	// views holds every checked copy of a workspace type declaration: the one of
+	// its package's own check and the ones its importers hold.
+	views map[analysis.ObjectID][]*gotypes.Named
+	// declared holds, per method declaration, the object its package's own
+	// check created.
+	declared map[analysis.ObjectID]*gotypes.Func
 }
 
 // interfaceSurvey returns the operation's survey, building it on first use.
@@ -49,92 +58,165 @@ func (op *ThreadContextOperation) interfaceSurvey(ws *pkgtypes.Workspace) *iface
 	return op.ifaceCache
 }
 
+// ifaceSurveyor accumulates an ifaceSurvey.
+type ifaceSurveyor struct {
+	survey      *ifaceSurvey
+	inWorkspace func(*gotypes.Package) bool
+	seenIface   map[*gotypes.Named]bool
+	seenType    map[gotypes.Type]bool
+}
+
 // surveyInterfaces surveys the interfaces and implementation types of ws.
 func surveyInterfaces(ws *pkgtypes.Workspace) *ifaceSurvey {
-	inWorkspace := workspacePkgPredicate(ws)
-	survey := &ifaceSurvey{}
-	seenIface := make(map[*gotypes.Named]bool)
-
-	add := func(c ifaceCandidate) {
-		if seenIface[c.named] {
-			return
-		}
-		seenIface[c.named] = true
-		if c.named.Obj().Pkg() != nil && inWorkspace(c.named.Obj().Pkg()) {
-			survey.workspace = append(survey.workspace, c)
-		} else {
-			survey.external = append(survey.external, c)
-		}
+	b := &ifaceSurveyor{
+		survey: &ifaceSurvey{
+			views:    make(map[analysis.ObjectID][]*gotypes.Named),
+			declared: make(map[analysis.ObjectID]*gotypes.Func),
+		},
+		inWorkspace: workspacePkgPredicate(ws),
+		seenIface:   make(map[*gotypes.Named]bool),
+		seenType:    make(map[gotypes.Type]bool),
 	}
-
-	seenType := make(map[gotypes.Type]bool)
 	for _, pkg := range ws.Packages {
 		if pkg.TypesPkg != nil {
-			// Everything the workspace itself declares.
-			for _, name := range pkg.TypesPkg.Scope().Names() {
-				tn, ok := pkg.TypesPkg.Scope().Lookup(name).(*gotypes.TypeName)
-				if !ok {
-					continue
-				}
-				named, ok := tn.Type().(*gotypes.Named)
-				if !ok {
-					continue
-				}
-				if iface, ok := asInterfaceType(named); ok {
-					add(ifaceCandidate{named: named, iface: iface})
-				} else {
-					survey.impls = append(survey.impls, named)
-				}
-			}
-
-			// Every exported interface of every DIRECTLY imported package. This is
-			// the net that catches fmt.Stringer and io.Writer: those never appear as
-			// the type of any expression in code that merely satisfies them, so a
-			// scan of type info alone would miss them entirely. Direct imports (not
-			// transitive) keeps this a bounded scope walk.
-			for _, imp := range pkg.TypesPkg.Imports() {
-				if inWorkspace(imp) {
-					continue
-				}
-				for _, name := range imp.Scope().Names() {
-					tn, ok := imp.Scope().Lookup(name).(*gotypes.TypeName)
-					if !ok || !tn.Exported() {
-						continue
-					}
-					named, ok := tn.Type().(*gotypes.Named)
-					if !ok {
-						continue
-					}
-					if iface, ok := asInterfaceType(named); ok {
-						add(ifaceCandidate{named: named, iface: iface})
-					}
-				}
-			}
+			b.declareScope(pkg.TypesPkg)
+			b.addImportedInterfaces(pkg.TypesPkg)
 		}
+		if pkg.TypesInfo != nil {
+			b.addMentionedInterfaces(pkg.TypesInfo)
+		}
+	}
+	// Everything the workspace itself declares, in every checked copy.
+	for _, checked := range checkedPackages(ws, b.inWorkspace) {
+		b.addScope(checked)
+	}
+	return b.survey
+}
 
-		if pkg.TypesInfo == nil {
+// checkedPackages returns every go/types package checked for a workspace
+// package: each package's own check and the copies its importers hold.
+func checkedPackages(ws *pkgtypes.Workspace, inWorkspace func(*gotypes.Package) bool) []*gotypes.Package {
+	var work, out []*gotypes.Package
+	for _, pkg := range ws.Packages {
+		if pkg.TypesPkg != nil {
+			work = append(work, pkg.TypesPkg)
+		}
+		if pkg.ExternalTestTypesPkg != nil {
+			work = append(work, pkg.ExternalTestTypesPkg.Imports()...)
+		}
+	}
+	seen := make(map[*gotypes.Package]bool)
+	for len(work) > 0 {
+		checked := work[len(work)-1]
+		work = work[:len(work)-1]
+		if seen[checked] || !inWorkspace(checked) {
 			continue
 		}
-		// Interfaces reachable from the types the workspace actually mentions.
-		// This covers interfaces reached through a signature the workspace calls
-		// (sort.Sort's `func(data sort.Interface)`) even when the defining package
-		// is only an indirect import.
-		for _, tv := range pkg.TypesInfo.Types {
-			collectIfaceTypes(tv.Type, seenType, add)
+		seen[checked] = true
+		out = append(out, checked)
+		work = append(work, checked.Imports()...)
+	}
+	return out
+}
+
+func (b *ifaceSurveyor) add(c ifaceCandidate) {
+	if b.seenIface[c.named] {
+		return
+	}
+	b.seenIface[c.named] = true
+	if c.named.Obj().Pkg() != nil && b.inWorkspace(c.named.Obj().Pkg()) {
+		b.survey.workspace = append(b.survey.workspace, c)
+	} else {
+		b.survey.external = append(b.survey.external, c)
+	}
+}
+
+// scopeTypes returns the named types checked declares at package level.
+func scopeTypes(checked *gotypes.Package) []*gotypes.Named {
+	var out []*gotypes.Named
+	for _, name := range checked.Scope().Names() {
+		tn, ok := checked.Scope().Lookup(name).(*gotypes.TypeName)
+		if !ok {
+			continue
 		}
-		for _, obj := range pkg.TypesInfo.Defs {
-			if obj != nil {
-				collectIfaceTypes(obj.Type(), seenType, add)
+		if named, ok := tn.Type().(*gotypes.Named); ok {
+			out = append(out, named)
+		}
+	}
+	return out
+}
+
+// declareScope records the methods own declares; own is a package's own check.
+func (b *ifaceSurveyor) declareScope(own *gotypes.Package) {
+	for _, named := range scopeTypes(own) {
+		if iface, ok := asInterfaceType(named); ok {
+			for i := range iface.NumExplicitMethods() {
+				b.declare(iface.ExplicitMethod(i))
 			}
+			continue
 		}
-		for _, obj := range pkg.TypesInfo.Uses {
-			if obj != nil {
-				collectIfaceTypes(obj.Type(), seenType, add)
+		for i := range named.NumMethods() {
+			b.declare(named.Method(i))
+		}
+	}
+}
+
+func (b *ifaceSurveyor) declare(m *gotypes.Func) {
+	b.survey.declared[analysis.ObjectIDOf(m)] = m
+}
+
+// addScope adds the interfaces and candidate implementations checked declares.
+func (b *ifaceSurveyor) addScope(checked *gotypes.Package) {
+	for _, named := range scopeTypes(checked) {
+		id := analysis.ObjectIDOf(named.Obj())
+		b.survey.views[id] = append(b.survey.views[id], named)
+		if iface, ok := asInterfaceType(named); ok {
+			b.add(ifaceCandidate{named: named, iface: iface})
+		} else {
+			b.survey.impls = append(b.survey.impls, named)
+		}
+	}
+}
+
+// addImportedInterfaces adds every exported interface of every package outside
+// the workspace that checked imports DIRECTLY. This is the net that catches
+// fmt.Stringer and io.Writer: those never appear as the type of any expression
+// in code that merely satisfies them, so a scan of type info alone would miss
+// them entirely. Direct imports (not transitive) keeps this a bounded scope walk.
+func (b *ifaceSurveyor) addImportedInterfaces(checked *gotypes.Package) {
+	for _, imp := range checked.Imports() {
+		if b.inWorkspace(imp) {
+			continue
+		}
+		for _, named := range scopeTypes(imp) {
+			if !named.Obj().Exported() {
+				continue
+			}
+			if iface, ok := asInterfaceType(named); ok {
+				b.add(ifaceCandidate{named: named, iface: iface})
 			}
 		}
 	}
+}
 
-	return survey
+// addMentionedInterfaces adds the interfaces reachable from the types info
+// mentions. This covers interfaces reached through a signature the workspace
+// calls (sort.Sort's `func(data sort.Interface)`) even when the defining package
+// is only an indirect import.
+func (b *ifaceSurveyor) addMentionedInterfaces(info *gotypes.Info) {
+	for _, tv := range info.Types {
+		collectIfaceTypes(tv.Type, b.seenType, b.add)
+	}
+	for _, obj := range info.Defs {
+		if obj != nil {
+			collectIfaceTypes(obj.Type(), b.seenType, b.add)
+		}
+	}
+	for _, obj := range info.Uses {
+		if obj != nil {
+			collectIfaceTypes(obj.Type(), b.seenType, b.add)
+		}
+	}
 }
 
 // workspacePkgPredicate reports membership of a go/types package in the
@@ -396,16 +478,60 @@ func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
 	if recv == nil {
 		return nil
 	}
-	if iface, ok := asInterfaceType(recv); ok {
-		return s.implementationsOf(iface, f.Name())
-	}
 	var out []*gotypes.Func
-	for _, cand := range s.workspace {
-		m := interfaceMethodNamed(cand.iface, f.Name())
-		if m == nil || !typeImplements(recv, cand.iface) {
+	for _, view := range s.viewsOf(recv) {
+		if iface, ok := asInterfaceType(view); ok {
+			out = append(out, s.implementationsOf(iface, f.Name())...)
 			continue
 		}
-		out = append(out, canonicalFunc(m))
+		for _, cand := range s.workspace {
+			m := interfaceMethodNamed(cand.iface, f.Name())
+			if m == nil || !typeImplements(view, cand.iface) {
+				continue
+			}
+			out = append(out, canonicalFunc(m))
+		}
+	}
+	return s.declaredFuncs(out)
+}
+
+// viewsOf returns every checked copy of the named type recv is or points to,
+// or recv alone when the workspace does not declare it at package level.
+func (s *ifaceSurvey) viewsOf(recv gotypes.Type) []gotypes.Type {
+	t := gotypes.Unalias(recv)
+	if ptr, ok := t.(*gotypes.Pointer); ok {
+		t = gotypes.Unalias(ptr.Elem())
+	}
+	named, ok := t.(*gotypes.Named)
+	if !ok {
+		return []gotypes.Type{recv}
+	}
+	copies := s.views[analysis.ObjectIDOf(named.Obj())]
+	if len(copies) == 0 {
+		return []gotypes.Type{recv}
+	}
+	out := make([]gotypes.Type, len(copies))
+	for i, c := range copies {
+		out[i] = c
+	}
+	return out
+}
+
+// declaredFuncs maps each method to the object its package's own check
+// created, without repeats.
+//
+// Importers of a package whose tests close an import cycle hold a separately
+// checked copy of it, whose objects and types differ by pointer. Callers key
+// by object, so nothing found through types may leave here unmapped.
+func (s *ifaceSurvey) declaredFuncs(funcs []*gotypes.Func) []*gotypes.Func {
+	var out []*gotypes.Func
+	for _, f := range funcs {
+		if own, ok := s.declared[analysis.ObjectIDOf(f)]; ok {
+			f = own
+		}
+		if !slices.Contains(out, f) {
+			out = append(out, f)
+		}
 	}
 	return out
 }

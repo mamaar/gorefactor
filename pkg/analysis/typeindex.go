@@ -77,8 +77,8 @@ type packageIndex struct {
 	inspect *inspector.Inspector
 	info    *gotypes.Info
 	pkg     *gotypes.Package
-	def     map[objectID]inspector.Cursor
-	uses    map[objectID]*uses
+	def     map[ObjectID]inspector.Cursor
+	uses    map[ObjectID]*uses
 }
 
 func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *gotypes.Info) *packageIndex {
@@ -86,8 +86,8 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 		inspect: inspect,
 		info:    info,
 		pkg:     pkg,
-		def:     make(map[objectID]inspector.Cursor),
-		uses:    make(map[objectID]*uses),
+		def:     make(map[ObjectID]inspector.Cursor),
+		uses:    make(map[ObjectID]*uses),
 	}
 
 	for cur := range inspect.Root().Preorder((*ast.ImportSpec)(nil), (*ast.Ident)(nil)) {
@@ -105,13 +105,13 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 
 		// Check if this ident is a definition
 		if obj, ok := info.Defs[ident]; ok && obj != nil {
-			ix.def[idOf(obj)] = cur
+			ix.def[ObjectIDOf(obj)] = cur
 			continue
 		}
 
 		// Check if this ident is a use
 		if obj, ok := info.Uses[ident]; ok && obj != nil {
-			id := idOf(obj)
+			id := ObjectIDOf(obj)
 			u := ix.uses[id]
 			if u == nil {
 				u = newUses()
@@ -127,7 +127,7 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 // Uses returns an iterator over all cursors that reference obj in this package.
 func (ix *packageIndex) Uses(obj gotypes.Object) iter.Seq[inspector.Cursor] {
 	return func(yield func(inspector.Cursor) bool) {
-		u := ix.uses[idOf(obj)]
+		u := ix.uses[ObjectIDOf(obj)]
 		if u == nil {
 			return
 		}
@@ -143,7 +143,7 @@ func (ix *packageIndex) Uses(obj gotypes.Object) iter.Seq[inspector.Cursor] {
 // Used reports whether any of the given objects are referenced in this package.
 func (ix *packageIndex) Used(objs ...gotypes.Object) bool {
 	for _, obj := range objs {
-		if u := ix.uses[idOf(obj)]; u != nil && len(u.code) > 0 {
+		if u := ix.uses[ObjectIDOf(obj)]; u != nil && len(u.code) > 0 {
 			return true
 		}
 	}
@@ -152,14 +152,14 @@ func (ix *packageIndex) Used(objs ...gotypes.Object) bool {
 
 // Def returns the cursor for the definition of obj in this package, if any.
 func (ix *packageIndex) Def(obj gotypes.Object) (inspector.Cursor, bool) {
-	cur, ok := ix.def[idOf(obj)]
+	cur, ok := ix.def[ObjectIDOf(obj)]
 	return cur, ok
 }
 
 // Calls returns an iterator over call sites that invoke callee within this package.
 func (ix *packageIndex) Calls(callee gotypes.Object) iter.Seq[inspector.Cursor] {
 	return func(yield func(inspector.Cursor) bool) {
-		u := ix.uses[idOf(callee)]
+		u := ix.uses[ObjectIDOf(callee)]
 		if u == nil {
 			return
 		}
@@ -296,21 +296,23 @@ func canonicalObject(obj gotypes.Object) gotypes.Object {
 	return obj
 }
 
-// objectID is the identity of a declared object: its declaration position, so
+// ObjectID is the identity of a declared object: its declaration position, so
 // that the copy of a declaration a production-only rescue package type-checks
 // compares equal to the original. Objects without a position keep pointer identity.
-type objectID struct {
+type ObjectID struct {
 	obj gotypes.Object
 	pos token.Pos
 	pkg string
 }
 
-func idOf(obj gotypes.Object) objectID {
+// ObjectIDOf returns the identity of obj, a generic instantiation counting as
+// its origin.
+func ObjectIDOf(obj gotypes.Object) ObjectID {
 	obj = canonicalObject(obj)
 	if obj == nil || !obj.Pos().IsValid() {
-		return objectID{obj: obj}
+		return ObjectID{obj: obj}
 	}
-	id := objectID{pos: obj.Pos()}
+	id := ObjectID{pos: obj.Pos()}
 	if obj.Pkg() != nil {
 		id.pkg = obj.Pkg().Path()
 	}
@@ -322,7 +324,7 @@ func sameObject(a, b gotypes.Object) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return idOf(a) == idOf(b)
+	return ObjectIDOf(a) == ObjectIDOf(b)
 }
 
 // isPackageLevel reports whether obj is a package-level symbol.

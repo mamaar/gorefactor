@@ -436,3 +436,38 @@ func caller() { Read(nil) }
 	// Read is a plain function, not a method: it satisfies nothing.
 	assertNames(t, gainingLabels(plan), []string{"Read", "caller"}, "Funcs")
 }
+
+func TestThreadContext_MissingDeclarationSaysWhatWasLookedUpAndWhere(t *testing.T) {
+	err := threadErrFor(t, map[string]string{
+		"store/store.go": `package store
+
+type MemStore struct{}
+
+func (m *MemStore) Save(x int) {}
+
+func use() {
+	type saver interface {
+		Save(x int)
+	}
+	var s saver = &MemStore{}
+	s.Save(1)
+}
+`,
+	}, "store/store.go", "MemStore.Save", true)
+	if err == nil {
+		t.Fatal("want an error for an interface declared inside a function")
+	}
+	for _, want := range []string{
+		"saver.Save",
+		"store/store.go:9",
+		"package example.com/m/store",
+		"defines no package-level function, method or interface method there",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error must mention %q, got: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "may have failed to type-check") {
+		t.Errorf("error must not guess at a failed type-check, got: %v", err)
+	}
+}
