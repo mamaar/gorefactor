@@ -395,7 +395,11 @@ func (e *DefaultEngine) RenameFieldAcrossConfigs(req types.RenameFieldRequest) (
 // chains, stopping only at a caller that already has a context in scope or at
 // a root that cannot take one.
 func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
-	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil)
+	stop, err := resolveStopAt([]*types.Workspace{ws}, req.StopAt)
+	if err != nil {
+		return nil, err
+	}
+	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil, stop)
 	return plan, err
 }
 
@@ -403,7 +407,20 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 // build configuration covering the workspace, and returns one merged plan. A
 // function that gains ctx under one configuration gains it under all of them.
 func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextRequest) (*types.RefactoringPlan, error) {
-	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req})
+	views, err := e.set.Views()
+	if err != nil {
+		return nil, err
+	}
+	wss := make([]*types.Workspace, len(views))
+	for i, v := range views {
+		wss[i] = v.Workspace
+	}
+	// Resolved before planning: planIn swallows SymbolNotFound per view.
+	stop, err := resolveStopAt(wss, req.StopAt)
+	if err != nil {
+		return nil, err
+	}
+	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req, stop: stop})
 }
 
 // threadContextPlanner plans context threading in one view.
@@ -411,10 +428,11 @@ type threadContextPlanner struct {
 	viewIndexes
 	engine *DefaultEngine
 	req    types.ThreadContextRequest
+	stop   types.SymbolKeySet
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked)
+	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked, p.stop)
 	if err != nil && !isSymbolNotFound(err) {
 		return configResult{}, err
 	}
@@ -445,11 +463,13 @@ func (e *DefaultEngine) threadContext(
 	idx *analysis.ReferenceIndex,
 	req types.ThreadContextRequest,
 	linked types.SymbolKeySet,
+	stop types.SymbolKeySet,
 ) (*types.RefactoringPlan, *ThreadContextOperation, error) {
 	operation := &ThreadContextOperation{
 		FunctionName: req.FunctionName,
 		SourceFile:   req.SourceFile,
 		Linked:       linked,
+		StopAt:       stop,
 		CachedIndex:  idx,
 	}
 	// The operation cannot reach EngineConfig through the Operation interface,

@@ -106,8 +106,9 @@ type RenameFieldRequest struct {
 // post-type-check reference index itself rather than reusing one that might
 // predate type-checking.
 type ThreadContextRequest struct {
-	FunctionName string // "Process" or "Type.Method"
-	SourceFile   string // File containing the function declaration
+	FunctionName string   // "Process" or "Type.Method"
+	SourceFile   string   // File containing the function declaration
+	StopAt       []string // Functions the climb stops at: "Name", "Type.Method" or "path/file.go:Type.Method"
 }
 
 // AddContextParameterRequest adds `ctx context.Context` as the first parameter

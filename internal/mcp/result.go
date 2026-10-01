@@ -21,6 +21,7 @@ type PlanResult struct {
 	// SkippedSites lists call sites that could not be automatically rewritten,
 	// or declarations left unmoved. Each skipped call site must be updated
 	// manually before the build will succeed; a skipped declaration stays put.
+	// A stop_at: entry marks where a context climb stopped and is not a build break.
 	SkippedSites []types.SkippedSite `json:"skipped_sites,omitempty"`
 	// BuildConfigs names the build configurations the plan was computed under,
 	// primary first. Omitted when there is only one.
