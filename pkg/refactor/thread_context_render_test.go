@@ -249,10 +249,10 @@ func Load(id int) int { return id }
 		Decls: map[*gotypes.Func]*funcDecl{saveF: saveFd, loadF: loadFd},
 		Fake:  map[*gotypes.Func]*ast.AssignStmt{},
 		ArgFor: map[token.Pos]*callEdit{
-			saveCall.Lparen: {Expr: "ctx", Site: analysis.CallSite{
+			saveCall.Lparen: {Expr: "ctx", Callee: saveF, Site: analysis.CallSite{
 				File: callerFd.File, Pkg: callerFd.Pkg, Call: saveCall, Fn: callerFd.Decl,
 			}},
-			loadCall.Lparen: {Expr: "ctx", Site: analysis.CallSite{
+			loadCall.Lparen: {Expr: "ctx", Callee: loadF, Site: analysis.CallSite{
 				File: callerFd.File, Pkg: callerFd.Pkg, Call: loadCall, Fn: callerFd.Decl,
 			}},
 		},

@@ -337,28 +337,11 @@ func bodyUsesCtx(plan *threadPlan, f *gotypes.Func, fd *funcDecl) bool {
 // decision, and reports the file path that needs a "context" import if the
 // emitted text requires one (empty string if not).
 //
-// It independently resolves the callee's *gotypes.Func from the call
-// expression itself (rather than trusting any identity threaded through
-// threadPlan) because threadPlan.ArgFor is keyed only by call position —
-// callEdit carries the expression to pass, not which function is being
-// called. That identity is exactly what decides insert vs. replace vs.
-// nothing, so it is resolved here from site.Call.Fun via the same
-// TypesInfo.Uses/canonicalFunc path buildFuncDeclIndex and callerObject use
-// elsewhere in this package.
+// The callee is the plan's own object for the called function.
 func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*pkgtypes.Change, string, error) {
 	site := edit.Site
 	call := site.Call
-
-	callee, ok := calleeFuncOf(site.Pkg, call)
-	if !ok {
-		return nil, "", &pkgtypes.RefactorError{
-			Type: pkgtypes.InvalidOperation,
-			Message: fmt.Sprintf(
-				"internal error: could not resolve the callee of the call at %s to a go/types function",
-				ws.FileSet.Position(call.Pos())),
-			File: site.File.Path,
-		}
-	}
+	callee := edit.Callee
 
 	if _, gaining := plan.Funcs[callee]; gaining {
 		// Case (a): the callee is itself gaining a ctx parameter. Insert the
@@ -458,42 +441,6 @@ func renderFakeDeletion(ws *pkgtypes.Workspace, file *pkgtypes.File, stmt *ast.A
 	start := ws.FileSet.Position(stmt.Pos()).Offset
 	end := ws.FileSet.Position(stmt.End()).Offset
 	return ctxAssignDeletionChange(file.Path, file.OriginalContent, start, end, label)
-}
-
-// calleeFuncOf resolves the *gotypes.Func that call actually invokes,
-// unwrapping parentheses and a generic instantiation's type arguments
-// (F[int](x) has call.Fun == *ast.IndexExpr/*ast.IndexListExpr wrapping the
-// identifier) down to the plain identifier or selector naming the function,
-// then reading its go/types object off pkg.TypesInfo.Uses. Canonicalized via
-// canonicalFunc so the result compares equal to the keys of
-// threadPlan.Funcs/Decls, which are canonicalized the same way when built.
-func calleeFuncOf(pkg *pkgtypes.Package, call *ast.CallExpr) (*gotypes.Func, bool) {
-	if pkg == nil || pkg.TypesInfo == nil {
-		return nil, false
-	}
-	fun := ast.Unparen(call.Fun)
-	switch e := fun.(type) {
-	case *ast.IndexExpr:
-		fun = ast.Unparen(e.X)
-	case *ast.IndexListExpr:
-		fun = ast.Unparen(e.X)
-	}
-
-	var ident *ast.Ident
-	switch e := fun.(type) {
-	case *ast.Ident:
-		ident = e
-	case *ast.SelectorExpr:
-		ident = e.Sel
-	default:
-		return nil, false
-	}
-
-	obj, ok := pkg.TypesInfo.Uses[ident].(*gotypes.Func)
-	if !ok {
-		return nil, false
-	}
-	return canonicalFunc(obj), true
 }
 
 // ctxParamIndex returns the index of f's context.Context parameter. Mirrors

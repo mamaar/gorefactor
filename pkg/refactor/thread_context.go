@@ -119,6 +119,10 @@ func (fd *funcDecl) FuncType() *ast.FuncType {
 type callEdit struct {
 	Expr string
 	Site analysis.CallSite
+	// Callee is the function the plan visited that Site calls. Its object may
+	// differ from the one Site's own type information resolves, which can be a
+	// copy checked for an importer, so the plan is keyed by this one.
+	Callee *gotypes.Func
 }
 
 // threadPlan is the plan-of-record: everything decided before any change is
@@ -628,7 +632,7 @@ func (op *ThreadContextOperation) resolve(
 			if err != nil {
 				return err
 			}
-			plan.ArgFor[site.Call.Lparen] = &callEdit{Expr: expr, Site: site}
+			plan.ArgFor[site.Call.Lparen] = &callEdit{Expr: expr, Site: site, Callee: f}
 		}
 	}
 	return nil
