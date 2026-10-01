@@ -129,7 +129,7 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			}
 		}
 	}
-	if cycle := importCycle(importGraph(ws), p.target, p.targetImports, p.importers); cycle != nil {
+	if cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers); cycle != nil {
 		p.object(v, "the move would create an import cycle: %s", strings.Join(cycle, " -> "))
 	}
 	return res

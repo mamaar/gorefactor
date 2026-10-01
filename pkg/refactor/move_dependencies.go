@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -56,32 +57,6 @@ func scanMovedUses(ws *types.Workspace, moving []*movingSymbol) map[*movingSymbo
 		}
 	}
 	return uses
-}
-
-// importGraph returns the packages each workspace package imports, by
-// filesystem path. In-package test files count, as their imports must not
-// cycle either; external test packages are separate packages that nothing
-// imports, so theirs do not.
-func importGraph(ws *types.Workspace) map[string][]string {
-	graph := make(map[string][]string, len(ws.Packages))
-	for path, pkg := range ws.Packages {
-		seen := make(map[string]bool)
-		for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
-			for _, file := range files {
-				if file.AST == nil || strings.HasSuffix(file.AST.Name.Name, "_test") {
-					continue
-				}
-				for _, imp := range file.AST.Imports {
-					if to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok && to != path && !seen[to] {
-						seen[to] = true
-						graph[path] = append(graph[path], to)
-					}
-				}
-			}
-		}
-		sort.Strings(graph[path])
-	}
-	return graph
 }
 
 // importCycle returns the import cycle, as the packages from target around to
@@ -169,7 +144,7 @@ func importsAndImporters(ws *types.Workspace, moving []*movingSymbol, uses map[*
 func (op *MoveSymbolOperation) checkImportCycles(ws *types.Workspace, moving []*movingSymbol, uses map[*movingSymbol]*movedUses, surviving []*types.Reference, target string) error {
 	imports, importers := importsAndImporters(ws, moving, uses, surviving, target)
 	op.targetImports, op.importers = slices.Sorted(maps.Keys(imports)), slices.Sorted(maps.Keys(importers))
-	cycle := importCycle(importGraph(ws), target, op.targetImports, op.importers)
+	cycle := importCycle(analysis.ImportGraph(ws).Union(), target, op.targetImports, op.importers)
 	if cycle == nil {
 		return nil
 	}
