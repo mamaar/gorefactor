@@ -1768,3 +1768,97 @@ func TestTypeCheck_FixedTestFileIsNoLongerExcludedAfterInvalidation(t *testing.T
 		t.Error("the fixed bad_test.go's call of F is missing from TypesInfo.Uses")
 	}
 }
+
+// assertCycleReported checks that pkg was checked despite a production import
+// cycle and reports it, naming every import path in want.
+func assertCycleReported(t *testing.T, pkg *types.Package, fn string, want ...string) {
+	t.Helper()
+	if !pkg.TypesChecked || pkg.TypesInfo == nil {
+		t.Fatalf("%s: TypesChecked=%v TypesInfo nil=%v", pkg.ImportPath, pkg.TypesChecked, pkg.TypesInfo == nil)
+	}
+	defined := false
+	for id := range pkg.TypesInfo.Defs {
+		if id.Name == fn {
+			defined = true
+		}
+	}
+	if !defined {
+		t.Errorf("%s: Defs has no entry for %s", pkg.ImportPath, fn)
+	}
+	var msg string
+	for _, err := range pkg.ProductionErrs {
+		msg += err.Error() + "\n"
+	}
+	if !strings.Contains(msg, "import cycle not allowed") {
+		t.Fatalf("%s: ProductionErrs = %q, want an import cycle error", pkg.ImportPath, msg)
+	}
+	for _, path := range want {
+		if !strings.Contains(msg, path) {
+			t.Errorf("%s: ProductionErrs = %q, want %s named", pkg.ImportPath, msg, path)
+		}
+	}
+}
+
+func TestParser_TypeCheckPackage_ProductionCycleIsReportedNotRecursed(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"a/a.go": "package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n",
+		"b/b.go": "package b\n\nimport \"example.com/w/a\"\n\nfunc FB() { a.FA() }\n",
+	})
+	p, ws := loadWithConfig(t, root, DefaultBuildConfig())
+	pkgA, pkgB := ws.Packages[filepath.Join(root, "a")], ws.Packages[filepath.Join(root, "b")]
+
+	p.TypeCheckPackage(ws, pkgA)
+	p.TypeCheckPackage(ws, pkgB)
+
+	assertCycleReported(t, pkgA, "FA", "example.com/w/a", "example.com/w/b")
+	assertCycleReported(t, pkgB, "FB", "example.com/w/a", "example.com/w/b")
+}
+
+func TestParser_TypeCheckPackage_ThreePackageProductionCycleNamesEveryMember(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"a/a.go": "package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n",
+		"b/b.go": "package b\n\nimport \"example.com/w/c\"\n\nfunc FB() { c.FC() }\n",
+		"c/c.go": "package c\n\nimport \"example.com/w/a\"\n\nfunc FC() { a.FA() }\n",
+	})
+	p, ws := loadWithConfig(t, root, DefaultBuildConfig())
+	pkgA, pkgB, pkgC := ws.Packages[filepath.Join(root, "a")], ws.Packages[filepath.Join(root, "b")], ws.Packages[filepath.Join(root, "c")]
+
+	p.TypeCheckPackage(ws, pkgA)
+	p.TypeCheckPackage(ws, pkgB)
+	p.TypeCheckPackage(ws, pkgC)
+
+	all := []string{"example.com/w/a", "example.com/w/b", "example.com/w/c"}
+	assertCycleReported(t, pkgA, "FA", all...)
+	assertCycleReported(t, pkgB, "FB", all...)
+	assertCycleReported(t, pkgC, "FC", all...)
+}
+
+func TestParser_InvalidateTypeCheck_CycleIntroducedAfterLoadIsReported(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"a/a.go": "package a\n\nfunc FA() {}\n",
+		"b/b.go": "package b\n\nimport \"example.com/w/a\"\n\nfunc FB() { a.FA() }\n",
+	})
+	set, err := LoadWorkspaceSet(root, DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ws := set.Primary().Parser, set.Primary().Workspace
+	pkgA, pkgB := ws.Packages[filepath.Join(root, "a")], ws.Packages[filepath.Join(root, "b")]
+	p.EnsureTypeChecked(ws, pkgB)
+
+	file := filepath.Join(root, "a", "a.go")
+	if err := os.WriteFile(file, []byte("package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := set.SyncSource(file); err != nil {
+		t.Fatal(err)
+	}
+	p.ProjectFile(pkgA, file)
+	p.InvalidateTypeCheck(pkgA)
+	p.InvalidateTypeCheck(pkgB)
+	p.TypeCheckPackage(ws, pkgA)
+	p.TypeCheckPackage(ws, pkgB)
+
+	assertCycleReported(t, pkgA, "FA", "example.com/w/a", "example.com/w/b")
+	assertCycleReported(t, pkgB, "FB", "example.com/w/a", "example.com/w/b")
+}

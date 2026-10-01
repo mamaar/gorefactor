@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/packages"
@@ -53,6 +54,11 @@ type GoParser struct {
 	// than mu: only the single goroutine holding a session ever touches it, so
 	// membership now means exactly "on my own stack" and nothing else.
 	typeCheckInProgress map[*types.Package]bool
+
+	// checkStack holds the packages whose files go/types is checking right
+	// now, innermost last; the top is the importing package of any Import
+	// call. Guarded by checkMu.
+	checkStack []*types.Package
 
 	// mu guards reads and writes of the per-package type-check result fields
 	// (TypesChecked/TypesPkg/TypesInfo/TypesErr). These are read by callers that
@@ -476,6 +482,9 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	if pkg == nil {
 		return
 	}
+	if p.importer != nil {
+		p.importer.prodCycles.Store(nil)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	pkg.TypesInfo = nil
@@ -495,6 +504,7 @@ func (p *GoParser) releaseTypeChecks(ws *types.Workspace) {
 	defer p.checkMu.Unlock()
 	if p.importer != nil {
 		p.importer.productionOnly = nil
+		p.importer.prodCycles.Store(nil)
 	}
 	for _, pkg := range ws.Packages {
 		p.InvalidateTypeCheck(pkg)
@@ -509,6 +519,7 @@ func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
 	defer p.checkMu.Unlock()
 	if p.importer != nil {
 		p.importer.productionOnly = nil
+		p.importer.prodCycles.Store(nil)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -899,6 +910,8 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 	if p.checkPassHook != nil {
 		p.checkPassHook(pkg)
 	}
+	p.checkStack = append(p.checkStack, pkg)
+	defer func() { p.checkStack = p.checkStack[:len(p.checkStack)-1] }()
 	conf := NewTypesConfig(p.importer, errs.add)
 	info := &gotypes.Info{
 		Types: make(map[ast.Expr]gotypes.TypeAndValue),
@@ -947,6 +960,11 @@ type workspaceImporter struct {
 	// typeCheckInProgress: only the single goroutine holding a type-check
 	// session ever touches it.
 	productionOnly map[*types.Package]*gotypes.Package
+
+	// prodCycles caches the production import cycles of ws; nil when it has
+	// to be rebuilt. Atomic because InvalidateTypeCheck clears it without
+	// holding checkMu.
+	prodCycles atomic.Pointer[prodCycles]
 }
 
 // loadExternal populates imp.ext by listing the whole workspace module with
@@ -1145,6 +1163,9 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// Check if this is a workspace-local package
 	if fsPath, ok := imp.ws.ImportToPath[path]; ok {
 		if pkg, ok := imp.ws.Packages[fsPath]; ok {
+			if err := imp.productionCycleError(pkg); err != nil {
+				return nil, err
+			}
 			// Import is only ever reached from inside go/types.Config.Check,
 			// which runs under a type-check session, so p.checkMu is already
 			// held by this goroutine and typeCheckInProgress belongs to this
@@ -1261,14 +1282,10 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 // above; see that comment for why this exists and what it deliberately does
 // NOT touch (pkg.TypesPkg/TypesInfo/TypesChecked).
 //
-// This check can recurse into Import again for whatever pkg's production
-// files themselves import, and can therefore hit this same in-progress
-// rescue path for some OTHER package. That recursion is guaranteed to
-// terminate: Go requires the production (non-test) import graph to be
-// acyclic — a real cycle there would already be a compile error outside this
-// tool — so walking it can revisit a package already resolved (returned from
-// the memo map below) but can never re-enter one that is still being
-// resolved on the current call stack.
+// This check can recurse into Import for what pkg's production files import.
+// It terminates because Import rejects a production import cycle (see
+// productionCycleError) before recursing, so the walk never re-enters a
+// package still being resolved on the stack.
 func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotypes.Package, error) {
 	if cached, ok := imp.productionOnly[pkg]; ok {
 		return cached, nil
@@ -1296,4 +1313,125 @@ func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotype
 	imp.productionOnly[pkg] = typesPkg
 
 	return typesPkg, nil
+}
+
+// prodCycles holds the workspace's production import graph and the SCC of
+// each package; an edge lies on a cycle exactly when both ends share an SCC.
+type prodCycles struct {
+	graph map[string][]string
+	scc   map[string]int
+}
+
+func newProdCycles(ws *types.Workspace) *prodCycles {
+	g := ImportGraph(ws).Production
+	c := &prodCycles{graph: g, scc: make(map[string]int, len(g))}
+	index := make(map[string]int, len(g))
+	low := make(map[string]int, len(g))
+	onStack := make(map[string]bool, len(g))
+	var stack []string
+	next, comp := 0, 0
+	var connect func(v string)
+	connect = func(v string) {
+		index[v], low[v] = next, next
+		next++
+		stack = append(stack, v)
+		onStack[v] = true
+		for _, w := range g[v] {
+			if _, seen := index[w]; !seen {
+				connect(w)
+				if low[w] < low[v] {
+					low[v] = low[w]
+				}
+			} else if onStack[w] {
+				if index[w] < low[v] {
+					low[v] = index[w]
+				}
+			}
+		}
+		if low[v] != index[v] {
+			return
+		}
+		for {
+			w := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[w] = false
+			c.scc[w] = comp
+			if w == v {
+				break
+			}
+		}
+		comp++
+	}
+	for _, v := range slices.Sorted(maps.Keys(g)) {
+		if _, seen := index[v]; !seen {
+			connect(v)
+		}
+	}
+	return c
+}
+
+// onCycle reports whether the production edge from -> to lies on a cycle.
+func (c *prodCycles) onCycle(from, to string) bool {
+	if !slices.Contains(c.graph[from], to) {
+		return false
+	}
+	a, aok := c.scc[from]
+	b, bok := c.scc[to]
+	return aok && bok && a == b
+}
+
+// path returns the shortest production path from -> ... -> to, or nil.
+func (c *prodCycles) path(from, to string) []string {
+	prev := map[string]string{from: ""}
+	queue := []string{from}
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		for _, w := range c.graph[v] {
+			if _, seen := prev[w]; seen {
+				continue
+			}
+			prev[w] = v
+			if w == to {
+				var out []string
+				for x := to; x != ""; x = prev[x] {
+					out = append([]string{x}, out...)
+				}
+				return out
+			}
+			queue = append(queue, w)
+		}
+	}
+	return nil
+}
+
+// productionCycleError returns an import-cycle error when the package being
+// checked (top of checkStack) imports pkg from production code and pkg reaches
+// it back through production code. Edges through test files never qualify.
+func (imp *workspaceImporter) productionCycleError(pkg *types.Package) error {
+	stack := imp.parser.checkStack
+	if len(stack) == 0 {
+		return nil
+	}
+	importer := stack[len(stack)-1]
+	c := imp.prodCycles.Load()
+	if c == nil {
+		c = newProdCycles(imp.ws)
+		imp.prodCycles.Store(c)
+	}
+	if !c.onCycle(importer.Path, pkg.Path) {
+		return nil
+	}
+	names := []string{importer.ImportPath}
+	for _, fs := range c.path(pkg.Path, importer.Path) {
+		names = append(names, imp.importPathOf(fs))
+	}
+	return fmt.Errorf("import cycle not allowed: %s", strings.Join(names, " -> "))
+}
+
+func (imp *workspaceImporter) importPathOf(fsPath string) string {
+	if p, ok := imp.ws.Packages[fsPath]; ok {
+		return p.ImportPath
+	}
+	return fsPath
 }
