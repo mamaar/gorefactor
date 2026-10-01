@@ -129,25 +129,55 @@ func compositeLitRequiresSamePackage(lit *ast.CompositeLit, unexportedFields map
 }
 
 // findCompanionFuncDecls returns the top-level (non-method) function
-// declarations in file that construct typeName via a composite literal
-// requiring same-package access. These are idiomatic constructors that must
-// move together with the type.
-func findCompanionFuncDecls(file *ast.File, typeName string, unexportedFields map[string]bool) []*ast.FuncDecl {
+// declarations in the package's production files that return typeName and
+// construct it via a composite literal requiring same-package access. These are idiomatic
+// constructors that must move together with the type. The type's own file
+// comes first in declaration order, then the other files by path.
+func findCompanionFuncDecls(pkg *types.Package, typeFile *types.File, typeName string, unexportedFields map[string]bool) []*ast.FuncDecl {
 	if len(unexportedFields) == 0 {
 		return nil
 	}
 
-	var companions []*ast.FuncDecl
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil || fn.Body == nil {
-			continue // only plain functions; methods already move with the type
+	files := []*types.File{typeFile}
+	var others []*types.File
+	for _, f := range pkg.Files {
+		if f != typeFile && f.AST != nil {
+			others = append(others, f)
 		}
-		if containsSamePackageCompositeLit(fn.Body, typeName, unexportedFields) {
-			companions = append(companions, fn)
+	}
+	sort.Slice(others, func(i, j int) bool { return others[i].Path < others[j].Path })
+	files = append(files, others...)
+
+	var companions []*ast.FuncDecl
+	for _, file := range files {
+		for _, decl := range file.AST.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Recv != nil || fn.Body == nil {
+				continue // only plain functions; methods already move with the type
+			}
+			if returnsType(fn, typeName) && containsSamePackageCompositeLit(fn.Body, typeName, unexportedFields) {
+				companions = append(companions, fn)
+			}
 		}
 	}
 	return companions
+}
+
+// returnsType reports whether fn has a result of type typeName or *typeName.
+func returnsType(fn *ast.FuncDecl, typeName string) bool {
+	if fn.Type.Results == nil {
+		return false
+	}
+	for _, field := range fn.Type.Results.List {
+		expr := field.Type
+		if star, ok := expr.(*ast.StarExpr); ok {
+			expr = star.X
+		}
+		if ident, ok := expr.(*ast.Ident); ok && ident.Name == typeName {
+			return true
+		}
+	}
+	return false
 }
 
 func containsSamePackageCompositeLit(node ast.Node, typeName string, unexportedFields map[string]bool) bool {
@@ -225,7 +255,7 @@ func (op *MoveSymbolOperation) resolveCompanionSymbols(resolver *analysis.Symbol
 		return nil, nil
 	}
 
-	companionDecls := findCompanionFuncDecls(sourceFile.AST, symbol.Name, unexportedFields)
+	companionDecls := findCompanionFuncDecls(sourcePackage, sourceFile, symbol.Name, unexportedFields)
 	if len(companionDecls) == 0 {
 		return nil, nil
 	}
