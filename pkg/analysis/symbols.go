@@ -132,11 +132,7 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 		}
 	}
 
-	// Extract struct field symbols. This is a separate pass (not folded into the
-	// ast.Inspect above) because it must iterate file.AST.Decls directly to see
-	// only package-level TypeSpecs — ast.Inspect would also descend into
-	// function-local struct types, whose names could collide with package-level
-	// type names in symbolTable.Fields.
+	// Struct fields need every package-level type retained first, so they get their own pass.
 	for _, file := range pkg.Files {
 		sr.extractStructFieldSymbols(file, symbolTable)
 	}
@@ -1032,40 +1028,31 @@ func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *
 		// must not crash symbol-table rebuilds for the whole package.
 		return nil
 	}
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		switch node := n.(type) {
+	for _, decl := range file.AST.Decls {
+		switch node := decl.(type) {
 		case *ast.FuncDecl:
 			symbol := sr.extractFunctionSymbol(node, file)
 			if node.Recv != nil {
-				// Method
 				recvType := sr.extractReceiverType(node.Recv)
-				if symbolTable.Methods[recvType] == nil {
-					symbolTable.Methods[recvType] = make([]*types.Symbol, 0)
-				}
 				symbolTable.Methods[recvType] = append(symbolTable.Methods[recvType], symbol)
-			} else {
-				// Function
+			} else if !shadowsProduction(symbolTable.Functions[symbol.Name], symbol) {
 				symbolTable.Functions[symbol.Name] = symbol
 			}
 
 		case *ast.GenDecl:
 			sr.extractGenDeclSymbols(node, file, symbolTable)
-
-		case *ast.TypeSpec:
-			symbol := sr.extractTypeSymbol(node, file)
-			// Don't overwrite non-test symbols with test symbols
-			if existing, exists := symbolTable.Types[symbol.Name]; exists {
-				// If existing symbol is from non-test file and new symbol is from test file, keep existing
-				if !strings.HasSuffix(existing.File, "_test.go") && strings.HasSuffix(symbol.File, "_test.go") {
-					break // Skip adding the test file symbol
-				}
-			}
-			symbolTable.Types[symbol.Name] = symbol
 		}
-		return true
-	})
+	}
 
 	return nil
+}
+
+// shadowsProduction reports whether symbol, from a test file, would replace
+// existing, a symbol from a non-test file.
+func shadowsProduction(existing, symbol *types.Symbol) bool {
+	return existing != nil &&
+		!strings.HasSuffix(existing.File, "_test.go") &&
+		strings.HasSuffix(symbol.File, "_test.go")
 }
 
 func (sr *SymbolResolver) extractFunctionSymbol(funcDecl *ast.FuncDecl, file *types.File) *types.Symbol {
@@ -1122,12 +1109,13 @@ func (sr *SymbolResolver) extractGenDeclSymbols(genDecl *ast.GenDecl, file *type
 					Exported: sr.isExported(name.Name),
 				}
 
+				table, kind := symbolTable.Variables, types.VariableSymbol
 				if genDecl.Tok == token.CONST {
-					symbol.Kind = types.ConstantSymbol
-					symbolTable.Constants[symbol.Name] = symbol
-				} else {
-					symbol.Kind = types.VariableSymbol
-					symbolTable.Variables[symbol.Name] = symbol
+					table, kind = symbolTable.Constants, types.ConstantSymbol
+				}
+				symbol.Kind = kind
+				if !shadowsProduction(table[symbol.Name], symbol) {
+					table[symbol.Name] = symbol
 				}
 
 				if genDecl.Doc != nil {
@@ -1137,15 +1125,7 @@ func (sr *SymbolResolver) extractGenDeclSymbols(genDecl *ast.GenDecl, file *type
 
 		case *ast.TypeSpec:
 			symbol := sr.extractTypeSymbol(s, file)
-			// Don't overwrite non-test symbols with test symbols
-			shouldAdd := true
-			if existing, exists := symbolTable.Types[symbol.Name]; exists {
-				// If existing symbol is from non-test file and new symbol is from test file, keep existing
-				if !strings.HasSuffix(existing.File, "_test.go") && strings.HasSuffix(symbol.File, "_test.go") {
-					shouldAdd = false
-				}
-			}
-			if shouldAdd {
+			if !shadowsProduction(symbolTable.Types[symbol.Name], symbol) {
 				symbolTable.Types[symbol.Name] = symbol
 				// If this is an interface, also extract its method signatures
 				// so they appear in the Methods map keyed by interface name.
@@ -1179,14 +1159,8 @@ func (sr *SymbolResolver) extractTypeSymbol(typeSpec *ast.TypeSpec, file *types.
 	return symbol
 }
 
-// extractStructFieldSymbols walks a file's top-level type declarations and indexes
-// struct field symbols into symbolTable.Fields, keyed by the owning type's name.
-//
-// This deliberately does not reuse the file-wide ast.Inspect in extractSymbolsFromFile:
-// that walk also visits function-local struct type literals, whose type names could
-// collide with a package-level type of the same name in symbolTable.Fields. Instead,
-// only top-level GenDecl/TypeSpec nodes (from file.AST.Decls) are considered, which
-// covers both `type T struct{...}` and grouped `type ( ... )` declarations in one place.
+// extractStructFieldSymbols indexes the fields of a file's package-level struct
+// types into symbolTable.Fields, keyed by the owning type's name.
 func (sr *SymbolResolver) extractStructFieldSymbols(file *types.File, symbolTable *types.SymbolTable) {
 	if file == nil || file.AST == nil {
 		return

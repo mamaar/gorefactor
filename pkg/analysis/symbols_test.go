@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -1401,5 +1402,104 @@ func TestResolveSymbol_DottedFieldAndBareNameGuard(t *testing.T) {
 	}
 	if bare != nil {
 		t.Errorf("expected nil symbol for bare field name, got %+v", bare)
+	}
+}
+
+// symbolTableOf parses name->source files into one package (files named
+// *_test.go go to TestFiles) and builds its symbol table.
+func symbolTableOf(t *testing.T, files map[string]string) *types.SymbolTable {
+	t.Helper()
+	fset := token.NewFileSet()
+	pkg := &types.Package{
+		Name:      "x",
+		Path:      "x",
+		Files:     map[string]*types.File{},
+		TestFiles: map[string]*types.File{},
+	}
+	for name, src := range files {
+		astFile, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		f := &types.File{Path: name, AST: astFile, Package: pkg}
+		if strings.HasSuffix(name, "_test.go") {
+			pkg.TestFiles[name] = f
+		} else {
+			pkg.Files[name] = f
+		}
+	}
+	ws := &types.Workspace{Packages: map[string]*types.Package{"x": pkg}, FileSet: fset}
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := resolver.BuildSymbolTable(pkg)
+	if err != nil {
+		t.Fatalf("BuildSymbolTable: %v", err)
+	}
+	return st
+}
+
+func requireSymbolAt(t *testing.T, kind string, table map[string]*types.Symbol, name, file string, line int) {
+	t.Helper()
+	sym := table[name]
+	if sym == nil {
+		t.Fatalf("%s %s missing", kind, name)
+	}
+	if sym.File != file || sym.Line != line {
+		t.Errorf("%s %s at %s:%d, want %s:%d", kind, name, sym.File, sym.Line, file, line)
+	}
+}
+
+const (
+	pkgLevelSrc = "package x\n\nconst Limit = 1\n\nvar Counter string\n\ntype T int\n"
+	localsSrc   = "package x\n\nfunc F() {\n\tconst Limit = 2\n\tvar Counter int\n\ttype T struct{}\n\tconst OnlyLocal = 3\n\tvar localVar int\n\ttype localType struct{}\n}\n"
+)
+
+func TestBuildSymbolTable_FunctionLocalDeclarationsDoNotShadowPackageLevel(t *testing.T) {
+	for range 20 {
+		st := symbolTableOf(t, map[string]string{"a.go": pkgLevelSrc, "b.go": localsSrc})
+		requireSymbolAt(t, "const", st.Constants, "Limit", "a.go", 3)
+		requireSymbolAt(t, "var", st.Variables, "Counter", "a.go", 5)
+		requireSymbolAt(t, "type", st.Types, "T", "a.go", 7)
+	}
+}
+
+func TestBuildSymbolTable_FunctionLocalNamesAreAbsent(t *testing.T) {
+	st := symbolTableOf(t, map[string]string{"a.go": pkgLevelSrc, "b.go": localsSrc})
+	if _, ok := st.Constants["OnlyLocal"]; ok {
+		t.Error("local const OnlyLocal in Constants")
+	}
+	if _, ok := st.Variables["localVar"]; ok {
+		t.Error("local var localVar in Variables")
+	}
+	if _, ok := st.Types["localType"]; ok {
+		t.Error("local type localType in Types")
+	}
+}
+
+func TestBuildSymbolTable_TestFilesDoNotReplaceProductionSymbols(t *testing.T) {
+	prod := "package x\n\nfunc Helper() {}\n\nconst Name = 1\n\nvar Shared int\n"
+	inPkgTest := "package x\n\nfunc Helper() {}\n\nconst Name = 2\n\nvar Shared string\n"
+	extTest := "package x_test\n\nfunc Helper() {}\n\nconst Name = 3\n\nvar Shared bool\n"
+	for range 20 {
+		st := symbolTableOf(t, map[string]string{"x.go": prod, "x_test.go": inPkgTest, "ext_test.go": extTest})
+		requireSymbolAt(t, "func", st.Functions, "Helper", "x.go", 3)
+		requireSymbolAt(t, "const", st.Constants, "Name", "x.go", 5)
+		requireSymbolAt(t, "var", st.Variables, "Shared", "x.go", 7)
+	}
+}
+
+func TestBuildSymbolTable_EachInterfaceIsRecordedOnce(t *testing.T) {
+	src := "package x\n\ntype I interface {\n\tM()\n}\n\ntype S struct {\n\tA int\n}\n"
+	st := symbolTableOf(t, map[string]string{"a.go": src})
+	if n := len(st.Methods["I"]); n != 1 {
+		t.Errorf("interface I has %d method symbols, want 1", n)
+	}
+	if n := len(st.Fields["S"]); n != 1 {
+		t.Errorf("struct S has %d field symbols, want 1", n)
+	}
+	if st.Methods["I"][0].Parent != st.Types["I"] {
+		t.Error("interface method Parent is not the retained type symbol")
+	}
+	if st.Fields["S"][0].Parent != st.Types["S"] {
+		t.Error("field Parent is not the retained type symbol")
 	}
 }
