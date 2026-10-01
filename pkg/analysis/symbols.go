@@ -742,43 +742,36 @@ func (sr *SymbolResolver) HasNonDeclarationReference(symbol *types.Symbol, idx *
 	}
 
 	for i := range entries {
-		entry := &entries[i]
-
-		if entry.Pos == symbol.Position {
-			continue
-		}
-		if entry.IsDeclaration {
-			continue
-		}
-
-		// Fast path: type-identity comparison
-		if targetObj != nil && entry.TypesObject != nil {
-			if !sameObject(entry.TypesObject, targetObj) {
-				continue
-			}
+		if sr.isNonDeclarationReference(&entries[i], symbol, targetObj) {
 			return true
 		}
-
-		if entry.IsSelector {
-			if entry.IsMethodCall && symbol.Kind == types.MethodSymbol {
-				if !sr.isMethodCallMatch(entry, symbol) {
-					continue
-				}
-			} else {
-				if !sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package) {
-					continue
-				}
-			}
-		} else {
-			if !sr.isSamePackage(entry.File.Package, symbol.Package) {
-				continue
-			}
-		}
-
-		return true
 	}
 
 	return false
+}
+
+// isNonDeclarationReference reports whether entry is a reference to symbol
+// other than a declaration. targetObj is symbol's go/types object, or nil.
+func (sr *SymbolResolver) isNonDeclarationReference(entry *indexEntry, symbol *types.Symbol, targetObj gotypes.Object) bool {
+	if entry.Pos == symbol.Position {
+		return false
+	}
+	if entry.IsDeclaration {
+		return false
+	}
+
+	// Fast path: type-identity comparison
+	if targetObj != nil && entry.TypesObject != nil {
+		return sameObject(entry.TypesObject, targetObj)
+	}
+
+	if entry.IsSelector {
+		if entry.IsMethodCall && symbol.Kind == types.MethodSymbol {
+			return sr.isMethodCallMatch(entry, symbol)
+		}
+		return sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package)
+	}
+	return sr.isSamePackage(entry.File.Package, symbol.Package)
 }
 
 // extractContext2 extracts surrounding context using pre-computed line number.

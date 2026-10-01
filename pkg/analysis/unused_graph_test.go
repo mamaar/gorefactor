@@ -51,7 +51,7 @@ func posAfter(t *testing.T, ws *types.Workspace, file, needle string) token.Pos 
 	t.Helper()
 	for _, pkg := range ws.Packages {
 		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
-			f := group[file]
+			f := fileNamed(group, file)
 			if f == nil {
 				continue
 			}
@@ -64,6 +64,16 @@ func posAfter(t *testing.T, ws *types.Workspace, file, needle string) token.Pos 
 	}
 	t.Fatalf("no file %s", file)
 	return token.NoPos
+}
+
+// fileNamed returns the file whose path is name or ends in "/"+name.
+func fileNamed(group map[string]*types.File, name string) *types.File {
+	for path, f := range group {
+		if path == name || strings.HasSuffix(path, "/"+name) {
+			return f
+		}
+	}
+	return nil
 }
 
 func nodeNames(nodes []*usageNode) []string {
@@ -190,4 +200,191 @@ func TestUsageGraph_NodeCarriesTheSymbolAtItsPosition(t *testing.T) {
 			t.Errorf("node %s = %+v, want it to carry symbol %s", name, n, name)
 		}
 	}
+}
+
+// graphFixture is a usage graph over a workspace, built either untyped or
+// type-checked.
+type graphFixture struct {
+	ws *types.Workspace
+	g  *usageGraph
+}
+
+func (f graphFixture) node(t *testing.T, file, needle string) *usageNode {
+	t.Helper()
+	n := f.g.nodes[posAfter(t, f.ws, file, needle)]
+	if n == nil {
+		t.Fatalf("no node at %q in %s", needle, file)
+	}
+	return n
+}
+
+// untypedGraph builds the graph of files (name -> source, one package) from
+// parsed, unchecked sources.
+func untypedGraph(t *testing.T, files map[string]string) graphFixture {
+	t.Helper()
+	ws := parsedGraphWorkspace(t, files)
+	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return graphFixture{ws: ws, g: buildUsageGraph(ws, resolver, resolver.BuildReferenceIndex())}
+}
+
+// typedGraph builds the graph of files (path -> source, relative to a module
+// "example.com/w") from a loaded and type-checked workspace, test files
+// included.
+func typedGraph(t *testing.T, files map[string]string) graphFixture {
+	t.Helper()
+	set, _ := loadSet(t, files)
+	v := set.Primary()
+	for _, pkg := range v.Workspace.Packages {
+		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+		if pkg.Symbols == nil {
+			if _, err := v.Resolver.BuildSymbolTable(pkg); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	idx, err := v.ReferenceIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return graphFixture{ws: v.Workspace, g: buildUsageGraph(v.Workspace, v.Resolver, idx)}
+}
+
+// inBothModes runs check on the untyped and the typed graph of a one-package
+// workspace.
+func inBothModes(t *testing.T, files map[string]string, check func(t *testing.T, f graphFixture)) {
+	t.Helper()
+	t.Run("untyped", func(t *testing.T) { check(t, untypedGraph(t, files)) })
+
+	prefixed := make(map[string]string, len(files))
+	for name, src := range files {
+		prefixed["p/"+name] = src
+	}
+	t.Run("typed", func(t *testing.T) { check(t, typedGraph(t, prefixed)) })
+}
+
+func assertRefs(t *testing.T, n *usageNode, prod, test int) {
+	t.Helper()
+	if n.prodRefs != prod || n.testRefs != test {
+		t.Errorf("%s: prodRefs=%d testRefs=%d, want %d and %d", n.name, n.prodRefs, n.testRefs, prod, test)
+	}
+}
+
+func assertEdge(t *testing.T, from, to *usageNode, want bool) {
+	t.Helper()
+	if got := slices.Contains(from.out, to); got != want {
+		t.Errorf("edge %s -> %s = %v, want %v", from.name, to.name, got, want)
+	}
+}
+
+func TestUsageGraph_CallFromProductionFunctionIsACountedEdge(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc callee() {}\n\nfunc caller() { callee() }\n"},
+		func(t *testing.T, f graphFixture) {
+			callee, caller := f.node(t, "a.go", "callee()"), f.node(t, "a.go", "caller()")
+			assertRefs(t, callee, 1, 0)
+			assertEdge(t, caller, callee, true)
+			if !slices.Equal(callee.referrers, []*usageNode{caller}) {
+				t.Errorf("referrers = %v, want [caller]", nodeNames(callee.referrers))
+			}
+		})
+}
+
+func TestUsageGraph_CallFromTestFileToProductionIsATestRefWithoutEdge(t *testing.T) {
+	inBothModes(t, map[string]string{
+		"a.go":      "package p\n\nfunc callee() {}\n",
+		"a_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { callee() }\n",
+	}, func(t *testing.T, f graphFixture) {
+		callee, test := f.node(t, "a.go", "callee()"), f.node(t, "a_test.go", "TestX")
+		assertRefs(t, callee, 0, 1)
+		assertEdge(t, test, callee, false)
+		if !slices.Equal(callee.referrers, []*usageNode{test}) {
+			t.Errorf("referrers = %v, want [TestX]", nodeNames(callee.referrers))
+		}
+	})
+}
+
+func TestUsageGraph_CallFromExternalTestPackageIsATestRef(t *testing.T) {
+	f := typedGraph(t, map[string]string{
+		"p/p.go":      "package p\n\nfunc Exported() {}\n",
+		"p/p_test.go": "package p_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/w/p\"\n)\n\nfunc TestX(t *testing.T) { p.Exported() }\n",
+	})
+
+	exported := f.node(t, "p.go", "Exported")
+	assertRefs(t, exported, 0, 1)
+	assertEdge(t, f.node(t, "p_test.go", "TestX"), exported, false)
+}
+
+func TestUsageGraph_TestHelperCalledFromTestIsACountedEdge(t *testing.T) {
+	inBothModes(t, map[string]string{
+		"a.go":      "package p\n",
+		"a_test.go": "package p\n\nimport \"testing\"\n\nfunc helper() {}\n\nfunc TestX(t *testing.T) { helper() }\n",
+	}, func(t *testing.T, f graphFixture) {
+		helper, test := f.node(t, "a_test.go", "helper()"), f.node(t, "a_test.go", "TestX")
+		assertRefs(t, helper, 1, 0)
+		assertEdge(t, test, helper, true)
+	})
+}
+
+func TestUsageGraph_RecursionDoesNotCountAsAUse(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc rec(n int) {\n\tif n > 0 {\n\t\trec(n - 1)\n\t}\n}\n"},
+		func(t *testing.T, f graphFixture) {
+			rec := f.node(t, "a.go", "rec(n int)")
+			assertRefs(t, rec, 0, 0)
+			assertEdge(t, rec, rec, false)
+		})
+}
+
+func TestUsageGraph_MethodDoesNotCountAsAUseOfItsReceiverType(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\ntype T struct{}\n\nfunc (t *T) M() *T { return &T{} }\n\nfunc (t T) N() { _ = T{} }\n"},
+		func(t *testing.T, f graphFixture) {
+			typ := f.node(t, "a.go", "T struct")
+			assertRefs(t, typ, 0, 0)
+			for _, m := range []string{"M()", "N()"} {
+				assertEdge(t, f.node(t, "a.go", m), typ, false)
+			}
+		})
+}
+
+func TestUsageGraph_PackageVarInitialiserReferenceIsAnEdgeFromTheVar(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc callee() int { return 1 }\n\nvar v = callee()\n"},
+		func(t *testing.T, f graphFixture) {
+			callee, v := f.node(t, "a.go", "callee()"), f.node(t, "a.go", "v =")
+			assertRefs(t, callee, 1, 0)
+			assertEdge(t, v, callee, true)
+		})
+}
+
+func TestUsageGraph_StructFieldTypeIsAnEdgeFromTheStructType(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\ntype S struct{ d Dep }\n"},
+		func(t *testing.T, f graphFixture) {
+			dep, s := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "S struct")
+			assertRefs(t, dep, 1, 0)
+			assertEdge(t, s, dep, true)
+		})
+}
+
+func TestUsageGraph_InterfaceMethodSignatureTypeIsAnEdgeFromTheInterfaceType(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\ntype I interface{ M(d Dep) }\n"},
+		func(t *testing.T, f graphFixture) {
+			dep, i := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "I interface")
+			assertRefs(t, dep, 1, 0)
+			assertEdge(t, i, dep, true)
+		})
+}
+
+func TestUsageGraph_ParameterTypeIsAnEdgeFromTheFunction(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\nfunc f(d Dep) {}\n"},
+		func(t *testing.T, f graphFixture) {
+			dep, fn := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "f(d")
+			assertRefs(t, dep, 1, 0)
+			assertEdge(t, fn, dep, true)
+		})
+}
+
+func TestUsageGraph_MethodCallIsAnEdgeToTheMethod(t *testing.T) {
+	inBothModes(t, map[string]string{"a.go": "package p\n\ntype T struct{}\n\nfunc (t T) M() {}\n\nfunc f(t T) { t.M() }\n"},
+		func(t *testing.T, f graphFixture) {
+			m, fn := f.node(t, "a.go", "M()"), f.node(t, "a.go", "f(t")
+			assertRefs(t, m, 1, 0)
+			assertEdge(t, fn, m, true)
+		})
 }

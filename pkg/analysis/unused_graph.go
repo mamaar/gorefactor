@@ -206,3 +206,93 @@ func (g *usageGraph) enclosing(pos token.Pos) []*usageNode {
 	}
 	return g.spans[i].owners
 }
+
+// buildUsageGraph returns the usage graph of ws with its reference edges. Symbol
+// tables must be built; idx must index the same workspace.
+func buildUsageGraph(ws *types.Workspace, resolver *SymbolResolver, idx *ReferenceIndex) *usageGraph {
+	g := newUsageGraph(ws)
+	typed := g.addTypedEdges(idx.workspaceIdx)
+	g.addNameEdges(resolver, idx, typed)
+	return g
+}
+
+// addTypedEdges adds the edges of every type-checked package and returns the
+// positions that package defines.
+func (g *usageGraph) addTypedEdges(wi *workspaceIndex) map[token.Pos]bool {
+	defined := make(map[token.Pos]bool)
+	if wi == nil {
+		return defined
+	}
+
+	for _, pix := range wi.packages {
+		for id := range pix.def {
+			defined[id.pos] = true
+		}
+		for id, u := range pix.uses {
+			target := g.nodes[id.pos]
+			if target == nil {
+				continue
+			}
+			g.addUsesOf(target, pix, u)
+		}
+	}
+	return defined
+}
+
+// addUsesOf adds an edge from the declaration enclosing each use of target.
+// The name check guards against a position that belongs to another file set.
+func (g *usageGraph) addUsesOf(target *usageNode, pix *packageIndex, u *uses) {
+	for i := range u.decode() {
+		ident, ok := pix.inspect.At(i).Node().(*ast.Ident)
+		if !ok || ident.Name != target.name {
+			continue
+		}
+		g.addUseAt(ident.Pos(), target)
+	}
+}
+
+// addNameEdges adds the edges to every node that no type-checked package
+// defines, matching the name index.
+func (g *usageGraph) addNameEdges(resolver *SymbolResolver, idx *ReferenceIndex, defined map[token.Pos]bool) {
+	for pos, target := range g.nodes {
+		if defined[pos] || target.symbol == nil {
+			continue
+		}
+		entries, _ := idx.NameEntries(target.name)
+		for i := range entries {
+			if resolver.isNonDeclarationReference(&entries[i], target.symbol, nil) {
+				g.addUseAt(entries[i].Pos, target)
+			}
+		}
+	}
+}
+
+// addUseAt records a use of target at pos by the declaration enclosing pos.
+func (g *usageGraph) addUseAt(pos token.Pos, target *usageNode) {
+	for _, referrer := range g.enclosing(pos) {
+		addUse(referrer, target)
+	}
+}
+
+// addUse records that referrer uses target. A declaration's own references
+// and a method's references to its receiver type are not uses; a test
+// declaration's references to non-test ones are counted apart and give no edge.
+func addUse(referrer, target *usageNode) {
+	if referrer == target || referrer.recv == target {
+		return
+	}
+
+	if len(target.referrers) < maxReferrers && !slices.Contains(target.referrers, referrer) {
+		target.referrers = append(target.referrers, referrer)
+	}
+
+	if referrer.test && !target.test {
+		target.testRefs++
+		return
+	}
+
+	target.prodRefs++
+	if n := len(referrer.out); n == 0 || referrer.out[n-1] != target {
+		referrer.out = append(referrer.out, target)
+	}
+}
