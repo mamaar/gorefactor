@@ -19,6 +19,7 @@ type usageNode struct {
 	name   string
 	test   bool // declared in a _test.go file
 
+	aliasOf string       // for a type alias, the name of the type it denotes
 	recv    *usageNode   // receiver type of a method; nil otherwise or when unresolved
 	methods []*usageNode // on a type node
 
@@ -79,9 +80,14 @@ type methodDecl struct {
 	key  receiverKey
 }
 
+// linkMethod attaches m to its receiver type, following aliases of the same
+// package to the type they denote.
 func linkMethod(m methodDecl, typeNodes map[receiverKey]*usageNode) {
 	typ := typeNodes[m.key]
-	if typ == nil {
+	for hops := 0; typ != nil && typ.aliasOf != "" && hops < len(typeNodes); hops++ {
+		typ = typeNodes[receiverKey{m.key.pkg, m.key.clause, typ.aliasOf}]
+	}
+	if typ == nil || typ.aliasOf != "" {
 		return
 	}
 	m.node.recv = typ
@@ -122,6 +128,9 @@ func (b fileNodes) addGenDecl(d *ast.GenDecl, clause string) {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
 			n := b.newNode(s.Name)
+			if id, ok := s.Type.(*ast.Ident); ok && s.Assign.IsValid() {
+				n.aliasOf = id.Name
+			}
 			b.typeNodes[receiverKey{b.pkg, clause, s.Name.Name}] = n
 			b.addSpan(s.Pos(), s.End(), n)
 		case *ast.ValueSpec:

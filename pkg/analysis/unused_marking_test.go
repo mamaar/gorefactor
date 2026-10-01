@@ -358,3 +358,28 @@ func TestFindUnusedSymbols_TypesReachedThroughEmbeddingCascadeAreNotReported(t *
 	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:y", "a.go:z")
 	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:y", "a.go:z")
 }
+
+const aliasSource = "package p\n\ntype b struct{}\n\ntype a = b\n\nfunc (a) m() { leaf() }\n\nfunc leaf() {}\n\ntype I interface{ m() }\n\nfunc Run() I { return b{} }\n\nfunc main() { _ = Run() }\n"
+
+func TestFindUnusedSymbols_MethodDeclaredOnAliasIsLiveWhenAliasedTypeIsLive(t *testing.T) {
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": aliasSource}, false), "a.go:a", "a.go:m", "a.go:leaf")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": aliasSource}), "a.go:a", "a.go:m", "a.go:leaf")
+}
+
+func TestFindUnusedSymbols_MethodDeclaredOnAliasChainIsLiveWhenAliasedTypeIsLive(t *testing.T) {
+	src := "package p\n\ntype b struct{}\n\ntype a1 = b\n\ntype a2 = a1\n\nfunc (a2) m() { leaf() }\n\nfunc leaf() {}\n\n" +
+		"type I interface{ m() }\n\nfunc main() { var _ I = b{} }\n"
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:a1", "a.go:a2", "a.go:m", "a.go:leaf")
+}
+
+func TestFindUnusedSymbols_AliasNamedOnlyByDeadMethodReceiverIsReported(t *testing.T) {
+	src := "package p\n\ntype b struct{}\n\ntype a = b\n\nfunc (a) m() {}\n\nfunc main() { _ = b{} }\n"
+	for _, facts := range []map[string]unusedFact{
+		typedUnusedFacts(t, map[string]string{"p/a.go": src}, false),
+		untypedUnusedFacts(t, map[string]string{"a.go": src}),
+	} {
+		assertReported(t, facts, "a.go:m", "")
+		assertReported(t, facts, "a.go:a", "")
+		assertNotReported(t, facts, "a.go:b")
+	}
+}
