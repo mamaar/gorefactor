@@ -297,3 +297,64 @@ func TestFindUnusedSymbols_TypeWhoseMethodIsCalledByUnusedCodeIsNotSafeToDelete(
 	assertReported(t, facts, "a.go:thing", reasonUnusedCode)
 	assertSafe(t, facts, "a.go:thing", false)
 }
+
+const embeddingSource = "package p\n\ntype base struct{}\n\nfunc (base) Close() error { return leaf() }\n\nfunc leaf() error { return nil }\n\n" +
+	"type Impl struct{ base }\n\nfunc Run() any { return Impl{} }\n\nfunc main() { _ = Run() }\n"
+
+func TestFindUnusedSymbols_TypeUsedOnlyByEmbeddingIsNotReported(t *testing.T) {
+	files := map[string]string{"p/a.go": embeddingSource}
+	for _, includeExported := range []bool{false, true} {
+		facts := typedUnusedFacts(t, files, includeExported)
+		assertNotReported(t, facts, "a.go:base", "a.go:Close", "a.go:leaf")
+	}
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": embeddingSource}), "a.go:base", "a.go:leaf")
+}
+
+func TestFindUnusedSymbols_PointerEmbeddedTypeIsNotReported(t *testing.T) {
+	src := "package p\n\ntype base struct{}\n\ntype gen[X any] struct{}\n\ntype Impl struct {\n\t*base\n\tgen[int]\n}\n\nfunc main() { _ = Impl{} }\n"
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:base", "a.go:gen")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:base", "a.go:gen")
+}
+
+func TestFindUnusedSymbols_TypeEmbeddedFromAnotherPackageIsNotReported(t *testing.T) {
+	facts := typedUnusedFacts(t, map[string]string{
+		"dep/dep.go": "package dep\n\ntype Base struct{}\n\nfunc (Base) Close() error { return leaf() }\n\nfunc leaf() error { return nil }\n",
+		"p/a.go":     "package p\n\nimport \"example.com/w/dep\"\n\ntype Impl struct{ dep.Base }\n\nfunc main() { _ = Impl{} }\n",
+	}, true)
+	assertNotReported(t, facts, "dep.go:Base", "dep.go:Close", "dep.go:leaf")
+}
+
+func TestFindUnusedSymbols_TypeEmbeddedInFunctionLocalStructIsNotReported(t *testing.T) {
+	src := "package p\n\ntype base struct{}\n\nfunc main() {\n\ttype local struct{ base }\n\t_ = local{}\n}\n"
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:base")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:base")
+}
+
+func TestFindUnusedSymbols_TypeEmbeddedInStructNestedInOtherTypeIsNotReported(t *testing.T) {
+	src := "package p\n\ntype base struct{}\n\ntype Outer struct {\n\tf []struct{ base }\n}\n\nfunc main() { _ = Outer{} }\n"
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:base")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:base")
+}
+
+func TestFindUnusedSymbols_InterfaceEmbeddedInLiveInterfaceIsNotReported(t *testing.T) {
+	src := "package p\n\ntype inner interface{ m() }\n\ntype Outer interface{ inner }\n\nfunc main() { var _ Outer }\n"
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:inner")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:inner")
+}
+
+func TestFindUnusedSymbols_TypeEmbeddedOnlyInUnusedStructIsReported(t *testing.T) {
+	src := "package p\n\ntype base struct{}\n\ntype impl struct{ base }\n"
+	for _, facts := range []map[string]unusedFact{
+		typedUnusedFacts(t, map[string]string{"p/a.go": src}, false),
+		untypedUnusedFacts(t, map[string]string{"a.go": src}),
+	} {
+		assertReported(t, facts, "a.go:impl", "")
+		assertReported(t, facts, "a.go:base", reasonUnusedCode)
+	}
+}
+
+func TestFindUnusedSymbols_TypesReachedThroughEmbeddingCascadeAreNotReported(t *testing.T) {
+	src := "package p\n\ntype (\n\tx struct{ y }\n\ty struct{ n z }\n\tz int\n)\n\nfunc main() { _ = x{} }\n"
+	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:y", "a.go:z")
+	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:y", "a.go:z")
+}

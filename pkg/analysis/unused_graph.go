@@ -37,8 +37,9 @@ type declSpan struct {
 }
 
 type usageGraph struct {
-	nodes map[token.Pos]*usageNode // by name identifier position
-	spans []declSpan               // sorted by pos, whole workspace
+	nodes     map[token.Pos]*usageNode // by name identifier position
+	spans     []declSpan               // sorted by pos, whole workspace
+	typeNodes map[receiverKey]*usageNode
 }
 
 // receiverKey names a type within one package and one package clause, so an
@@ -52,8 +53,8 @@ type receiverKey struct {
 // newUsageGraph creates a node for every top-level declaration name of ws and
 // the spans that locate them. Symbol tables must already be built.
 func newUsageGraph(ws *types.Workspace) *usageGraph {
-	g := &usageGraph{nodes: make(map[token.Pos]*usageNode)}
 	typeNodes := make(map[receiverKey]*usageNode)
+	g := &usageGraph{nodes: make(map[token.Pos]*usageNode), typeNodes: typeNodes}
 	var methodDecls []methodDecl
 
 	for _, pkg := range ws.Packages {
@@ -214,6 +215,7 @@ func buildUsageGraph(ws *types.Workspace, resolver *SymbolResolver, idx *Referen
 	g := newUsageGraph(ws)
 	typed := g.addTypedEdges(idx.workspaceIdx)
 	g.addNameEdges(resolver, idx, typed)
+	g.addEmbeddedEdges(ws, resolver, idx.workspaceIdx)
 	return g
 }
 
@@ -266,6 +268,133 @@ func (g *usageGraph) addNameEdges(resolver *SymbolResolver, idx *ReferenceIndex,
 			}
 		}
 	}
+}
+
+// addEmbeddedEdges adds the edges from a struct or interface type to the types
+// it embeds. The package index skips them: an embedded field name is also a
+// definition.
+func (g *usageGraph) addEmbeddedEdges(ws *types.Workspace, resolver *SymbolResolver, wi *workspaceIndex) {
+	typed := g.addTypedEmbeddedEdges(wi)
+
+	for _, pkg := range ws.Packages {
+		for _, file := range indexedFiles(pkg) {
+			c := &embedCollector{}
+			ast.Walk(c, file.AST)
+			for _, ref := range c.refs {
+				if !typed[ref.name] {
+					g.addEmbeddedByName(resolver, pkg, file, ref)
+				}
+			}
+		}
+	}
+}
+
+// addTypedEmbeddedEdges resolves the embedded types of every type-checked
+// package through go/types and returns the identifiers it resolved.
+func (g *usageGraph) addTypedEmbeddedEdges(wi *workspaceIndex) map[*ast.Ident]bool {
+	resolved := make(map[*ast.Ident]bool)
+	if wi == nil {
+		return resolved
+	}
+
+	for _, pix := range wi.packages {
+		for cur := range pix.inspect.Root().Preorder((*ast.StructType)(nil), (*ast.InterfaceType)(nil)) {
+			for _, ref := range embeddedRefs(cur.Node()) {
+				obj := pix.info.Uses[ref.name]
+				if obj == nil {
+					continue
+				}
+				resolved[ref.name] = true
+
+				target := g.nodes[canonicalObject(obj).Pos()]
+				if target != nil && target.name == ref.name.Name {
+					g.addUseAt(ref.name.Pos(), target)
+				}
+			}
+		}
+	}
+	return resolved
+}
+
+// addEmbeddedByName matches an embedded type by name: within the package for
+// T, and through the import alias for pkg.T.
+func (g *usageGraph) addEmbeddedByName(resolver *SymbolResolver, pkg *types.Package, file *types.File, ref embeddedRef) {
+	if ref.qual == nil {
+		clause := file.AST.Name.Name
+		if target := g.typeNodes[receiverKey{pkg, clause, ref.name.Name}]; target != nil {
+			g.addUseAt(ref.name.Pos(), target)
+		}
+		return
+	}
+
+	for key, target := range g.typeNodes {
+		if key.typName == ref.name.Name && target.symbol != nil &&
+			resolver.importAliasRefersToPackage(ref.qual.Name, file, target.symbol.Package) {
+			g.addUseAt(ref.name.Pos(), target)
+		}
+	}
+}
+
+// embeddedRef names an embedded type.
+type embeddedRef struct {
+	name *ast.Ident
+	qual *ast.Ident // package qualifier of pkg.T; nil otherwise
+}
+
+// embedCollector gathers the embedded types of every struct and interface type
+// in a tree.
+type embedCollector struct{ refs []embeddedRef }
+
+func (c *embedCollector) Visit(n ast.Node) ast.Visitor {
+	c.refs = append(c.refs, embeddedRefs(n)...)
+	return c
+}
+
+// embeddedRefs returns the types embedded in n if it is a struct or interface
+// type, including the terms of an embedded constraint.
+func embeddedRefs(n ast.Node) []embeddedRef {
+	var fields *ast.FieldList
+	switch t := n.(type) {
+	case *ast.StructType:
+		fields = t.Fields
+	case *ast.InterfaceType:
+		fields = t.Methods
+	}
+	if fields == nil {
+		return nil
+	}
+
+	var refs []embeddedRef
+	for _, f := range fields.List {
+		if len(f.Names) == 0 {
+			refs = appendTypeNames(refs, f.Type)
+		}
+	}
+	return refs
+}
+
+func appendTypeNames(refs []embeddedRef, expr ast.Expr) []embeddedRef {
+	switch e := expr.(type) {
+	case *ast.Ident:
+		return append(refs, embeddedRef{name: e})
+	case *ast.SelectorExpr:
+		if qual, ok := e.X.(*ast.Ident); ok {
+			return append(refs, embeddedRef{name: e.Sel, qual: qual})
+		}
+	case *ast.StarExpr:
+		return appendTypeNames(refs, e.X)
+	case *ast.ParenExpr:
+		return appendTypeNames(refs, e.X)
+	case *ast.IndexExpr:
+		return appendTypeNames(refs, e.X)
+	case *ast.IndexListExpr:
+		return appendTypeNames(refs, e.X)
+	case *ast.UnaryExpr:
+		return appendTypeNames(refs, e.X)
+	case *ast.BinaryExpr:
+		return appendTypeNames(appendTypeNames(refs, e.X), e.Y)
+	}
+	return refs
 }
 
 // addUseAt records a use of target at pos by the declaration enclosing pos.

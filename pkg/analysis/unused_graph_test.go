@@ -388,3 +388,28 @@ func TestUsageGraph_MethodCallIsAnEdgeToTheMethod(t *testing.T) {
 			assertEdge(t, fn, m, true)
 		})
 }
+
+func TestUsageGraph_EmbeddingStructHasEdgeToEmbeddedType(t *testing.T) {
+	set, _ := loadSet(t, map[string]string{
+		"p/a.go": "package p\n\ntype base struct{}\n\ntype Impl struct{ base }\n",
+	})
+	v := set.Primary()
+	resolver := NewSymbolResolver(v.Workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	for _, pkg := range v.Workspace.Packages {
+		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx, err := v.ReferenceIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := buildUsageGraph(v.Workspace, resolver, idx)
+
+	base := g.nodes[posAfter(t, v.Workspace, "a.go", "base struct")]
+	impl := g.nodes[posAfter(t, v.Workspace, "a.go", "Impl struct")]
+	if !slices.Contains(impl.out, base) {
+		t.Errorf("Impl.out = %v, want base in it", nodeNames(impl.out))
+	}
+}
