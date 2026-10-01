@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"maps"
 	"slices"
 	"strings"
 
@@ -93,7 +94,7 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 		return referenceFileEdit{qualifier: qualifier, importChanges: removeDropped(slices.DeleteFunc(dropped, func(s *ast.ImportSpec) bool { return s == imp }))}
 	}
 
-	alias := chooseImportName(ws, file, dropped, targetImportPath, targetName)
+	alias := chooseImportName(ws, file, dropped, targetImportPath, targetName, nil)
 	explicit := ""
 	if alias != lastPathComponent(targetImportPath) {
 		explicit = alias
@@ -163,9 +164,10 @@ func countQualifierUses(f *ast.File, name string) int {
 // chooseImportName picks the local name for the target import: the package
 // name if free in the file, else the package name prefixed with preceding path
 // segments, else numbered. dropped imports are being removed and so do not
-// occupy their names.
-func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.ImportSpec, targetImportPath, targetName string) string {
+// occupy their names, and avoid lists names that are unavailable besides.
+func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.ImportSpec, targetImportPath, targetName string, avoid map[string]bool) string {
 	taken := namesInFileScope(ws, file, dropped)
+	maps.Copy(taken, avoid)
 
 	segments := strings.Split(targetImportPath, "/")
 	candidates := []string{targetName}
@@ -207,6 +209,9 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 		if name, _ := importLocalName(spec); name != "" {
 			dropNames[name] = true
 		}
+	}
+	if file.AST == nil {
+		return taken
 	}
 	for _, imp := range file.AST.Imports {
 		if slices.Contains(dropped, imp) {

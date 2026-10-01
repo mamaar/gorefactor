@@ -1003,67 +1003,31 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 	if len(moving) == 0 {
 		return nil, fmt.Errorf("no symbols to add to %s", targetPackage.Path)
 	}
-
-	// Needed to strip self-qualification below: if the moved code already
-	// referenced something now living in targetPackage (e.g. a symbol moved
-	// there by an earlier call), extractSymbolSource copies that qualifier
-	// verbatim. Left alone it produces an illegal self-qualified reference
-	// plus a self-import once resolveNeededImports sees the same qualifier.
-	// See unqualifySelfReferences in move_imports.go.
-	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
-
-	var blocks []string
-	var needed []neededImport
-	seenImportPaths := make(map[string]bool)
-	need := func(imp neededImport) {
-		if !seenImportPaths[imp.path] {
-			seenImportPaths[imp.path] = true
-			needed = append(needed, imp)
+	for _, m := range moving {
+		if m.file == nil {
+			return nil, fmt.Errorf("could not find source file for symbol %s", m.sym.Name)
+		}
+		if len(m.file.OriginalContent) == 0 {
+			return nil, fmt.Errorf("source file %s has no content loaded", m.file.Path)
+		}
+		if path := uses[m].dotImport; path != "" {
+			return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("cannot move %s: it uses names from the dot import %q in %s; qualify them first", m.name(), path, filepath.Base(m.file.Path)),
+			}}
 		}
 	}
-	sourceNames := make(map[*types.Package]string)
+
+	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
+	names, needed := chooseImportNames(ws, targetFile, moving, uses, targetImportPath)
+
+	var blocks []string
 	for _, m := range moving {
-		symbol, symbolFile := m.sym, m.file
-		if symbolFile == nil {
-			return nil, fmt.Errorf("could not find source file for symbol %s", symbol.Name)
-		}
-		if len(symbolFile.OriginalContent) == 0 {
-			return nil, fmt.Errorf("source file %s has no content loaded", symbolFile.Path)
-		}
-
-		qualifiers := make(map[int]string)
-		if len(uses[m].leftBehind) > 0 {
-			name, ok := sourceNames[m.pkg]
-			if !ok {
-				var imp neededImport
-				name, imp = importForSource(ws, targetFile, m.pkg)
-				need(imp)
-				sourceNames[m.pkg] = name
-			}
-			for _, offset := range uses[m].leftBehind {
-				qualifiers[offset] = name + "."
-			}
-		}
-
-		symbolCode, err := op.extractSymbolSource(symbolFile, symbol, qualifiers)
+		symbolCode, err := op.extractSymbolSource(m.file, m.sym, qualifierEdits(ws, m, uses[m], names, targetImportPath))
 		if err != nil {
 			return nil, fmt.Errorf("failed to extract symbol source: %w", err)
 		}
-
-		symbolCode = unqualifySelfReferences(symbolFile, symbolCode, targetImportPath)
-
-		// No "was moved from" banner here: it's pure diff churn (every move
-		// adds a line no one reads) and review noise. git blame / git log on
-		// the target file already tells the same story.
 		blocks = append(blocks, symbolCode)
-
-		// Resolve which imports this symbol's code needs by inspecting the
-		// actual identifiers it references against its own source file's
-		// import list (each moved symbol may originate from a different
-		// file within sourcePackage). See move_imports.go.
-		for _, imp := range resolveNeededImports(symbolFile, symbolCode) {
-			need(imp)
-		}
 	}
 
 	combinedCode := "\n" + strings.Join(blocks, "\n\n") + "\n"
@@ -1083,32 +1047,6 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 	}
 
 	return changes, nil
-}
-
-// importForSource returns the name targetFile uses for the source package and
-// the import that provides it: the file's own import of it, else a new one
-// under a name free in the file.
-func importForSource(ws *types.Workspace, targetFile *types.File, source *types.Package) (string, neededImport) {
-	path := packagePathToImportPath(ws, source.Path)
-	if targetFile.AST != nil {
-		for _, imp := range targetFile.AST.Imports {
-			if strings.Trim(imp.Path.Value, `"`) == path {
-				if name, explicit := importLocalName(imp); name != "" {
-					alias := ""
-					if explicit {
-						alias = name
-					}
-					return name, neededImport{alias: alias, path: path}
-				}
-			}
-		}
-	}
-	name := chooseImportName(ws, targetFile, nil, path, source.Name)
-	imp := neededImport{path: path}
-	if name != lastPathComponent(path) {
-		imp.alias = name
-	}
-	return name, imp
 }
 
 func symbolNames(moving []*movingSymbol) string {
@@ -1538,8 +1476,8 @@ func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, fileP
 }
 
 // extractSymbolSource extracts the source code of a symbol from a file, with
-// each text in qualifiers (keyed by the file offset it goes before) inserted.
-func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol, qualifiers map[int]string) (string, error) {
+// edits (in the file's offsets) applied.
+func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *types.Symbol, edits []textEdit) (string, error) {
 	if file.AST == nil {
 		return "", fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
@@ -1547,7 +1485,7 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 	if !ok {
 		return "", fmt.Errorf("symbol %s not found in file %s", symbol.Name, file.Path)
 	}
-	sourceCode := copyLines(file.OriginalContent, start, end, qualifiers)
+	sourceCode := copyLines(file.OriginalContent, start, end, edits)
 	if keyword != "" {
 		// The keyword goes on the spec's own line, below any doc comment.
 		lines := strings.Split(sourceCode, "\n")
@@ -1559,8 +1497,8 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 }
 
 // copyLines returns the 0-based lines [start, end) of content without the final
-// newline, with inserts applied as in copyWithInserts.
-func copyLines(content []byte, start, end int, inserts map[int]string) string {
+// newline, with edits applied as in copyWithEdits.
+func copyLines(content []byte, start, end int, edits []textEdit) string {
 	lineOffset := func(line int) int {
 		offset := 0
 		for range line {
@@ -1572,21 +1510,27 @@ func copyLines(content []byte, start, end int, inserts map[int]string) string {
 		}
 		return offset
 	}
-	return copyWithInserts(content, lineOffset(start), min(lineOffset(end)-1, len(content)), inserts)
+	return copyWithEdits(content, lineOffset(start), min(lineOffset(end)-1, len(content)), edits)
 }
 
-// copyWithInserts returns content[start:end] with each text in inserts put
-// before the offset it is keyed by.
-func copyWithInserts(content []byte, start, end int, inserts map[int]string) string {
+// textEdit replaces content[start:end] with text; start == end inserts.
+type textEdit struct {
+	start, end int
+	text       string
+}
+
+// copyWithEdits returns content[start:end] with the edits that lie within it
+// applied.
+func copyWithEdits(content []byte, start, end int, edits []textEdit) string {
 	var b strings.Builder
 	last := start
-	for _, offset := range slices.Sorted(maps.Keys(inserts)) {
-		if offset < start || offset >= end {
+	for _, e := range slices.SortedFunc(slices.Values(edits), func(a, b textEdit) int { return a.start - b.start }) {
+		if e.start < last || e.end > end {
 			continue
 		}
-		b.Write(content[last:offset])
-		b.WriteString(inserts[offset])
-		last = offset
+		b.Write(content[last:e.start])
+		b.WriteString(e.text)
+		last = e.end
 	}
 	b.Write(content[last:end])
 	return b.String()

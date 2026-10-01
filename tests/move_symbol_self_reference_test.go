@@ -34,16 +34,13 @@ import (
 //     qualifies references with. extractSymbolSource copied the qualifier
 //     verbatim, so the pasted code read `asyncserver.NewAsyncServer(...)`
 //     and `*asyncserver.AsyncServer` from *inside* package asyncserver, and
-//     resolveNeededImports (move_imports.go) saw that same qualifier and
-//     added `import "reprotest/pkg/asyncserver"` to asyncserver.go itself —
-//     an import cycle ("import cycle not allowed").
+//     asyncserver.go imported itself — an import cycle ("import cycle not
+//     allowed").
 //
-// Root cause: generateSymbolAdditionChanges (pkg/refactor/operations.go)
-// pasted the moved declaration's source text as-is with no check for
-// whether a qualifier it already carried now resolved to the destination
-// package. Fixed via unqualifySelfReferences (pkg/refactor/move_imports.go),
-// called before the pasted text is scanned for needed imports, which strips
-// any qualifier matching the destination package's import path.
+// Root cause: the moved declaration's source text was pasted as-is with no
+// check for whether a qualifier it already carried resolved to the
+// destination package. qualifierEdits (pkg/refactor/move_imports.go) strips
+// any qualifier of the destination package.
 func TestMoveSymbolDoesNotSelfQualifyAlreadyMovedReferences(t *testing.T) {
 	tmpDir := t.TempDir()
 

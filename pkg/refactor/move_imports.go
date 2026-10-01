@@ -5,23 +5,20 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
-// This file computes the import block a moved declaration needs in its new
-// home file. Previously move_symbol copied only the raw declaration text
-// (see generateSymbolAdditionChange in operations.go) and never looked at
-// what identifiers that text actually referenced, so any moved code that
-// used a package-qualified name (http.Client, sync.RWMutex, an aliased
-// third-party import, ...) landed in the target file with zero imports and
-// failed to compile.
+// This file decides the imports a moved declaration needs in its new home
+// file and the qualifiers its code uses for them.
 
 // neededImport describes one import the moved code requires in its new file.
 type neededImport struct {
-	alias string // "" unless the source file used an explicit alias
+	alias string // "" when the import is under the package's own name
 	path  string
 }
 
@@ -53,160 +50,131 @@ func importLocalName(imp *ast.ImportSpec) (string, bool) {
 	return path, false
 }
 
-// collectPackageSelectorNames parses code as a standalone file body and
-// returns the set of identifiers used as the package-qualifier half of a
-// selector expression (the "http" in "http.Client"). Parsing standalone
-// (rather than reusing AST nodes from the original file) means this works
-// regardless of how code was produced — AST-based extraction or the
-// line/brace-counting fallback in extractSymbolSource.
-//
-// Returns (nil, err) only if code doesn't parse even as a loose statement
-// list; callers should treat that as "don't know, skip import inference"
-// rather than failing the whole move.
-func collectPackageSelectorNames(code string) (map[string]bool, error) {
-	fset := token.NewFileSet()
-	synthetic, err := parser.ParseFile(fset, "", "package movedsymbols\n"+code, 0)
-	if err != nil {
-		return nil, err
+// chooseImportNames decides, once for the whole target file, the local name of
+// every package the moved code refers to through a qualifier, plus the source
+// packages whose left-behind names it qualifies. A name is, in order: the
+// target's own named import of the path, the name the source used, or a fresh
+// one; each only when nothing else in the target file, the moved code or an
+// earlier choice claims it. It returns the name per import path and the
+// imports to add.
+func chooseImportNames(ws *types.Workspace, targetFile *types.File, moving []*movingSymbol, uses map[*movingSymbol]*movedUses, targetImportPath string) (map[string]string, []neededImport) {
+	type want struct {
+		path, realName, preferred string
+		inserted                  bool
+		used                      []string
 	}
-
-	names := make(map[string]bool)
-	ast.Inspect(synthetic, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
+	var wants []*want
+	byPath := make(map[string]*want)
+	get := func(path, realName string) *want {
+		if w, ok := byPath[path]; ok {
+			return w
 		}
-		if ident, ok := sel.X.(*ast.Ident); ok {
-			names[ident.Name] = true
+		w := &want{path: path, realName: realName}
+		byPath[path] = w
+		wants = append(wants, w)
+		return w
+	}
+	avoid := make(map[string]bool)
+	shadow := make(map[string]bool)
+	for _, m := range moving {
+		if m.typ == nil {
+			avoid[m.sym.Name] = true
 		}
-		return true
-	})
-	return names, nil
-}
-
-// unqualifySelfReferences rewrites code — a moved declaration's source text,
-// still carrying whatever package qualifiers it had back in sourceFile — so
-// that any reference to targetImportPath (the package code is being moved
-// INTO) is left bare instead of self-qualified.
-//
-// This matters when a move lands a symbol in a package that already
-// contains something the symbol's body refers to — typically because an
-// earlier move already relocated that something there. Example: move #1
-// relocates AsyncServer to pkg/asyncserver; since NewLoggedAsyncServer still
-// lived in the old package at that point and called NewAsyncServer, move #1
-// correctly qualified that call as asyncserver.NewAsyncServer and added the
-// asyncserver import to the old package. Move #2 then relocates
-// NewLoggedAsyncServer itself to pkg/asyncserver — but extractSymbolSource
-// copies its body verbatim, qualifier and all, so pasting it into
-// pkg/asyncserver produces a package that calls asyncserver.NewAsyncServer
-// (illegal self-qualification) and, via resolveNeededImports below spotting
-// that same qualifier, imports itself (an import cycle). Stripping the
-// qualifier here — before resolveNeededImports ever sees the code — fixes
-// both symptoms in one place.
-//
-// Returns code unchanged if sourceFile has no import of targetImportPath, or
-// code doesn't parse as a standalone declaration; the latter is the same
-// "don't know, don't touch it" fallback collectPackageSelectorNames uses.
-func unqualifySelfReferences(sourceFile *types.File, code string, targetImportPath string) string {
-	if sourceFile == nil || sourceFile.AST == nil || targetImportPath == "" {
-		return code
-	}
-
-	// Find the local alias sourceFile used to refer to targetImportPath, if
-	// any. Nothing to do if the source code never imported the destination
-	// package in the first place.
-	alias := ""
-	for _, imp := range sourceFile.AST.Imports {
-		if strings.Trim(imp.Path.Value, `"`) != targetImportPath {
-			continue
+		maps.Copy(shadow, uses[m].idents)
+		if len(uses[m].leftBehind) > 0 {
+			get(packagePathToImportPath(ws, m.pkg.Path), m.pkg.Name).inserted = true
 		}
-		localName, _ := importLocalName(imp)
-		if localName != "" {
-			alias = localName
+		for _, u := range uses[m].pkgUses {
+			if u.path == targetImportPath {
+				continue
+			}
+			w := get(u.path, u.pkgName)
+			if w.preferred == "" {
+				w.preferred = u.name
+			}
+			w.used = append(w.used, u.name)
 		}
-		break
-	}
-	if alias == "" {
-		return code
 	}
 
-	const prefix = "package movedsymbols\n"
-	fset := token.NewFileSet()
-	synthetic, err := parser.ParseFile(fset, "", prefix+code, 0)
-	if err != nil {
-		return code
-	}
-
-	// Collect the byte ranges of "alias." prefixes to delete, keyed off the
-	// synthetic file's own offsets (which are prefix-relative, hence the
-	// -len(prefix) adjustment back to code's coordinate space).
-	type span struct{ start, end int }
-	var removals []span
-	ast.Inspect(synthetic, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok {
-			return true
+	taken := namesInFileScope(ws, targetFile, nil)
+	chosen := make(map[string]bool)
+	// fits reports whether w may go by name: unclaimed, and not shadowed by an
+	// identifier of the moved code unless every qualifier already says name.
+	fits := func(w *want, name string) bool {
+		if chosen[name] || avoid[name] {
+			return false
 		}
-		ident, ok := sel.X.(*ast.Ident)
-		if !ok || ident.Name != alias {
-			return true
-		}
-		start := fset.Position(sel.X.Pos()).Offset - len(prefix)
-		end := fset.Position(sel.Sel.Pos()).Offset - len(prefix)
-		if start < 0 || end < start || end > len(code) {
-			return true // out of bounds shouldn't happen, but don't corrupt code if it does
-		}
-		removals = append(removals, span{start, end})
-		return true
-	})
-	if len(removals) == 0 {
-		return code
+		return !shadow[name] || !w.inserted && !slices.ContainsFunc(w.used, func(u string) bool { return u != name })
 	}
 
-	sort.Slice(removals, func(i, j int) bool { return removals[i].start > removals[j].start })
-	result := code
-	for _, r := range removals {
-		result = result[:r.start] + result[r.end:]
-	}
-	return result
-}
-
-// resolveNeededImports maps the package-qualifier identifiers used in code
-// back to the import specs that provide them in sourceFile, carrying over
-// any explicit alias. Imports that can't be resolved (used name isn't any of
-// sourceFile's import local names — e.g. the identifier turned out to be
-// something else entirely) are simply omitted; this is best-effort inference,
-// not authoritative.
-func resolveNeededImports(sourceFile *types.File, code string) []neededImport {
-	if sourceFile == nil || sourceFile.AST == nil {
-		return nil
-	}
-
-	usedNames, err := collectPackageSelectorNames(code)
-	if err != nil || len(usedNames) == 0 {
-		return nil
-	}
-
+	names := make(map[string]string, len(wants))
 	var needed []neededImport
-	seenPaths := make(map[string]bool)
-	for _, imp := range sourceFile.AST.Imports {
-		localName, explicit := importLocalName(imp)
-		if localName == "" || !usedNames[localName] {
-			continue
+	for _, w := range wants {
+		name := ""
+		if targetFile.AST != nil {
+			for _, imp := range targetFile.AST.Imports {
+				if strings.Trim(imp.Path.Value, `"`) != w.path {
+					continue
+				}
+				existing := w.realName
+				if imp.Name != nil {
+					existing, _ = importLocalName(imp)
+				}
+				if existing != "" && fits(w, existing) {
+					name = existing
+					break
+				}
+			}
 		}
-		path := strings.Trim(imp.Path.Value, `"`)
-		if seenPaths[path] {
-			continue
+		if name == "" && w.preferred != "" && !taken[w.preferred] && fits(w, w.preferred) {
+			name = w.preferred
 		}
-		seenPaths[path] = true
-
-		alias := ""
-		if explicit {
-			alias = localName
+		if name == "" {
+			blocked := maps.Clone(chosen)
+			maps.Copy(blocked, avoid)
+			maps.Copy(blocked, shadow)
+			name = chooseImportName(ws, targetFile, nil, w.path, w.realName, blocked)
 		}
-		needed = append(needed, neededImport{alias: alias, path: path})
+		chosen[name] = true
+		names[w.path] = name
+		imp := neededImport{path: w.path}
+		if name != w.realName {
+			imp.alias = name
+		}
+		needed = append(needed, imp)
 	}
-	return needed
+	return names, needed
+}
+
+// qualifierEdits returns the edits that make m's code use the chosen import
+// names: a use of the target package loses its qualifier, any other qualifier
+// is renamed when the name differs, and each left-behind name gets the source
+// package's qualifier.
+func qualifierEdits(ws *types.Workspace, m *movingSymbol, u *movedUses, names map[string]string, targetImportPath string) []textEdit {
+	content := m.file.OriginalContent
+	var edits []textEdit
+	for _, use := range u.pkgUses {
+		end := use.offset + use.length
+		switch {
+		case use.path == targetImportPath:
+			for end < len(content) && (content[end] == ' ' || content[end] == '\t') {
+				end++
+			}
+			if end < len(content) && content[end] == '.' {
+				end++
+			}
+			edits = append(edits, textEdit{start: use.offset, end: end})
+		case names[use.path] != use.name:
+			edits = append(edits, textEdit{start: use.offset, end: end, text: names[use.path]})
+		}
+	}
+	if len(u.leftBehind) > 0 {
+		qualifier := names[packagePathToImportPath(ws, m.pkg.Path)] + "."
+		for _, offset := range u.leftBehind {
+			edits = append(edits, textEdit{start: offset, end: offset, text: qualifier})
+		}
+	}
+	return edits
 }
 
 // packageClauseEndOffset returns the byte offset in targetFile.OriginalContent
@@ -267,16 +235,9 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 		return nil
 	}
 
-	existing := make(map[string]bool)
-	if targetFile.AST != nil {
-		for _, imp := range targetFile.AST.Imports {
-			existing[strings.Trim(imp.Path.Value, `"`)] = true
-		}
-	}
-
 	var lines []string
 	for _, n := range needed {
-		if existing[n.path] {
+		if importsUnder(targetFile, n) {
 			continue
 		}
 		if n.alias != "" {
@@ -312,6 +273,23 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 		NewText:     "\nimport (\n" + strings.Join(lines, "\n") + "\n)\n",
 		Description: fmt.Sprintf("Add imports to %s", targetFile.Path),
 	}
+}
+
+// importsUnder reports whether file imports n's path under n's name; a blank
+// or dot import does not count.
+func importsUnder(file *types.File, n neededImport) bool {
+	if file.AST == nil {
+		return false
+	}
+	return slices.ContainsFunc(file.AST.Imports, func(imp *ast.ImportSpec) bool {
+		if strings.Trim(imp.Path.Value, `"`) != n.path {
+			return false
+		}
+		if imp.Name == nil {
+			return n.alias == ""
+		}
+		return imp.Name.Name == n.alias
+	})
 }
 
 // applyChangesInMemory applies changes to content and returns the result,
