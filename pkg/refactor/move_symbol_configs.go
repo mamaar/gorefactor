@@ -124,6 +124,10 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			continue
 		}
 		for _, ref := range refs {
+			if generatedFile(ws, ref.File) != nil {
+				p.object(v, "%s is referenced at %s:%d, in a generated file; change the generator's input and regenerate", key.Name, rootRelative(ws, ref.File), ref.Line)
+				continue
+			}
 			if !p.rewritten[refSite{ref.File, ref.Offset}] {
 				res.blockers = append(res.blockers, types.Blocker{Reference: *ref})
 			}

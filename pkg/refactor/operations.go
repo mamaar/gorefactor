@@ -207,6 +207,9 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	if err != nil {
 		return nil, err
 	}
+	if err := op.checkGeneratedDeclarations(ws, moving); err != nil {
+		return nil, err
+	}
 	// Find all references to every symbol being moved together. A method is
 	// reached through its type, so only the requested symbols are searched.
 	var moveSet []*types.Symbol
@@ -359,6 +362,9 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 	}
 
+	if err := op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes); err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
@@ -1190,7 +1196,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 
 	for _, name := range slices.Sorted(maps.Keys(targetPackage.Files)) {
 		f := targetPackage.Files[name]
-		if f.AST != nil && analysis.IncludedInEveryConfig(targetPackage.Dir, filepath.Base(f.Path), f.AST) {
+		if f.AST != nil && !f.Generated && analysis.IncludedInEveryConfig(targetPackage.Dir, filepath.Base(f.Path), f.AST) {
 			return targetPackage, f, false, nil
 		}
 	}
