@@ -80,7 +80,7 @@ func TestSafeDelete_ErroringProductionFileThatDoesNotMentionTheNameOnlyReports(t
 }
 
 func TestUnused_UnresolvedMentionInErroringProductionFileIsPossiblyUsed(t *testing.T) {
-	out, _ := callUnused(t, map[string]string{
+	out, _ := callUnused(t, nil, map[string]string{
 		"p/t.go":        "package p\n\ntype T struct{}\n\nfunc (T) run() {}\n\nfunc (T) idle() {}\n\nvar V T\n",
 		"p/bad_tagx.go": teBrokenImport + "func Bad() { thirdparty.Make().run() }\n",
 	})

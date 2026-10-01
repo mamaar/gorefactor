@@ -72,8 +72,8 @@ type ComplexityResultItem struct {
 // --- unused ---
 
 type UnusedInput struct {
-	IncludeExported bool   `json:"include_exported,omitempty" jsonschema:"include exported (public) symbols in results"`
-	Package         string `json:"package,omitempty" jsonschema:"filter to a specific package"`
+	IncludeExported bool   `json:"include_exported,omitempty" jsonschema:"include exported (public) symbols, judged by use within the workspace only"`
+	Package         string `json:"package,omitempty" jsonschema:"restrict the report to one package, given as import path, directory or workspace-relative path"`
 }
 
 type UnusedSymbolItem struct {
@@ -88,9 +88,18 @@ type UnusedSymbolItem struct {
 	// Configs names the build configurations that declare the symbol. Omitted
 	// when every configuration does.
 	Configs []string `json:"configs,omitempty"`
+	// ReferencedFrom are up to five declarations, tests or unused code, that
+	// refer to the symbol without keeping it alive.
+	ReferencedFrom []ReferrerItem `json:"referenced_from,omitempty"`
 	// PossibleUse is where a file no build configuration type-checks names
 	// the symbol.
 	PossibleUse *PossibleUseItem `json:"possible_use,omitempty"`
+}
+
+type ReferrerItem struct {
+	Name string `json:"name"`
+	File string `json:"file"`
+	Line int    `json:"line"`
 }
 
 type PossibleUseItem struct {
@@ -127,6 +136,9 @@ func unusedItems(findings []refactor.UnusedFinding) []UnusedSymbolItem {
 			SafeToDelete: f.SafeToDelete,
 			Reason:       f.Reason,
 			Configs:      f.Configs,
+		}
+		for _, ref := range f.Referrers {
+			items[i].ReferencedFrom = append(items[i].ReferencedFrom, ReferrerItem{Name: ref.Name, File: ref.File, Line: ref.Line})
 		}
 		if use := f.PossibleUse; use != nil {
 			items[i].PossibleUse = &PossibleUseItem{File: use.File, Line: use.Line, Configs: use.Configs, Reason: use.Unverified}
@@ -532,9 +544,11 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "unused",
-		Description: "Find unused symbols in the workspace. By default only shows unexported symbols that are safe to delete. " +
-			"A symbol counts as unused only when no build configuration (GOOS/GOARCH variants, custom build tags) covering the workspace uses it; " +
-			"one that a file no configuration type-checks mentions, or that is named unresolved in a file with a type error, is listed under possibly_used instead.",
+		Description: "Find unused symbols in the workspace. A symbol is reported when no build configuration (GOOS/GOARCH variants, custom build tags) covering the workspace uses it. " +
+			"References from _test.go files do not count for symbols declared in non-test files, and neither do references from code that is itself unused. " +
+			"By default only unexported symbols are reported; include_exported adds exported ones, judged by use within the workspace only. " +
+			"safe_to_delete: false means safe_delete will refuse until the referenced_from entries (tests or unused callers) are gone. " +
+			"A symbol that a file no configuration type-checks mentions, or that is named unresolved in a file with a type error, is listed under possibly_used instead.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in UnusedInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the report exists: a watcher batch
 		// takes the write lock and may drop a view being analysed.

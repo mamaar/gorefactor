@@ -211,3 +211,21 @@ func TestSafeDelete_SingleConfigRefusalAndResultAreUnchanged(t *testing.T) {
 	}
 	assertFileUnchanged(t, dir, "p/f.go", sdcF)
 }
+
+func TestSafeDelete_RefusesSymbolThatUnusedReportsAsOnlyReferencedFromTests(t *testing.T) {
+	const f = "package p\n\nfunc helper() {}\n"
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":      f,
+		"p/f_test.go": "package p\n\nimport \"testing\"\n\nfunc TestHelper(t *testing.T) { helper() }\n",
+	})
+
+	res, message := safeDeleteDeclined(t, dir, "helper", "p/f.go")
+
+	if !res.IsError {
+		t.Errorf("safe_delete succeeded, want it refused")
+	}
+	if !strings.Contains(message, "p/f_test.go:5") {
+		t.Errorf("dialog = %q, want the test reference", message)
+	}
+	assertFileUnchanged(t, dir, "p/f.go", f)
+}
