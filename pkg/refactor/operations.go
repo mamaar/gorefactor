@@ -241,10 +241,16 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			return nil, err
 		}
 		m.removal = c
+	}
+	widenGroupRemovals(moving)
+	for _, m := range moving {
+		if m.file == nil {
+			continue
+		}
 		if _, ok := removals[m.file.Path]; !ok {
 			sourceFiles = append(sourceFiles, m.file)
 		}
-		removals[m.file.Path] = append(removals[m.file.Path], c...)
+		removals[m.file.Path] = append(removals[m.file.Path], m.removal...)
 	}
 	if err := op.checkForStrandedReferences(ws, moving); err != nil {
 		return nil, err
@@ -845,20 +851,77 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(m *movingSymbol) ([]
 	case symbol.Kind == types.TypeSymbol:
 		description = fmt.Sprintf("Remove type %s", symbol.Name)
 	}
-	changes := []types.Change{lineRemoval(file, start, end, description)}
+	return []types.Change{lineRemoval(file, start, end, description)}, nil
+}
 
-	// A declaration ending the file without a trailing newline has no newline to remove.
-	for i := range changes {
-		if limit := len(file.OriginalContent); changes[i].End > limit {
-			changes[i].End = limit
-			changes[i].OldText = strings.TrimSuffix(changes[i].OldText, "\n")
+// widenGroupRemovals makes the removals of a parenthesised declaration whose
+// specs all move cover the whole group, so no empty shell or stray comment
+// stays behind. Each moving symbol keeps one removal; together they tile the
+// group from its first line through the closing parenthesis.
+func widenGroupRemovals(moving []*movingSymbol) {
+	byName := make(map[token.Pos]*movingSymbol)
+	for _, m := range moving {
+		if m.file != nil && m.typ == nil && len(m.removal) == 1 {
+			byName[m.sym.Position] = m
 		}
 	}
+	done := make(map[*types.File]bool)
+	for _, m := range moving {
+		if m.file == nil || m.file.AST == nil || done[m.file] {
+			continue
+		}
+		done[m.file] = true
+		for _, decl := range m.file.AST.Decls {
+			d, ok := decl.(*ast.GenDecl)
+			if !ok || !d.Lparen.IsValid() || len(d.Specs) < 2 {
+				continue
+			}
+			members := make([]*movingSymbol, 0, len(d.Specs))
+			for _, spec := range d.Specs {
+				ts, isType := spec.(*ast.TypeSpec)
+				if !isType || byName[ts.Name.Pos()] == nil || byName[ts.Name.Pos()].file != m.file {
+					break
+				}
+				members = append(members, byName[ts.Name.Pos()])
+			}
+			if len(members) != len(d.Specs) {
+				continue
+			}
+			first := d.Pos()
+			if d.Doc != nil {
+				first = d.Doc.Pos()
+			}
+			bounds := []int{sourceLine(m.file, first)}
+			for _, spec := range d.Specs[1:] {
+				bounds = append(bounds, sourceLine(m.file, specFirst(spec)))
+			}
+			bounds = append(bounds, sourceLine(m.file, d.End()-1)+1)
+			ok = true
+			for i, spec := range d.Specs {
+				if sourceLine(m.file, spec.End()-1)+1 > bounds[i+1] {
+					ok = false
+				}
+			}
+			if !ok {
+				continue
+			}
+			for i, mem := range members {
+				mem.removal = []types.Change{lineRemoval(m.file, bounds[i], bounds[i+1], mem.removal[0].Description)}
+			}
+		}
+	}
+}
 
-	return changes, nil
+// specFirst is the first position of spec, including its doc comment.
+func specFirst(spec ast.Spec) token.Pos {
+	if ts, ok := spec.(*ast.TypeSpec); ok && ts.Doc != nil {
+		return ts.Doc.Pos()
+	}
+	return spec.Pos()
 }
 
 // lineRemoval is the change deleting the 0-based lines [start, end) of file.
+// A range ending the file without a trailing newline has no newline to remove.
 func lineRemoval(file *types.File, start, end int, description string) types.Change {
 	lines := strings.Split(string(file.OriginalContent), "\n")
 	startByte := 0
@@ -869,13 +932,18 @@ func lineRemoval(file *types.File, start, end int, description string) types.Cha
 	for _, line := range lines[start:end] {
 		endByte += len(line) + 1
 	}
-	return types.Change{
+	change := types.Change{
 		File:        file.Path,
 		Start:       startByte,
 		End:         endByte,
 		OldText:     strings.Join(lines[start:end], "\n") + "\n",
 		Description: description,
 	}
+	if limit := len(file.OriginalContent); change.End > limit {
+		change.End = limit
+		change.OldText = strings.TrimSuffix(change.OldText, "\n")
+	}
+	return change
 }
 
 // sourceLine is the 0-based line of pos in file.
