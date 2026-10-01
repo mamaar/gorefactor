@@ -754,7 +754,7 @@ func (op *MoveSymbolOperation) generateSymbolRemovalChanges(file *types.File, sy
 	if file.AST == nil {
 		return nil, fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
-	start, end, _, ok := declLines(file, symbol)
+	start, end, _, ok := declLines(file, symbol.Position)
 	if !ok {
 		return nil, fmt.Errorf("symbol %s not found in AST of file %s", symbol.Name, file.Path)
 	}
@@ -808,51 +808,40 @@ func sourceLine(file *types.File, pos token.Pos) int {
 	return bytes.Count(file.OriginalContent[:int(pos-file.AST.FileStart)], []byte("\n"))
 }
 
-// funcDeclLines is the 0-based line range [start, end) of fn, starting at the
-// comment block above it.
-func funcDeclLines(file *types.File, fn *ast.FuncDecl) (start, end int) {
-	start = sourceLine(file, fn.Pos())
-	lines := strings.Split(string(file.OriginalContent), "\n")
-	first := start
-	for j := first - 1; j >= 0; j-- {
-		trimmed := strings.TrimSpace(lines[j])
-		if strings.HasPrefix(trimmed, "//") {
-			start = j
-		} else if trimmed != "" {
-			break
+// declLines is the 0-based line range [start, end) of the declaration whose
+// name is at pos: its doc comment through its last line. A spec in a group
+// is returned alone, with keyword the declaration keyword to put before it.
+func declLines(file *types.File, pos token.Pos) (start, end int, keyword string, ok bool) {
+	span := func(doc *ast.CommentGroup, node ast.Node) (int, int) {
+		first := node.Pos()
+		if doc != nil {
+			first = doc.Pos()
 		}
+		return sourceLine(file, first), sourceLine(file, node.End()-1) + 1
 	}
-	return start, sourceLine(file, fn.End()-1) + 1
-}
-
-// declLines locates symbol's top-level declaration in file as the 0-based line
-// range [start, end). grouped reports a type declared inside a "type (...)"
-// block, whose lines then lack the "type" keyword.
-func declLines(file *types.File, symbol *types.Symbol) (start, end int, grouped, ok bool) {
 	for _, decl := range file.AST.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			if d.Recv == nil && d.Name.Name == symbol.Name {
-				start, end = funcDeclLines(file, d)
-				return start, end, false, true
+			if d.Name.Pos() == pos {
+				start, end = span(d.Doc, d)
+				return start, end, "", true
 			}
 		case *ast.GenDecl:
-			if d.Tok != token.TYPE {
-				continue
-			}
 			for _, spec := range d.Specs {
-				if spec.(*ast.TypeSpec).Name.Name != symbol.Name {
+				ts, isType := spec.(*ast.TypeSpec)
+				if !isType || ts.Name.Pos() != pos {
 					continue
 				}
-				node := ast.Node(d)
-				if d.Lparen.IsValid() {
-					node = spec
+				if d.Lparen.IsValid() && len(d.Specs) > 1 {
+					start, end = span(ts.Doc, ts)
+					return start, end, d.Tok.String(), true
 				}
-				return sourceLine(file, node.Pos()), sourceLine(file, node.End()-1) + 1, d.Lparen.IsValid(), true
+				start, end = span(d.Doc, d)
+				return start, end, "", true
 			}
 		}
 	}
-	return 0, 0, false, false
+	return 0, 0, "", false
 }
 
 // mergeChanges merges overlapping or adjacent changes in the same file
@@ -925,7 +914,7 @@ func (op *MoveSymbolOperation) generateMethodRemovalChanges(file *types.File, ty
 		if !ok || receiverTypeName(funcDecl) != typeName {
 			continue
 		}
-		start, end := funcDeclLines(file, funcDecl)
+		start, end, _, _ := declLines(file, funcDecl.Name.Pos())
 		changes = append(changes, lineRemoval(file, start, end, fmt.Sprintf("Remove method %s.%s", typeName, funcDecl.Name.Name)))
 	}
 	return changes
@@ -1479,11 +1468,31 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 	if file.AST == nil {
 		return "", fmt.Errorf("AST not loaded for file %s", file.Path)
 	}
-	start, end, grouped, ok := declLines(file, symbol)
+	start, end, keyword, ok := declLines(file, symbol.Position)
 	if !ok {
 		return "", fmt.Errorf("symbol %s not found in file %s", symbol.Name, file.Path)
 	}
-	content := file.OriginalContent
+	sourceCode := copyLines(file.OriginalContent, start, end, qualifiers)
+	if keyword != "" {
+		// The keyword goes on the spec's own line, below any doc comment.
+		lines := strings.Split(sourceCode, "\n")
+		spec := sourceLine(file, symbol.Position) - start
+		lines[spec] = keyword + " " + strings.TrimLeft(lines[spec], " \t")
+		sourceCode = strings.Join(lines, "\n")
+	}
+
+	// A type moves with its methods.
+	if symbol.Kind == types.TypeSymbol {
+		if methodsCode := op.extractMethodsForType(file, symbol.Name, qualifiers); methodsCode != "" {
+			sourceCode += "\n\n" + methodsCode
+		}
+	}
+	return sourceCode, nil
+}
+
+// copyLines returns the 0-based lines [start, end) of content without the final
+// newline, with inserts applied as in copyWithInserts.
+func copyLines(content []byte, start, end int, inserts map[int]string) string {
 	lineOffset := func(line int) int {
 		offset := 0
 		for range line {
@@ -1495,18 +1504,7 @@ func (op *MoveSymbolOperation) extractSymbolSource(file *types.File, symbol *typ
 		}
 		return offset
 	}
-	sourceCode := copyWithInserts(content, lineOffset(start), min(lineOffset(end)-1, len(content)), qualifiers)
-	if grouped {
-		sourceCode = "type " + strings.TrimLeft(sourceCode, " \t")
-	}
-
-	// A type moves with its methods.
-	if symbol.Kind == types.TypeSymbol {
-		if methodsCode := op.extractMethodsForType(file, symbol.Name, qualifiers); methodsCode != "" {
-			sourceCode += "\n\n" + methodsCode
-		}
-	}
-	return sourceCode, nil
+	return copyWithInserts(content, lineOffset(start), min(lineOffset(end)-1, len(content)), inserts)
 }
 
 // copyWithInserts returns content[start:end] with each text in inserts put
@@ -1534,12 +1532,8 @@ func (op *MoveSymbolOperation) extractMethodsForType(file *types.File, typeName 
 		if !ok || receiverTypeName(funcDecl) != typeName {
 			continue
 		}
-		first := funcDecl.Pos()
-		if funcDecl.Doc != nil {
-			first = funcDecl.Doc.Pos()
-		}
-		start, end := int(first-file.AST.FileStart), int(funcDecl.End()-file.AST.FileStart)
-		methods = append(methods, copyWithInserts(file.OriginalContent, start, end, qualifiers))
+		start, end, _, _ := declLines(file, funcDecl.Name.Pos())
+		methods = append(methods, copyLines(file.OriginalContent, start, end, qualifiers))
 	}
 	return strings.Join(methods, "\n\n")
 }
