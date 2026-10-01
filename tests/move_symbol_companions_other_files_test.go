@@ -84,8 +84,8 @@ func TestMoveSymbolRefusesWhenUnexportedLiteralInAnotherFileCannotMove(t *testin
 		"src/other.go": "package src\n\nfunc Peek() int { return T{n: 1}.n }\n\nfunc Keep() int { return 2 }\n",
 		"src/use.go":   "package src\n\nfunc Use() int { return Keep() + Peek() }\n",
 	}, "T")
-	if !isErr || !strings.Contains(msg, "other.go") {
-		t.Fatalf("want refusal naming other.go, got isErr=%v msg=%s", isErr, msg)
+	if !isErr || !strings.Contains(msg, "moving T would strand code that constructs it via unexported fields (n)") || !strings.Contains(msg, "other.go") {
+		t.Fatalf("want a stranded-construction refusal naming other.go, got isErr=%v msg=%s", isErr, msg)
 	}
 	assertFileContains(t, dir, "src/other.go", "func Peek()")
 }
@@ -95,8 +95,8 @@ func TestMoveSymbolRefusesConstructorInTestFile(t *testing.T) {
 		"src/t.go":      "package src\n\ntype T struct{ n int }\n",
 		"src/t_test.go": "package src\n\nimport \"testing\"\n\nfunc newT() *T { return &T{n: 1} }\n\nfunc TestT(t *testing.T) { _ = newT() }\n",
 	}, "T")
-	if !isErr || !strings.Contains(msg, "t_test.go") {
-		t.Fatalf("want refusal naming t_test.go, got isErr=%v msg=%s", isErr, msg)
+	if !isErr || !strings.Contains(msg, "moving T would strand code that constructs it via unexported fields (n)") || !strings.Contains(msg, "t_test.go") {
+		t.Fatalf("want a stranded-construction refusal naming t_test.go, got isErr=%v msg=%s", isErr, msg)
 	}
 	assertFileContains(t, dir, "src/t.go", "type T struct")
 }

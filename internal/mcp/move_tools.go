@@ -101,6 +101,8 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			"Names declared together must be moved together through symbols: the constants of an iota group (or any group that repeats an expression implicitly) and the names of one declaration such as var a, b = f(). " +
 			"Moving a variable moves its initializer's side effects to the target package's init. " +
 			"A type does not take its constants along: name them in the same call, or the move is refused as an import cycle when its methods use constants left behind. " +
+			"A type's methods move with it from every non-test file of its package; a method declared in a test file refuses the move, as does anything the move would have to edit in a generated file. " +
+			"A method or struct field cannot be moved on its own: move its type. " +
 			"The move is planned for the default build configuration and checked under every other one (GOOS/GOARCH variants, custom build tags) that covers the workspace; " +
 			"it is refused when a file outside the default configuration references or declares the symbol.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
