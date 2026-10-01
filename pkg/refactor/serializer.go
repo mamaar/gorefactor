@@ -54,6 +54,12 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 		return err
 	}
 
+	// Generated files are read from disk, not the workspace: ExecutePlan passes
+	// none, and a file regenerated since load would carry a stale flag.
+	if err := GeneratedFileEdits(changes); err != nil {
+		return err
+	}
+
 	// Group changes by file
 	fileChanges := make(map[string][]refactorTypes.Change)
 	for _, change := range changes {
