@@ -103,10 +103,20 @@ const (
 	Replace
 )
 
-// DependencyGraph represents package and symbol dependencies
+// DependencyGraph represents package dependencies. Keys are always
+// filesystem paths.
 type DependencyGraph struct {
-	PackageImports map[string][]string            // package -> direct imports
-	PackageDeps    map[string][]string            // package -> all dependencies
-	SymbolDeps     map[string]map[string][]string // package -> symbol -> dependencies
-	ImportCycles   [][]string                     // detected import cycles
+	// PackageImports lists the raw import strings of each package's non-test
+	// files, including stdlib and third-party; sorted.
+	PackageImports map[string][]string
+	// PackageDeps lists the workspace-local packages (filesystem paths) each
+	// package transitively imports from non-test files; sorted.
+	PackageDeps map[string][]string
+	// ImportCycles holds one closed path (first == last, filesystem paths)
+	// per production import cycle, starting at its smallest path; sorted.
+	ImportCycles [][]string
+	// TestImportCycles holds closed paths, starting at package P, where an
+	// in-package test import of P leads back to P through production edges.
+	// They break go vet and go test but not go build.
+	TestImportCycles [][]string
 }

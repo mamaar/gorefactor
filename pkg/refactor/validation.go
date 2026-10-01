@@ -192,10 +192,6 @@ func (v *Validator) ValidateMove(ws *refactorTypes.Workspace, req refactorTypes.
 		}
 	}
 
-	// Check for circular dependencies in symbol relationships
-	circularIssues := v.checkCircularSymbolDependencies(ws, symbol, req.ToPackage)
-	issues = append(issues, circularIssues...)
-
 	return issues
 }
 
@@ -540,31 +536,6 @@ func (v *Validator) checkMethodSetChanges(ws *refactorTypes.Workspace, symbols [
 				File:        symbol.File,
 				Severity:    refactorTypes.Warning,
 			})
-		}
-	}
-
-	return issues
-}
-
-func (v *Validator) checkCircularSymbolDependencies(ws *refactorTypes.Workspace, symbol *refactorTypes.Symbol, targetPackage string) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// This is a simplified check for circular dependencies
-	// A full implementation would analyze the symbol dependency graph
-	if ws.Dependencies != nil {
-		if symbolDeps, exists := ws.Dependencies.SymbolDeps[symbol.Package]; exists {
-			if deps, exists := symbolDeps[symbol.Name]; exists {
-				for _, dep := range deps {
-					if strings.HasPrefix(dep, targetPackage+".") {
-						issues = append(issues, refactorTypes.Issue{
-							Type:        refactorTypes.IssueImportCycle,
-							Description: fmt.Sprintf("moving %s to %s may create circular dependency with %s", symbol.Name, targetPackage, dep),
-							File:        symbol.File,
-							Severity:    refactorTypes.Warning,
-						})
-					}
-				}
-			}
 		}
 	}
 

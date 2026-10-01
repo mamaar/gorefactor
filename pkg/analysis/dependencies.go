@@ -20,40 +20,25 @@ func NewDependencyAnalyzer(ws *types.Workspace, logger *slog.Logger) *Dependency
 	}
 }
 
-// BuildDependencyGraph builds complete dependency graph for workspace
+// BuildDependencyGraph builds the dependency graph for the workspace.
 func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, error) {
 	da.logger.Info("building dependency graph", "packages", len(da.workspace.Packages))
 
-	graph := &types.DependencyGraph{
-		PackageImports: make(map[string][]string),
-		PackageDeps:    make(map[string][]string),
-		SymbolDeps:     make(map[string]map[string][]string),
-		ImportCycles:   make([][]string, 0),
-	}
-
-	// Collect direct package imports
 	imports := make(map[string][]string)
 	for _, pkg := range da.workspace.Packages {
 		da.collectPackageImports(pkg, imports)
 	}
 
-	graph.PackageImports = imports
-
-	// Build transitive closure of dependencies
-	graph.PackageDeps = da.transitiveClose(imports)
-
-	// Detect import cycles
-	cycles := da.detectCycles(imports)
-	graph.ImportCycles = cycles
-
-	if len(cycles) > 0 {
-		da.logger.Warn("detected import cycles", "cycle_count", len(cycles))
+	edges := ImportGraph(da.workspace)
+	graph := &types.DependencyGraph{
+		PackageImports:   imports,
+		PackageDeps:      transitiveClose(edges.Production),
+		ImportCycles:     importCycles(edges.Production),
+		TestImportCycles: testImportCycles(edges),
 	}
 
-	// Build symbol dependencies (simplified)
-	err := da.buildSymbolDependencies(graph)
-	if err != nil {
-		return nil, err
+	if n := len(graph.ImportCycles); n > 0 {
+		da.logger.Warn("detected import cycles", "cycle_count", n)
 	}
 
 	da.workspace.Dependencies = graph
@@ -86,126 +71,141 @@ func (da *DependencyAnalyzer) DetectCycles() ([][]string, error) {
 	return da.workspace.Dependencies.ImportCycles, nil
 }
 
-func (da *DependencyAnalyzer) detectCycles(imports map[string][]string) [][]string {
-	var cycles [][]string
-	visited := make(map[string]bool)
-	recStack := make(map[string]bool)
-
-	var dfs func(string, []string) []string
-	dfs = func(pkg string, path []string) []string {
-		visited[pkg] = true
-		recStack[pkg] = true
-		newPath := append(append([]string{}, path...), pkg)
-
-		for _, imp := range imports[pkg] {
-			if !visited[imp] {
-				if cycle := dfs(imp, newPath); cycle != nil {
-					return cycle
-				}
-			} else if recStack[imp] {
-				// Found a cycle
-				cycleStart := -1
-				for i, p := range newPath {
-					if p == imp {
-						cycleStart = i
-						break
-					}
-				}
-				if cycleStart >= 0 {
-					return newPath[cycleStart:]
-				}
-			}
-		}
-
-		recStack[pkg] = false
-		return nil
-	}
-
-	for pkg := range imports {
-		if !visited[pkg] {
-			if cycle := dfs(pkg, []string{}); cycle != nil {
-				cycles = append(cycles, cycle)
-			}
-		}
-	}
-
-	return cycles
-}
-
-func (da *DependencyAnalyzer) buildSymbolDependencies(graph *types.DependencyGraph) error {
-	// Simplified implementation for now
-	graph.SymbolDeps = make(map[string]map[string][]string)
-	return nil
-}
-
 func (da *DependencyAnalyzer) collectPackageImports(pkg *types.Package, imports map[string][]string) {
 	if pkg == nil {
 		return
 	}
 
-	pkgImports := make([]string, 0)
+	var pkgImports []string
 	for _, file := range pkg.Files {
-		if file.AST != nil {
-			for _, imp := range file.AST.Imports {
-				if imp.Path != nil {
-					// Remove quotes from import path
-					importPath := imp.Path.Value[1 : len(imp.Path.Value)-1]
-					pkgImports = append(pkgImports, importPath)
-				}
+		if file.AST == nil {
+			continue
+		}
+		for _, imp := range file.AST.Imports {
+			if imp.Path != nil {
+				pkgImports = append(pkgImports, imp.Path.Value[1:len(imp.Path.Value)-1])
 			}
 		}
 	}
 
 	if len(pkgImports) > 0 {
-		imports[pkg.Path] = unique(pkgImports)
+		slices.Sort(pkgImports)
+		imports[pkg.Path] = slices.Compact(pkgImports)
 	}
 }
 
-func (da *DependencyAnalyzer) transitiveClose(deps map[string][]string) map[string][]string {
-	result := make(map[string][]string)
-
-	// Copy direct dependencies
-	for pkg, directDeps := range deps {
-		result[pkg] = make([]string, len(directDeps))
-		copy(result[pkg], directDeps)
+// reachable returns the nodes reachable from start over one or more edges;
+// start itself is included only when it lies on a cycle.
+func reachable(edges map[string][]string, start string) map[string]bool {
+	seen := make(map[string]bool)
+	stack := slices.Clone(edges[start])
+	for len(stack) > 0 {
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		stack = append(stack, edges[n]...)
 	}
+	return seen
+}
 
-	// Floyd-Warshall-like algorithm for transitive closure
-	changed := true
-	for changed {
-		changed = false
-		for pkg := range result {
-			for _, intermediate := range result[pkg] {
-				if intermediateDeps, exists := result[intermediate]; exists {
-					for _, transitiveDep := range intermediateDeps {
-						if !sliceContains(result[pkg], transitiveDep) && transitiveDep != pkg {
-							result[pkg] = append(result[pkg], transitiveDep)
-							changed = true
-						}
-					}
-				}
+// transitiveClose maps each node to the sorted nodes it reaches, excluding itself.
+func transitiveClose(edges map[string][]string) map[string][]string {
+	result := make(map[string][]string, len(edges))
+	for pkg := range edges {
+		deps := make([]string, 0)
+		for dep := range reachable(edges, pkg) {
+			if dep != pkg {
+				deps = append(deps, dep)
+			}
+		}
+		slices.Sort(deps)
+		result[pkg] = deps
+	}
+	return result
+}
+
+// shortestPath returns a shortest edge path from one of starts to target,
+// preferring earlier starts and neighbors, or nil when none exists.
+func shortestPath(edges map[string][]string, starts []string, target string) []string {
+	prev := make(map[string]string)
+	seen := make(map[string]bool)
+	queue := slices.Clone(starts)
+	for _, s := range starts {
+		seen[s] = true
+	}
+	for len(queue) > 0 {
+		n := queue[0]
+		queue = queue[1:]
+		if n == target {
+			path := []string{n}
+			for p, ok := prev[n]; ok; p, ok = prev[p] {
+				path = append([]string{p}, path...)
+			}
+			return path
+		}
+		for _, next := range edges[n] {
+			if !seen[next] {
+				seen[next] = true
+				prev[next] = n
+				queue = append(queue, next)
 			}
 		}
 	}
-
-	return result
+	return nil
 }
 
-// Helper function to check if slice contains string
-func sliceContains(slice []string, item string) bool {
-	return slices.Contains(slice, item)
+// importCycles returns one closed path per cyclic strongly connected
+// component, rotated to start at its smallest node, sorted.
+func importCycles(edges map[string][]string) [][]string {
+	nodes := make([]string, 0, len(edges))
+	for n := range edges {
+		nodes = append(nodes, n)
+	}
+	slices.Sort(nodes)
+
+	cycles := make([][]string, 0)
+	covered := make(map[string]bool)
+	for _, start := range nodes {
+		if covered[start] {
+			continue
+		}
+		reach := reachable(edges, start)
+		if !reach[start] {
+			continue
+		}
+		for n := range reach {
+			if reachable(edges, n)[start] {
+				covered[n] = true
+			}
+		}
+		cycles = append(cycles, append([]string{start}, shortestPath(edges, edges[start], start)...))
+	}
+	return cycles
 }
 
-func unique(slice []string) []string {
-	keys := make(map[string]bool)
-	result := []string{}
+// testImportCycles returns, per package, the closed path through which an
+// in-package test import leads back to the package via production edges.
+func testImportCycles(g Imports) [][]string {
+	pkgs := make([]string, 0, len(g.Test))
+	for p := range g.Test {
+		pkgs = append(pkgs, p)
+	}
+	slices.Sort(pkgs)
 
-	for _, item := range slice {
-		if !keys[item] {
-			keys[item] = true
-			result = append(result, item)
+	cycles := make([][]string, 0)
+	for _, p := range pkgs {
+		var best []string
+		for _, t := range g.Test[p] {
+			if path := shortestPath(g.Production, []string{t}, p); path != nil && (best == nil || len(path) < len(best)) {
+				best = path
+			}
+		}
+		if best != nil {
+			cycles = append(cycles, append([]string{p}, best...))
 		}
 	}
-
-	return result
+	return cycles
 }

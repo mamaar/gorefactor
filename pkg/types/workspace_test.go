@@ -147,7 +147,6 @@ func TestDependencyGraph(t *testing.T) {
 	graph := &DependencyGraph{
 		PackageImports: make(map[string][]string),
 		PackageDeps:    make(map[string][]string),
-		SymbolDeps:     make(map[string]map[string][]string),
 		ImportCycles:   make([][]string, 0),
 	}
 
@@ -161,14 +160,6 @@ func TestDependencyGraph(t *testing.T) {
 
 	if len(graph.PackageDeps["pkg1"]) != 3 {
 		t.Errorf("Expected 3 total dependencies for pkg1, got %d", len(graph.PackageDeps["pkg1"]))
-	}
-
-	// Test symbol dependencies
-	graph.SymbolDeps["pkg1"] = make(map[string][]string)
-	graph.SymbolDeps["pkg1"]["Symbol1"] = []string{"pkg2.Symbol2"}
-
-	if len(graph.SymbolDeps["pkg1"]["Symbol1"]) != 1 {
-		t.Errorf("Expected 1 symbol dependency, got %d", len(graph.SymbolDeps["pkg1"]["Symbol1"]))
 	}
 
 	// Test import cycles

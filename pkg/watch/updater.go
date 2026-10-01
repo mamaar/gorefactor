@@ -104,6 +104,9 @@ func (u *WorkspaceUpdater) removePackage(v *analysis.View, pkg *types.Package, s
 		delete(v.Workspace.ImportToPath, pkg.ImportPath)
 	}
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
+	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
+		u.logger.Error("remove: dependency graph rebuild failed", "dir", pkg.Dir, "err", err)
+	}
 	u.logger.Info("removed empty package",
 		"dir", pkg.Dir,
 		"config", v.Config.Key(),

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
@@ -300,4 +301,34 @@ func safeFuncCount(pkg *types.Package) int {
 		return 0
 	}
 	return len(pkg.Symbols.Functions)
+}
+
+func TestUpdater_RemovingPackageDropsItFromDependencyGraph(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	aDir := filepath.Join(dir, "pkg", "a")
+	bDir := filepath.Join(dir, "pkg", "b")
+	_ = os.MkdirAll(bDir, 0755)
+	bFile := filepath.Join(bDir, "b.go")
+	_ = os.WriteFile(bFile, []byte("package b\n\nimport _ \"example.com/test/pkg/a\"\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: bFile, Op: fsnotify.Create}})
+
+	g := u.Workspace().Dependencies
+	if !slices.Contains(g.PackageDeps[bDir], aDir) {
+		t.Fatalf("PackageDeps[b] = %v, want it to contain %s", g.PackageDeps[bDir], aDir)
+	}
+
+	aFile := filepath.Join(aDir, "a.go")
+	_ = os.Remove(aFile)
+	u.HandleChanges([]ChangeEvent{{Path: aFile, Op: fsnotify.Remove}})
+
+	g = u.Workspace().Dependencies
+	if _, ok := g.PackageImports[aDir]; ok {
+		t.Errorf("PackageImports still has %s", aDir)
+	}
+	if _, ok := g.PackageDeps[aDir]; ok {
+		t.Errorf("PackageDeps still has key %s", aDir)
+	}
+	if slices.Contains(g.PackageDeps[bDir], aDir) {
+		t.Errorf("PackageDeps[b] = %v, still lists removed %s", g.PackageDeps[bDir], aDir)
+	}
 }
