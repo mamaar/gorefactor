@@ -156,7 +156,7 @@ func TestReachableSites_PathRunsFromMainToEnclosing(t *testing.T) {
 	}
 
 	s = reachableSites(t, false)["dep.ViaIface"][0]
-	want = []string{"main.main", "main.impl", "main.impl.Do"}
+	want = []string{"main.main", "main.impl.Do"}
 	if !slices.Equal(s.Path, want) || s.Enclosing != "impl.Do" {
 		t.Errorf("path %v enclosing %q, want %v impl.Do", s.Path, s.Enclosing, want)
 	}
@@ -218,5 +218,49 @@ func TestResolveTargets_OverlappingSpecsYieldEachObjectOnce(t *testing.T) {
 
 	if err != nil || len(got) != 1 {
 		t.Errorf("got %v, %v, want one target", got, err)
+	}
+}
+
+const guardsFiles = `package p
+
+import "example.com/w/dep"
+
+type T struct{}
+
+func (T) Logs()   { dep.Target() }
+func (T) helper() { dep.Helped() }
+
+var guards = []func(T){T.helper}
+
+const K = 1
+`
+
+func TestReachableSites_MentionedTypeDoesNotMakeItsMethodsLive(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc Target() {}\nfunc Helped() {}\n",
+		"p/p.go":      guardsFiles,
+		"cmd/main.go": "package main\n\nimport \"example.com/w/p\"\n\nfunc main() { _ = p.K }\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep"}, false)
+
+	if len(got["dep.Target"]) != 0 {
+		t.Errorf("dep.Target: unexpected sites %v", got["dep.Target"])
+	}
+	if len(got["dep.Helped"]) != 1 {
+		t.Errorf("dep.Helped: got %v, want 1 site (address-taken method)", got["dep.Helped"])
+	}
+}
+
+func TestReachableSites_MethodNamedByExternalInterfaceStaysLive(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc Target() {}\n",
+		"cmd/main.go": "package main\n\nimport (\n\t\"fmt\"\n\t\"example.com/w/dep\"\n)\n\ntype s struct{}\n\nfunc (s) String() string { dep.Target(); return \"\" }\n\nfunc main() { fmt.Println(s{}) }\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep"}, false)
+
+	if len(got["dep.Target"]) != 1 {
+		t.Errorf("dep.Target: got %v, want 1 site", got["dep.Target"])
 	}
 }

@@ -489,7 +489,7 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	defer p.mu.Unlock()
 	pkg.TypesInfo = nil
 	pkg.TypesPkg = nil
-	pkg.ExternalTestTypesPkg = nil
+	pkg.ExternalTestTypesPkg, pkg.ExternalTestTypesInfo = nil, nil
 	pkg.TypesErr = nil
 	pkg.ExcludedTestFiles = nil
 	pkg.ProductionErrs = nil
@@ -549,7 +549,7 @@ func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
 	for _, pkg := range ws.Packages {
 		pkg.TypesInfo = nil
 		pkg.TypesPkg = nil
-		pkg.ExternalTestTypesPkg = nil
+		pkg.ExternalTestTypesPkg, pkg.ExternalTestTypesInfo = nil, nil
 	}
 }
 
@@ -637,7 +637,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// it unconditionally — dependents can use best-effort info instead of
 	// nothing at all.
 	pkg.TypesPkg = res.pkg
-	pkg.ExternalTestTypesPkg = nil
+	pkg.ExternalTestTypesPkg, pkg.ExternalTestTypesInfo = nil, nil
 	pkg.TypesInfo = res.info
 	pkg.TypesErr = res.err
 	pkg.ExcludedTestFiles = res.excluded
@@ -880,7 +880,7 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 		// nowhere to merge into.
 		return
 	}
-	pkg.ExternalTestTypesPkg = res.pkg
+	pkg.ExternalTestTypesPkg, pkg.ExternalTestTypesInfo = res.pkg, res.info
 	for ident, obj := range res.info.Defs {
 		pkg.TypesInfo.Defs[ident] = obj
 	}
@@ -945,6 +945,9 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 		Uses:      make(map[*ast.Ident]gotypes.Object),
 		Implicits: make(map[ast.Node]gotypes.Object),
 		Scopes:    make(map[ast.Node]*gotypes.Scope),
+
+		Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
+		Instances:  make(map[*ast.Ident]gotypes.Instance),
 	}
 	typesPkg, err := conf.Check(pkg.ImportPath, ws.FileSet, files, info)
 	return typesPkg, info, err

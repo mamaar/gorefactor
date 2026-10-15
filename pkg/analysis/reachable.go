@@ -147,16 +147,18 @@ func exportedCallables(pkg *gotypes.Package) []gotypes.Object {
 }
 
 // ReachableSites returns the call sites and references of targets that sit in
-// code reachable from main of entry, across the packages it imports. An
-// interface call reaches every exported method, and every method named by a
-// workspace interface, of every type reachable code mentions; that
-// over-approximates. Exported funcs are not roots. Test code counts only with
-// includeTests. The type-checked packages must already be in the index.
+// code reachable from main of entry, across the packages it imports.
+// Reachability is rapid type analysis over SSA: a method is live when it is
+// called, taken as a value, or dispatched through an interface that a live
+// conversion of its type satisfies. A method of such a type whose name an
+// interface outside the workspace declares counts as called by that code.
+// Exported funcs are not roots. Test code counts only with includeTests. The
+// type-checked packages must already be in the index.
 func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target, includeTests bool) ([]ReachableSite, error) {
 	if entry.Name != "main" {
 		return nil, fmt.Errorf("entry package %s is not package main", entry.Path)
 	}
-	g, idx, m, err := ua.prepare()
+	g, idx, _, err := ua.prepare()
 	if err != nil {
 		return nil, err
 	}
@@ -164,18 +166,10 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 		return nil, fmt.Errorf("packages are not type-checked")
 	}
 
-	closure := ua.importClosure(entry, includeTests)
-	isRoot := func(n *usageNode) bool { return m.isReachableRoot(n, entry, closure, includeTests) }
-	hasMain := false
-	for _, n := range g.nodes {
-		hasMain = hasMain || (n.name == "main" && isRoot(n))
+	live, err := ua.buildLiveness(entry, includeTests)
+	if err != nil {
+		return nil, err
 	}
-	if !hasMain {
-		return nil, fmt.Errorf("entry package %s has no func main", entry.Path)
-	}
-
-	m.includeExported, m.followTests = false, includeTests
-	m.markFrom(g, isRoot)
 
 	var sites []ReachableSite
 	add := func(target Target, file *types.File, pos token.Pos, kind string) {
@@ -183,7 +177,8 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 			return
 		}
 		for _, owner := range g.enclosing(pos) {
-			if !m.live[owner] {
+			path := live.pathTo(owner, pos)
+			if path == nil {
 				continue
 			}
 			sites = append(sites, ReachableSite{
@@ -194,7 +189,7 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 				Enclosing: declName(owner),
 				Target:    target.Name(),
 				Kind:      kind,
-				Path:      m.pathTo(owner),
+				Path:      path,
 			})
 			return
 		}
@@ -239,48 +234,6 @@ func (ua *UnusedAnalyzer) importClosure(entry *types.Package, includeTests bool)
 		}
 	}
 	return closure
-}
-
-// isReachableRoot reports whether n runs without being referenced when the
-// entry program runs: main, init, package variable initializers, and methods
-// that may be called through an interface from outside the graph. With
-// includeTests it also accepts tests.
-func (m *marker) isReachableRoot(n *usageNode, entry *types.Package, closure map[*types.Package]bool, includeTests bool) bool {
-	if !closure[n.pkg] || (n.test && !includeTests) {
-		return false
-	}
-	s := n.symbol
-	if s != nil && s.Kind == types.MethodSymbol {
-		return n.recv == nil && m.isKeptMethod(n)
-	}
-	switch {
-	case n.name == "main":
-		return n.pkg == entry && !n.test && s != nil && s.Kind == types.FunctionSymbol
-	case n.name == "init" || n.name == "_":
-		return true
-	case s == nil:
-		return n.test
-	case s.Kind == types.VariableSymbol:
-		return true
-	}
-	return n.test && m.ua.isTestFunction(s)
-}
-
-// pathTo returns the declarations from a root to n.
-func (m *marker) pathTo(n *usageNode) []string {
-	var path []string
-	for ; n != nil; n = m.from[n] {
-		path = append(path, packageName(n)+"."+declName(n))
-	}
-	slices.Reverse(path)
-	return path
-}
-
-func packageName(n *usageNode) string {
-	if n.pkg == nil {
-		return ""
-	}
-	return n.pkg.Name
 }
 
 func declName(n *usageNode) string {

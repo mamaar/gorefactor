@@ -659,9 +659,8 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 // `(&b).WriteString(s)` and mutates b exactly as `&b` would, so b has to
 // travel back out of the extracted function.
 //
-// Info.Selections is not populated by this project's type-checker, so the
-// method is resolved through Uses on the selector's Sel instead — which works
-// for concrete methods (the only ones that can have a pointer receiver).
+// The method is resolved through Uses on the selector's Sel, which works for
+// concrete methods (the only ones that can have a pointer receiver).
 func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.Object]bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
