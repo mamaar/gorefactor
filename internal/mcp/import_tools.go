@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"path/filepath"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -24,6 +25,7 @@ type AliasRuleInput struct {
 
 type StandardizeImportsInput struct {
 	Rules  []AliasRuleInput `json:"rules" jsonschema:"list of alias rules to apply"`
+	Files  []string         `json:"files,omitempty" jsonschema:"limit the change to these .go files (absolute or workspace-relative); default: the whole workspace"`
 	DryRun bool             `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
@@ -90,6 +92,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 		plan, err := state.GetEngine().StandardizeImports(ws, types.StandardizeImportsRequest{
 			Workspace: ws.RootPath,
 			Rules:     rules,
+			Files:     absPaths(ws.RootPath, in.Files),
 		})
 		if err != nil {
 			state.RUnlock()
@@ -161,4 +164,16 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 		return textResult(result), nil, nil
 	})
+}
+
+// absPaths resolves workspace-relative paths against root.
+func absPaths(root string, paths []string) []string {
+	abs := make([]string, len(paths))
+	for i, p := range paths {
+		abs[i] = p
+		if !filepath.IsAbs(p) {
+			abs[i] = filepath.Join(root, p)
+		}
+	}
+	return abs
 }

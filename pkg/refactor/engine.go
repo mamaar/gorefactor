@@ -1263,6 +1263,7 @@ func (e *DefaultEngine) CleanAliases(ws *types.Workspace, req types.CleanAliases
 // StandardizeImports implements standardizing import aliases
 func (e *DefaultEngine) StandardizeImports(ws *types.Workspace, req types.StandardizeImportsRequest) (*types.RefactoringPlan, error) {
 	operation := &StandardizeImportsOperation{Request: req}
+	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {

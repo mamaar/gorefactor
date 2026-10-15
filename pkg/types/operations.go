@@ -456,6 +456,7 @@ type CleanAliasesRequest struct {
 type StandardizeImportsRequest struct {
 	Workspace string
 	Rules     []AliasRule
+	Files     []string // absolute paths; when set, only these files are standardized
 }
 
 type AliasRule struct {

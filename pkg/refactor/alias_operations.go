@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	gotypes "go/types"
 	"path/filepath"
 	"strings"
 
@@ -196,72 +197,178 @@ func (op *StandardizeImportsOperation) Execute(ws *types.Workspace) (*types.Refa
 		Reversible:    true,
 	}
 
-	// Apply standardization rules to all files
+	wanted := make(map[string]bool, len(op.Request.Files))
+	for _, f := range op.Request.Files {
+		wanted[f] = true
+	}
 	for _, pkg := range ws.Packages {
-		for _, file := range pkg.Files {
-			changes := op.standardizeFileImports(file)
+		for _, file := range packageAllFiles(pkg) {
+			if len(op.Request.Files) > 0 {
+				if !wanted[file.Path] {
+					continue
+				}
+				delete(wanted, file.Path)
+			}
+			changes := op.standardizeFileImports(ws, pkg, file, plan)
 			plan.Changes = append(plan.Changes, changes...)
 			if len(changes) > 0 {
 				plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
 			}
 		}
 	}
+	// A mistyped path would otherwise look like "nothing to change".
+	for f := range wanted {
+		return nil, fmt.Errorf("file %s is not in the workspace", f)
+	}
 
 	return plan, nil
 }
 
-func (op *StandardizeImportsOperation) standardizeFileImports(file *types.File) []types.Change {
+// uncheckedReason says why file has no reliable type information, or "".
+func uncheckedReason(pkg *types.Package, file *types.File) string {
+	name := filepath.Base(file.Path)
+	if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
+		return "package is not type-checked"
+	}
+	if err := pkg.ExcludedTestFiles[name]; err != nil {
+		return "excluded from type-checking: " + err.Error()
+	}
+	if err := pkg.ProductionErrs[name]; err != nil {
+		return "type errors may hide uses: " + err.Error()
+	}
+	return ""
+}
+
+// standardizeFileImports renames each matching import to its rule's alias
+// (dropping the alias when it equals the package name) and rewrites its uses.
+// An import it cannot rename safely is recorded in plan.SkippedSites and left alone.
+func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspace, pkg *types.Package, file *types.File, plan *types.RefactoringPlan) []types.Change {
 	var changes []types.Change
 
 	if file.AST == nil {
 		return changes
 	}
+	offset := func(pos token.Pos) int { return ws.FileSet.Position(pos).Offset }
 
-	// Match import paths against rules and standardize aliases
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if importSpec, ok := n.(*ast.ImportSpec); ok {
-			importPath := strings.Trim(importSpec.Path.Value, `"`)
-
-			// Find matching rule
-			for _, rule := range op.Request.Rules {
-				if op.matchesPattern(importPath, rule.PackagePattern) {
-					currentAlias := ""
-					if importSpec.Name != nil {
-						currentAlias = importSpec.Name.Name
-					}
-
-					if currentAlias != rule.Alias {
-						// Need to update alias
-						if importSpec.Name != nil {
-							// Update existing alias
-							changes = append(changes, types.Change{
-								File:        file.Path,
-								Start:       int(importSpec.Name.Pos()),
-								End:         int(importSpec.Name.End()),
-								OldText:     currentAlias,
-								NewText:     rule.Alias,
-								Description: fmt.Sprintf("Standardize import alias for %s from '%s' to '%s'", importPath, currentAlias, rule.Alias),
-							})
-						} else {
-							// Add new alias
-							changes = append(changes, types.Change{
-								File:        file.Path,
-								Start:       int(importSpec.Path.Pos()),
-								End:         int(importSpec.Path.Pos()),
-								OldText:     "",
-								NewText:     rule.Alias + " ",
-								Description: fmt.Sprintf("Add import alias '%s' for package %s", rule.Alias, importPath),
-							})
-						}
-					}
-					break
-				}
+	for _, importSpec := range file.AST.Imports {
+		importPath := strings.Trim(importSpec.Path.Value, `"`)
+		if importSpec.Name != nil && (importSpec.Name.Name == "." || importSpec.Name.Name == "_") {
+			continue
+		}
+		var rule *types.AliasRule
+		for i := range op.Request.Rules {
+			if op.matchesPattern(importPath, op.Request.Rules[i].PackagePattern) {
+				rule = &op.Request.Rules[i]
+				break
 			}
 		}
-		return true
-	})
+		if rule == nil {
+			continue
+		}
+
+		skip := func(reason string) {
+			plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
+				File:    file.Path,
+				Line:    ws.FileSet.Position(importSpec.Pos()).Line,
+				Reason:  reason,
+				Snippet: importSpec.Path.Value,
+			})
+		}
+		if reason := uncheckedReason(pkg, file); reason != "" {
+			skip(reason)
+			continue
+		}
+		var obj gotypes.Object = pkg.TypesInfo.Implicits[importSpec]
+		if importSpec.Name != nil {
+			obj = pkg.TypesInfo.Defs[importSpec.Name]
+		}
+		pkgName, ok := obj.(*gotypes.PkgName)
+		if !ok {
+			skip("import was not resolved by the type checker")
+			continue
+		}
+
+		current, target := pkgName.Name(), rule.Alias
+		explicit := target != pkgName.Imported().Name()
+		if current == target && explicit == (importSpec.Name != nil) {
+			continue
+		}
+
+		var uses []*ast.Ident
+		if current != target {
+			ast.Inspect(file.AST, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok && pkg.TypesInfo.Uses[id] == pkgName {
+					uses = append(uses, id)
+				}
+				return true
+			})
+			if taken := nameTakenAt(pkg, file, pkgName, target, uses); taken != nil {
+				skip(fmt.Sprintf("name %q is already declared at %s", target, ws.FileSet.Position(taken.Pos())))
+				continue
+			}
+		}
+
+		switch {
+		case importSpec.Name != nil && !explicit:
+			start, end := offset(importSpec.Name.Pos()), offset(importSpec.Path.Pos())
+			changes = append(changes, types.Change{
+				File:        file.Path,
+				Start:       start,
+				End:         end,
+				OldText:     string(file.OriginalContent[start:end]),
+				Description: fmt.Sprintf("Remove import alias '%s' for %s", current, importPath),
+			})
+		case importSpec.Name != nil:
+			changes = append(changes, types.Change{
+				File:        file.Path,
+				Start:       offset(importSpec.Name.Pos()),
+				End:         offset(importSpec.Name.End()),
+				OldText:     current,
+				NewText:     target,
+				Description: fmt.Sprintf("Standardize import alias for %s from '%s' to '%s'", importPath, current, target),
+			})
+		default:
+			changes = append(changes, types.Change{
+				File:        file.Path,
+				Start:       offset(importSpec.Path.Pos()),
+				End:         offset(importSpec.Path.Pos()),
+				NewText:     target + " ",
+				Description: fmt.Sprintf("Add import alias '%s' for package %s", target, importPath),
+			})
+		}
+		for _, id := range uses {
+			changes = append(changes, types.Change{
+				File:        file.Path,
+				Start:       offset(id.Pos()),
+				End:         offset(id.End()),
+				OldText:     id.Name,
+				NewText:     target,
+				Description: fmt.Sprintf("Rename %s to %s to match the import alias", id.Name, target),
+			})
+		}
+	}
 
 	return changes
+}
+
+// nameTakenAt returns the declaration that name would clash with, either in
+// scope at the import or at one of the uses of pkgName.
+func nameTakenAt(pkg *types.Package, file *types.File, pkgName *gotypes.PkgName, name string, uses []*ast.Ident) gotypes.Object {
+	if fileScope := pkg.TypesInfo.Scopes[file.AST]; fileScope != nil {
+		if _, obj := fileScope.LookupParent(name, token.NoPos); obj != nil && obj != pkgName {
+			return obj
+		}
+	}
+	for _, id := range uses {
+		scope := pkg.TypesPkg.Scope().Innermost(id.Pos())
+		if scope == nil {
+			continue
+		}
+		if _, obj := scope.LookupParent(name, id.Pos()); obj != nil && obj != pkgName {
+			return obj
+		}
+	}
+	return nil
 }
 
 func (op *StandardizeImportsOperation) matchesPattern(importPath, pattern string) bool {
