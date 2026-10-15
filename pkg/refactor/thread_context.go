@@ -684,8 +684,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf(
 				"cannot thread context through %s at %s: it already has a context.Context parameter that "+
-					"the call site cannot reference (unnamed, blank, or shadowed by a local); name or "+
-					"un-shadow that parameter and re-run", funcLabel(caller), op.sitePos(site)),
+					"the call site cannot reference (shadowed by a local); un-shadow that parameter "+
+					"and re-run", funcLabel(caller), op.sitePos(site)),
 			File: site.File.Path,
 			Line: op.siteLine(site),
 		}

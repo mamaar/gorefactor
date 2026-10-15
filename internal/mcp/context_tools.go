@@ -18,7 +18,7 @@ type AddContextParameterInput struct {
 	Propagate    bool     `json:"propagate,omitempty" jsonschema:"propagate changes to interface declarations and sibling implementations"`
 	Thread       bool     `json:"thread,omitempty" jsonschema:"thread ctx transitively through all callers up to entrypoints, instead of injecting context.TODO() at each call site"`
 	StopAt       []string `json:"stop_at,omitempty" jsonschema:"functions where the thread climb stops (requires thread): Name, Type.Method or path/file.go:Type.Method; a stop keeps its signature and passes its in-scope ctx or context.TODO()"`
-	EntryPackage string   `json:"entry_package,omitempty" jsonschema:"a package main (import path, directory or workspace-relative path; requires thread): the climb stops at every production caller its program does not reach, which keeps its signature and passes context.TODO(); reported in skipped_sites as outside entry"`
+	EntryPackage string   `json:"entry_package,omitempty" jsonschema:"a package main (import path, directory or workspace-relative path; requires thread): the climb stops at every production caller its program does not reach, which keeps its signature and passes its in-scope ctx or context.TODO(); reported in skipped_sites as outside entry"`
 	DryRun       bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
