@@ -9,8 +9,9 @@ import (
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
-// blankCtxField returns the parameter of fd that is a context.Context the body
-// cannot reference: a blank name, or no name. It is nil for a named one.
+// blankCtxField returns the parameter field of fd that is a context.Context the
+// body cannot reference, and for a blank one its `_` identifier. Both are nil
+// when every context parameter is named; the identifier is nil when unnamed.
 func blankCtxField(pkg *pkgtypes.Package, fd *ast.FuncDecl) (*ast.Field, *ast.Ident) {
 	if fd == nil || fd.Type.Params == nil || pkg.TypesInfo == nil {
 		return nil, nil
@@ -31,12 +32,18 @@ func blankCtxField(pkg *pkgtypes.Package, fd *ast.FuncDecl) (*ast.Field, *ast.Id
 	return nil, nil
 }
 
-// ctxNameConflict returns where fd declares or uses an identifier called ctx,
-// or nil when the name is free.
-func ctxNameConflict(fd *ast.FuncDecl) *ast.Ident {
+// ctxNameConflict returns where fd declares or uses a variable, constant or
+// other object called ctx, or nil when the name is free. Fields named ctx do
+// not conflict: they are reached through a selector or a literal key.
+func ctxNameConflict(pkg *pkgtypes.Package, fd *ast.FuncDecl) *ast.Ident {
 	var found *ast.Ident
 	ast.Inspect(fd, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Name == ctxParamName && found == nil {
+		id, ok := n.(*ast.Ident)
+		if !ok || id.Name != ctxParamName || found != nil {
+			return found == nil
+		}
+		obj := pkg.TypesInfo.ObjectOf(id)
+		if v, isVar := obj.(*gotypes.Var); !isVar || !v.IsField() {
 			found = id
 		}
 		return found == nil
@@ -54,7 +61,7 @@ func (op *ThreadContextOperation) renameBlankCtx(plan *threadPlan, caller *gotyp
 	if field, _ := blankCtxField(fd.Pkg, fd.Decl); field == nil {
 		return false, nil
 	}
-	if id := ctxNameConflict(fd.Decl); id != nil {
+	if id := ctxNameConflict(fd.Pkg, fd.Decl); id != nil {
 		return false, &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf("cannot thread context through %s: its context.Context parameter is blank or unnamed "+

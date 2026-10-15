@@ -32,7 +32,18 @@ func TestThreadContext_BlankContextParameterWithTakenNameIsRefused(t *testing.T)
 
 	_, err := eng.ThreadContextAcrossConfigs(types.ThreadContextRequest{FunctionName: "S", SourceFile: "main.go"})
 
-	if err == nil || !strings.Contains(err.Error(), "ctx") {
+	if err == nil || !strings.Contains(err.Error(), "already used at") {
 		t.Errorf("err = %v, want a refusal naming the ctx conflict", err)
 	}
+}
+
+func TestThreadContext_BlankContextParameterIgnoresFieldsNamedCtx(t *testing.T) {
+	eng, dir := loadConfigsEngine(t, map[string]string{
+		"main.go": "package main\n\nimport \"context\"\n\ntype T struct{ ctx int }\n\nfunc S() {}\n\nfunc A(_ context.Context, t T) {\n\t_ = t.ctx\n\t_ = T{ctx: 1}\n\tS()\n}\n\nfunc main() { A(context.TODO(), T{}) }\n",
+	})
+
+	threadAcrossAndApply(t, eng, "main.go", "S")
+
+	assertOnce(t, dir, "main.go", "func A(ctx context.Context, t T) {")
+	vetBuilds(t, dir, linuxBuild)
 }
