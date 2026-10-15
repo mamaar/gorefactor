@@ -190,9 +190,10 @@ func externalMethodNames(external []*gotypes.Package) map[string]bool {
 	return names
 }
 
-// addReflected adds T to set, and the types reflection reaches from it
-// through exported struct fields and element types, with the pointer to each
-// field type; reflection cannot call methods through unexported fields. Method parameters and results are not followed.
+// addReflected adds T to set, and the types reflection reaches from it through
+// exported or embedded struct fields and element types, with the pointer to
+// each field type. Reflection cannot call methods through other unexported
+// fields; method parameters and results are not followed.
 func addReflected(set *typeutil.Map, T gotypes.Type) {
 	if set.At(T) != nil {
 		return
@@ -201,7 +202,7 @@ func addReflected(set *typeutil.Map, T gotypes.Type) {
 	switch u := T.Underlying().(type) {
 	case *gotypes.Struct:
 		for f := range u.Fields() {
-			if !f.Exported() {
+			if !f.Exported() && !f.Embedded() {
 				continue
 			}
 			addReflected(set, f.Type())
