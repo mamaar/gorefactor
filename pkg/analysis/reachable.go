@@ -289,3 +289,14 @@ func declName(n *usageNode) string {
 func packageLabel(pkg *types.Package) string {
 	return cmp.Or(pkg.ImportPath, pkg.Path)
 }
+
+// ReachableDirs returns the directories of the packages ReachableSites
+// examines for entry, sorted.
+func (ua *UnusedAnalyzer) ReachableDirs(entry *types.Package, includeTests bool) []string {
+	var dirs []string
+	for pkg := range ua.importClosure(entry, includeTests) {
+		dirs = append(dirs, pkg.Dir)
+	}
+	slices.Sort(dirs)
+	return dirs
+}
