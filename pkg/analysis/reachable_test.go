@@ -294,7 +294,7 @@ func mainWith(body string) map[string]string {
 }
 
 func TestReachableSites_RootTakenAsValueStaysARoot(t *testing.T) {
-	got := reachableSitesOf(t, mainWith("var keep func()\n\nfunc main() { keep = main; dep.T() }\n"), []string{"example.com/w/dep.T"}, false)
+	got := reachableSitesOf(t, mainWith("var keep func()\n\nfunc h() {}\n\nfunc main() { keep = main; keep = h; dep.T() }\n"), []string{"example.com/w/dep.T"}, false)
 
 	if len(got["dep.T"]) != 1 {
 		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])

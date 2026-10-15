@@ -33,6 +33,11 @@ type liveDecl struct {
 
 // buildLiveness runs rapid type analysis from main of entry, the initializers
 // of the packages it imports, and with includeTests their test functions.
+// A function taken as a value is live, even where no call of its signature
+// reaches it. The methods of a type converted to an interface, or reachable
+// from it through struct fields, are live when an interface outside the
+// workspace declares a method of that name, because code outside the
+// workspace may call them.
 func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool) (live *liveness, err error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -40,7 +45,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		}
 	}()
 
-	prog := ssa.NewProgram(ua.workspace.FileSet, ssa.InstantiateGenerics)
+	prog := ssa.NewProgram(ua.workspace.FileSet, ssa.InstantiateGenerics|ssa.BuildSerially)
 	sc := newSourceChecker(ua.workspace)
 	ssaPkgs := make(map[*types.Package]*ssa.Package)
 	var testPkgs []*ssa.Package
@@ -269,9 +274,7 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.
 }
 
 // funcScan lists what a function does that RTA does not link to a call: the
-// functions it uses as values, and the concrete types it converts to
-// interfaces. RTA reaches a taken function only through a call of its
-// signature, but taking it makes it reachable.
+// functions it takes as values and the concrete types it converts to interfaces.
 type funcScan struct {
 	taken     []*ssa.Function
 	converted []gotypes.Type

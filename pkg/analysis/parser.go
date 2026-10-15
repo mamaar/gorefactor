@@ -850,11 +850,10 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 		return
 	}
 
-	// checkFiles uses pkg.ImportPath as the Check() path argument, which is
-	// harmless here: nothing ever imports the resulting *types.Package, which
-	// is kept only as ExternalTestTypesPkg, and go/types.Checker verifies package-name consistency
-	// only among the files passed to ONE Check() call, never against that
-	// path string — it is purely a label on the (unused) result.
+	// checkFiles labels the result with pkg.ImportPath. That is harmless:
+	// nothing imports the result, which is kept only as ExternalTestTypesPkg,
+	// and go/types checks package-name consistency among the files of one
+	// Check() call, not against that path.
 	res := p.checkSheddingTests(ws, pkg, nil, tests)
 	if res.err != nil {
 		p.logger.Debug("external test package type-checking failed", "package", pkg.ImportPath, "err", res.err)
