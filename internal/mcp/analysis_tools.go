@@ -88,6 +88,12 @@ type ReachableSiteItem struct {
 	Path      []string `json:"path"`
 }
 
+type BodilessPackageItem struct {
+	Package string   `json:"package"`
+	Reason  string   `json:"reason"`
+	Configs []string `json:"configs,omitempty"`
+}
+
 // --- unused ---
 
 type UnusedInput struct {
@@ -596,6 +602,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Find the call sites and references of target functions or methods that run when a program runs: those in code reachable from main of entry_package, across the workspace packages it imports. " +
 			"Each site lists the declarations from a root (main, init, package-level var, or a method called by code outside the workspace) to the enclosing one in path, and kind is call or reference (a func value that is not called). " +
 			"Reachability is rapid type analysis: a function is reachable if it is called, taken as a value, or dispatched through an interface that a live conversion of its type satisfies; a method named by an interface outside the workspace (String, ServeHTTP, ...) counts as called when its type is converted; exported funcs are not roots. A call to an interface method that may dispatch to a target method is not counted as a site of that target. Dynamic dispatch through reflection, go:linkname and assembly is not modelled. " +
+			"Packages whose code cannot be analysed (cgo, unresolved identifiers, test packages that do not type-check) are listed in bodiless_packages: calls inside them are missing from sites. An entry_package of that kind is an error. " +
 			"Sites are merged across build configurations; configs names those that reach a site, omitted when all do. Test code counts only with include_tests.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ReachableReferencesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
@@ -623,6 +630,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 		if len(report.Configs) > 1 {
 			out["build_configs"] = report.Configs
+		}
+		if len(report.Bodiless) > 0 {
+			bodiless := make([]BodilessPackageItem, len(report.Bodiless))
+			for i, b := range report.Bodiless {
+				bodiless[i] = BodilessPackageItem{Package: b.Package, Reason: b.Reason, Configs: b.Configs}
+			}
+			out["bodiless_packages"] = bodiless
 		}
 		if len(report.Unchecked) > 0 {
 			var unchecked []UncoveredFileInfo

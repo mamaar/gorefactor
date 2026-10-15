@@ -87,6 +87,19 @@ func reachableSites(t *testing.T, includeTests bool) map[string][]ReachableSite 
 
 func reachableSitesOf(t *testing.T, files map[string]string, specs []string, includeTests bool) map[string][]ReachableSite {
 	t.Helper()
+	sites, _, err := reachableOf(t, files, specs, includeTests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byTarget := map[string][]ReachableSite{}
+	for _, s := range sites {
+		byTarget[s.Target] = append(byTarget[s.Target], s)
+	}
+	return byTarget
+}
+
+func reachableOf(t *testing.T, files map[string]string, specs []string, includeTests bool) ([]ReachableSite, []BodilessPackage, error) {
+	t.Helper()
 	set, _ := loadSet(t, files)
 	v := set.Primary()
 	for _, pkg := range v.Workspace.Packages {
@@ -109,15 +122,7 @@ func reachableSitesOf(t *testing.T, files map[string]string, specs []string, inc
 			entry = pkg
 		}
 	}
-	sites, err := ua.ReachableSites(entry, targets, includeTests)
-	if err != nil {
-		t.Fatal(err)
-	}
-	byTarget := map[string][]ReachableSite{}
-	for _, s := range sites {
-		byTarget[s.Target] = append(byTarget[s.Target], s)
-	}
-	return byTarget
+	return ua.ReachableSites(entry, targets, includeTests)
 }
 
 func TestReachableSites(t *testing.T) {
@@ -296,8 +301,8 @@ func TestReachableSites_RootTakenAsValueStaysARoot(t *testing.T) {
 	}
 }
 
-func TestReachableSites_TypeOnlyReachableThroughAFieldIsNotConverted(t *testing.T) {
-	body := "type P struct{}\n\nfunc (*P) Close() { dep.T() }\n\ntype Holder struct{ P *P }\n\nfunc main() { fmt.Println(Holder{}) }\n"
+func TestReachableSites_MethodResultOfConvertedTypeIsNotConverted(t *testing.T) {
+	body := "type P struct{}\n\nfunc (*P) Close() { dep.T() }\n\ntype Svc struct{}\n\nfunc (Svc) Get() *P { return nil }\n\nfunc main() { fmt.Println(Svc{}) }\n"
 
 	got := reachableSitesOf(t, mainWith(body), []string{"example.com/w/dep.T"}, false)
 
@@ -337,5 +342,95 @@ func TestReachableSites_GenericInstanceKeepsItsDeclarationInThePath(t *testing.T
 
 	if sites := got["dep.T"]; len(sites) != 1 || !slices.Equal(sites[0].Path, []string{"main.main", "main.G"}) {
 		t.Errorf("dep.T: got %v, want one site on path main.main main.G", sites)
+	}
+}
+
+func TestReachableSites_XTestImportingOnlyAStdlibPackageIsAnalysed(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":    "package dep\n\nfunc T() {}\n",
+		"p/p.go":        "package p\n\nfunc F() {}\n",
+		"p/p_x_test.go": "package p_test\n\nimport (\n\t\"container/ring\"\n\t\"testing\"\n\t\"example.com/w/dep\"\n)\n\nfunc TestX(t *testing.T) { _ = ring.New(1); dep.T() }\n",
+		"cmd/main.go":   "package main\n\nimport _ \"example.com/w/p\"\n\nfunc main() {}\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, true)
+
+	if len(got["dep.T"]) != 1 {
+		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func TestReachableSites_XTestSeesTheTestVariantOfPackagesBetweenItAndTheTestedOne(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":    "package dep\n\nfunc T() {}\n",
+		"p/p.go":        "package p\n\ntype DB struct{}\n",
+		"p/p_test.go":   "package p\n\nfunc helper() {}\n",
+		"h/h.go":        "package h\n\nimport (\n\t\"example.com/w/dep\"\n\t\"example.com/w/p\"\n)\n\nfunc Use(*p.DB) { dep.T() }\n",
+		"p/p_x_test.go": "package p_test\n\nimport (\n\t\"testing\"\n\t\"example.com/w/h\"\n\t\"example.com/w/p\"\n)\n\nfunc TestX(t *testing.T) { h.Use(&p.DB{}) }\n",
+		"cmd/main.go":   "package main\n\nimport _ \"example.com/w/p\"\n\nfunc main() {}\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, true)
+
+	if len(got["dep.T"]) != 1 {
+		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func bodilessFiles() map[string]string {
+	return map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"c/c.go":      "package c\n\n// int f() { return 1; }\nimport \"C\"\n\nimport \"example.com/w/dep\"\n\nfunc F() int { dep.T(); return int(C.f()) }\n",
+		"c/c_test.go": "package c\n\nimport \"testing\"\n\nfunc TestF(t *testing.T) { F() }\n",
+		"cmd/main.go": "package main\n\nimport \"example.com/w/c\"\n\nfunc main() { c.F() }\n",
+	}
+}
+
+func TestReachableSites_CgoPackageIsReportedBodiless(t *testing.T) {
+	for _, includeTests := range []bool{false, true} {
+		_, bodiless, err := reachableOf(t, bodilessFiles(), []string{"example.com/w/dep.T"}, includeTests)
+
+		if err != nil {
+			t.Fatalf("includeTests=%v: %v", includeTests, err)
+		}
+		if len(bodiless) != 1 || bodiless[0].Package != "example.com/w/c" {
+			t.Errorf("includeTests=%v: bodiless = %v, want example.com/w/c", includeTests, bodiless)
+		}
+	}
+}
+
+func TestReachableSites_BodilessEntryIsAnError(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"cmd/main.go": "package main\n\n// int f() { return 1; }\nimport \"C\"\n\nimport \"example.com/w/dep\"\n\nfunc main() { dep.T(); _ = C.f() }\n",
+	}
+
+	_, _, err := reachableOf(t, files, []string{"example.com/w/dep.T"}, false)
+
+	if err == nil || !strings.Contains(err.Error(), "cannot be analysed") {
+		t.Errorf("err = %v, want one saying the entry package cannot be analysed", err)
+	}
+}
+
+func TestSourceChecker_TestPackageThatDoesNotCheckIsReported(t *testing.T) {
+	files := map[string]string{
+		"p/p.go":        "package p\n\nfunc F() {}\n",
+		"p/p_x_test.go": "package p_test\n\nimport \"container/ring\"\n\nvar _ = ring.New\n",
+	}
+	set, _ := loadSet(t, files)
+	ws := set.Primary().Workspace
+	sc := newSourceChecker(ws)
+	delete(sc.outside, "container/ring")
+	pkg := ws.Packages[types.ResolvePackagePath(ws, "example.com/w/p")]
+	if _, err := sc.production(pkg); err != nil {
+		t.Fatal(err)
+	}
+
+	if x, _ := sc.externalTests(pkg); x != nil {
+		t.Errorf("external tests = %v, want none", x)
+	}
+
+	if len(sc.bodiless) != 1 || sc.bodiless[0].Package != "example.com/w/p [xtests]" {
+		t.Errorf("bodiless = %v, want example.com/w/p [xtests]", sc.bodiless)
 	}
 }

@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -24,10 +25,20 @@ type ReachableFinding struct {
 	Configs []string
 }
 
+// BodilessFinding is a package whose code the analysis could not see.
+type BodilessFinding struct {
+	analysis.BodilessPackage
+	// Configs names the configurations that cannot see it; empty when all do.
+	Configs []string
+}
+
 // ReachableReport is the outcome of ReachableAcrossConfigs.
 type ReachableReport struct {
 	Configs []string // display names, primary first
 	Sites   []ReachableFinding
+	// Bodiless lists packages whose code the analysis cannot see, so calls
+	// inside them are missing from Sites.
+	Bodiless []BodilessFinding
 	// Unchecked holds files of examined packages that no configuration type-checks.
 	Unchecked []analysis.UncheckedFile
 }
@@ -39,7 +50,7 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 	if req.Entry == "" || len(req.Targets) == 0 {
 		return nil, fmt.Errorf("entry and targets are required")
 	}
-	run := &reachableRun{req: req, found: make(map[declSite]*ReachableFinding), resolved: make(map[string]bool), dirs: make(map[string]bool)}
+	run := &reachableRun{req: req, found: make(map[declSite]*ReachableFinding), bodiless: make(map[analysis.BodilessPackage]*BodilessFinding), resolved: make(map[string]bool), dirs: make(map[string]bool)}
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, err
@@ -58,6 +69,9 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 			entryViews++
 		}
 	}
+	if entryViews == 0 && run.entryErr != nil {
+		return nil, run.entryErr
+	}
 	if entryViews == 0 {
 		return nil, fmt.Errorf("entry package %q not found in any build configuration", req.Entry)
 	}
@@ -73,6 +87,13 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 		}
 		out.Sites = append(out.Sites, *f)
 	}
+	for _, b := range run.bodiless {
+		if len(b.Configs) == len(views) {
+			b.Configs = nil
+		}
+		out.Bodiless = append(out.Bodiless, *b)
+	}
+	slices.SortFunc(out.Bodiless, func(a, b BodilessFinding) int { return cmp.Compare(a.Package, b.Package) })
 	slices.SortFunc(out.Sites, func(a, b ReachableFinding) int {
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.File, b.File), cmp.Compare(a.Pos, b.Pos), cmp.Compare(a.Target, b.Target))
 	})
@@ -84,6 +105,8 @@ type reachableRun struct {
 	viewIndexes
 	req      ReachableRequest
 	found    map[declSite]*ReachableFinding
+	bodiless map[analysis.BodilessPackage]*BodilessFinding
+	entryErr error // the first configuration whose entry package is bodiless
 	resolved map[string]bool // specs some view resolves
 	dirs     map[string]bool // directories examined in any view
 }
@@ -112,9 +135,25 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 
 	a := analysis.NewUnusedAnalyzer(v.Workspace, e.logger)
 	a.SetIndex(idx)
-	sites, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
+	sites, bodiless, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
+	var entryBodiless *analysis.EntryBodilessError
+	if errors.As(err, &entryBodiless) {
+		r.entryErr = cmp.Or(r.entryErr, err)
+		bodiless, err = []analysis.BodilessPackage{{Package: entryBodiless.Package, Reason: entryBodiless.Reason}}, nil
+	}
 	if err != nil {
 		return true, err
+	}
+	for _, b := range bodiless {
+		f := r.bodiless[b]
+		if f == nil {
+			f = &BodilessFinding{BodilessPackage: b}
+			r.bodiless[b] = f
+		}
+		f.Configs = append(f.Configs, v.Config.String())
+	}
+	if entryBodiless != nil {
+		return false, nil
 	}
 	for _, dir := range a.ReachableDirs(entry, r.req.IncludeTests) {
 		r.dirs[dir] = true

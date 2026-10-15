@@ -1,15 +1,12 @@
 package analysis
 
 import (
-	"cmp"
 	"fmt"
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
-	"runtime"
 	"slices"
 	"strings"
-	"sync"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/rta"
@@ -25,6 +22,8 @@ type liveness struct {
 	pred  map[*callgraph.Node]*callgraph.Node // BFS tree from the graph root
 	decls []liveDecl                          // reachable func declarations, by position
 	inits map[string]*callgraph.Node          // package path -> its initializer
+
+	bodiless []BodilessPackage // code the analysis could not see
 }
 
 type liveDecl struct {
@@ -55,6 +54,9 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		if err != nil {
 			return nil, err
 		}
+		if pkg == entry && c.bodiless != "" {
+			return nil, &EntryBodilessError{Package: entry.ImportPath, Reason: c.bodiless}
+		}
 		ssaPkgs[pkg] = create(c, true)
 		if !includeTests {
 			continue
@@ -62,14 +64,16 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		if t := sc.withTests(pkg); t != nil {
 			testPkgs = append(testPkgs, create(t, false))
 		}
-		if x := sc.externalTests(pkg); x != nil {
+		x, rebuilt := sc.externalTests(pkg)
+		if x != nil {
 			testPkgs = append(testPkgs, create(x, false))
+		}
+		for _, r := range rebuilt {
+			create(r, false)
 		}
 	}
 	external := createImports(prog, created)
-	if err := buildAll(prog); err != nil {
-		return nil, err
-	}
+	prog.Build()
 
 	mainFn := ssaPkgs[entry].Func("main")
 	if mainFn == nil {
@@ -127,6 +131,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 			}
 		}
 		if len(added)+len(addedTaken) == 0 {
+			live.bodiless = sc.bodiless
 			return live, nil
 		}
 		for _, fn := range addedTaken {
@@ -157,33 +162,6 @@ func createImports(prog *ssa.Program, created map[*gotypes.Package]bool) []*goty
 		walk(sp.Pkg)
 	}
 	return external
-}
-
-// buildAll builds every package of prog concurrently, turning a panic of a
-// builder goroutine into an error.
-func buildAll(prog *ssa.Program) error {
-	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var first error
-	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
-	for _, sp := range prog.AllPackages() {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					mu.Lock()
-					first = cmp.Or(first, fmt.Errorf("building SSA for %s: %v", sp.Pkg.Path(), r))
-					mu.Unlock()
-				}
-				<-sem
-				wg.Done()
-			}()
-			sp.Build()
-		}()
-	}
-	wg.Wait()
-	return first
 }
 
 // externalMethodNames returns the names of the methods that interfaces

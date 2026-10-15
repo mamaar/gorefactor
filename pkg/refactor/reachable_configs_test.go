@@ -72,3 +72,50 @@ func TestReachableAcrossConfigs_RejectsBadInput(t *testing.T) {
 		}
 	}
 }
+
+func TestReachableAcrossConfigs_BodilessPackageIsReportedWithItsConfig(t *testing.T) {
+	files := reachableFiles()
+	files["p/run_tagx.go"] = "//go:build tagx\n\npackage p\n\n// int f() { return 1; }\nimport \"C\"\n\nfunc run() { Log(); _ = C.f() }\n"
+	eng, _ := loadConfigsEngine(t, files)
+
+	report, err := eng.ReachableAcrossConfigs(ReachableRequest{Entry: "example.com/threadtest", Targets: []string{"example.com/threadtest/p.Log"}})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Bodiless) != 1 || report.Bodiless[0].Package != "example.com/threadtest/p" ||
+		len(report.Bodiless[0].Configs) != 1 || !strings.Contains(report.Bodiless[0].Configs[0], "tagx") {
+		t.Errorf("bodiless = %+v, want p, in the tagx configuration only", report.Bodiless)
+	}
+}
+
+func TestReachableAcrossConfigs_EntryBodilessInOneConfigIsReportedNotFatal(t *testing.T) {
+	files := reachableFiles()
+	files["main_tagx.go"] = "//go:build tagx\n\npackage main\n\n// int f() { return 1; }\nimport \"C\"\n\nvar _ = C.f\n"
+	eng, _ := loadConfigsEngine(t, files)
+
+	report, err := eng.ReachableAcrossConfigs(ReachableRequest{Entry: "example.com/threadtest", Targets: []string{"example.com/threadtest/p.Log"}})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Bodiless) != 1 || report.Bodiless[0].Package != "example.com/threadtest" ||
+		len(report.Bodiless[0].Configs) != 1 || !strings.Contains(report.Bodiless[0].Configs[0], "tagx") {
+		t.Errorf("bodiless = %+v, want the entry package in the tagx configuration only", report.Bodiless)
+	}
+	if len(report.Sites) != 1 {
+		t.Errorf("sites = %+v, want the one the other configuration finds", report.Sites)
+	}
+}
+
+func TestReachableAcrossConfigs_EntryBodilessInEveryConfigIsAnError(t *testing.T) {
+	files := reachableFiles()
+	files["main_cgo.go"] = "package main\n\n// int f() { return 1; }\nimport \"C\"\n\nvar _ = C.f\n"
+	eng, _ := loadConfigsEngine(t, files)
+
+	_, err := eng.ReachableAcrossConfigs(ReachableRequest{Entry: "example.com/threadtest", Targets: []string{"example.com/threadtest/p.Log"}})
+
+	if err == nil || !strings.Contains(err.Error(), "cannot be analysed") {
+		t.Errorf("err = %v, want one saying the entry package cannot be analysed", err)
+	}
+}

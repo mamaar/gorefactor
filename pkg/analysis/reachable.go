@@ -149,21 +149,21 @@ func exportedCallables(pkg *gotypes.Package) []gotypes.Object {
 // ReachableSites returns the call sites and references of targets in code that
 // rapid type analysis finds reachable from main of entry (see buildLiveness).
 // Exported funcs are not roots; test code counts only with includeTests.
-func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target, includeTests bool) ([]ReachableSite, error) {
+func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target, includeTests bool) ([]ReachableSite, []BodilessPackage, error) {
 	if entry.Name != "main" {
-		return nil, fmt.Errorf("entry package %s is not package main", entry.Path)
+		return nil, nil, fmt.Errorf("entry package %s is not package main", entry.Path)
 	}
 	g, idx, _, err := ua.prepare()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !idx.HasTypeInfo() {
-		return nil, fmt.Errorf("packages are not type-checked")
+		return nil, nil, fmt.Errorf("packages are not type-checked")
 	}
 
 	live, err := ua.buildLiveness(entry, includeTests)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var sites []ReachableSite
@@ -201,7 +201,8 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 	slices.SortFunc(sites, func(a, b ReachableSite) int {
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.File, b.File), cmp.Compare(a.Pos, b.Pos), cmp.Compare(a.Target, b.Target))
 	})
-	return sites, nil
+	slices.SortFunc(live.bodiless, func(a, b BodilessPackage) int { return cmp.Compare(a.Package, b.Package) })
+	return sites, live.bodiless, nil
 }
 
 // importClosure returns entry and the workspace packages it imports
