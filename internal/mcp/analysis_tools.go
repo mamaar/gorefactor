@@ -69,6 +69,25 @@ type ComplexityResultItem struct {
 	Level                string `json:"level"`
 }
 
+// --- reachable_references ---
+
+type ReachableReferencesInput struct {
+	EntryPackage string   `json:"entry_package" jsonschema:"the package main to start from, as import path, directory or workspace-relative path"`
+	Targets      []string `json:"targets" jsonschema:"functions or methods to find references to: pkg.Func, pkg.Type.Method, or a package path for all its exported funcs and methods"`
+	IncludeTests bool     `json:"include_tests,omitempty" jsonschema:"also treat test functions of the examined packages as entry points"`
+}
+
+type ReachableSiteItem struct {
+	Package   string   `json:"package"`
+	File      string   `json:"file"`
+	Line      int      `json:"line"`
+	Enclosing string   `json:"enclosing"`
+	Target    string   `json:"target"`
+	Kind      string   `json:"kind"`
+	Configs   []string `json:"configs,omitempty"`
+	Path      []string `json:"path"`
+}
+
 // --- unused ---
 
 type UnusedInput struct {
@@ -568,6 +587,53 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 		if len(report.Configs) > 1 {
 			out["build_configs"] = report.Configs
+		}
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "reachable_references",
+		Description: "Find the call sites and references of target functions or methods that run when a program runs: those in code reachable from main of entry_package, across the workspace packages it imports. " +
+			"Each site lists the declarations from a root (main, init, package-level var) to the enclosing one in path, and kind is call or reference (a func value that is not called). " +
+			"Reachability over-approximates: every exported method of a type reachable code mentions counts as reachable, and so does every method named by a workspace interface; exported funcs are not roots. Sites reached only through an interface declared elsewhere are not reported. Dynamic dispatch through reflection, go:linkname and assembly is not modelled. " +
+			"Sites are merged across build configurations; configs names those that reach a site, omitted when all do. Test code counts only with include_tests.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ReachableReferencesInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		ws, err := state.GetWorkspace()
+		var report *refactor.ReachableReport
+		if err == nil {
+			report, err = state.GetEngine().ReachableAcrossConfigs(refactor.ReachableRequest{Entry: in.EntryPackage, Targets: in.Targets, IncludeTests: in.IncludeTests})
+		}
+		state.RUnlock()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := make([]ReachableSiteItem, len(report.Sites))
+		byPackage, byTarget := map[string]int{}, map[string]int{}
+		for i, f := range report.Sites {
+			items[i] = ReachableSiteItem{Package: f.Package, File: f.File, Line: f.Line, Enclosing: f.Enclosing, Target: f.Target, Kind: f.Kind, Configs: f.Configs, Path: f.Path}
+			byPackage[f.Package]++
+			byTarget[f.Target]++
+		}
+		out := map[string]any{
+			"sites":   items,
+			"count":   len(items),
+			"summary": map[string]any{"by_package": byPackage, "by_target": byTarget},
+		}
+		if len(report.Configs) > 1 {
+			out["build_configs"] = report.Configs
+		}
+		if len(report.Unchecked) > 0 {
+			var unchecked []UncoveredFileInfo
+			for _, u := range report.Unchecked {
+				info := UncoveredFileInfo{File: relativeTo(ws.RootPath, u.Source.Path), Reason: u.Reason}
+				for _, c := range u.Configs {
+					info.Configs = append(info.Configs, c.String())
+				}
+				unchecked = append(unchecked, info)
+			}
+			out["uncovered_files"] = unchecked
 		}
 		return textResult(out), nil, nil
 	})

@@ -29,7 +29,7 @@ type ReachableReport struct {
 	Configs []string // display names, primary first
 	Sites   []ReachableFinding
 	// Unchecked holds files of examined packages that no configuration type-checks.
-	Unchecked []string
+	Unchecked []analysis.UncheckedFile
 }
 
 // ReachableAcrossConfigs finds the references to the targets that run when the
@@ -73,9 +73,7 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 	slices.SortFunc(out.Sites, func(a, b ReachableFinding) int {
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.File, b.File), cmp.Compare(a.Pos, b.Pos), cmp.Compare(a.Target, b.Target))
 	})
-	for _, u := range analysis.UncheckedFiles(views, slices.Sorted(maps.Keys(run.dirs))) {
-		out.Unchecked = append(out.Unchecked, u.Source.Path)
-	}
+	out.Unchecked = analysis.UncheckedFiles(views, slices.Sorted(maps.Keys(run.dirs)))
 	return out, nil
 }
 
