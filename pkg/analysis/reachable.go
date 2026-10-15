@@ -48,7 +48,8 @@ type ReachableSite struct {
 
 // ResolveTargets resolves specs to objects. A spec is a package path (every
 // exported func and method of it), pkg.Func, or pkg.Type.Method, where pkg is
-// a workspace package or one a workspace package imports.
+// a workspace package or one a workspace package imports. Overlapping specs
+// yield each object once.
 func ResolveTargets(ws *types.Workspace, specs []string) ([]Target, error) {
 	pkgs := make(map[string]*gotypes.Package)
 	for _, pkg := range ws.Packages {
@@ -62,13 +63,17 @@ func ResolveTargets(ws *types.Workspace, specs []string) ([]Target, error) {
 	}
 
 	var targets []Target
+	seen := make(map[ObjectID]bool)
 	for _, spec := range specs {
 		objs, ok := resolveSpec(pkgs, spec)
 		if !ok {
 			return nil, fmt.Errorf("unknown target %q", spec)
 		}
 		for _, obj := range objs {
-			targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
+			if id := ObjectIDOf(obj); !seen[id] {
+				seen[id] = true
+				targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
+			}
 		}
 	}
 	return targets, nil
@@ -121,7 +126,7 @@ func exportedCallables(pkg *gotypes.Package) []gotypes.Object {
 			}
 		case *gotypes.TypeName:
 			named, ok := obj.Type().(*gotypes.Named)
-			if !ok || !obj.Exported() {
+			if !ok {
 				continue
 			}
 			for m := range named.Methods() {
@@ -169,8 +174,7 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 		return nil, fmt.Errorf("entry package %s has no func main", entry.Path)
 	}
 
-	m.includeExported = false
-	m.followTests = includeTests
+	m.includeExported, m.followTests = false, includeTests
 	m.markFrom(g, isRoot)
 
 	var sites []ReachableSite
@@ -255,7 +259,7 @@ func (m *marker) isReachableRoot(n *usageNode, entry *types.Package, closure map
 	case n.name == "init" || n.name == "_":
 		return true
 	case s == nil:
-		return false
+		return n.test
 	case s.Kind == types.VariableSymbol:
 		return true
 	}

@@ -36,6 +36,9 @@ type ReachableReport struct {
 // entry program runs, under each build configuration covering the workspace.
 // A site found in several configurations is one finding.
 func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*ReachableReport, error) {
+	if req.Entry == "" || len(req.Targets) == 0 {
+		return nil, fmt.Errorf("entry and targets are required")
+	}
 	run := &reachableRun{req: req, found: make(map[declSite]*ReachableFinding), resolved: make(map[string]bool), dirs: make(map[string]bool)}
 	views, err := e.beginRun(run)
 	if err != nil {
@@ -94,18 +97,17 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 	if entry == nil {
 		return false, nil
 	}
-	if entry.Name != "main" {
-		return false, fmt.Errorf("entry package %s is not package main", r.req.Entry)
-	}
 
-	var targets []analysis.Target
+	var specs []string
 	for _, spec := range r.req.Targets {
-		got, err := analysis.ResolveTargets(v.Workspace, []string{spec})
-		if err != nil {
-			continue
+		if _, err := analysis.ResolveTargets(v.Workspace, []string{spec}); err == nil {
+			r.resolved[spec] = true
+			specs = append(specs, spec)
 		}
-		r.resolved[spec] = true
-		targets = append(targets, got...)
+	}
+	targets, err := analysis.ResolveTargets(v.Workspace, specs)
+	if err != nil {
+		return true, err
 	}
 
 	a := analysis.NewUnusedAnalyzer(v.Workspace, e.logger)

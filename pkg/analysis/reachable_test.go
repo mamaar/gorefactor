@@ -82,10 +82,11 @@ func TestX() { helper() }
 // target name.
 func reachableSites(t *testing.T, includeTests bool) map[string][]ReachableSite {
 	t.Helper()
-	files := map[string]string{}
-	for k, v := range reachableFiles {
-		files[k] = v
-	}
+	return reachableSitesOf(t, reachableFiles, []string{"example.com/w/dep"}, includeTests)
+}
+
+func reachableSitesOf(t *testing.T, files map[string]string, specs []string, includeTests bool) map[string][]ReachableSite {
+	t.Helper()
 	set, _ := loadSet(t, files)
 	v := set.Primary()
 	for _, pkg := range v.Workspace.Packages {
@@ -98,7 +99,7 @@ func reachableSites(t *testing.T, includeTests bool) map[string][]ReachableSite 
 	ua := NewUnusedAnalyzer(v.Workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ua.SetIndex(idx)
 
-	targets, err := ResolveTargets(v.Workspace, []string{"example.com/w/dep"})
+	targets, err := ResolveTargets(v.Workspace, specs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,5 +175,48 @@ func TestResolveTargets_UnknownSpecIsAnError(t *testing.T) {
 	_, err := ResolveTargets(set.Primary().Workspace, []string{"example.com/w/dep.Nope"})
 	if err == nil || !strings.Contains(err.Error(), "example.com/w/dep.Nope") {
 		t.Errorf("err = %v, want one naming the spec", err)
+	}
+}
+
+func TestReachableSites_TestVarSharingAProductionVarNameIsARoot(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"p/p.go":      "package p\n\nvar x = 1\n",
+		"p/p_test.go": "package p_test\n\nimport \"example.com/w/dep\"\n\nvar x = func() int { dep.T(); return 0 }()\n",
+		"cmd/main.go": "package main\n\nimport _ \"example.com/w/p\"\n\nfunc main() {}\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, true)
+
+	if len(got["dep.T"]) != 1 {
+		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func TestReachableSites_PackageSpecIncludesMethodsOfUnexportedTypes(t *testing.T) {
+	files := map[string]string{
+		"p2/p2.go":    "package p2\n\ntype impl struct{}\n\nfunc (impl) Do() {}\n\nfunc New() impl { return impl{} }\n",
+		"cmd/main.go": "package main\n\nimport \"example.com/w/p2\"\n\nfunc main() { p2.New().Do() }\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/p2"}, false)
+
+	if len(got["p2.impl.Do"]) != 1 {
+		t.Errorf("p2.impl.Do: got %v, want 1 site", got["p2.impl.Do"])
+	}
+}
+
+func TestResolveTargets_OverlappingSpecsYieldEachObjectOnce(t *testing.T) {
+	set, _ := loadSet(t, map[string]string{"dep/dep.go": "package dep\n\nfunc F() {}\n"})
+
+	v := set.Primary()
+	for _, pkg := range v.Workspace.Packages {
+		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+	}
+
+	got, err := ResolveTargets(v.Workspace, []string{"example.com/w/dep", "example.com/w/dep.F"})
+
+	if err != nil || len(got) != 1 {
+		t.Errorf("got %v, %v, want one target", got, err)
 	}
 }

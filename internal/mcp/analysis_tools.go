@@ -595,7 +595,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		Name: "reachable_references",
 		Description: "Find the call sites and references of target functions or methods that run when a program runs: those in code reachable from main of entry_package, across the workspace packages it imports. " +
 			"Each site lists the declarations from a root (main, init, package-level var) to the enclosing one in path, and kind is call or reference (a func value that is not called). " +
-			"Reachability over-approximates: every exported method of a type reachable code mentions counts as reachable, and so does every method named by a workspace interface; exported funcs are not roots. Sites reached only through an interface declared elsewhere are not reported. Dynamic dispatch through reflection, go:linkname and assembly is not modelled. " +
+			"Reachability over-approximates: every exported method of a type reachable code mentions counts as reachable, and so does every method named by a workspace interface; exported funcs are not roots. A call to an interface method that may dispatch to a target method is not counted as a site of that target. Dynamic dispatch through reflection, go:linkname and assembly is not modelled. " +
 			"Sites are merged across build configurations; configs names those that reach a site, omitted when all do. Test code counts only with include_tests.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ReachableReferencesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()

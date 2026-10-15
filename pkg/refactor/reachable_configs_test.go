@@ -43,11 +43,28 @@ func TestReachableAcrossConfigs_TaggedSiteIsReportedOnceWithItsConfig(t *testing
 	}
 }
 
+func TestReachableAcrossConfigs_OverlappingSpecsKeepTheTaggedSiteTagged(t *testing.T) {
+	eng, _ := loadConfigsEngine(t, reachableFiles())
+
+	report, err := eng.ReachableAcrossConfigs(ReachableRequest{Entry: "example.com/threadtest", Targets: []string{"example.com/threadtest/p", "example.com/threadtest/p.Log"}})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range report.Sites {
+		if strings.HasSuffix(s.File, "run_tagx.go") && len(s.Configs) != 1 {
+			t.Errorf("tagged site configs = %v, want one config", s.Configs)
+		}
+	}
+}
+
 func TestReachableAcrossConfigs_RejectsBadInput(t *testing.T) {
 	eng, _ := loadConfigsEngine(t, reachableFiles())
 	for name, req := range map[string]ReachableRequest{
 		"unknown target": {Entry: "example.com/threadtest", Targets: []string{"example.com/threadtest/p.Nope"}},
 		"non-main entry": {Entry: "example.com/threadtest/p", Targets: []string{"example.com/threadtest/p.Log"}},
+		"empty entry":    {Targets: []string{"example.com/threadtest/p.Log"}},
+		"no targets":     {Entry: "example.com/threadtest"},
 		"missing entry":  {Entry: "example.com/threadtest/zzz", Targets: []string{"example.com/threadtest/p.Log"}},
 	} {
 		if _, err := eng.ReachableAcrossConfigs(req); err == nil {
