@@ -1,16 +1,20 @@
 package analysis
 
 import (
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/rta"
 	"golang.org/x/tools/go/ssa"
+	"golang.org/x/tools/go/types/typeutil"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -33,30 +37,39 @@ type liveDecl struct {
 func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool) (live *liveness, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("building SSA for %s: %v", entry.Path, r)
+			err = fmt.Errorf("analysing %s: %v", entry.Path, r)
 		}
 	}()
 
-	closure := ua.importClosure(entry, true)
 	prog := ssa.NewProgram(ua.workspace.FileSet, ssa.InstantiateGenerics)
+	sc := newSourceChecker(ua.workspace)
 	ssaPkgs := make(map[*types.Package]*ssa.Package)
-	for pkg := range closure {
-		if pkg.TypesPkg == nil || pkg.TypesInfo == nil {
-			return nil, fmt.Errorf("package %s is not type-checked", pkg.Path)
-		}
-		ssaPkgs[pkg] = prog.CreatePackage(pkg.TypesPkg, checkedFiles(pkg, false), pkg.TypesInfo, true)
+	var testPkgs []*ssa.Package
+	created := make(map[*gotypes.Package]bool)
+	create := func(c *checkedPkg, importable bool) *ssa.Package {
+		created[c.pkg] = true
+		return prog.CreatePackage(c.pkg, c.files, c.info, importable)
 	}
-	var extTests []*ssa.Package
-	if includeTests {
-		for pkg := range closure {
-			if pkg.ExternalTestTypesPkg != nil {
-				sp := prog.CreatePackage(pkg.ExternalTestTypesPkg, checkedFiles(pkg, true), pkg.ExternalTestTypesInfo, false)
-				extTests = append(extTests, sp)
-			}
+	for pkg := range ua.importClosure(entry, includeTests) {
+		c, err := sc.production(pkg)
+		if err != nil {
+			return nil, err
+		}
+		ssaPkgs[pkg] = create(c, true)
+		if !includeTests {
+			continue
+		}
+		if t := sc.withTests(pkg); t != nil {
+			testPkgs = append(testPkgs, create(t, false))
+		}
+		if x := sc.externalTests(pkg); x != nil {
+			testPkgs = append(testPkgs, create(x, false))
 		}
 	}
-	external := createImports(prog)
-	prog.Build()
+	external := createImports(prog, created)
+	if err := buildAll(prog); err != nil {
+		return nil, err
+	}
 
 	mainFn := ssaPkgs[entry].Func("main")
 	if mainFn == nil {
@@ -64,13 +77,9 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	}
 	roots := []*ssa.Function{mainFn}
 	for pkg := range ua.importClosure(entry, includeTests) {
-		sp := ssaPkgs[pkg]
-		roots = append(roots, sp.Func("init"))
-		if includeTests {
-			roots = append(roots, testFuncs(sp)...)
-		}
+		roots = append(roots, ssaPkgs[pkg].Func("init"))
 	}
-	for _, sp := range extTests {
+	for _, sp := range testPkgs {
 		roots = append(roots, sp.Func("init"))
 		roots = append(roots, testFuncs(sp)...)
 	}
@@ -81,67 +90,64 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	for _, r := range roots {
 		rootSet[r] = true
 	}
-	taken := make(map[*ssa.Function][]*ssa.Function) // function -> functions it uses as values
+	scans := make(scanCache)
+	takenOnly := make(map[*ssa.Function]bool) // roots added because a function takes them as a value
 	for {
 		res := rta.Analyze(roots, true)
-		live = newLiveness(res.CallGraph, roots, taken)
-		var added []*ssa.Function
-		addRoot := func(fn *ssa.Function) {
+		live = newLiveness(res.CallGraph, roots, takenOnly, scans)
+		var added, addedTaken []*ssa.Function
+		addRoot := func(fn *ssa.Function, list *[]*ssa.Function) {
 			if fn != nil && !rootSet[fn] && (len(fn.Blocks) > 0 || fn.Synthetic != "") {
 				rootSet[fn] = true
-				added = append(added, fn)
+				*list = append(*list, fn)
+			}
+		}
+		var converted typeutil.Map
+		for n := range live.pred {
+			if n.Func == nil {
+				continue
+			}
+			for _, T := range scans.of(n.Func).converted {
+				converted.Set(T, true)
+			}
+		}
+		for _, T := range converted.Keys() {
+			mset := prog.MethodSets.MethodSet(T)
+			for i := range mset.Len() {
+				if names[mset.At(i).Obj().Name()] {
+					addRoot(prog.MethodValue(mset.At(i)), &added)
+				}
 			}
 		}
 		for n := range live.pred {
 			if n.Func != nil {
-				taken[n.Func] = takenFuncs(n.Func)
-			}
-			for _, fn := range taken[n.Func] {
-				addRoot(fn)
-			}
-		}
-		for _, T := range res.RuntimeTypes.Keys() {
-			mset := prog.MethodSets.MethodSet(T)
-			for i := range mset.Len() {
-				if names[mset.At(i).Obj().Name()] {
-					addRoot(prog.MethodValue(mset.At(i)))
+				for _, fn := range scans.of(n.Func).taken {
+					addRoot(fn, &addedTaken)
 				}
 			}
 		}
-		if len(added) == 0 {
+		if len(added)+len(addedTaken) == 0 {
 			return live, nil
 		}
+		for _, fn := range addedTaken {
+			takenOnly[fn] = true
+		}
+		added = append(added, addedTaken...)
 		slices.SortFunc(added, func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
 		roots = append(roots, added...)
 	}
 }
 
-// checkedFiles returns the syntax trees type-checked into pkg.TypesInfo: the
-// package's own files, or those of its external test package.
-func checkedFiles(pkg *types.Package, external bool) []*ast.File {
-	var files []*ast.File
-	if !external {
-		for _, f := range pkg.Files {
-			files = append(files, f.AST)
-		}
-	}
-	for name, f := range pkg.TestFiles {
-		if _, excluded := pkg.ExcludedTestFiles[name]; !excluded && isExternalTestFile(f.AST) == external {
-			files = append(files, f.AST)
-		}
-	}
-	return files
-}
-
 // createImports creates bodiless SSA packages for every package the created
-// ones import and returns them.
-func createImports(prog *ssa.Program) []*gotypes.Package {
+// ones import and returns them. created holds the packages already created.
+func createImports(prog *ssa.Program, created map[*gotypes.Package]bool) []*gotypes.Package {
 	var external []*gotypes.Package
 	var walk func(p *gotypes.Package)
 	walk = func(p *gotypes.Package) {
 		for _, imp := range p.Imports() {
-			if prog.ImportedPackage(imp.Path()) == nil {
-				prog.CreatePackage(imp, nil, nil, true)
+			if !created[imp] {
+				created[imp] = true
+				prog.CreatePackage(imp, nil, nil, prog.ImportedPackage(imp.Path()) == nil)
 				external = append(external, imp)
 				walk(imp)
 			}
@@ -153,11 +159,38 @@ func createImports(prog *ssa.Program) []*gotypes.Package {
 	return external
 }
 
+// buildAll builds every package of prog concurrently, turning a panic of a
+// builder goroutine into an error.
+func buildAll(prog *ssa.Program) error {
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var first error
+	sem := make(chan struct{}, runtime.GOMAXPROCS(0))
+	for _, sp := range prog.AllPackages() {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					mu.Lock()
+					first = cmp.Or(first, fmt.Errorf("building SSA for %s: %v", sp.Pkg.Path(), r))
+					mu.Unlock()
+				}
+				<-sem
+				wg.Done()
+			}()
+			sp.Build()
+		}()
+	}
+	wg.Wait()
+	return first
+}
+
 // externalMethodNames returns the names of the methods that interfaces
 // declared outside the workspace require, error included. Code outside the
 // workspace has no SSA bodies, so it may call any method by such a name.
 func externalMethodNames(external []*gotypes.Package) map[string]bool {
-	names := map[string]bool{"Error": true}
+	names := map[string]bool{"Error": true, "Is": true, "As": true, "Unwrap": true}
 	for _, p := range external {
 		for _, name := range p.Scope().Names() {
 			tn, ok := p.Scope().Lookup(name).(*gotypes.TypeName)
@@ -193,20 +226,14 @@ func testFuncs(sp *ssa.Package) []*ssa.Function {
 	return fns
 }
 
-// newLiveness searches cg breadth-first from the roots no function takes as a
-// value, following calls and taken[caller].
-func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, taken map[*ssa.Function][]*ssa.Function) *liveness {
-	isTaken := make(map[*ssa.Function]bool)
-	for _, fns := range taken {
-		for _, fn := range fns {
-			isTaken[fn] = true
-		}
-	}
+// newLiveness searches cg breadth-first from the roots not in takenOnly,
+// following calls and the functions each scanned function takes.
+func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.Function]bool, scans scanCache) *liveness {
 	l := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node)}
 	seenDecl := make(map[token.Pos]bool)
 	var queue []*callgraph.Node
 	for _, r := range roots {
-		if n := cg.CreateNode(r); !isTaken[r] && !slices.Contains(queue, n) {
+		if n := cg.CreateNode(r); !takenOnly[r] && !slices.Contains(queue, n) {
 			l.pred[n] = nil
 			queue = append(queue, n)
 		}
@@ -219,8 +246,10 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, taken map[*ssa.Func
 		for _, e := range n.Out {
 			next = append(next, e.Callee)
 		}
-		for _, fn := range taken[n.Func] {
-			next = append(next, cg.CreateNode(fn))
+		if n.Func != nil {
+			for _, fn := range scans.of(n.Func).taken {
+				next = append(next, cg.CreateNode(fn))
+			}
 		}
 		for _, c := range next {
 			if _, seen := l.pred[c]; !seen {
@@ -233,27 +262,39 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, taken map[*ssa.Func
 	return l
 }
 
-// takenFuncs returns the functions fn uses as values. RTA links such a
-// function only to calls through a func of its signature, but taking it makes
-// it reachable.
-func takenFuncs(fn *ssa.Function) []*ssa.Function {
-	if fn == nil {
-		return nil
+// funcScan lists what a function does that RTA does not link to a call: the
+// functions it uses as values, and the concrete types it converts to
+// interfaces. RTA reaches a taken function only through a call of its
+// signature, but taking it makes it reachable.
+type funcScan struct {
+	taken     []*ssa.Function
+	converted []gotypes.Type
+}
+
+type scanCache map[*ssa.Function]*funcScan
+
+func (c scanCache) of(fn *ssa.Function) *funcScan {
+	if sc := c[fn]; sc != nil {
+		return sc
 	}
-	var taken []*ssa.Function
+	sc := &funcScan{}
+	c[fn] = sc
 	var ops []*ssa.Value
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
+			if mi, ok := instr.(*ssa.MakeInterface); ok {
+				sc.converted = append(sc.converted, mi.X.Type())
+			}
 			ops = instr.Operands(ops[:0])
 			call, _ := instr.(ssa.CallInstruction)
 			for _, op := range ops {
 				if f, ok := (*op).(*ssa.Function); ok && (call == nil || op != &call.Common().Value) {
-					taken = append(taken, f)
+					sc.taken = append(sc.taken, f)
 				}
 			}
 		}
 	}
-	return taken
+	return sc
 }
 
 // index records n under its top-level declaration, or its package when n is
@@ -275,11 +316,18 @@ func (l *liveness) index(n *callgraph.Node, seen map[token.Pos]bool) {
 	}
 }
 
+// topFunc returns the declaration holding fn: its generic origin, and for a
+// closure the function enclosing it.
 func topFunc(fn *ssa.Function) *ssa.Function {
-	for fn.Parent() != nil {
+	for {
+		if o := fn.Origin(); o != nil {
+			fn = o
+		}
+		if fn.Parent() == nil {
+			return fn
+		}
 		fn = fn.Parent()
 	}
-	return fn
 }
 
 // pathTo returns the declarations from a root to the code of owner holding

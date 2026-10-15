@@ -146,14 +146,9 @@ func exportedCallables(pkg *gotypes.Package) []gotypes.Object {
 	return objs
 }
 
-// ReachableSites returns the call sites and references of targets that sit in
-// code reachable from main of entry, across the packages it imports.
-// Reachability is rapid type analysis over SSA: a method is live when it is
-// called, taken as a value, or dispatched through an interface that a live
-// conversion of its type satisfies. A method of such a type whose name an
-// interface outside the workspace declares counts as called by that code.
-// Exported funcs are not roots. Test code counts only with includeTests. The
-// type-checked packages must already be in the index.
+// ReachableSites returns the call sites and references of targets in code that
+// rapid type analysis finds reachable from main of entry (see buildLiveness).
+// Exported funcs are not roots; test code counts only with includeTests.
 func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target, includeTests bool) ([]ReachableSite, error) {
 	if entry.Name != "main" {
 		return nil, fmt.Errorf("entry package %s is not package main", entry.Path)

@@ -264,3 +264,78 @@ func TestReachableSites_MethodNamedByExternalInterfaceStaysLive(t *testing.T) {
 		t.Errorf("dep.Target: got %v, want 1 site", got["dep.Target"])
 	}
 }
+
+func TestReachableSites_PackageWithTestImportCycleIsAnalysed(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"p/p.go":      "package p\n\nimport \"example.com/w/dep\"\n\nfunc F() { dep.T() }\n",
+		"p/p_test.go": "package p\n\nimport \"example.com/w/q\"\n\nvar _ = q.G\n",
+		"q/q.go":      "package q\n\nimport \"example.com/w/p\"\n\nfunc G() { p.F() }\n",
+		"cmd/main.go": "package main\n\nimport \"example.com/w/q\"\n\nfunc main() { q.G() }\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, false)
+
+	if len(got["dep.T"]) != 1 {
+		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func mainWith(body string) map[string]string {
+	return map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"cmd/main.go": "package main\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n\t\"example.com/w/dep\"\n)\n\nvar _ = errors.Is\nvar _ = fmt.Sprint\n\n" + body,
+	}
+}
+
+func TestReachableSites_RootTakenAsValueStaysARoot(t *testing.T) {
+	got := reachableSitesOf(t, mainWith("var keep func()\n\nfunc main() { keep = main; dep.T() }\n"), []string{"example.com/w/dep.T"}, false)
+
+	if len(got["dep.T"]) != 1 {
+		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func TestReachableSites_TypeOnlyReachableThroughAFieldIsNotConverted(t *testing.T) {
+	body := "type P struct{}\n\nfunc (*P) Close() { dep.T() }\n\ntype Holder struct{ P *P }\n\nfunc main() { fmt.Println(Holder{}) }\n"
+
+	got := reachableSitesOf(t, mainWith(body), []string{"example.com/w/dep.T"}, false)
+
+	if len(got["dep.T"]) != 0 {
+		t.Errorf("dep.T: unexpected sites %v", got["dep.T"])
+	}
+}
+
+func TestReachableSites_MethodOfUnnamedStdlibInterfaceStaysLive(t *testing.T) {
+	body := "type E struct{}\n\nfunc (E) Error() string { return \"\" }\n\nfunc (E) Is(error) bool { dep.T(); return false }\n\nfunc main() { _ = errors.Is(E{}, nil) }\n"
+
+	got := reachableSitesOf(t, mainWith(body), []string{"example.com/w/dep.T"}, false)
+
+	if len(got["dep.T"]) != 1 {
+		t.Errorf("dep.T: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func TestReachableSites_TestFileInitDoesNotRootCodeWithoutIncludeTests(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"p/p.go":      "package p\n\nimport \"example.com/w/dep\"\n\nfunc Helper() { dep.T() }\n",
+		"p/p_test.go": "package p\n\nfunc init() { Helper() }\n",
+		"cmd/main.go": "package main\n\nimport _ \"example.com/w/p\"\n\nfunc main() {}\n",
+	}
+
+	if got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, false); len(got["dep.T"]) != 0 {
+		t.Errorf("without tests: unexpected sites %v", got["dep.T"])
+	}
+	if got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, true); len(got["dep.T"]) != 1 {
+		t.Errorf("with tests: got %v, want 1 site", got["dep.T"])
+	}
+}
+
+func TestReachableSites_GenericInstanceKeepsItsDeclarationInThePath(t *testing.T) {
+	got := reachableSitesOf(t, mainWith("func G[T any](T) { dep.T() }\n\nfunc main() { G(1) }\n"), []string{"example.com/w/dep.T"}, false)
+
+	if sites := got["dep.T"]; len(sites) != 1 || !slices.Equal(sites[0].Path, []string{"main.main", "main.G"}) {
+		t.Errorf("dep.T: got %v, want one site on path main.main main.G", sites)
+	}
+}
