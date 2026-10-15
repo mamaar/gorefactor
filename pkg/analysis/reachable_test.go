@@ -19,6 +19,8 @@ func ViaField() {}
 func ViaVar() int { return 1 }
 func ViaInit() {}
 func ViaTest() {}
+func ViaOther() {}
+func ViaShortest() {}
 `,
 	"side/side.go": `package side
 
@@ -27,6 +29,12 @@ import "example.com/w/dep"
 var V = dep.ViaVar()
 
 func init() { dep.ViaInit() }
+`,
+	"other/other.go": `package other
+
+import "example.com/w/dep"
+
+func init() { dep.ViaOther() }
 `,
 	"cmd/main.go": `package main
 
@@ -46,17 +54,27 @@ type holder struct{ fn func() }
 func main() {
 	var d Doer = impl{}
 	d.Do()
-	h := holder{fn: func() { dep.ViaField() }}
+	h := holder{fn: viaFieldFn}
 	h.fn()
+	short()
+	long1()
 }
+
+func viaFieldFn() { dep.ViaField() }
+
+func helper() { dep.ViaTest() }
+
+func short() { target() }
+func long1() { long2() }
+func long2() { long3() }
+func long3() { target() }
+func target() { dep.ViaShortest() }
 
 func unreachable() { dep.Dead() }
 `,
 	"cmd/main_test.go": `package main
 
-import "example.com/w/dep"
-
-func TestX() { dep.ViaTest() }
+func TestX() { helper() }
 `,
 }
 
@@ -103,12 +121,12 @@ func reachableSites(t *testing.T, includeTests bool) map[string][]ReachableSite 
 
 func TestReachableSites(t *testing.T) {
 	got := reachableSites(t, false)
-	for _, name := range []string{"dep.ViaIface", "dep.ViaField", "dep.ViaVar", "dep.ViaInit"} {
+	for _, name := range []string{"dep.ViaIface", "dep.ViaField", "dep.ViaVar", "dep.ViaInit", "dep.ViaShortest"} {
 		if len(got[name]) != 1 {
 			t.Errorf("%s: got %d sites, want 1", name, len(got[name]))
 		}
 	}
-	for _, name := range []string{"dep.Dead", "dep.ViaTest"} {
+	for _, name := range []string{"dep.Dead", "dep.ViaTest", "dep.ViaOther"} {
 		if len(got[name]) != 0 {
 			t.Errorf("%s: unexpected sites %v", name, got[name])
 		}
@@ -131,15 +149,23 @@ func TestReachableSites_PathRunsFromMainToEnclosing(t *testing.T) {
 		t.Fatalf("got %d sites, want 1", len(sites))
 	}
 	s := sites[0]
-	want := []string{"main.main"}
-	if !slices.Equal(s.Path, want) || s.Enclosing != "main" || s.Kind != "call" {
-		t.Errorf("path %v enclosing %q kind %q, want %v main call", s.Path, s.Enclosing, s.Kind, want)
+	want := []string{"main.main", "main.viaFieldFn"}
+	if !slices.Equal(s.Path, want) || s.Enclosing != "viaFieldFn" || s.Kind != "call" {
+		t.Errorf("path %v enclosing %q kind %q, want %v viaFieldFn call", s.Path, s.Enclosing, s.Kind, want)
 	}
 
 	s = reachableSites(t, false)["dep.ViaIface"][0]
 	want = []string{"main.main", "main.impl", "main.impl.Do"}
 	if !slices.Equal(s.Path, want) || s.Enclosing != "impl.Do" {
 		t.Errorf("path %v enclosing %q, want %v impl.Do", s.Path, s.Enclosing, want)
+	}
+}
+
+func TestReachableSites_PathIsShortest(t *testing.T) {
+	s := reachableSites(t, false)["dep.ViaShortest"][0]
+	want := []string{"main.main", "main.short", "main.target"}
+	if !slices.Equal(s.Path, want) {
+		t.Errorf("path %v, want %v", s.Path, want)
 	}
 }
 
