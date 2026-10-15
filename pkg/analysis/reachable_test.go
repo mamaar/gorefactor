@@ -324,6 +324,19 @@ func TestReachableSites_FieldTypeOfConvertedTypeStaysLive(t *testing.T) {
 	}
 }
 
+func TestReachableSites_UnexportedFieldTypeOfConvertedTypeIsNotConverted(t *testing.T) {
+	files := map[string]string{
+		"dep/dep.go":  "package dep\n\nfunc T() {}\n",
+		"cmd/main.go": "package main\n\nimport (\n\t\"encoding/json\"\n\t\"example.com/w/dep\"\n)\n\ntype F struct{}\n\nfunc (F) MarshalJSON() ([]byte, error) { dep.T(); return nil, nil }\n\ntype Holder struct{ f F }\n\nfunc main() { _, _ = json.Marshal(Holder{}) }\n",
+	}
+
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, false)
+
+	if len(got["dep.T"]) != 0 {
+		t.Errorf("dep.T: unexpected sites %v", got["dep.T"])
+	}
+}
+
 func TestReachableSites_MethodOfUnnamedStdlibInterfaceStaysLive(t *testing.T) {
 	body := "type E struct{}\n\nfunc (E) Error() string { return \"\" }\n\nfunc (E) Is(error) bool { dep.T(); return false }\n\nfunc main() { _ = errors.Is(E{}, nil) }\n"
 

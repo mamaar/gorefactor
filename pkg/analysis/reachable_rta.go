@@ -35,7 +35,7 @@ type liveDecl struct {
 // of the packages it imports, and with includeTests their test functions.
 // A function taken as a value is live, even where no call of its signature
 // reaches it. The methods of a type converted to an interface, or reachable
-// from it through struct fields, are live when an interface outside the
+// from it through exported struct fields, are live when an interface outside the
 // workspace declares a method of that name, because code outside the
 // workspace may call them.
 func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool) (live *liveness, err error) {
@@ -191,8 +191,8 @@ func externalMethodNames(external []*gotypes.Package) map[string]bool {
 }
 
 // addReflected adds T to set, and the types reflection reaches from it
-// through struct fields and element types, with the pointer to each field
-// type. Method parameters and results are not followed.
+// through exported struct fields and element types, with the pointer to each
+// field type; reflection cannot call methods through unexported fields. Method parameters and results are not followed.
 func addReflected(set *typeutil.Map, T gotypes.Type) {
 	if set.At(T) != nil {
 		return
@@ -201,6 +201,9 @@ func addReflected(set *typeutil.Map, T gotypes.Type) {
 	switch u := T.Underlying().(type) {
 	case *gotypes.Struct:
 		for f := range u.Fields() {
+			if !f.Exported() {
+				continue
+			}
 			addReflected(set, f.Type())
 			if _, isIface := f.Type().Underlying().(*gotypes.Interface); !isIface {
 				addReflected(set, gotypes.NewPointer(f.Type()))
