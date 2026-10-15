@@ -63,6 +63,10 @@ type ThreadContextOperation struct {
 	// root: its calls pass an in-scope ctx or context.TODO().
 	StopAt pkgtypes.SymbolKeySet
 
+	// Reach, when set, stops the climb at every production caller the entry
+	// program does not reach, like a stop.
+	Reach *EntryReach
+
 	plan *threadPlan // populated by Validate/Execute
 
 	declIndex map[*gotypes.Func]*funcDecl
@@ -76,6 +80,19 @@ type ThreadContextOperation struct {
 	// type info that does not change during a run, and expandInterfaces consults
 	// it once per worklist entry.
 	ifaceCache *ifaceSurvey
+}
+
+// EntryReach is the code an entry program runs.
+type EntryReach struct {
+	Entry    string
+	Funcs    pkgtypes.SymbolKeySet // functions and methods the program reaches
+	Bodiless map[string]bool       // packages whose code could not be analysed; their callers count as reached
+}
+
+// outside reports whether f is declared in analysed code the program does not reach.
+func (r *EntryReach) outside(f *gotypes.Func) bool {
+	key, ok := pkgtypes.SymbolKeyOf(f)
+	return ok && !r.Funcs.Has(key) && !r.Bodiless[key.PkgPath]
 }
 
 // funcDecl resolves a func object back to its declaration and its owning
@@ -146,6 +163,12 @@ type threadPlan struct {
 	// Stops holds the declared stops whose presence changed the outcome: the
 	// climb reached them and would otherwise have added a ctx.
 	Stops map[*gotypes.Func]bool
+	// Outside holds the callers the climb did not climb into because the entry
+	// program does not reach them.
+	Outside map[*gotypes.Func]bool
+	// Renamed holds callers whose blank or unnamed context parameter is named
+	// ctx instead of gaining a second one.
+	Renamed map[*gotypes.Func]bool
 }
 
 // dropAnalysis forgets the index, declarations and plan-of-record the
@@ -228,17 +251,23 @@ func (op *ThreadContextOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Ref
 // line order.
 func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 	var sites []pkgtypes.SkippedSite
-	for f := range op.plan.Stops {
+	add := func(f *gotypes.Func, reason string) {
 		fd := op.declIndex[f]
 		if fd == nil || fd.File == nil {
-			continue
+			return
 		}
 		sites = append(sites, pkgtypes.SkippedSite{
 			File:    fd.File.Path,
 			Line:    offsetLine(fd.File, fd.Decl.Pos()),
-			Reason:  "stop_at: the context climb stopped here; calls inside pass the in-scope ctx or context.TODO()",
+			Reason:  reason + ": the context climb stopped here; calls inside pass the in-scope ctx or context.TODO()",
 			Snippet: funcLabel(f),
 		})
+	}
+	for f := range op.plan.Stops {
+		add(f, "stop_at")
+	}
+	for f := range op.plan.Outside {
+		add(f, "outside entry")
 	}
 	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
 		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Snippet, b.Snippet))
@@ -306,6 +335,9 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		Fake:   make(map[*gotypes.Func]*ast.AssignStmt),
 		ArgFor: make(map[token.Pos]*callEdit),
 		Stops:  make(map[*gotypes.Func]bool),
+
+		Outside: make(map[*gotypes.Func]bool),
+		Renamed: make(map[*gotypes.Func]bool),
 	}
 
 	visited, err := op.discover(ws, idx, plan, seeds)
@@ -629,6 +661,10 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 		plan.Stops[caller] = true
 		return nil, false, nil
 	}
+	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && op.Reach.outside(caller) {
+		plan.Outside[caller] = true
+		return nil, false, nil
+	}
 
 	// The caller is about to gain a ctx parameter, but it already declares one
 	// that the call site cannot reach — the parameter is unnamed or blank, or it
@@ -683,6 +719,9 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 		if name, ok := plan.Funcs[caller]; ok {
 			return name, nil
 		}
+		if plan.Renamed[caller] {
+			return ctxParamName, nil
+		}
 	}
 
 	// 2/3. A context already reachable from the call site wins over any root
@@ -709,7 +748,7 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	if site.Fn != nil && site.Lit == nil {
 		if caller, err := op.callerObject(site); err != nil {
 			return "", err
-		} else if op.isStop(caller) {
+		} else if op.isStop(caller) || plan.Outside[caller] {
 			return "context.TODO()", nil
 		}
 	}

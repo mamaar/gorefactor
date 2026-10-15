@@ -1,10 +1,13 @@
 package refactor
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	gotypes "go/types"
 	"io"
 	"log/slog"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"sync"
@@ -400,7 +403,10 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 	if err != nil {
 		return nil, err
 	}
-	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil, stop)
+	if req.EntryPackage != "" {
+		return nil, fmt.Errorf("entry_package needs every build configuration; use ThreadContextAcrossConfigs")
+	}
+	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil, stop, nil)
 	return plan, err
 }
 
@@ -421,7 +427,47 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 	if err != nil {
 		return nil, err
 	}
-	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req, stop: stop})
+	var reach *EntryReach
+	if req.EntryPackage != "" {
+		if reach, err = e.entryReach(views, req.EntryPackage); err != nil {
+			return nil, err
+		}
+	}
+	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req, stop: stop, reach: reach})
+}
+
+// entryReach merges what the program of entry reaches under each build
+// configuration. A configuration whose entry cannot be analysed adds nothing,
+// and is an error only when no configuration can be.
+func (e *DefaultEngine) entryReach(views []*analysis.View, entry string) (*EntryReach, error) {
+	reach := &EntryReach{Entry: entry, Funcs: make(types.SymbolKeySet), Bodiless: make(map[string]bool)}
+	var entryErr error
+	analysed := 0
+	for _, v := range views {
+		pkg := v.Workspace.Packages[types.ResolvePackagePath(v.Workspace, entry)]
+		if pkg == nil {
+			continue
+		}
+		ensureTypeChecked(v.Parser, v.Workspace)
+		funcs, bodiless, err := analysis.NewUnusedAnalyzer(v.Workspace, e.logger).ReachedFuncs(pkg)
+		var bodilessEntry *analysis.EntryBodilessError
+		switch {
+		case errors.As(err, &bodilessEntry):
+			entryErr = cmp.Or(entryErr, err)
+			continue
+		case err != nil:
+			return nil, viewError(views, v, err)
+		}
+		analysed++
+		maps.Copy(reach.Funcs, funcs)
+		for _, b := range bodiless {
+			reach.Bodiless[b.Package] = true
+		}
+	}
+	if analysed == 0 {
+		return nil, cmp.Or(entryErr, fmt.Errorf("entry package %q not found in any build configuration", entry))
+	}
+	return reach, nil
 }
 
 // threadContextPlanner plans context threading in one view.
@@ -430,10 +476,11 @@ type threadContextPlanner struct {
 	engine *DefaultEngine
 	req    types.ThreadContextRequest
 	stop   types.SymbolKeySet
+	reach  *EntryReach
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked, p.stop)
+	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked, p.stop, p.reach)
 	if err != nil && !isSymbolNotFound(err) {
 		return configResult{}, err
 	}
@@ -465,12 +512,14 @@ func (e *DefaultEngine) threadContext(
 	req types.ThreadContextRequest,
 	linked types.SymbolKeySet,
 	stop types.SymbolKeySet,
+	reach *EntryReach,
 ) (*types.RefactoringPlan, *ThreadContextOperation, error) {
 	operation := &ThreadContextOperation{
 		FunctionName: req.FunctionName,
 		SourceFile:   req.SourceFile,
 		Linked:       linked,
 		StopAt:       stop,
+		Reach:        reach,
 		CachedIndex:  idx,
 	}
 	// The operation cannot reach EngineConfig through the Operation interface,

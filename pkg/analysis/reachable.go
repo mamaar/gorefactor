@@ -205,6 +205,31 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 	return sites, live.bodiless, nil
 }
 
+// ReachedFuncs returns the keys of the declared functions and methods whose code
+// is reachable from main of entry, and the packages whose code it could not see.
+// An entry that cannot be analysed is an *EntryBodilessError.
+func (ua *UnusedAnalyzer) ReachedFuncs(entry *types.Package) (types.SymbolKeySet, []BodilessPackage, error) {
+	if entry.Name != "main" {
+		return nil, nil, fmt.Errorf("entry package %s is not package main", entry.Path)
+	}
+	live, err := ua.buildLiveness(entry, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys := make(types.SymbolKeySet)
+	for n := range live.pred {
+		if n.Func == nil {
+			continue
+		}
+		if fn, ok := topFunc(n.Func).Object().(*gotypes.Func); ok {
+			if key, ok := types.SymbolKeyOf(fn); ok {
+				keys[key] = struct{}{}
+			}
+		}
+	}
+	return keys, live.bodiless, nil
+}
+
 // importClosure returns entry and the workspace packages it imports
 // transitively, through test files too when includeTests.
 func (ua *UnusedAnalyzer) importClosure(entry *types.Package, includeTests bool) map[*types.Package]bool {
