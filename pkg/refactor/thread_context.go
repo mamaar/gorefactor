@@ -664,6 +664,10 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 		return nil, false, nil
 	}
 	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && op.Reach.outside(caller) {
+		// A conflict only costs the rename here: the caller can pass context.TODO().
+		if renamed, _ := op.renameBlankCtx(plan, caller, site); renamed {
+			return nil, false, nil
+		}
 		plan.Outside[caller] = true
 		return nil, false, nil
 	}

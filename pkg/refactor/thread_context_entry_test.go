@@ -146,3 +146,12 @@ func TestThreadContextEntry_EntryNoConfigurationCanAnalyseIsAnError(t *testing.T
 		t.Errorf("err = %v, want an entry that cannot be analysed", err)
 	}
 }
+
+func TestThreadContextEntry_OutsideCallerWithBlankContextNamesItAndPassesIt(t *testing.T) {
+	_, dir := threadScoped(t, map[string]string{
+		"main.go": "package main\n\nimport \"context\"\n\nfunc S() {}\n\nfunc B(_ context.Context) { S() }\n\nfunc main() { S() }\n",
+	}, "S")
+
+	assertOnce(t, dir, "main.go", "func B(ctx context.Context) { S(ctx) }")
+	vetBuilds(t, dir, linuxBuild)
+}
