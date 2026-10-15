@@ -64,3 +64,38 @@ func TestThreadContextEntry_RequiresAnEntryThatIsMain(t *testing.T) {
 		t.Error("want an error for a non-main entry")
 	}
 }
+
+func TestThreadContextEntry_PackagesDownstreamOfBodilessCodeCountAsReached(t *testing.T) {
+	files := map[string]string{
+		"main.go": "package main\n\nimport \"example.com/threadtest/c\"\n\nfunc main() { _ = c.F() }\n",
+		"c/c.go":  "package c\n\n// int f() { return 1; }\nimport \"C\"\n\nimport \"example.com/threadtest/p\"\n\nfunc F() int { p.G(); return int(C.f()) }\n",
+		"p/p.go":  "package p\n\nfunc S() {}\n\nfunc G() { S() }\n",
+		"r/r.go":  "package r\n\nimport \"example.com/threadtest/p\"\n\nfunc R() { p.S() }\n",
+	}
+	eng, _ := loadConfigsEngine(t, files)
+
+	plan, err := eng.ThreadContextAcrossConfigs(types.ThreadContextRequest{FunctionName: "S", SourceFile: "p/p.go", EntryPackage: entryPkg})
+
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range plan.SkippedSites {
+		if s.Snippet == "G" {
+			t.Errorf("G is downstream of bodiless code, so it must be climbed, got %+v", s)
+		}
+	}
+	outside := false
+	for _, s := range plan.SkippedSites {
+		outside = outside || s.Snippet == "R"
+	}
+	if !outside {
+		t.Errorf("R is in a package no bodiless package imports, so it stays outside: %+v", plan.SkippedSites)
+	}
+	gained := false
+	for _, c := range plan.Changes {
+		gained = gained || (strings.HasSuffix(c.File, "p/p.go") && strings.Contains(c.NewText, "ctx context.Context"))
+	}
+	if !gained {
+		t.Errorf("no signature in p gained ctx: %+v", plan.Changes)
+	}
+}

@@ -86,7 +86,7 @@ type ThreadContextOperation struct {
 type EntryReach struct {
 	Entry    string
 	Funcs    pkgtypes.SymbolKeySet // functions and methods the program reaches
-	Bodiless map[string]bool       // packages whose code could not be analysed; their callers count as reached
+	Bodiless map[string]bool       // packages with code the analysis could not see, and what they import; their callers count as reached
 }
 
 // outside reports whether f is declared in analysed code the program does not reach.

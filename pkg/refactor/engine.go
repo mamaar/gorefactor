@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -436,6 +437,26 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req, stop: stop, reach: reach})
 }
 
+// addImportClosure adds path and the workspace packages it imports,
+// transitively, to set. RTA cannot see the calls out of a package with no
+// bodies, so what that package imports may be reached through it.
+func addImportClosure(set map[string]bool, ws *types.Workspace, path string) {
+	if set[path] {
+		return
+	}
+	set[path] = true
+	for _, pkg := range ws.Packages {
+		if pkg.ImportPath != path || pkg.TypesPkg == nil {
+			continue
+		}
+		for _, imp := range pkg.TypesPkg.Imports() {
+			if ws.ImportToPath[imp.Path()] != "" {
+				addImportClosure(set, ws, imp.Path())
+			}
+		}
+	}
+}
+
 // entryReach merges what the program of entry reaches under each build
 // configuration. A configuration whose entry cannot be analysed adds nothing,
 // and is an error only when no configuration can be.
@@ -461,7 +482,9 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry string) (*Entry
 		analysed++
 		maps.Copy(reach.Funcs, funcs)
 		for _, b := range bodiless {
-			reach.Bodiless[b.Package] = true
+			if !strings.Contains(b.Package, " ") { // not a test variant
+				addImportClosure(reach.Bodiless, v.Workspace, b.Package)
+			}
 		}
 	}
 	if analysed == 0 {
