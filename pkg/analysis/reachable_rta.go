@@ -112,7 +112,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 				continue
 			}
 			for _, T := range scans.of(n.Func).converted {
-				converted.Set(T, true)
+				addReflected(&converted, T)
 			}
 		}
 		for _, T := range converted.Keys() {
@@ -183,6 +183,34 @@ func externalMethodNames(external []*gotypes.Package) map[string]bool {
 		}
 	}
 	return names
+}
+
+// addReflected adds T to set, and the types reflection reaches from it
+// through struct fields and element types, with the pointer to each field
+// type. Method parameters and results are not followed.
+func addReflected(set *typeutil.Map, T gotypes.Type) {
+	if set.At(T) != nil {
+		return
+	}
+	set.Set(T, true)
+	switch u := T.Underlying().(type) {
+	case *gotypes.Struct:
+		for f := range u.Fields() {
+			addReflected(set, f.Type())
+			if _, isIface := f.Type().Underlying().(*gotypes.Interface); !isIface {
+				addReflected(set, gotypes.NewPointer(f.Type()))
+			}
+		}
+	case *gotypes.Pointer:
+		addReflected(set, u.Elem())
+	case *gotypes.Slice:
+		addReflected(set, u.Elem())
+	case *gotypes.Array:
+		addReflected(set, u.Elem())
+	case *gotypes.Map:
+		addReflected(set, u.Key())
+		addReflected(set, u.Elem())
+	}
 }
 
 // testFuncs returns the test, benchmark, fuzz and example functions of sp
