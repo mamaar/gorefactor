@@ -101,6 +101,10 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		needsContext[fd.File.Path] = true
 	}
 
+	for f := range plan.Renamed {
+		changes = append(changes, renderBlankCtx(ws, plan.Decls[f])...)
+	}
+
 	// 2. Call sites: for every recorded call-site decision, either insert a
 	// new argument or replace an existing fabricated-root one.
 	for _, edit := range plan.ArgFor {

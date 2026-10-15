@@ -667,11 +667,13 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	}
 
 	// The caller is about to gain a ctx parameter, but it already declares one
-	// that the call site cannot reach — the parameter is unnamed or blank, or it
-	// is shadowed by a local. Adding a second context.Context parameter would not
-	// compile, and guessing which one to thread would be worse. Abort and let the
-	// user name/rename the existing parameter first.
+	// that the call site cannot reach. A blank or unnamed one is named ctx. A
+	// named one shadowed by a local cannot be fixed by guessing: abort and let
+	// the user un-shadow it.
 	if funcHasContextParam(caller) {
+		if renamed, err := op.renameBlankCtx(plan, caller, site); err != nil || renamed {
+			return nil, false, err
+		}
 		return nil, false, &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf(
