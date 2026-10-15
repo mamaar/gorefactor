@@ -267,7 +267,9 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 		add(f, "stop_at")
 	}
 	for f := range op.plan.Outside {
-		add(f, "outside entry")
+		if _, gains := op.plan.Funcs[f]; !gains {
+			add(f, "outside entry")
+		}
 	}
 	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
 		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Snippet, b.Snippet))
