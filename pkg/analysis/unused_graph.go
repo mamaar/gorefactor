@@ -16,6 +16,7 @@ const MaxReferrers = 5
 // usageNode is one top-level declaration name.
 type usageNode struct {
 	symbol *types.Symbol // nil when the symbol table has none (a second init, _)
+	pkg    *types.Package
 	name   string
 	test   bool // declared in a _test.go file
 
@@ -23,7 +24,8 @@ type usageNode struct {
 	recv    *usageNode   // receiver type of a method; nil otherwise or when unresolved
 	methods []*usageNode // on a type node
 
-	out []*usageNode // declarations this one references (counted edges only)
+	out     []*usageNode // declarations this one references (counted edges only)
+	testOut []*usageNode // non-test declarations a test declaration references
 
 	// Inbound references, excluding the node itself. testRefs counts the
 	// uncounted ones from a test declaration to a non-test one.
@@ -146,6 +148,7 @@ func (b fileNodes) addGenDecl(d *ast.GenDecl, clause string) {
 func (b fileNodes) newNode(name *ast.Ident) *usageNode {
 	n := &usageNode{
 		symbol: b.symbols[name.Pos()],
+		pkg:    b.pkg,
 		name:   name.Name,
 		test:   strings.HasSuffix(b.file.Path, "_test.go"),
 	}
@@ -427,6 +430,9 @@ func addUse(referrer, target *usageNode) {
 
 	if referrer.test && !target.test {
 		target.testRefs++
+		if n := len(referrer.testOut); n == 0 || referrer.testOut[n-1] != target {
+			referrer.testOut = append(referrer.testOut, target)
+		}
 		return
 	}
 

@@ -76,23 +76,11 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 // unused unless live code outside test files references it; code that only
 // unused code or tests reference is unused too.
 func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
-	for _, pkg := range ua.workspace.Packages {
-		if pkg.Symbols != nil {
-			continue
-		}
-		if _, err := ua.resolver.BuildSymbolTable(pkg); err != nil {
-			return nil, fmt.Errorf("failed to build symbol table for package %s: %v", pkg.Path, err)
-		}
+	g, idx, m, err := ua.prepare()
+	if err != nil {
+		return nil, err
 	}
-
-	idx := ua.index
-	if idx == nil {
-		idx = ua.resolver.BuildReferenceIndex()
-	}
-
-	g := buildUsageGraph(ua.workspace, ua.resolver, idx)
-	m := &marker{ua: ua, live: make(map[*usageNode]bool, len(g.nodes)), ifaceMethodNames: ua.collectInterfaceMethodNames()}
-	m.markFrom(g)
+	m.markFrom(g, m.isRoot)
 
 	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live), callers: deadCallers(g, m.live)}
 	var unused []*UnusedSymbol
@@ -104,6 +92,34 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	slices.SortFunc(unused, compareUnused)
 
 	return unused, nil
+}
+
+// prepare builds the symbol tables, the reference index (unless one was set),
+// the usage graph and a marker for it.
+func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, error) {
+	for _, pkg := range ua.workspace.Packages {
+		if pkg.Symbols != nil {
+			continue
+		}
+		if _, err := ua.resolver.BuildSymbolTable(pkg); err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %v", pkg.Path, err)
+		}
+	}
+
+	idx := ua.index
+	if idx == nil {
+		idx = ua.resolver.BuildReferenceIndex()
+	}
+
+	g := buildUsageGraph(ua.workspace, ua.resolver, idx)
+	m := &marker{
+		ua:               ua,
+		live:             make(map[*usageNode]bool, len(g.nodes)),
+		from:             make(map[*usageNode]*usageNode),
+		includeExported:  ua.includeExported,
+		ifaceMethodNames: ua.collectInterfaceMethodNames(),
+	}
+	return g, idx, m, nil
 }
 
 func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }
@@ -186,30 +202,36 @@ func (ua *UnusedAnalyzer) FormatUnusedSymbol(unused *UnusedSymbol) string {
 type marker struct {
 	ua               *UnusedAnalyzer
 	live             map[*usageNode]bool
-	work             []*usageNode
+	from             map[*usageNode]*usageNode // first node found to keep a node live; none for roots
+	work             []*usageNode              // FIFO, so from gives shortest paths
+	includeExported  bool
+	followTests      bool // also follow test-to-production edges
 	ifaceMethodNames map[string]bool
 }
 
-// markFrom marks every declaration reachable from the roots of g.
-func (m *marker) markFrom(g *usageGraph) {
+// markFrom marks every declaration reachable from the nodes of g that isRoot accepts.
+func (m *marker) markFrom(g *usageGraph, isRoot func(*usageNode) bool) {
 	for _, n := range g.nodes {
-		if m.isRoot(n) {
-			m.mark(n)
+		if isRoot(n) {
+			m.mark(n, nil)
 		}
 	}
 
 	for len(m.work) > 0 {
-		n := m.work[len(m.work)-1]
-		m.work = m.work[:len(m.work)-1]
+		n := m.work[0]
+		m.work = m.work[1:]
 		m.visit(n)
 	}
 }
 
-func (m *marker) mark(n *usageNode) {
+func (m *marker) mark(n, parent *usageNode) {
 	if n == nil || m.live[n] {
 		return
 	}
 	m.live[n] = true
+	if parent != nil {
+		m.from[n] = parent
+	}
 	m.work = append(m.work, n)
 }
 
@@ -217,12 +239,17 @@ func (m *marker) mark(n *usageNode) {
 // method's receiver type, and the kept methods of a type.
 func (m *marker) visit(n *usageNode) {
 	for _, target := range n.out {
-		m.mark(target)
+		m.mark(target, n)
 	}
-	m.mark(n.recv)
+	if m.followTests {
+		for _, target := range n.testOut {
+			m.mark(target, n)
+		}
+	}
+	m.mark(n.recv, n)
 	for _, method := range n.methods {
 		if m.isKeptMethod(method) {
-			m.mark(method)
+			m.mark(method, n)
 		}
 	}
 }
@@ -243,7 +270,7 @@ func (m *marker) isRoot(n *usageNode) bool {
 	if s.Kind == types.MethodSymbol {
 		return n.recv == nil && m.isKeptMethod(n)
 	}
-	return s.Exported && !m.ua.includeExported
+	return s.Exported && !m.includeExported
 }
 
 // isKeptMethod reports whether the method n is live whenever its receiver type
@@ -254,7 +281,7 @@ func (m *marker) isKeptMethod(n *usageNode) bool {
 	if s == nil || s.Kind != types.MethodSymbol {
 		return false
 	}
-	return (s.Exported && !m.ua.includeExported) || m.ifaceMethodNames[s.Name]
+	return (s.Exported && !m.includeExported) || m.ifaceMethodNames[s.Name]
 }
 
 // unusedReport turns the dead nodes of a graph into findings.
