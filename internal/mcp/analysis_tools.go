@@ -75,6 +75,7 @@ type ReachableReferencesInput struct {
 	EntryPackage string   `json:"entry_package" jsonschema:"the package main to start from, as import path, directory or workspace-relative path"`
 	Targets      []string `json:"targets" jsonschema:"functions or methods to find references to: pkg.Func, pkg.Type.Method, or a package path for all its exported funcs and methods"`
 	IncludeTests bool     `json:"include_tests,omitempty" jsonschema:"also treat test functions of the examined packages as entry points"`
+	Within       string   `json:"within_function,omitempty" jsonschema:"only report sites in code this function (pkg.Func or pkg.Type.Method) reaches; the live types still come from the whole entry_package program"`
 }
 
 type ReachableSiteItem struct {
@@ -609,7 +610,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		ws, err := state.GetWorkspace()
 		var report *refactor.ReachableReport
 		if err == nil {
-			report, err = state.GetEngine().ReachableAcrossConfigs(refactor.ReachableRequest{Entry: in.EntryPackage, Targets: in.Targets, IncludeTests: in.IncludeTests})
+			report, err = state.GetEngine().ReachableAcrossConfigs(refactor.ReachableRequest{Entry: in.EntryPackage, Targets: in.Targets, IncludeTests: in.IncludeTests, Within: in.Within})
 		}
 		state.RUnlock()
 		if err != nil {

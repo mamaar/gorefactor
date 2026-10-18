@@ -1485,6 +1485,10 @@ func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath st
 		return nil
 	}
 
+	if change := addImportBesideCgo(ws, file, alias, importPath); change != nil {
+		return change
+	}
+
 	// Check if we have imports and if they're in single-line or multi-line format
 	if len(file.AST.Imports) > 0 {
 		// Read file content to check import format
@@ -1549,6 +1553,54 @@ func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath st
 		}
 	}
 	return nil
+}
+
+// addImportBesideCgo adds an import to a file that has `import "C"`, which must
+// stay a standalone declaration directly after its preamble comment. It
+// returns nil for a file without one.
+func addImportBesideCgo(ws *types.Workspace, file *types.File, alias, importPath string) *types.Change {
+	var cgo *ast.GenDecl
+	var other []*ast.GenDecl // the other import declarations
+	for _, d := range file.AST.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.IMPORT {
+			continue
+		}
+		if len(gd.Specs) == 1 && !gd.Lparen.IsValid() && gd.Specs[0].(*ast.ImportSpec).Path.Value == `"C"` {
+			cgo = gd
+			continue
+		}
+		other = append(other, gd)
+	}
+	if cgo == nil || ws.FileSet == nil {
+		return nil
+	}
+	offset := func(p token.Pos) int { return ws.FileSet.Position(p).Offset }
+	content := file.OriginalContent
+	spec := importSpecText(alias, importPath)
+	desc := fmt.Sprintf("Add import for %s", importPath)
+
+	if len(other) == 0 {
+		end := offset(cgo.End())
+		if i := bytes.IndexByte(content[end:], '\n'); i >= 0 {
+			end += i + 1
+		}
+		return &types.Change{File: file.Path, Start: end, End: end, NewText: "import " + spec + "\n", Description: desc}
+	}
+
+	last := other[len(other)-1]
+	if last.Lparen.IsValid() {
+		end := offset(last.Rparen)
+		return &types.Change{File: file.Path, Start: end, End: end, NewText: "\t" + spec + "\n", Description: desc}
+	}
+	start, end := offset(last.Pos()), offset(last.End())
+	old := strings.TrimSpace(string(content[start:end]))
+	old = strings.TrimSpace(strings.TrimPrefix(old, "import"))
+	return &types.Change{
+		File: file.Path, Start: start, End: end, OldText: string(content[start:end]),
+		NewText:     fmt.Sprintf("import (\n\t%s\n\t%s\n)", old, spec),
+		Description: "Convert single-line import to multi-line and add " + importPath,
+	}
 }
 
 // isSingleLineImport checks if imports are in single-line format (no parentheses)

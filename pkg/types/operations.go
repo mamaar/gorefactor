@@ -119,6 +119,9 @@ type ThreadContextRequest struct {
 	// CallSitesOf, with EntryPackage, replaces FunctionName: the seeds are the declarations enclosing the
 	// reached call sites of these targets (pkg.Func, pkg.Type.Method or a package path).
 	CallSitesOf []string
+	// WithinFunction (pkg.Func or pkg.Type.Method; needs CallSitesOf) limits the seeds to the code this
+	// function reaches, and the climb stops at callers the entry program reaches outside it.
+	WithinFunction string
 }
 
 // AddContextParameterRequest adds `ctx context.Context` as the first parameter

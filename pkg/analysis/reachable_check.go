@@ -316,3 +316,11 @@ func usesCgo(files []*ast.File) bool {
 	}
 	return false
 }
+
+// WithinUnreachedError is returned when the declaration a scoped analysis starts
+// from is not reached by the entry program.
+type WithinUnreachedError struct{ Function string }
+
+func (e *WithinUnreachedError) Error() string {
+	return fmt.Sprintf("within_function %s is not reached by the entry program", e.Function)
+}

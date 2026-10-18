@@ -165,6 +165,11 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 	if err != nil {
 		return nil, nil, err
 	}
+	if ua.within != nil {
+		if live = live.within(*ua.within); live == nil {
+			return nil, nil, &WithinUnreachedError{Function: ua.within.String()}
+		}
+	}
 
 	var sites []ReachableSite
 	add := func(target Target, file *types.File, pos token.Pos, kind string) {
@@ -209,15 +214,32 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 // is reachable from main of entry, and the packages whose code it could not see.
 // An entry that cannot be analysed is an *EntryBodilessError.
 func (ua *UnusedAnalyzer) ReachedFuncs(entry *types.Package) (types.SymbolKeySet, []BodilessPackage, error) {
+	keys, _, bodiless, err := ua.ReachedFuncsWithin(entry)
+	return keys, bodiless, err
+}
+
+// ReachedFuncsWithin is ReachedFuncs plus, when SetWithin was called, the keys
+// reached from that declaration (nil when the entry program does not reach it).
+func (ua *UnusedAnalyzer) ReachedFuncsWithin(entry *types.Package) (all, within types.SymbolKeySet, bodiless []BodilessPackage, err error) {
 	if entry.Name != "main" {
-		return nil, nil, fmt.Errorf("entry package %s is not package main", entry.Path)
+		return nil, nil, nil, fmt.Errorf("entry package %s is not package main", entry.Path)
 	}
 	live, err := ua.buildLiveness(entry, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	if ua.within != nil {
+		if w := live.within(*ua.within); w != nil {
+			within = w.keys()
+		}
+	}
+	return live.keys(), within, live.bodiless, nil
+}
+
+// keys returns the declared functions and methods l reaches.
+func (l *liveness) keys() types.SymbolKeySet {
 	keys := make(types.SymbolKeySet)
-	for n := range live.pred {
+	for n := range l.pred {
 		if n.Func == nil {
 			continue
 		}
@@ -227,7 +249,7 @@ func (ua *UnusedAnalyzer) ReachedFuncs(entry *types.Package) (types.SymbolKeySet
 			}
 		}
 	}
-	return keys, live.bodiless, nil
+	return keys
 }
 
 // importClosure returns entry and the workspace packages it imports

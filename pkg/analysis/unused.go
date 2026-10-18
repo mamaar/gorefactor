@@ -52,6 +52,13 @@ type UnusedAnalyzer struct {
 	resolver        *SymbolResolver
 	includeExported bool
 	index           *ReferenceIndex
+	within          *types.SymbolKey
+}
+
+// SetWithin limits ReachableSites and ReachedFuncsWithin to what the declaration
+// key reaches; the live types still come from the whole entry program.
+func (ua *UnusedAnalyzer) SetWithin(key types.SymbolKey) {
+	ua.within = &key
 }
 
 // SetIndex makes the analyzer use idx instead of building a reference index.

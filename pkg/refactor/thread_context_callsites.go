@@ -82,7 +82,7 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 	if key, ok := pkgtypes.SymbolKeyOf(enclosing); ok && op.targets.Has(key) {
 		return nil, nil
 	}
-	if op.Reach.outside(enclosing) {
+	if op.Reach.outside(enclosing) || op.Reach.outsideWithin(enclosing) {
 		return nil, nil
 	}
 

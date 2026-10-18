@@ -24,6 +24,9 @@ type liveness struct {
 	inits map[string]*callgraph.Node          // package path -> its initializer
 
 	bodiless []BodilessPackage // code the analysis could not see
+
+	graph *callgraph.Graph
+	scans scanCache
 }
 
 type liveDecl struct {
@@ -244,8 +247,7 @@ func testFuncs(sp *ssa.Package) []*ssa.Function {
 // newLiveness searches cg breadth-first from the roots not in takenOnly,
 // following calls and the functions each scanned function takes.
 func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.Function]bool, scans scanCache) *liveness {
-	l := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node)}
-	seenDecl := make(map[token.Pos]bool)
+	l := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), graph: cg, scans: scans}
 	var queue []*callgraph.Node
 	for _, r := range roots {
 		if n := cg.CreateNode(r); !takenOnly[r] && !slices.Contains(queue, n) {
@@ -253,6 +255,38 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.
 			queue = append(queue, n)
 		}
 	}
+	l.search(queue)
+	return l
+}
+
+// within returns what the declaration key reaches, over the call graph of l, or
+// nil when l does not reach it. The graph, and so the live types, are l's.
+func (l *liveness) within(key types.SymbolKey) *liveness {
+	w := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), bodiless: l.bodiless, graph: l.graph, scans: l.scans}
+	var queue []*callgraph.Node
+	for n := range l.pred {
+		if n.Func == nil || n.Func.Parent() != nil || n.Func.Synthetic != "" {
+			continue
+		}
+		if fn, ok := n.Func.Object().(*gotypes.Func); ok {
+			if k, ok := types.SymbolKeyOf(fn); ok && k == key {
+				w.pred[n] = nil
+				queue = append(queue, n)
+			}
+		}
+	}
+	if len(queue) == 0 {
+		return nil
+	}
+	w.search(queue)
+	return w
+}
+
+// search extends l breadth-first from queue, following calls and the
+// functions each scanned function takes.
+func (l *liveness) search(queue []*callgraph.Node) {
+	cg, scans := l.graph, l.scans
+	seenDecl := make(map[token.Pos]bool)
 	for len(queue) > 0 {
 		n := queue[0]
 		queue = queue[1:]
@@ -274,7 +308,6 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.
 		}
 	}
 	slices.SortFunc(l.decls, func(a, b liveDecl) int { return int(a.pos - b.pos) })
-	return l
 }
 
 // funcScan lists what a function does that RTA does not link to a call: the

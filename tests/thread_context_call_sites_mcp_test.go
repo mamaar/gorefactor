@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -346,4 +347,130 @@ func Run() {
 		}
 	}
 	goBuilds(t, dir, "")
+}
+
+func withinArgs(dryRun bool) map[string]any {
+	args := callSitesArgs(dryRun)
+	args["within_function"] = "example.com/threadmcp/p.Run"
+	return args
+}
+
+const withinFiles = `package p
+
+import "example.com/threadmcp/lg"
+
+type Doer interface{ Do() }
+
+type Impl struct{}
+
+func (Impl) Do() { lg.Warn("impl") }
+
+func Run(d Doer) { inRun(); shared(); d.Do() }
+
+func Other() { inOther(); shared() }
+
+func inRun() { lg.Warn("r") }
+
+func inOther() { lg.Warn("o") }
+
+func shared() { lg.Warn("s") }
+`
+
+func TestAddContextParameter_CallSitesOfWithinFunctionSeedsOnlyItsReach(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": logPkg,
+		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Run(p.Impl{}); p.Other() }\n",
+		"p/p.go":   withinFiles,
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "add_context_parameter", withinArgs(false))
+
+	got := fileText(t, dir, "p/p.go")
+	for _, want := range []string{
+		"func (Impl) Do(ctx context.Context)",
+		"func Run(ctx context.Context, d Doer)",
+		"func inRun(ctx context.Context)",
+		"func shared(ctx context.Context)",
+		"func Other() { inOther(); shared(context.TODO()) }",
+		"func inOther() { lg.Warn(\"o\") }",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("p.go lacks %q:\n%s", want, got)
+		}
+	}
+	if !hasReason(out, "outside within:") {
+		t.Errorf("skipped_sites lacks an outside within: entry: %v", skippedReasons(out))
+	}
+	goBuilds(t, dir, "")
+}
+
+func TestAddContextParameter_WithinFunctionRequiresCallSitesOf(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": logPkg,
+		"main.go":  "package main\n\nfunc main() {}\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	args := map[string]any{"function_name": "main", "source_file": "main.go", "thread": true, "within_function": "example.com/threadmcp/p.Run"}
+	if msg := callExpectingError(t, sess, args); !strings.Contains(msg, "within_function") {
+		t.Errorf("error should name within_function: %s", msg)
+	}
+}
+
+func TestReachableReferences_WithinFunctionKeepsLiveTypesOfWholeProgram(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": logPkg,
+		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Run(p.Impl{}); p.Other() }\n",
+		"p/p.go":   withinFiles,
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "reachable_references", map[string]any{
+		"entry_package":   "example.com/threadmcp",
+		"targets":         []string{"example.com/threadmcp/lg.Warn"},
+		"within_function": "example.com/threadmcp/p.Run",
+	})
+
+	var got []string
+	for _, s := range out["sites"].([]any) {
+		got = append(got, s.(map[string]any)["enclosing"].(string))
+	}
+	slices.Sort(got)
+	if want := []string{"Impl.Do", "inRun", "shared"}; !slices.Equal(got, want) {
+		t.Errorf("enclosing = %v, want %v", got, want)
+	}
+}
+
+func TestAddContextParameter_CallSitesOfSkipsShadowedContextPackage(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": logPkg,
+		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Render() }\n",
+		"p/p.go": `package p
+
+import "example.com/threadmcp/lg"
+
+func Render() {
+	context := "c"
+	_ = context
+	go func() { helper() }()
+}
+
+func helper() { lg.Warn("h") }
+`,
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "add_context_parameter", callSitesArgs(false))
+
+	if got := fileText(t, dir, "p/p.go"); strings.Contains(got, "context.TODO()") {
+		t.Errorf("emitted context.TODO() where context is shadowed:\n%s", got)
+	}
+	if !hasReason(out, "shadowed context:") {
+		t.Errorf("skipped_sites lacks a shadowed context: entry: %v", skippedReasons(out))
+	}
 }

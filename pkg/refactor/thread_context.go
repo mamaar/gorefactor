@@ -96,6 +96,13 @@ type EntryReach struct {
 	Entry    string
 	Funcs    pkgtypes.SymbolKeySet // functions and methods the program reaches
 	Bodiless map[string]bool       // packages with code the analysis could not see, and what they import; their callers count as reached
+	Within   pkgtypes.SymbolKeySet // when set, the functions the within function reaches
+}
+
+// outsideWithin reports whether f is reached by the entry program but not from the within function.
+func (r *EntryReach) outsideWithin(f *gotypes.Func) bool {
+	key, ok := pkgtypes.SymbolKeyOf(f)
+	return r.Within != nil && ok && !r.Within.Has(key) && !r.Bodiless[key.PkgPath]
 }
 
 // reachesPackage reports whether the program runs code of the package at path.
@@ -188,6 +195,9 @@ type threadPlan struct {
 	// Outside holds the callers the climb did not climb into because the entry
 	// program does not reach them.
 	Outside map[*gotypes.Func]bool
+	// OutsideWithin holds the callers the entry program reaches that the within
+	// function does not, which the climb did not climb into.
+	OutsideWithin map[*gotypes.Func]bool
 	// Renamed holds callers whose blank or unnamed context parameter is named
 	// ctx instead of gaining a second one.
 	Renamed map[*gotypes.Func]bool
@@ -304,6 +314,11 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 			add(f, "outside entry")
 		}
 	}
+	for f := range op.plan.OutsideWithin {
+		if _, gains := op.plan.Funcs[f]; !gains {
+			add(f, "outside within")
+		}
+	}
 	for f, reason := range op.plan.Blocked {
 		if fd := op.declIndex[f]; fd != nil && fd.File != nil {
 			sites = append(sites, pkgtypes.SkippedSite{
@@ -379,6 +394,7 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		Stops:  make(map[*gotypes.Func]bool),
 
 		Outside:       make(map[*gotypes.Func]bool),
+		OutsideWithin: make(map[*gotypes.Func]bool),
 		Renamed:       make(map[*gotypes.Func]bool),
 		Blocked:       make(map[*gotypes.Func]string),
 		WithoutCancel: len(op.CallSitesOf) > 0,
@@ -741,12 +757,16 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 		plan.Stops[caller] = true
 		return nil, false, nil
 	}
-	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && op.Reach.outside(caller) {
+	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && (op.Reach.outside(caller) || op.Reach.outsideWithin(caller)) {
 		// A conflict only costs the rename here: the caller can pass context.TODO().
 		if renamed, _ := op.renameBlankCtx(plan, caller, site); renamed {
 			return nil, false, nil
 		}
-		plan.Outside[caller] = true
+		if op.Reach.outside(caller) {
+			plan.Outside[caller] = true
+		} else {
+			plan.OutsideWithin[caller] = true
+		}
 		return nil, false, nil
 	}
 
@@ -834,7 +854,7 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	if site.Fn != nil && site.Lit == nil {
 		if caller, err := op.callerObject(site); err != nil {
 			return "", err
-		} else if op.isStop(caller) || plan.Outside[caller] || plan.Blocked[caller] != "" {
+		} else if op.isStop(caller) || plan.Outside[caller] || plan.OutsideWithin[caller] || plan.Blocked[caller] != "" {
 			return "context.TODO()", nil
 		}
 	}

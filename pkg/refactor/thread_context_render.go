@@ -108,6 +108,15 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 	// 2. Call sites: for every recorded call-site decision, either insert a
 	// new argument or replace an existing fabricated-root one.
 	for _, edit := range plan.ArgFor {
+		if plan.WithoutCancel && strings.Contains(edit.Expr, "context.") && contextShadowed(edit.Site.Pkg, edit.Site.Call.Pos()) {
+			plan.Notes = append(plan.Notes, pkgtypes.SkippedSite{
+				File:    edit.Site.File.Path,
+				Line:    offsetLine(edit.Site.File, edit.Site.Call.Pos()),
+				Reason:  fmt.Sprintf("shadowed context: %s cannot be written here, so the call to %s needs a ctx argument by hand", edit.Expr, funcLabel(edit.Callee)),
+				Snippet: funcLabel(edit.Callee),
+			})
+			continue
+		}
 		change, importFile, err := renderCallEdit(ws, plan, edit)
 		if err != nil {
 			return nil, err
@@ -456,6 +465,21 @@ func renderFakeDeletion(ws *pkgtypes.Workspace, file *pkgtypes.File, stmt *ast.A
 	start := ws.FileSet.Position(stmt.Pos()).Offset
 	end := ws.FileSet.Position(stmt.End()).Offset
 	return ctxAssignDeletionChange(file.Path, file.OriginalContent, start, end, label)
+}
+
+// contextShadowed reports whether `context` at pos names something other than
+// the context package, so a context.X expression written there would not compile.
+func contextShadowed(pkg *pkgtypes.Package, pos token.Pos) bool {
+	_, inner := scopeAt(pkg, pos)
+	if inner == nil {
+		return false
+	}
+	_, obj := inner.LookupParent("context", pos)
+	if obj == nil {
+		return false
+	}
+	pn, ok := obj.(*gotypes.PkgName)
+	return !ok || pn.Imported().Path() != "context"
 }
 
 // renderFakeWithoutCancel replaces stmt, the top-level `ctx :=

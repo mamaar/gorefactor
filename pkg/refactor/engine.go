@@ -430,7 +430,7 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 	}
 	var reach *EntryReach
 	if req.EntryPackage != "" {
-		if reach, err = e.entryReach(views, req.EntryPackage); err != nil {
+		if reach, err = e.entryReach(views, req.EntryPackage, req.WithinFunction); err != nil {
 			return nil, err
 		}
 	}
@@ -470,8 +470,12 @@ func addImportClosure(set map[string]bool, ws *types.Workspace, path string) {
 // entryReach merges what the program of entry reaches under each build
 // configuration. A configuration whose entry cannot be analysed adds nothing,
 // and is an error only when no configuration can be.
-func (e *DefaultEngine) entryReach(views []*analysis.View, entry string) (*EntryReach, error) {
+func (e *DefaultEngine) entryReach(views []*analysis.View, entry, within string) (*EntryReach, error) {
 	reach := &EntryReach{Entry: entry, Funcs: make(types.SymbolKeySet), Bodiless: make(map[string]bool)}
+	if within != "" {
+		reach.Within = make(types.SymbolKeySet)
+	}
+	withinReached := false
 	var entryErr error
 	analysed := 0
 	for _, v := range views {
@@ -480,7 +484,17 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry string) (*Entry
 			continue
 		}
 		ensureTypeChecked(v.Parser, v.Workspace)
-		funcs, bodiless, err := analysis.NewUnusedAnalyzer(v.Workspace, e.logger).ReachedFuncs(pkg)
+		a := analysis.NewUnusedAnalyzer(v.Workspace, e.logger)
+		if within != "" {
+			key, ok, err := withinKey(v.Workspace, within)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				a.SetWithin(key)
+			}
+		}
+		funcs, scoped, bodiless, err := a.ReachedFuncsWithin(pkg)
 		var bodilessEntry *analysis.EntryBodilessError
 		switch {
 		case errors.As(err, &bodilessEntry):
@@ -491,6 +505,10 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry string) (*Entry
 		}
 		analysed++
 		maps.Copy(reach.Funcs, funcs)
+		if scoped != nil {
+			withinReached = true
+			maps.Copy(reach.Within, scoped)
+		}
 		for _, b := range bodiless {
 			if !strings.Contains(b.Package, " ") { // not a test variant
 				addImportClosure(reach.Bodiless, v.Workspace, b.Package)
@@ -499,6 +517,9 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry string) (*Entry
 	}
 	if analysed == 0 {
 		return nil, cmp.Or(entryErr, fmt.Errorf("entry package %q not found in any build configuration", entry))
+	}
+	if within != "" && !withinReached {
+		return nil, fmt.Errorf("within_function %q is not declared or not reached by the entry program", within)
 	}
 	return reach, nil
 }

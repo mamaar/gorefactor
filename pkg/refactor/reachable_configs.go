@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	gotypes "go/types"
 	"maps"
 	"slices"
 
@@ -16,6 +17,9 @@ type ReachableRequest struct {
 	Entry        string // a package main, as import path, directory or workspace-relative path
 	Targets      []string
 	IncludeTests bool
+	// Within limits the report to what this function (pkg.Func or pkg.Type.Method)
+	// reaches; the live types still come from the whole entry program.
+	Within string
 }
 
 // ReachableFinding is a reference to a target from code the entry program runs.
@@ -80,6 +84,9 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 			return nil, fmt.Errorf("unknown target %q", spec)
 		}
 	}
+	if req.Within != "" && !run.withinReached {
+		return nil, cmp.Or(run.withinErr, fmt.Errorf("unknown within_function %q", req.Within))
+	}
 
 	for _, f := range run.found {
 		if len(f.Configs) == len(views) {
@@ -109,6 +116,9 @@ type reachableRun struct {
 	entryErr error // the first configuration whose entry package is bodiless
 	resolved map[string]bool // specs some view resolves
 	dirs     map[string]bool // directories examined in any view
+
+	withinReached bool  // some view's entry program reaches req.Within
+	withinErr     error // the last view that declares req.Within but does not reach it
 }
 
 // visit adds the sites v reaches. It reports false when v lacks the entry
@@ -135,7 +145,22 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 
 	a := analysis.NewUnusedAnalyzer(v.Workspace, e.logger)
 	a.SetIndex(idx)
+	if r.req.Within != "" {
+		key, ok, err := withinKey(v.Workspace, r.req.Within)
+		if err != nil {
+			return true, err
+		}
+		if !ok {
+			return true, nil // another build configuration may declare it
+		}
+		a.SetWithin(key)
+	}
 	sites, bodiless, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
+	var unreached *analysis.WithinUnreachedError
+	if errors.As(err, &unreached) {
+		r.withinErr = err
+		return true, nil
+	}
 	var entryBodiless *analysis.EntryBodilessError
 	if errors.As(err, &entryBodiless) {
 		r.entryErr = cmp.Or(r.entryErr, err)
@@ -155,6 +180,7 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 	if entryBodiless != nil {
 		return false, nil
 	}
+	r.withinReached = true
 	for _, dir := range a.ReachableDirs(entry, r.req.IncludeTests) {
 		r.dirs[dir] = true
 	}
@@ -168,4 +194,22 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 		f.Configs = append(f.Configs, v.Config.String())
 	}
 	return true, nil
+}
+
+// withinKey resolves spec, one function or method, to its key in ws. ok is
+// false when ws does not declare it.
+func withinKey(ws *types.Workspace, spec string) (key types.SymbolKey, ok bool, err error) {
+	targets, rerr := analysis.ResolveTargets(ws, []string{spec})
+	if rerr != nil {
+		return key, false, nil
+	}
+	if len(targets) != 1 {
+		return key, false, fmt.Errorf("within_function %q must name one function or method", spec)
+	}
+	fn, isFunc := targets[0].Obj.(*gotypes.Func)
+	if !isFunc {
+		return key, false, fmt.Errorf("within_function %q is not a function or method", spec)
+	}
+	key, ok = types.SymbolKeyOf(canonicalFunc(fn))
+	return key, ok, nil
 }
