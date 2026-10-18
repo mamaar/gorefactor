@@ -404,8 +404,8 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 	if err != nil {
 		return nil, err
 	}
-	if req.EntryPackage != "" {
-		return nil, fmt.Errorf("entry_package needs every build configuration; use ThreadContextAcrossConfigs")
+	if req.EntryPackage != "" || len(req.CallSitesOf) > 0 {
+		return nil, fmt.Errorf("entry_package and call_sites_of need every build configuration; use ThreadContextAcrossConfigs")
 	}
 	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil, stop, nil)
 	return plan, err
@@ -434,7 +434,17 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 			return nil, err
 		}
 	}
-	return e.planAcrossConfigs(&threadContextPlanner{engine: e, req: req, stop: stop, reach: reach})
+	planner := &threadContextPlanner{engine: e, req: req, stop: stop, reach: reach, resolved: make(map[string]bool)}
+	plan, err := e.planAcrossConfigs(planner)
+	if err != nil {
+		return nil, err
+	}
+	for _, spec := range req.CallSitesOf {
+		if !planner.resolved[spec] {
+			return nil, fmt.Errorf("unknown target %q", spec)
+		}
+	}
+	return plan, nil
 }
 
 // addImportClosure adds path and the workspace packages it imports,
@@ -500,6 +510,8 @@ type threadContextPlanner struct {
 	req    types.ThreadContextRequest
 	stop   types.SymbolKeySet
 	reach  *EntryReach
+	// resolved holds the req.CallSitesOf entries some view declares.
+	resolved map[string]bool
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
@@ -510,6 +522,7 @@ func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySe
 	res := configResult{absent: err, declared: declaredFuncKeys(v.Workspace)}
 	if err == nil {
 		res = configResult{plan: plan, changed: op.GainedKeys(), reach: op.reach(), declared: res.declared}
+		maps.Copy(p.resolved, op.ResolvedCallSites())
 	}
 	p.planned(v, plan)
 	return res, nil
@@ -540,6 +553,7 @@ func (e *DefaultEngine) threadContext(
 	operation := &ThreadContextOperation{
 		FunctionName: req.FunctionName,
 		SourceFile:   req.SourceFile,
+		CallSitesOf:  req.CallSitesOf,
 		Linked:       linked,
 		StopAt:       stop,
 		Reach:        reach,

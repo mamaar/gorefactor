@@ -208,7 +208,7 @@ func (op *ThreadContextOperation) generatedAbort(ws *pkgtypes.Workspace, g *gene
 		advice = fmt.Sprintf("To keep the climb out of generated code, pass stop_at: [%s].", strings.Join(stops, ", "))
 	}
 
-	seed := op.FunctionName
+	seed := cmp.Or(op.FunctionName, "the call sites of "+strings.Join(op.CallSitesOf, ", "))
 	if op.seed != nil {
 		seed = funcLabel(op.seed)
 	}

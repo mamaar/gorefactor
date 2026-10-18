@@ -67,6 +67,14 @@ type ThreadContextOperation struct {
 	// program does not reach, like a stop.
 	Reach *EntryReach
 
+	// CallSitesOf seeds the climb at the declarations enclosing the reached
+	// call sites of these targets instead of at FunctionName; the targets keep
+	// their signatures. Needs Reach. A function that cannot gain a ctx without
+	// breaking the build is skipped instead of aborting the plan, and a
+	// fabricated root context becomes context.WithoutCancel(ctx).
+	CallSitesOf []string
+	resolved    map[string]bool // CallSitesOf entries this workspace declares
+
 	plan *threadPlan // populated by Validate/Execute
 
 	declIndex map[*gotypes.Func]*funcDecl
@@ -87,6 +95,19 @@ type EntryReach struct {
 	Entry    string
 	Funcs    pkgtypes.SymbolKeySet // functions and methods the program reaches
 	Bodiless map[string]bool       // packages with code the analysis could not see, and what they import; their callers count as reached
+}
+
+// reachesPackage reports whether the program runs code of the package at path.
+func (r *EntryReach) reachesPackage(path string) bool {
+	if r.Bodiless[path] {
+		return true
+	}
+	for key := range r.Funcs {
+		if key.PkgPath == path {
+			return true
+		}
+	}
+	return false
 }
 
 // outside reports whether f is declared in analysed code the program does not reach.
@@ -169,6 +190,14 @@ type threadPlan struct {
 	// Renamed holds callers whose blank or unnamed context parameter is named
 	// ctx instead of gaining a second one.
 	Renamed map[*gotypes.Func]bool
+	// Blocked holds the functions a call-site seeded plan leaves unchanged
+	// because they cannot gain a ctx, with the reason.
+	Blocked map[*gotypes.Func]string
+	// Notes are the call sites a call-site seeded plan leaves unchanged.
+	Notes []pkgtypes.SkippedSite
+	// WithoutCancel keeps a fabricated root context's lack of cancellation:
+	// it becomes context.WithoutCancel(ctx) instead of being replaced by ctx.
+	WithoutCancel bool
 }
 
 // dropAnalysis forgets the index, declarations and plan-of-record the
@@ -180,6 +209,9 @@ func (op *ThreadContextOperation) dropAnalysis() {
 	op.seed = nil
 	op.ifaceCache = nil
 }
+
+// ResolvedCallSites returns the CallSitesOf entries the planned workspace declares.
+func (op *ThreadContextOperation) ResolvedCallSites() map[string]bool { return op.resolved }
 
 func (op *ThreadContextOperation) Type() pkgtypes.OperationType {
 	return pkgtypes.ThreadContextOperationType
@@ -271,9 +303,21 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 			add(f, "outside entry")
 		}
 	}
+	for f, reason := range op.plan.Blocked {
+		if fd := op.declIndex[f]; fd != nil && fd.File != nil {
+			sites = append(sites, pkgtypes.SkippedSite{
+				File:    fd.File.Path,
+				Line:    offsetLine(fd.File, fd.Decl.Pos()),
+				Reason:  reason,
+				Snippet: funcLabel(f),
+			})
+		}
+	}
+	sites = append(sites, op.plan.Notes...)
 	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
-		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Snippet, b.Snippet))
+		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Snippet, b.Snippet), strings.Compare(a.Reason, b.Reason))
 	})
+	sites = slices.Compact(sites)
 	return sites
 }
 
@@ -326,11 +370,6 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 
 	op.declIndex = buildFuncDeclIndex(ws)
 
-	seeds, err := op.seeds(ws)
-	if err != nil {
-		return nil, err
-	}
-
 	plan := &threadPlan{
 		Funcs:  make(map[*gotypes.Func]string),
 		Decls:  make(map[*gotypes.Func]*funcDecl),
@@ -338,8 +377,15 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		ArgFor: make(map[token.Pos]*callEdit),
 		Stops:  make(map[*gotypes.Func]bool),
 
-		Outside: make(map[*gotypes.Func]bool),
-		Renamed: make(map[*gotypes.Func]bool),
+		Outside:       make(map[*gotypes.Func]bool),
+		Renamed:       make(map[*gotypes.Func]bool),
+		Blocked:       make(map[*gotypes.Func]string),
+		WithoutCancel: len(op.CallSitesOf) > 0,
+	}
+
+	seeds, err := op.seeds(ws, idx, plan)
+	if err != nil {
+		return nil, err
 	}
 
 	visited, err := op.discover(ws, idx, plan, seeds)
@@ -355,11 +401,18 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 	return plan, nil
 }
 
-// seeds returns the requested seed followed by every function Linked names in
-// this workspace. A seed the workspace does not declare is an error only when
+// seeds returns the requested seed (or the call-site seeds) followed by every
+// function Linked names in this workspace. A seed the workspace does not declare is an error only when
 // no linked function stands in for it.
-func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace) ([]*gotypes.Func, error) {
+func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace, idx *analysis.ReferenceIndex, plan *threadPlan) ([]*gotypes.Func, error) {
 	linked := op.linkedFuncs()
+	if len(op.CallSitesOf) > 0 {
+		sites, err := op.callSiteSeeds(ws, idx, plan)
+		if err != nil {
+			return nil, err
+		}
+		return op.rejectStopSeeds(append(sites, linked...))
+	}
 	seed, err := op.resolveSeed(ws)
 	if err != nil {
 		if len(linked) == 0 || !isSymbolNotFound(err) {
@@ -499,11 +552,20 @@ func (op *ThreadContextOperation) discover(
 	visited := make(map[*gotypes.Func]bool)
 	queue := slices.Clone(seeds)
 	gen := newGeneratedReach()
+	// pinned are the functions that must change together with another one, so
+	// a call-site seeded plan cannot skip them.
+	pinned := make(map[*gotypes.Func]bool)
+	for _, f := range op.linkedFuncs() {
+		pinned[f] = true
+	}
 
 	for len(queue) > 0 {
 		f := queue[0]
 		queue = queue[1:]
 		if visited[f] {
+			if reason := plan.Blocked[f]; reason != "" && pinned[f] {
+				return nil, blockedError(f, reason)
+			}
 			continue // the visited set is what terminates cycles and diamonds
 		}
 		visited[f] = true
@@ -516,6 +578,15 @@ func (op *ThreadContextOperation) discover(
 		// may raise an abort that hides this one.
 		if gen.isGaining(f, fd) {
 			continue
+		}
+		if len(op.CallSitesOf) > 0 {
+			if reason := op.gainBlocker(ws, idx, f); reason != "" {
+				if pinned[f] {
+					return nil, blockedError(f, reason)
+				}
+				plan.Blocked[f] = reason
+				continue
+			}
 		}
 		plan.Decls[f] = fd
 
@@ -545,6 +616,9 @@ func (op *ThreadContextOperation) discover(
 			}
 		}
 		gen.expanded(f, extra)
+		for _, e := range extra {
+			pinned[e] = true
+		}
 		queue = append(queue, extra...)
 
 		for _, site := range idx.CallSitesOf(f) {
@@ -563,6 +637,9 @@ func (op *ThreadContextOperation) discover(
 	}
 	if err := op.generatedAbort(ws, gen, seeds); err != nil {
 		return nil, err
+	}
+	for f := range plan.Blocked {
+		delete(visited, f)
 	}
 	return visited, nil
 }
@@ -756,7 +833,7 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	if site.Fn != nil && site.Lit == nil {
 		if caller, err := op.callerObject(site); err != nil {
 			return "", err
-		} else if op.isStop(caller) || plan.Outside[caller] {
+		} else if op.isStop(caller) || plan.Outside[caller] || plan.Blocked[caller] != "" {
 			return "context.TODO()", nil
 		}
 	}

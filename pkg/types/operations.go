@@ -116,6 +116,9 @@ type ThreadContextRequest struct {
 	SourceFile   string   // File containing the function declaration
 	StopAt       []string // Functions the climb stops at: "Name", "Type.Method" or "path/file.go:Type.Method"
 	EntryPackage string   // A package main: the climb stops at callers its program does not reach
+	// CallSitesOf, with EntryPackage, replaces FunctionName: the seeds are the declarations enclosing the
+	// reached call sites of these targets (pkg.Func, pkg.Type.Method or a package path).
+	CallSitesOf []string
 }
 
 // AddContextParameterRequest adds `ctx context.Context` as the first parameter

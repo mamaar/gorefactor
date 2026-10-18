@@ -130,6 +130,9 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 				"internal error: %s has a recorded fake-root deletion but no resolvable declaration", funcLabel(f))
 		}
 		del := renderFakeDeletion(ws, fd.File, stmt, funcLabel(f))
+		if plan.WithoutCancel {
+			del = renderFakeWithoutCancel(ws, fd.File, stmt, plan.Funcs[f], funcLabel(f))
+		}
 		// Assert, per the plan, that this deletion cannot swallow an
 		// insertion already emitted. It never can in practice: the deleted
 		// range is exactly `ctx := context.Background()` (or ...TODO()),
@@ -215,12 +218,16 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 			start := ws.FileSet.Position(call.Pos()).Offset
 			end := ws.FileSet.Position(call.End()).Offset
 			old := string(fd.File.OriginalContent[start:end])
+			text := name
+			if plan.WithoutCancel {
+				text = "context.WithoutCancel(" + name + ")"
+			}
 			changes = append(changes, pkgtypes.Change{
 				File:    fd.File.Path,
 				Start:   start,
 				End:     end,
 				OldText: old,
-				NewText: name,
+				NewText: text,
 				Description: fmt.Sprintf(
 					"Replace fabricated %s with the new %s parameter in %s", old, name, funcLabel(f)),
 			})
@@ -445,6 +452,26 @@ func renderFakeDeletion(ws *pkgtypes.Workspace, file *pkgtypes.File, stmt *ast.A
 	start := ws.FileSet.Position(stmt.Pos()).Offset
 	end := ws.FileSet.Position(stmt.End()).Offset
 	return ctxAssignDeletionChange(file.Path, file.OriginalContent, start, end, label)
+}
+
+// renderFakeWithoutCancel replaces stmt, the top-level `ctx :=
+// context.Background()` of f's function, with a ctx that keeps the parameter's
+// values and drops its cancellation, as the fabricated one did not cancel.
+func renderFakeWithoutCancel(ws *pkgtypes.Workspace, file *pkgtypes.File, stmt *ast.AssignStmt, param, label string) pkgtypes.Change {
+	start := ws.FileSet.Position(stmt.Pos()).Offset
+	end := ws.FileSet.Position(stmt.End()).Offset
+	text := "ctx := context.WithoutCancel(" + param + ")"
+	if param == "ctx" {
+		text = "ctx = context.WithoutCancel(ctx)"
+	}
+	return pkgtypes.Change{
+		File:        file.Path,
+		Start:       start,
+		End:         end,
+		OldText:     string(file.OriginalContent[start:end]),
+		NewText:     text,
+		Description: fmt.Sprintf("Replace fabricated root context with context.WithoutCancel in %s", label),
+	}
 }
 
 // ctxParamIndex returns the index of f's context.Context parameter. Mirrors
