@@ -214,7 +214,7 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 			continue
 		}
 
-		for _, call := range internalRootContextCalls(fd.Decl.Body) {
+		for _, call := range internalRootContextCalls(fd.Decl.Body, plan.WithoutCancel) {
 			start := ws.FileSet.Position(call.Pos()).Offset
 			end := ws.FileSet.Position(call.End()).Offset
 			old := string(fd.File.OriginalContent[start:end])
@@ -254,12 +254,12 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 	return kept
 }
 
-// internalRootContextCalls returns the root context calls of body outside
-// nested function literals.
-func internalRootContextCalls(body *ast.BlockStmt) []*ast.CallExpr {
+// internalRootContextCalls returns the root context calls of body, outside
+// nested function literals unless intoClosures.
+func internalRootContextCalls(body *ast.BlockStmt, intoClosures bool) []*ast.CallExpr {
 	var calls []*ast.CallExpr
 	ast.Inspect(body, func(n ast.Node) bool {
-		if _, isLit := n.(*ast.FuncLit); isLit {
+		if _, isLit := n.(*ast.FuncLit); isLit && !intoClosures {
 			return false
 		}
 		call, ok := n.(*ast.CallExpr)
@@ -274,7 +274,7 @@ func internalRootContextCalls(body *ast.BlockStmt) []*ast.CallExpr {
 }
 
 func hasInternalRootContext(body *ast.BlockStmt) bool {
-	return len(internalRootContextCalls(body)) > 0
+	return len(internalRootContextCalls(body, false)) > 0
 }
 
 // overlapsAny reports whether c intersects any change in others, using the
@@ -403,12 +403,16 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 		}
 		start := ws.FileSet.Position(arg.Pos()).Offset
 		end := ws.FileSet.Position(arg.End()).Offset
+		text := edit.Expr
+		if plan.WithoutCancel && !strings.HasPrefix(text, "context.") {
+			text = "context.WithoutCancel(" + text + ")"
+		}
 		change := &pkgtypes.Change{
 			File:        site.File.Path,
 			Start:       start,
 			End:         end,
 			OldText:     string(site.File.OriginalContent[start:end]),
-			NewText:     edit.Expr,
+			NewText:     text,
 			Description: fmt.Sprintf("Replace fabricated root context with %s at call to %s", edit.Expr, funcLabel(callee)),
 		}
 		return change, importFileFor(site.File.Path, edit.Expr), nil

@@ -285,3 +285,65 @@ func TestAddContextParameter_CallSitesOfRejectsBadCombinations(t *testing.T) {
 		}
 	}
 }
+
+func TestAddContextParameter_CallSitesOfTargetsKeepTheirSignatures(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": "package lg\n\nfunc Error(msg string) {}\n\nfunc Failure(msg string) { Error(msg) }\n",
+		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Run() }\n",
+		"p/p.go": `package p
+
+import "example.com/threadmcp/lg"
+
+func Run() { lg.Failure("x") }
+`,
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	args := callSitesArgs(false)
+	args["call_sites_of"] = []string{"example.com/threadmcp/lg.Error", "example.com/threadmcp/lg.Failure"}
+	callJSON(t, sess, "add_context_parameter", args)
+
+	if got := fileText(t, dir, "lg/lg.go"); strings.Contains(got, "context") {
+		t.Errorf("a target was changed:\n%s", got)
+	}
+	if got := fileText(t, dir, "p/p.go"); !strings.Contains(got, "func Run(ctx context.Context)") {
+		t.Errorf("p.go:\n%s", got)
+	}
+	goBuilds(t, dir, "")
+}
+
+func TestAddContextParameter_CallSitesOfInlineRootContextsKeepNoCancelInClosures(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": logPkg,
+		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Run() }\n",
+		"p/p.go": `package p
+
+import (
+	"context"
+
+	"example.com/threadmcp/lg"
+)
+
+func work(ctx context.Context) {}
+
+func Run() {
+	work(context.Background())
+	go func() { work(context.TODO()) }()
+	lg.Warn("r")
+}
+`,
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "add_context_parameter", callSitesArgs(false))
+
+	got := fileText(t, dir, "p/p.go")
+	for _, want := range []string{"work(context.WithoutCancel(ctx))", "go func() { work(context.WithoutCancel(ctx)) }()"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("p.go lacks %q:\n%s", want, got)
+		}
+	}
+	goBuilds(t, dir, "")
+}

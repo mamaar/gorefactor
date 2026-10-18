@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	gotypes "go/types"
+	"maps"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -24,22 +25,38 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 		}
 	}
 	op.resolved = make(map[string]bool)
-	var seeds []*gotypes.Func
+	var all []analysis.Target
 	for _, spec := range op.CallSitesOf {
 		targets, err := analysis.ResolveTargets(ws, []string{spec})
 		if err != nil {
 			continue // another build configuration may declare it
 		}
 		op.resolved[spec] = true
-		for _, t := range targets {
-			for _, site := range idx.CallSitesOf(t.Obj) {
-				seed, err := op.callSiteSeed(idx, plan, site)
-				if err != nil {
-					return nil, err
-				}
-				if seed != nil {
-					seeds = append(seeds, seed)
-				}
+		all = append(all, targets...)
+	}
+	// A target never gains a ctx: the climb stops at every one of them.
+	op.StopAt = maps.Clone(op.StopAt)
+	if op.StopAt == nil {
+		op.StopAt = make(pkgtypes.SymbolKeySet)
+	}
+	op.targets = make(pkgtypes.SymbolKeySet)
+	for _, t := range all {
+		if fn, ok := t.Obj.(*gotypes.Func); ok {
+			if key, ok := pkgtypes.SymbolKeyOf(canonicalFunc(fn)); ok {
+				op.StopAt[key] = struct{}{}
+				op.targets[key] = struct{}{}
+			}
+		}
+	}
+	var seeds []*gotypes.Func
+	for _, t := range all {
+		for _, site := range idx.CallSitesOf(t.Obj) {
+			seed, err := op.callSiteSeed(idx, plan, site)
+			if err != nil {
+				return nil, err
+			}
+			if seed != nil {
+				seeds = append(seeds, seed)
 			}
 		}
 	}
@@ -61,6 +78,9 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 	enclosing, err := op.callerObject(site)
 	if err != nil {
 		return nil, err
+	}
+	if key, ok := pkgtypes.SymbolKeyOf(enclosing); ok && op.targets.Has(key) {
+		return nil, nil
 	}
 	if op.Reach.outside(enclosing) {
 		return nil, nil

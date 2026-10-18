@@ -73,7 +73,8 @@ type ThreadContextOperation struct {
 	// breaking the build is skipped instead of aborting the plan, and a
 	// fabricated root context becomes context.WithoutCancel(ctx).
 	CallSitesOf []string
-	resolved    map[string]bool // CallSitesOf entries this workspace declares
+	resolved    map[string]bool       // CallSitesOf entries this workspace declares
+	targets     pkgtypes.SymbolKeySet // the resolved targets, which never gain a ctx
 
 	plan *threadPlan // populated by Validate/Execute
 
