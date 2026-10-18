@@ -474,3 +474,52 @@ func helper() { lg.Warn("h") }
 		t.Errorf("skipped_sites lacks a shadowed context: entry: %v", skippedReasons(out))
 	}
 }
+
+func TestReachableReferences_WithinFunctionIgnoresFuncValuesTakenOutsideItsReach(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lg/lg.go": logPkg,
+		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Setup(); p.Run(); p.Admin() }\n",
+		"p/p.go": `package p
+
+import "example.com/threadmcp/lg"
+
+var cb func()
+
+func Setup() { cb = admin }
+
+func admin() { lg.Warn("admin") }
+
+func Admin() { admin() }
+
+func local() { lg.Warn("local") }
+
+func Run() {
+	f := local
+	f()
+	cb()
+	lg.Warn("run")
+}
+`,
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "reachable_references", map[string]any{
+		"entry_package":   "example.com/threadmcp",
+		"targets":         []string{"example.com/threadmcp/lg.Warn"},
+		"within_function": "example.com/threadmcp/p.Run",
+	})
+
+	var got []string
+	for _, s := range out["sites"].([]any) {
+		site := s.(map[string]any)
+		got = append(got, site["enclosing"].(string))
+		if path := site["path"].([]any); path[0] != "p.Run" {
+			t.Errorf("path of %v does not start at p.Run: %v", site["enclosing"], path)
+		}
+	}
+	slices.Sort(got)
+	if want := []string{"Run", "local"}; !slices.Equal(got, want) {
+		t.Errorf("enclosing = %v, want %v", got, want)
+	}
+}

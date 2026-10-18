@@ -27,6 +27,9 @@ type liveness struct {
 
 	graph *callgraph.Graph
 	scans scanCache
+	// takenHere, when set, limits calls through func values to the functions in
+	// it, the ones taken as values inside the search.
+	takenHere map[*ssa.Function]bool
 }
 
 type liveDecl struct {
@@ -261,8 +264,37 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.
 
 // within returns what the declaration key reaches, over the call graph of l, or
 // nil when l does not reach it. The graph, and so the live types, are l's.
+//
+// RTA links a call through a func value to every function taken as a value in
+// the program, so such a call only reaches the functions the search itself takes
+// as values; the search is repeated until that set stops growing.
 func (l *liveness) within(key types.SymbolKey) *liveness {
-	w := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), bodiless: l.bodiless, graph: l.graph, scans: l.scans}
+	taken := make(map[*ssa.Function]bool)
+	for {
+		w := l.searchWithin(key, taken)
+		if w == nil {
+			return nil
+		}
+		grew := false
+		for n := range w.pred {
+			if n.Func == nil {
+				continue
+			}
+			for _, fn := range l.scans.of(n.Func).taken {
+				if !taken[fn] {
+					taken[fn] = true
+					grew = true
+				}
+			}
+		}
+		if !grew {
+			return w
+		}
+	}
+}
+
+func (l *liveness) searchWithin(key types.SymbolKey, taken map[*ssa.Function]bool) *liveness {
+	w := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), bodiless: l.bodiless, graph: l.graph, scans: l.scans, takenHere: taken}
 	var queue []*callgraph.Node
 	for n := range l.pred {
 		if n.Func == nil || n.Func.Parent() != nil || n.Func.Synthetic != "" {
@@ -282,6 +314,15 @@ func (l *liveness) within(key types.SymbolKey) *liveness {
 	return w
 }
 
+// isFuncValueCall reports whether e is a call through a func-typed value.
+func isFuncValueCall(e *callgraph.Edge) bool {
+	if e.Site == nil || e.Callee.Func == nil {
+		return false
+	}
+	c := e.Site.Common()
+	return !c.IsInvoke() && c.StaticCallee() == nil
+}
+
 // search extends l breadth-first from queue, following calls and the
 // functions each scanned function takes.
 func (l *liveness) search(queue []*callgraph.Node) {
@@ -293,6 +334,9 @@ func (l *liveness) search(queue []*callgraph.Node) {
 		l.index(n, seenDecl)
 		next := make([]*callgraph.Node, 0, len(n.Out))
 		for _, e := range n.Out {
+			if l.takenHere != nil && isFuncValueCall(e) && !l.takenHere[e.Callee.Func] && !l.takenHere[e.Callee.Func.Origin()] {
+				continue
+			}
 			next = append(next, e.Callee)
 		}
 		if n.Func != nil {
