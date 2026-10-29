@@ -20,8 +20,8 @@ type ParamSpec struct {
 type ChangeSignatureInput struct {
 	FunctionName string      `json:"function_name" jsonschema:"function or method name (use Type.Method for methods)"`
 	SourceFile   string      `json:"source_file" jsonschema:"file containing the function"`
-	Subcommand   string      `json:"subcommand" jsonschema:"operation: add_param, remove_param, add_return, or remove_return"`
-	Params       []ParamSpec `json:"params,omitempty" jsonschema:"full new parameter list (for add_param/remove_param)"`
+	Subcommand   string      `json:"subcommand" jsonschema:"operation: add_param, remove_param, add_return, remove_return, or deref_param"`
+	Params       []ParamSpec `json:"params,omitempty" jsonschema:"full new parameter list (for add_param/remove_param/deref_param)"`
 	Returns      []string    `json:"returns,omitempty" jsonschema:"full new return type list (for add_return/remove_return)"`
 	DefaultValue string      `json:"default_value,omitempty" jsonschema:"default value for new parameter at call sites"`
 	Position     int         `json:"position,omitempty" jsonschema:"position index of the new parameter (for add_param)"`
@@ -32,11 +32,12 @@ type ChangeSignatureInput struct {
 func registerChangeSignatureTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "change_signature",
-		Description: `Change a function or method signature. Supports four subcommands:
+		Description: `Change a function or method signature. Supports five subcommands:
 - add_param: add a new parameter (provide params list with the new param included, plus default_value and position)
 - remove_param: remove a parameter (provide params list without the removed param)
 - add_return: add a new return value (provide returns list with the new type included)
 - remove_return: remove a return value (provide returns list without the removed type)
+- deref_param: change one parameter from *T to T (provide the full params list with that parameter's type as T). Every use in the body must be a plain read *p, which becomes p; any other use refuses the change. Call sites pass x for &x and *e for any other argument; references that are not calls, and calls that cannot be rewritten, are listed in skipped_sites. Not supported for interface methods or with propagate.
 All call sites are updated automatically, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations gets the same change, and an abort names the configuration it came from.`,
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ChangeSignatureInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher

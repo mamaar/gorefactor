@@ -55,6 +55,7 @@ func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatur
 	newReturnPosition := -1
 	removedReturnIndex := -1
 	defaultReturnValue := ""
+	deref := false
 
 	switch req.Subcommand {
 	case "add_return":
@@ -63,6 +64,8 @@ func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatur
 			newReturnPosition = len(req.NewReturns) - 1
 			defaultReturnValue = zeroValueForType(req.NewReturns[newReturnPosition])
 		}
+	case "deref_param":
+		deref = true
 	case "remove_return":
 		// NewReturns is the list after removal, so the removed return was the one past its end.
 		removedReturnIndex = len(req.NewReturns)
@@ -80,6 +83,7 @@ func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatur
 		NewReturnPosition:    newReturnPosition,
 		RemovedReturnIndex:   removedReturnIndex,
 		DefaultReturnValue:   defaultReturnValue,
+		DerefParam:           deref,
 		CachedIndex:          req.CachedIndex,
 		Logger:               logger,
 	}
@@ -106,7 +110,13 @@ type ChangeSignatureOperation struct {
 	CachedIndex          *analysis.ReferenceIndex // Optional pre-built reference index for performance
 	Logger               *slog.Logger             // Logger for progress reporting
 
-	altered []AlteredDecl
+	// DerefParam turns the one parameter whose type differs between the
+	// declaration and NewParams from *T into T, rewriting the body and calls.
+	DerefParam bool
+
+	altered    []AlteredDecl
+	derefIdx   int
+	derefSkips []pkgtypes.SkippedSite
 }
 
 // AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
@@ -264,6 +274,25 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		op.Logger.Info("processing signature change", "function", op.FunctionName, "is_interface", isIface)
 	}
 
+	op.derefSkips = nil
+	if op.DerefParam {
+		if isIface || op.PropagateToInterface {
+			return nil, fmt.Errorf("deref_param: interface methods and propagate are not supported")
+		}
+		decl := op.findFunction(sourceFile, op.FunctionName)
+		if decl == nil {
+			return nil, fmt.Errorf("deref_param: function %s not found", op.FunctionName)
+		}
+		idx, err := op.derefTarget(decl)
+		if err != nil {
+			return nil, err
+		}
+		op.derefIdx = idx
+		if err := op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan); err != nil {
+			return nil, err
+		}
+	}
+
 	// Collect all symbols whose references need call-site updates
 	var allRefSymbols []*pkgtypes.Symbol
 	var primaryFuncDecl *ast.FuncDecl // for impact analysis
@@ -285,6 +314,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	callSiteCount := op.updateCallSites(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
 	op.updateReturnStatements(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
 	op.updateAssignmentLHS(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
+	plan.SkippedSites = append(plan.SkippedSites, op.derefSkips...)
 	op.addDefaultValueImports(ws, plan)
 	op.buildImpactAnalysis(ws, plan, primaryFuncDecl, callSiteCount)
 
@@ -886,8 +916,13 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 		return true
 	})
 
-	if !foundCallExpr && op.Logger != nil {
-		op.Logger.Debug("No call expression found containing reference")
+	if !foundCallExpr {
+		if op.DerefParam {
+			op.skipSite(ref, "reference is not a call, so its argument cannot be rewritten", ref.Context)
+		}
+		if op.Logger != nil {
+			op.Logger.Debug("No call expression found containing reference")
+		}
 	}
 
 	return changes
@@ -917,6 +952,13 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 		start := op.tokenPosToOffset(ws, arg.Pos())
 		end := op.tokenPosToOffset(ws, arg.End())
 		existingArgs[i] = string(fileContent[start:end])
+	}
+
+	if op.DerefParam {
+		if reason := op.derefArgs(existingArgs, callExpr, ws, fileContent); reason != "" {
+			op.skipSite(ref, reason, string(fileContent[op.tokenPosToOffset(ws, callExpr.Pos()):op.tokenPosToOffset(ws, callExpr.End())]))
+			return ""
+		}
 	}
 
 	// Build new argument list
