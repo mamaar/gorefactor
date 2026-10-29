@@ -662,6 +662,9 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 		case named:
 			signature.WriteString("_ ") // Go rejects a list that mixes named and unnamed
 		}
+		if sharesTypeWithNext(funcDecl, op.NewParams, i) {
+			continue
+		}
 		signature.WriteString(param.Type)
 	}
 	signature.WriteString(")")
@@ -705,6 +708,30 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 	}
 
 	return signature.String()
+}
+
+// keptGroup returns the declaration group `a, b T` of decl that p is an
+// unchanged member of, and its position in the group.
+func keptGroup(decl *ast.FuncDecl, p Parameter) (*ast.Field, int) {
+	for _, f := range listOf(decl.Type.Params) {
+		for k, n := range f.Names {
+			if len(f.Names) > 1 && paramEqual(p, Parameter{Name: n.Name, Type: gotypes.ExprString(f.Type)}) {
+				return f, k
+			}
+		}
+	}
+	return nil, 0
+}
+
+// sharesTypeWithNext reports whether params[i] and params[i+1] are adjacent,
+// unchanged members of one declaration group, so the type is written once.
+func sharesTypeWithNext(decl *ast.FuncDecl, params []Parameter, i int) bool {
+	if i+1 >= len(params) {
+		return false
+	}
+	f, k := keptGroup(decl, params[i])
+	g, l := keptGroup(decl, params[i+1])
+	return f != nil && f == g && l == k+1
 }
 
 func (op *ChangeSignatureOperation) extractCurrentSignature(funcDecl *ast.FuncDecl) string {
@@ -971,8 +998,12 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 		}
 	}
 
-	// Build new argument list
+	// Build new argument list; a trailing variadic parameter takes whatever
+	// arguments the call passes, so only the fixed parameters are mapped one by one.
 	newArgCount := len(op.NewParams)
+	if op.isVariadic() {
+		newArgCount--
+	}
 	newArgs := make([]string, newArgCount)
 
 	// If this is an add-param operation (DefaultValue is set and NewParamPosition >= 0),
@@ -1009,6 +1040,20 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 			} else {
 				newArgs[i] = zeroValueForType(op.NewParams[i].Type)
 			}
+		}
+	}
+
+	if op.isVariadic() {
+		start := newArgCount
+		if op.DefaultValue != "" && op.NewParamPosition >= 0 && op.NewParamPosition < newArgCount {
+			start-- // the added parameter shifted the variadic one
+		}
+		if start < len(existingArgs) {
+			tail := slices.Clone(existingArgs[start:])
+			if callExpr.Ellipsis.IsValid() {
+				tail[len(tail)-1] += "..."
+			}
+			newArgs = append(newArgs, tail...)
 		}
 	}
 

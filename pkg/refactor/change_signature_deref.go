@@ -6,6 +6,7 @@ import (
 	"go/token"
 	gotypes "go/types"
 	"slices"
+	"strings"
 
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
@@ -166,13 +167,22 @@ func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 		b.refuse(star, why)
 		return
 	}
-	start := b.op.tokenPosToOffset(b.ws, star.Star)
+	// (*p) becomes p, not (p)
+	var from, to token.Pos = star.Star, star.End()
+	for i := len(stack) - 3; i >= 0; i-- {
+		paren, ok := stack[i].(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		from, to = paren.Lparen, paren.End()
+	}
+	start, end := b.op.tokenPosToOffset(b.ws, from), b.op.tokenPosToOffset(b.ws, to)
 	b.plan.Changes = append(b.plan.Changes, pkgtypes.Change{
 		File:        b.file.Path,
 		Start:       start,
-		End:         start + 1,
-		OldText:     "*",
-		NewText:     "",
+		End:         end,
+		OldText:     string(b.file.OriginalContent[start:end]),
+		NewText:     id.Name,
 		Description: fmt.Sprintf("Drop dereference of parameter %s", b.param.Name),
 	})
 }
@@ -345,9 +355,16 @@ func (b *derefBody) drop(from, to token.Pos) {
 
 // derefWriteOrAlias explains why star, whose ancestors are outer, cannot become
 // a read of a by-value copy: it is written through, has its address taken, or
-// reaches a pointer-receiver method or an array slice.
+// reaches a pointer-receiver method or an array slice. When the pointee is a
+// slice or map, uses that go through an element of it are fine: the copy shares
+// that storage with the caller.
 func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info) string {
 	var top ast.Expr = star
+	var direct, shared bool // top is star itself (pointee a slice or map) / top is reached through an element of one
+	switch info.TypeOf(star).Underlying().(type) {
+	case *gotypes.Slice, *gotypes.Map:
+		direct = true
+	}
 	for i := len(outer) - 1; i >= 0; i-- {
 		switch p := outer[i].(type) {
 		case *ast.ParenExpr:
@@ -357,20 +374,21 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 			if p.X != top {
 				return ""
 			}
-			if sel := info.Selections[p]; sel != nil && sel.Kind() == gotypes.MethodVal {
+			if sel := info.Selections[p]; !shared && sel != nil && sel.Kind() == gotypes.MethodVal {
 				if recv := sel.Obj().(*gotypes.Func).Type().(*gotypes.Signature).Recv(); recv != nil {
 					if _, ptr := recv.Type().(*gotypes.Pointer); ptr {
 						return "is the receiver of a pointer method"
 					}
 				}
 			}
-			top = p
+			top, direct = p, false
 			continue
 		case *ast.IndexExpr:
 			if p.X != top {
 				return ""
 			}
-			top = p
+			shared = shared || direct
+			top, direct = p, false
 			continue
 		case *ast.SliceExpr:
 			if p.X != top {
@@ -379,24 +397,25 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 			if _, arr := info.TypeOf(star).Underlying().(*gotypes.Array); arr {
 				return "slices an array it points to"
 			}
-			top = p
+			shared = shared || direct
+			top, direct = p, false
 			continue
 		case *ast.AssignStmt:
 			for _, l := range p.Lhs {
-				if l == top {
+				if l == top && !shared {
 					return "is written through"
 				}
 			}
 		case *ast.IncDecStmt:
-			if p.X == top {
+			if p.X == top && !shared {
 				return "is written through"
 			}
 		case *ast.RangeStmt:
-			if p.Key == top || p.Value == top {
+			if (p.Key == top || p.Value == top) && !shared {
 				return "is written through"
 			}
 		case *ast.UnaryExpr:
-			if p.Op.String() == "&" {
+			if p.Op.String() == "&" && !shared {
 				return "has its address taken"
 			}
 		}
@@ -409,8 +428,8 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 // becomes x and any other expression e becomes *e. It reports why a call
 // cannot be rewritten, or "" when it can.
 func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallExpr, ws *pkgtypes.Workspace, content []byte, info *gotypes.Info) string {
-	if len(callExpr.Args) != len(op.NewParams) {
-		return "arguments do not match the parameters one to one"
+	if !op.argsMatchParams(callExpr) {
+		return "arguments do not match the parameters"
 	}
 	arg := callExpr.Args[op.derefIdx]
 	for {
@@ -479,4 +498,19 @@ func (op *ChangeSignatureOperation) skipSite(ref *pkgtypes.Reference, reason, sn
 		op.failDeref(fmt.Errorf("deref_param: %s checks its parameter against nil, so every reference must be rewritable, but %s:%d: %s", op.FunctionName, ref.File, ref.Line, reason))
 	}
 	op.derefSkips = append(op.derefSkips, pkgtypes.SkippedSite{File: ref.File, Line: ref.Line, Reason: reason, Snippet: snippet})
+}
+
+// isVariadic reports whether the new parameter list ends in a ...T parameter.
+func (op *ChangeSignatureOperation) isVariadic() bool {
+	n := len(op.NewParams)
+	return n > 0 && strings.HasPrefix(op.NewParams[n-1].Type, "...")
+}
+
+// argsMatchParams reports whether the call passes one argument per fixed
+// parameter, plus any number for a trailing variadic one.
+func (op *ChangeSignatureOperation) argsMatchParams(callExpr *ast.CallExpr) bool {
+	if op.isVariadic() {
+		return len(callExpr.Args) >= len(op.NewParams)-1
+	}
+	return len(callExpr.Args) == len(op.NewParams)
 }

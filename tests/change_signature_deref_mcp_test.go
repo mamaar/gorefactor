@@ -198,7 +198,7 @@ func TestChangeSignature_DerefParamNilCheckRealCases(t *testing.T) {
 			t.Fatalf("unexpected error: %s", errText(res))
 		}
 		assertFileContains(t, dir, "p/f.go", "if report == nil {")
-		assertFileContains(t, dir, "p/f.go", "(report)[k]")
+		assertFileContains(t, dir, "p/f.go", "report[k]")
 		assertFileContains(t, dir, "p/use.go", "getPlantCounts(reportI)")
 		goVets(t, dir, "")
 	})
@@ -301,4 +301,117 @@ func TestChangeSignature_DerefParamNilCheckCallSiteGuard(t *testing.T) {
 			wantDerefRefusal(t, dir, res, files, "use.go:")
 		})
 	}
+}
+
+func TestChangeSignature_DerefParamAcceptsElementWritesOfSliceAndMap(t *testing.T) {
+	cases := []struct{ name, typ, body, want string }{
+		{"map assign", "map[string]int", "(*p)[\"a\"] = 1", "p[\"a\"] = 1"},
+		{"map op-assign", "map[string]int", "(*p)[\"a\"] += 1", "p[\"a\"] += 1"},
+		{"map incdec", "map[string]int", "(*p)[\"a\"]++", "p[\"a\"]++"},
+		{"slice incdec", "[]int", "(*p)[0]--", "p[0]--"},
+		{"multi-assign", "[]int", "(*p)[0], (*p)[1] = 1, 2", "p[0], p[1] = 1, 2"},
+		{"element field", "[]E", "(*p)[0].f = 1", "p[0].f = 1"},
+		{"element address", "[]int", "sink(&(*p)[0])", "sink(&p[0])"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := "package p\n\ntype E struct{ f int }\n\nfunc sink(*int) {}\n\nfunc g(p *" + c.typ + ") {\n\t" + c.body + "\n}\n"
+			use := "package p\n\nfunc Use() {\n\tx := " + c.typ + "{}\n\t_ = x\n\tg(&x)\n}\n"
+			if strings.HasPrefix(c.typ, "[]") {
+				use = strings.Replace(use, "{}\n", "{{}, {}}\n", 1)
+				if c.typ == "[]E" {
+					use = strings.Replace(use, "{{}, {}}", "{{}}", 1)
+				}
+				if c.typ == "[]int" {
+					use = strings.Replace(use, "{{}, {}}", "{1, 2}", 1)
+				}
+			}
+			dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("g", param("p", c.typ)))
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", errText(res))
+			}
+			assertFileContains(t, dir, "p/f.go", c.want)
+			assertFileContains(t, dir, "p/use.go", "g(x)")
+			goVets(t, dir, "")
+		})
+	}
+}
+
+func TestChangeSignature_DerefParamRefusesWritesThatNeedTheCaller(t *testing.T) {
+	cases := map[string]string{
+		"reassign slice":     "func g(p *[]int) { *p = nil }\n",
+		"reassign by slice":  "func g(p *[]int) { *p = (*p)[1:] }\n",
+		"address of pointee": "func g(p *[]int) { _ = &*p }\n",
+		"array element":      "func g(p *[2]int) { (*p)[0] = 1 }\n",
+		"array incdec":       "func g(p *[2]int) { (*p)[0]++ }\n",
+		"array element addr": "func g(p *[2]int) { _ = &(*p)[0] }\n",
+		"struct field":       "func g(p *struct{ f int }) { (*p).f = 1 }\n",
+		"struct slice field": "func g(p *struct{ f []int }) { (*p).f[0] = 1 }\n",
+	}
+	for name, decl := range cases {
+		t.Run(name, func(t *testing.T) {
+			typ := strings.TrimSuffix(strings.SplitN(decl, "*", 2)[1][:strings.Index(strings.SplitN(decl, "*", 2)[1], ")")], " ")
+			files := map[string]string{
+				"p/f.go":   "package p\n\n" + decl,
+				"p/use.go": "package p\n\nfunc Use() {\n\tvar x " + typ + "\n\tg(&x)\n}\n",
+			}
+			dir, res := runDeref(t, files, derefNamed("g", param("p", typ)))
+			wantDerefRefusal(t, dir, res, files, "f.go:")
+		})
+	}
+}
+
+func TestChangeSignature_DerefParamRealElementWriteCases(t *testing.T) {
+	f := "package p\n\ntype W struct {\n\tKey   string\n\tValue []string\n}\n\nfunc fill(attributes *map[string]string, w W) {\n\t(*attributes)[w.Key] = w.Value[0]\n}\n\nfunc Reportify(m *map[string]interface{}, opts ...string) {}\n\nfunc each(m *[]map[string]interface{}, opts ...string) {\n\tfor i := range *m {\n\t\tReportify(&(*m)[i], opts...)\n\t}\n}\n"
+	use := "package p\n\nfunc Use() {\n\tattrs := map[string]string{}\n\tfill(&attrs, W{Key: \"k\", Value: []string{\"v\"}})\n\tms := []map[string]interface{}{{}}\n\teach(&ms)\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, derefNamed("fill", param("attributes", "map[string]string"), param("w", "W")))
+	changeSigOK(t, sess, derefNamed("each", param("m", "[]map[string]interface{}"), param("opts", "...string")))
+
+	assertFileContains(t, dir, "p/f.go", "attributes[w.Key] = w.Value[0]")
+	assertFileContains(t, dir, "p/f.go", "range m {")
+	assertFileContains(t, dir, "p/f.go", "Reportify(&m[i], opts...)")
+	assertFileContains(t, dir, "p/use.go", "each(ms)")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_DerefParamVariadicCallSites(t *testing.T) {
+	f := "package p\n\nfunc put(key string, bs *[]byte, collection ...string) error { return nil }\n"
+	use := "package p\n\nfunc Use(ptr *[]byte, rest []string) {\n\tx := []byte{1}\n\t_ = put(\"a\", &x)\n\t_ = put(\"a\", &x, \"c1\")\n\t_ = put(\"a\", &x, \"c1\", \"c2\")\n\t_ = put(\"a\", ptr, rest...)\n}\n"
+	dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("put", param("key", "string"), param("bs", "[]byte"), param("collection", "...string")))
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/f.go", "func put(key string, bs []byte, collection ...string) error")
+	for _, want := range []string{"put(\"a\", x)", "put(\"a\", x, \"c1\")", "put(\"a\", x, \"c1\", \"c2\")", "put(\"a\", *ptr, rest...)"} {
+		assertFileContains(t, dir, "p/use.go", want)
+	}
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_DerefParamKeepsUntouchedParamGroups(t *testing.T) {
+	f := "package p\n\nfunc g(includeA, includeB bool, newStuff, existingStuff *[]int) {\n\t_ = len(*newStuff)\n}\n"
+	use := "package p\n\nfunc Use() {\n\ta, b := []int{}, []int{}\n\tg(true, false, &a, &b)\n}\n"
+	dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use},
+		derefNamed("g", param("includeA", "bool"), param("includeB", "bool"), param("newStuff", "[]int"), param("existingStuff", "*[]int")))
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/f.go", "func g(includeA, includeB bool, newStuff []int, existingStuff *[]int)")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_DerefParamDropsParenthesesAroundDereferenceOnly(t *testing.T) {
+	f := "package p\n\nfunc g(b *[]int, k int) int {\n\tx := ((*b))[k:]\n\treturn (len(*b)+1)*2 + len(x)\n}\n"
+	use := "package p\n\nfunc Use() int {\n\tx := []int{1}\n\treturn g(&x, 0)\n}\n"
+	dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("g", param("b", "[]int"), param("k", "int")))
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/f.go", "x := b[k:]")
+	assertFileContains(t, dir, "p/f.go", "(len(b)+1)*2")
+	goVets(t, dir, "")
 }
