@@ -62,11 +62,8 @@ func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath 
 
 // inProcess is the in-process transport using NewInMemoryTransports.
 type inProcess struct {
-	// elicitationHandler is optionally set to make the client advertise the
-	// elicitation capability (see InProcessWithElicitation). Left nil by
-	// InProcess so the client's ClientOptions stay exactly nil, matching the
-	// transport's behavior before elicitation support was added.
-	elicitationHandler func(context.Context, *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error)
+	clientOpts  *mcpsdk.ClientOptions
+	sessionOpts *mcpsdk.ClientSessionOptions
 }
 
 // InProcess returns a transport that runs the MCP server in-process. The
@@ -81,7 +78,13 @@ func InProcess() Transport { return inProcess{} }
 // pass a non-nil handler even if the test expects it never to be called, so
 // the capability is advertised and the resulting call proves that.
 func InProcessWithElicitation(handler func(context.Context, *mcpsdk.ElicitRequest) (*mcpsdk.ElicitResult, error)) Transport {
-	return inProcess{elicitationHandler: handler}
+	return inProcess{clientOpts: &mcpsdk.ClientOptions{ElicitationHandler: handler}}
+}
+
+// InProcessWithClient returns an in-process transport whose client uses the
+// given options, for tests that pin its capabilities or protocol version.
+func InProcessWithClient(clientOpts *mcpsdk.ClientOptions, sessionOpts *mcpsdk.ClientSessionOptions) Transport {
+	return inProcess{clientOpts: clientOpts, sessionOpts: sessionOpts}
 }
 
 func (ip inProcess) connect(ctx context.Context, t testing.TB) (*Session, error) {
@@ -96,14 +99,8 @@ func (ip inProcess) connect(ctx context.Context, t testing.TB) (*Session, error)
 	ctx, cancel := context.WithCancel(ctx)
 	go server.Run(ctx, serverT)
 
-	// Only set ClientOptions when an elicitation handler was requested, so
-	// InProcess() keeps passing nil - identical to before this field existed.
-	var clientOpts *mcpsdk.ClientOptions
-	if ip.elicitationHandler != nil {
-		clientOpts = &mcpsdk.ClientOptions{ElicitationHandler: ip.elicitationHandler}
-	}
-	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, clientOpts)
-	session, err := client.Connect(ctx, clientT, nil)
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, ip.clientOpts)
+	session, err := client.Connect(ctx, clientT, ip.sessionOpts)
 	if err != nil {
 		cancel()
 		state.Close()

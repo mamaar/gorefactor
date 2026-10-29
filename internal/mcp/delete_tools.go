@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -24,6 +23,10 @@ type SafeDeleteInput struct {
 // elicitation dialog, so a symbol with hundreds of call sites still renders
 // a small, readable prompt.
 const maxListedRefs = 10
+
+// safeDeleteConfirmInput keys the confirmation dialog in a tool call's input
+// requests and responses.
+const safeDeleteConfirmInput = "confirm_delete"
 
 // safeDeleteConfirmMessage builds the message shown to the human user when a
 // safe_delete would break one or more live references and force/dry_run
@@ -85,28 +88,29 @@ func planSafeDelete(state *MCPServer, in SafeDeleteInput) (*types.RefactoringPla
 	return state.GetEngine().SafeDeleteAcrossConfigs(req)
 }
 
-// confirmSafeDelete asks the user whether to delete past the blockers of an
-// unforced, applying delete. It reports whether the delete is to be forced;
-// a client that cannot be asked gets the unforced delete and its refusal.
-func confirmSafeDelete(ctx context.Context, sess *mcpsdk.ServerSession, state *MCPServer, in SafeDeleteInput) (bool, error) {
+// confirmSafeDelete decides whether an unforced, applying delete may go past
+// its blockers. It reports whether the delete is to be forced, or returns the
+// dialog to ask the user first; a client that cannot be asked gets the
+// unforced delete and its refusal.
+func confirmSafeDelete(req *mcpsdk.CallToolRequest, state *MCPServer, in SafeDeleteInput) (bool, *mcpsdk.ElicitParams, error) {
 	if in.Force || in.DryRun {
-		return in.Force, nil
+		return in.Force, nil, nil
 	}
 	refs, err := safeDeleteBlockers(state, in)
 	if err != nil || len(refs) == 0 {
-		return false, err
+		return false, nil, err
 	}
-	// No lock is held here: the dialog may stay open indefinitely.
-	accepted, err := confirm(ctx, sess, safeDeleteConfirmMessage(in.Symbol, refs))
-	switch {
-	case errors.Is(err, errElicitUnsupported):
-		return false, nil
-	case err != nil:
-		return false, err
-	case !accepted:
-		return false, fmt.Errorf("deletion of %q cancelled: user did not confirm removing %d blocking reference(s)", in.Symbol, len(refs))
+	if !canConfirm(req.Session) {
+		return false, nil, nil
 	}
-	return true, nil
+	answer, answered := req.Params.InputResponses[safeDeleteConfirmInput]
+	if !answered {
+		return false, confirmRequest(safeDeleteConfirmMessage(in.Symbol, refs)), nil
+	}
+	if !confirmAccepted(answer) {
+		return false, nil, fmt.Errorf("deletion of %q cancelled: user did not confirm removing %d blocking reference(s)", in.Symbol, len(refs))
+	}
+	return true, nil, nil
 }
 
 func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
@@ -115,9 +119,12 @@ func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Safely delete a symbol (function, type, variable, constant, method, struct field). If references exist, the human user is asked to confirm; the deletion is refused unless they accept or force is true. Surviving call sites are reported in skipped_sites, not rewritten. " +
 			"References are looked for under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace, a declaration of the symbol in each configuration is deleted, and a mention in a file no configuration type-checks, or one the type checker could not resolve in a file with a type error, counts as a reference.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in SafeDeleteInput) (*mcpsdk.CallToolResult, any, error) {
-		force, err := confirmSafeDelete(ctx, req.Session, state, in)
+		force, dialog, err := confirmSafeDelete(req, state, in)
 		if err != nil {
 			return errResult(err), nil, nil
+		}
+		if dialog != nil {
+			return &mcpsdk.CallToolResult{InputRequests: mcpsdk.InputRequestMap{safeDeleteConfirmInput: dialog}}, nil, nil
 		}
 		in.Force = force
 		plan, err := planSafeDelete(state, in)

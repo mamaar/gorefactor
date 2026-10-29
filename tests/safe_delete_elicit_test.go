@@ -196,6 +196,68 @@ func TestSafeDeleteElicit_DeclineOrCancel(t *testing.T) {
 	}
 }
 
+func TestSafeDeleteElicit_LegacyProtocolClient(t *testing.T) {
+	for action, wantDeleted := range map[string]bool{"accept": true, "decline": false} {
+		t.Run(action, func(t *testing.T) {
+			handler, calls := countingHandler(func(*mcpsdk.ElicitRequest) *mcpsdk.ElicitResult {
+				return &mcpsdk.ElicitResult{Action: action}
+			})
+
+			tmpDir := copyFixture(t, "safe_delete_elicit")
+			ctx := context.Background()
+			sess := mcptest.Dial(ctx, t, mcptest.InProcessWithClient(
+				&mcpsdk.ClientOptions{ElicitationHandler: handler},
+				&mcpsdk.ClientSessionOptions{ProtocolVersion: "2025-11-25"},
+			), tmpDir)
+			defer sess.Close()
+			if got := sess.InitializeResult().ProtocolVersion; got != "2025-11-25" {
+				t.Fatalf("negotiated protocol %s, want 2025-11-25", got)
+			}
+
+			result, text := callSafeDelete(ctx, t, sess, "deprecatedHelper", "main.go", false, false)
+			if result.IsError == wantDeleted {
+				t.Fatalf("IsError = %v after %s: %s", result.IsError, action, text)
+			}
+			if got := calls.Load(); got != 1 {
+				t.Fatalf("elicitation handler called %d times, want 1", got)
+			}
+			if got := strings.Contains(readTmpMain(t, tmpDir), "func deprecatedHelper"); got == wantDeleted {
+				t.Fatalf("declaration present = %v after %s", got, action)
+			}
+		})
+	}
+}
+
+func TestSafeDeleteElicit_URLOnlyClient_ExactError(t *testing.T) {
+	handler, calls := countingHandler(func(*mcpsdk.ElicitRequest) *mcpsdk.ElicitResult {
+		return &mcpsdk.ElicitResult{Action: "accept"}
+	})
+	for _, version := range []string{"2025-11-25", "2026-07-28"} {
+		t.Run(version, func(t *testing.T) {
+			tmpDir := copyFixture(t, "safe_delete_elicit")
+			ctx := context.Background()
+			sess := mcptest.Dial(ctx, t, mcptest.InProcessWithClient(
+				&mcpsdk.ClientOptions{
+					ElicitationHandler: handler,
+					Capabilities: &mcpsdk.ClientCapabilities{
+						Elicitation: &mcpsdk.ElicitationCapabilities{URL: &mcpsdk.URLElicitationCapabilities{}},
+					},
+				},
+				&mcpsdk.ClientSessionOptions{ProtocolVersion: version},
+			), tmpDir)
+			defer sess.Close()
+
+			result, text := callSafeDelete(ctx, t, sess, "deprecatedHelper", "main.go", false, false)
+			if want := wantExactBlockedError("deprecatedHelper", 2); !result.IsError || text != want {
+				t.Fatalf("IsError = %v, text = %q, want refusal %q", result.IsError, text, want)
+			}
+			if got := calls.Load(); got != 0 {
+				t.Fatalf("elicitation handler called %d times, want 0", got)
+			}
+		})
+	}
+}
+
 // --- force:false, dry_run:true, N>0 blocking references: no dialog, dry-run unchanged ---
 
 func TestSafeDeleteElicit_DryRun_NoDialog(t *testing.T) {
