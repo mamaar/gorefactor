@@ -558,7 +558,7 @@ func (op *ConvertAliasesOperation) Execute(ws *types.Workspace) (*types.Refactor
 			} else {
 				changes = op.convertToAliases(file)
 			}
-			
+
 			plan.Changes = append(plan.Changes, changes...)
 			if len(changes) > 0 {
 				plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
@@ -616,10 +616,10 @@ func (op *ConvertAliasesOperation) convertToAliases(file *types.File) []types.Ch
 		if importSpec, ok := n.(*ast.ImportSpec); ok && importSpec.Name == nil {
 			importPath := strings.Trim(importSpec.Path.Value, `"`)
 			packageName := filepath.Base(importPath)
-			
+
 			// Generate a reasonable alias
 			alias := op.generateAlias(importPath)
-			
+
 			if alias != packageName {
 				// Add alias to import
 				changes = append(changes, types.Change{
@@ -642,11 +642,11 @@ func (op *ConvertAliasesOperation) generateAlias(importPath string) string {
 	// Simple alias generation - could be enhanced with more sophisticated rules
 	parts := strings.Split(importPath, "/")
 	packageName := parts[len(parts)-1]
-	
+
 	// For common patterns, generate reasonable aliases
 	if strings.Contains(importPath, "github.com") && len(parts) >= 3 {
-		return strings.ToLower(parts[len(parts)-1][:3])  // First 3 characters
+		return strings.ToLower(parts[len(parts)-1][:3]) // First 3 characters
 	}
-	
+
 	return packageName
 }

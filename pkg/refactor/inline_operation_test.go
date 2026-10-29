@@ -399,9 +399,9 @@ func (t *TestStruct) inlineMe() {
 
 	// Create a test package
 	pkg := &types.Package{
-		Path:    "main",
-		Name:    "main",
-		Dir:     "/test",
+		Path: "main",
+		Name: "main",
+		Dir:  "/test",
 		Files: map[string]*types.File{
 			"test.go": testFile,
 		},

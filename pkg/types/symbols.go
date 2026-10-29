@@ -7,20 +7,20 @@ import (
 
 // Symbol represents any named entity in Go code
 type Symbol struct {
-	Name        string
-	Kind        SymbolKind
-	Package     string
-	File        string
-	Position    token.Pos  
-	End         token.Pos
-	Line        int         // Line number in file
-	Column      int         // Column number in file
-	Exported    bool
-	Signature   string      // Function signature, type def, etc.
-	DocComment  string
-	Parent      *Symbol     // For methods, struct fields
-	Children    []*Symbol   // For types with methods/fields
-	References  []Reference // References to this symbol
+	Name       string
+	Kind       SymbolKind
+	Package    string
+	File       string
+	Position   token.Pos
+	End        token.Pos
+	Line       int // Line number in file
+	Column     int // Column number in file
+	Exported   bool
+	Signature  string // Function signature, type def, etc.
+	DocComment string
+	Parent     *Symbol     // For methods, struct fields
+	Children   []*Symbol   // For types with methods/fields
+	References []Reference // References to this symbol
 }
 
 type SymbolKind int
@@ -85,8 +85,8 @@ type SymbolTable struct {
 	Types     map[string]*Symbol
 	Variables map[string]*Symbol
 	Constants map[string]*Symbol
-	Methods   map[string][]*Symbol  // type name -> methods
-	Fields    map[string][]*Symbol  // type name -> struct fields
+	Methods   map[string][]*Symbol // type name -> methods
+	Fields    map[string][]*Symbol // type name -> struct fields
 }
 
 // FindSymbol searches the symbol table for a symbol by name across all categories.
@@ -143,9 +143,9 @@ func (st *SymbolTable) FindSymbol(name string) *Symbol {
 type Reference struct {
 	Symbol   *Symbol
 	Position token.Pos
-	Offset   int       // Byte offset within the file
+	Offset   int // Byte offset within the file
 	File     string
 	Line     int
 	Column   int
-	Context  string  // Surrounding code context
+	Context  string // Surrounding code context
 }

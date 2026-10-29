@@ -76,7 +76,7 @@ func (r MoveSymbolRequest) Refs() []QualifiedSymbol {
 type RenameSymbolRequest struct {
 	SymbolName string
 	NewName    string
-	Package    string  // Empty means workspace-wide
+	Package    string // Empty means workspace-wide
 	Scope      RenameScope
 }
 
@@ -90,10 +90,10 @@ type RenamePackageRequest struct {
 
 // RenameMethodRequest represents renaming a method on a specific type (struct or interface)
 type RenameMethodRequest struct {
-	TypeName          string  // Name of the type (struct or interface) that owns the method
-	MethodName        string  // Current method name
-	NewMethodName     string  // New method name
-	PackagePath       string  // Path to the package containing the type (optional, "" means workspace-wide)
+	TypeName      string // Name of the type (struct or interface) that owns the method
+	MethodName    string // Current method name
+	NewMethodName string // New method name
+	PackagePath   string // Path to the package containing the type (optional, "" means workspace-wide)
 }
 
 // RenameFieldRequest represents renaming a struct field on a named type
@@ -191,7 +191,7 @@ type InlineVariableRequest struct {
 	TargetFiles  []string // Files where to inline the variable
 }
 
-// InlineFunctionRequest represents inlining a function call with its implementation  
+// InlineFunctionRequest represents inlining a function call with its implementation
 type InlineFunctionRequest struct {
 	FunctionName string
 	SourceFile   string
@@ -208,10 +208,10 @@ type CallSite struct {
 // SkippedSite records a call site that could not be automatically rewritten,
 // or a declaration an operation left in place.
 type SkippedSite struct {
-	File        string `json:"file"`
-	Line        int    `json:"line"`
-	Reason      string `json:"reason"`
-	Snippet     string `json:"snippet"`
+	File    string `json:"file"`
+	Line    int    `json:"line"`
+	Reason  string `json:"reason"`
+	Snippet string `json:"snippet"`
 }
 
 // Blocker is a use of a symbol that stands in the way of an operation which
@@ -250,7 +250,7 @@ type RefactoringPlan struct {
 	Reversible    bool
 	// SkippedSites holds call sites that were too complex to rewrite automatically,
 	// or declarations left unmoved. The caller should inspect these; call sites need manual updates.
-	SkippedSites  []SkippedSite
+	SkippedSites []SkippedSite
 	// Coverage says which build configurations the plan was computed under.
 	// It is empty for a plan made in a single view.
 	Coverage Coverage
@@ -328,14 +328,14 @@ type PackageCouplingInfo struct {
 
 // ImpactAnalysis shows what will be affected by a refactoring
 type ImpactAnalysis struct {
-	AffectedPackages []string
-	AffectedFiles    []string
-	AffectedSymbols  []*Symbol
-	PotentialIssues  []Issue
-	ImportChanges    []ImportChange
-	SuggestedMoves   []SuggestedMove                `json:"suggested_moves,omitempty"`
-	PackageCoupling  map[string]PackageCouplingInfo  `json:"package_coupling,omitempty"`
-	BackwardsDependencies []BackwardDependency       `json:"backwards_dependencies,omitempty"`
+	AffectedPackages      []string
+	AffectedFiles         []string
+	AffectedSymbols       []*Symbol
+	PotentialIssues       []Issue
+	ImportChanges         []ImportChange
+	SuggestedMoves        []SuggestedMove                `json:"suggested_moves,omitempty"`
+	PackageCoupling       map[string]PackageCouplingInfo `json:"package_coupling,omitempty"`
+	BackwardsDependencies []BackwardDependency           `json:"backwards_dependencies,omitempty"`
 }
 
 type Issue struct {
@@ -442,8 +442,8 @@ type ExportSpec struct {
 
 // GenerateFacadesRequest represents auto-generating facades for modules
 type GenerateFacadesRequest struct {
-	ModulesDir string
-	TargetDir  string
+	ModulesDir  string
+	TargetDir   string
 	ExportTypes []string // e.g., "commands", "models", "events"
 }
 
@@ -455,7 +455,7 @@ type UpdateFacadesRequest struct {
 
 // CleanAliasesRequest represents removing import aliases
 type CleanAliasesRequest struct {
-	Workspace      string
+	Workspace         string
 	PreserveConflicts bool // keep aliases only where needed to resolve conflicts
 }
 
@@ -487,34 +487,34 @@ const (
 
 // ConvertAliasesRequest represents converting between aliased and non-aliased imports
 type ConvertAliasesRequest struct {
-	Workspace    string
-	ToFullNames  bool
+	Workspace     string
+	ToFullNames   bool
 	FromFullNames bool
 }
 
 // MoveByDependenciesRequest represents moving symbols based on dependency analysis
 type MoveByDependenciesRequest struct {
-	Workspace      string
-	MoveSharedTo   string // e.g., "pkg/"
-	KeepInternal   []string // e.g., ["internal/app", "internal/handlers"]
-	AnalyzeOnly    bool // If true, only analyze and suggest moves
+	Workspace    string
+	MoveSharedTo string   // e.g., "pkg/"
+	KeepInternal []string // e.g., ["internal/app", "internal/handlers"]
+	AnalyzeOnly  bool     // If true, only analyze and suggest moves
 }
 
 // OrganizeByLayersRequest represents organizing imports/packages by architectural layers
 type OrganizeByLayersRequest struct {
-	Workspace      string
-	DomainLayer    string // e.g., "modules/"
+	Workspace           string
+	DomainLayer         string // e.g., "modules/"
 	InfrastructureLayer string // e.g., "pkg/"
-	ApplicationLayer string // e.g., "internal/"
-	ReorderImports bool // Whether to reorder imports according to layers
+	ApplicationLayer    string // e.g., "internal/"
+	ReorderImports      bool   // Whether to reorder imports according to layers
 }
 
 // AnalyzeDependenciesRequest represents analyzing dependency flow
 type AnalyzeDependenciesRequest struct {
 	Workspace           string
 	DetectBackwardsDeps bool
-	SuggestMoves       bool
-	OutputFile         string // File to write analysis results
+	SuggestMoves        bool
+	OutputFile          string // File to write analysis results
 }
 
 // BatchOperationRequest represents executing multiple operations atomically

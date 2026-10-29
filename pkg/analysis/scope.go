@@ -13,12 +13,12 @@ import (
 // Scope represents a lexical scope in Go code
 type Scope struct {
 	Kind     ScopeKind
-	Node     ast.Node               // AST node that creates this scope
-	Parent   *Scope                 // Parent scope
-	Children []*Scope               // Child scopes
+	Node     ast.Node                 // AST node that creates this scope
+	Parent   *Scope                   // Parent scope
+	Children []*Scope                 // Child scopes
 	Symbols  map[string]*types.Symbol // Symbols defined in this scope
-	Start    token.Pos              // Start position of scope
-	End      token.Pos              // End position of scope
+	Start    token.Pos                // Start position of scope
+	End      token.Pos                // End position of scope
 }
 
 type ScopeKind int
@@ -230,7 +230,7 @@ func (sa *ScopeAnalyzer) addPackageLevelSymbols(scope *Scope, file *types.File) 
 func (sa *ScopeAnalyzer) addImportSymbols(scope *Scope, file *types.File) error {
 	for _, imp := range file.AST.Imports {
 		importPath := strings.Trim(imp.Path.Value, `"`)
-		
+
 		var symbolName string
 		if imp.Name != nil {
 			// Named import (alias or dot import)
@@ -271,13 +271,13 @@ func (sa *ScopeAnalyzer) buildNestedScopes(parent *Scope, node ast.Node) error {
 				parent.Children = append(parent.Children, funcScope)
 			}
 		}
-		
+
 	case *ast.BlockStmt:
 		// Process each statement in the block
 		for _, stmt := range n.List {
 			_ = sa.buildNestedScopes(parent, stmt)
 		}
-		
+
 	case *ast.IfStmt:
 		if n.Body != nil {
 			blockScope, err := sa.createImplicitBlockScope(parent, n)
@@ -285,13 +285,13 @@ func (sa *ScopeAnalyzer) buildNestedScopes(parent *Scope, node ast.Node) error {
 				parent.Children = append(parent.Children, blockScope)
 			}
 		}
-		
+
 	case *ast.ForStmt, *ast.RangeStmt:
 		blockScope, err := sa.createImplicitBlockScope(parent, n)
 		if err == nil {
 			parent.Children = append(parent.Children, blockScope)
 		}
-		
+
 	case *ast.SwitchStmt, *ast.TypeSwitchStmt:
 		blockScope, err := sa.createImplicitBlockScope(parent, n)
 		if err == nil {
@@ -465,11 +465,11 @@ func (sa *ScopeAnalyzer) findEnclosingScope(root *Scope, pos token.Pos) *Scope {
 func (sa *ScopeAnalyzer) resolveQualifiedIdentifier(ident *ast.Ident, file *types.File, scope *Scope) *types.Symbol {
 	// Look for selector expressions in the AST that contain this identifier
 	// This happens when we have expressions like pkg.Symbol
-	
+
 	if file.AST == nil {
 		return nil
 	}
-	
+
 	var result *types.Symbol
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		if selector, ok := n.(*ast.SelectorExpr); ok {
@@ -489,7 +489,7 @@ func (sa *ScopeAnalyzer) resolveQualifiedIdentifier(ident *ast.Ident, file *type
 		}
 		return true
 	})
-	
+
 	return result
 }
 
@@ -498,7 +498,7 @@ func (sa *ScopeAnalyzer) resolvePackageIdentifier(pkgIdent *ast.Ident, file *typ
 	if file.AST != nil {
 		for _, imp := range file.AST.Imports {
 			importPath := strings.Trim(imp.Path.Value, "\"")
-			
+
 			// Check if there's an explicit alias
 			if imp.Name != nil {
 				if imp.Name.Name == pkgIdent.Name {
@@ -521,7 +521,7 @@ func (sa *ScopeAnalyzer) resolvePackageIdentifier(pkgIdent *ast.Ident, file *typ
 			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -568,14 +568,14 @@ func (sa *ScopeAnalyzer) resolveBuiltinSymbol(name string) *types.Symbol {
 		"rune": types.TypeSymbol, "string": types.TypeSymbol, "uint": types.TypeSymbol,
 		"uint8": types.TypeSymbol, "uint16": types.TypeSymbol, "uint32": types.TypeSymbol,
 		"uint64": types.TypeSymbol, "uintptr": types.TypeSymbol,
-		
+
 		// Functions
 		"append": types.FunctionSymbol, "cap": types.FunctionSymbol, "close": types.FunctionSymbol,
 		"complex": types.FunctionSymbol, "copy": types.FunctionSymbol, "delete": types.FunctionSymbol,
 		"imag": types.FunctionSymbol, "len": types.FunctionSymbol, "make": types.FunctionSymbol,
 		"new": types.FunctionSymbol, "panic": types.FunctionSymbol, "print": types.FunctionSymbol,
 		"println": types.FunctionSymbol, "real": types.FunctionSymbol, "recover": types.FunctionSymbol,
-		
+
 		// Constants
 		"true": types.ConstantSymbol, "false": types.ConstantSymbol, "iota": types.ConstantSymbol,
 		"nil": types.ConstantSymbol,

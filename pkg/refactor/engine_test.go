@@ -24,8 +24,6 @@ func TestCreateEngine(t *testing.T) {
 	}
 }
 
-
-
 func TestDefaultEngine_ValidateRefactoring(t *testing.T) {
 	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 
@@ -75,11 +73,11 @@ func TestDefaultEngine_PreviewPlan(t *testing.T) {
 	if !strings.Contains(preview, "Preview of 1 changes") {
 		t.Error("Expected preview to mention 1 change")
 	}
-	
+
 	if !strings.Contains(preview, "test.go") {
 		t.Error("Expected preview to mention test.go")
 	}
-	
+
 	if !strings.Contains(preview, "test change") {
 		t.Error("Expected preview to mention change description")
 	}

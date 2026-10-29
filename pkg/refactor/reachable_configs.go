@@ -113,7 +113,7 @@ type reachableRun struct {
 	req      ReachableRequest
 	found    map[declSite]*ReachableFinding
 	bodiless map[analysis.BodilessPackage]*BodilessFinding
-	entryErr error // the first configuration whose entry package is bodiless
+	entryErr error           // the first configuration whose entry package is bodiless
 	resolved map[string]bool // specs some view resolves
 	dirs     map[string]bool // directories examined in any view
 

@@ -368,7 +368,7 @@ func F(parent context.Context) {
 
 func TestClassifyRoot_TestFunc(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{
-		"p/pkg.go":      "package p\n",
+		"p/pkg.go": "package p\n",
 		"p/foo_test.go": `package p
 
 import "testing"
@@ -392,7 +392,7 @@ func mark() {}
 
 func TestClassifyRoot_BenchmarkFunc(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{
-		"p/pkg.go":      "package p\n",
+		"p/pkg.go": "package p\n",
 		"p/foo_test.go": `package p
 
 import "testing"
@@ -416,7 +416,7 @@ func mark() {}
 
 func TestClassifyRoot_TestMain(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{
-		"p/pkg.go":      "package p\n",
+		"p/pkg.go": "package p\n",
 		"p/foo_test.go": `package p
 
 import "testing"
@@ -441,7 +441,7 @@ func mark() {}
 // A helper taking *testing.T is a root, like a Test declaration.
 func TestClassifyRoot_TestHelperIsRoot(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{
-		"p/pkg.go":      "package p\n",
+		"p/pkg.go": "package p\n",
 		"p/foo_test.go": `package p
 
 import "testing"
@@ -465,7 +465,7 @@ func mark() {}
 
 func TestClassifyRoot_TRunSubtestClosure(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{
-		"p/pkg.go":      "package p\n",
+		"p/pkg.go": "package p\n",
 		"p/foo_test.go": `package p
 
 import "testing"

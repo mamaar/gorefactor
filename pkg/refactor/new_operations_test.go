@@ -386,7 +386,7 @@ func TestSafeDeleteOperation_Description(t *testing.T) {
 
 func TestExtractConstantOperation_isExtractableLiteral(t *testing.T) {
 	op := &ExtractConstantOperation{}
-	
+
 	tests := []struct {
 		name     string
 		literal  string
@@ -395,7 +395,7 @@ func TestExtractConstantOperation_isExtractableLiteral(t *testing.T) {
 		// We can't easily test this without creating actual AST nodes
 		// In a full implementation, we would create test AST nodes
 	}
-	
+
 	// This is a placeholder for more comprehensive testing
 	_ = tests
 	_ = op
@@ -502,9 +502,9 @@ func (t *TestStruct) TestMethod() {
 
 	// Create a test package
 	pkg := &types.Package{
-		Path:    "main",
-		Name:    "main",
-		Dir:     "/test",
+		Path: "main",
+		Name: "main",
+		Dir:  "/test",
 		Files: map[string]*types.File{
 			"test.go": testFile,
 		},

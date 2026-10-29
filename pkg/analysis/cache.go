@@ -15,7 +15,7 @@ type SymbolCache struct {
 	refsLock     sync.RWMutex
 
 	// Cache for method sets
-	methodSets map[string][]*types.Symbol
+	methodSets  map[string][]*types.Symbol
 	methodsLock sync.RWMutex
 
 	// Cache for package symbol tables
@@ -27,7 +27,7 @@ type SymbolCache struct {
 	typesLock       sync.RWMutex
 
 	// NEW: Cache for method-to-type mappings (type:method -> bool)
-	methodTypeMap map[string]bool
+	methodTypeMap     map[string]bool
 	methodTypeMapLock sync.RWMutex
 
 	// Cache metadata
@@ -37,17 +37,17 @@ type SymbolCache struct {
 
 // CacheStats tracks cache performance metrics
 type CacheStats struct {
-	ResolvedRefHits   int64
-	ResolvedRefMisses int64
-	MethodSetHits     int64
-	MethodSetMisses   int64
-	PackageHits       int64
-	PackageMisses     int64
-	IdentifierTypeHits int64     // NEW
-	IdentifierTypeMisses int64   // NEW
-	MethodTypeMapHits   int64    // NEW
-	MethodTypeMapMisses int64    // NEW
-	LastReset         time.Time
+	ResolvedRefHits      int64
+	ResolvedRefMisses    int64
+	MethodSetHits        int64
+	MethodSetMisses      int64
+	PackageHits          int64
+	PackageMisses        int64
+	IdentifierTypeHits   int64 // NEW
+	IdentifierTypeMisses int64 // NEW
+	MethodTypeMapHits    int64 // NEW
+	MethodTypeMapMisses  int64 // NEW
+	LastReset            time.Time
 }
 
 // NewSymbolCache creates a new symbol cache
@@ -299,14 +299,14 @@ type CacheSize struct {
 // GetHitRate returns the overall cache hit rate as a percentage
 func (c *SymbolCache) GetHitRate() float64 {
 	stats := c.GetStats()
-	
+
 	totalHits := stats.ResolvedRefHits + stats.MethodSetHits + stats.PackageHits
 	totalRequests := totalHits + stats.ResolvedRefMisses + stats.MethodSetMisses + stats.PackageMisses
-	
+
 	if totalRequests == 0 {
 		return 0.0
 	}
-	
+
 	return float64(totalHits) / float64(totalRequests) * 100.0
 }
 
@@ -314,11 +314,11 @@ func (c *SymbolCache) GetHitRate() float64 {
 func (c *SymbolCache) GetResolvedRefHitRate() float64 {
 	stats := c.GetStats()
 	total := stats.ResolvedRefHits + stats.ResolvedRefMisses
-	
+
 	if total == 0 {
 		return 0.0
 	}
-	
+
 	return float64(stats.ResolvedRefHits) / float64(total) * 100.0
 }
 
@@ -326,11 +326,11 @@ func (c *SymbolCache) GetResolvedRefHitRate() float64 {
 func (c *SymbolCache) GetMethodSetHitRate() float64 {
 	stats := c.GetStats()
 	total := stats.MethodSetHits + stats.MethodSetMisses
-	
+
 	if total == 0 {
 		return 0.0
 	}
-	
+
 	return float64(stats.MethodSetHits) / float64(total) * 100.0
 }
 
@@ -338,11 +338,11 @@ func (c *SymbolCache) GetMethodSetHitRate() float64 {
 func (c *SymbolCache) GetPackageHitRate() float64 {
 	stats := c.GetStats()
 	total := stats.PackageHits + stats.PackageMisses
-	
+
 	if total == 0 {
 		return 0.0
 	}
-	
+
 	return float64(stats.PackageHits) / float64(total) * 100.0
 }
 
@@ -442,9 +442,9 @@ func (c *SymbolCache) CleanupStaleEntries() {
 func (c *SymbolCache) GetMemoryUsage() int64 {
 	// This is a rough estimate - in production, you'd want more accurate measurement
 	size := c.GetCacheSize()
-	
+
 	// Rough estimate: each symbol ~1KB, each method set ~5KB average
 	estimatedBytes := int64(size.ResolvedRefs*1024 + size.MethodSets*5120 + size.PackageSymbols*10240)
-	
+
 	return estimatedBytes
 }

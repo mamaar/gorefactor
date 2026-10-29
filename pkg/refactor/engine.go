@@ -44,24 +44,24 @@ type RefactorEngine interface {
 	MovePackage(ws *types.Workspace, req types.MovePackageRequest) (*types.RefactoringPlan, error)
 	MoveDir(ws *types.Workspace, req types.MoveDirRequest) (*types.RefactoringPlan, error)
 	MovePackages(ws *types.Workspace, req types.MovePackagesRequest) (*types.RefactoringPlan, error)
-	
+
 	// Facade operations
 	CreateFacade(ws *types.Workspace, req types.CreateFacadeRequest) (*types.RefactoringPlan, error)
 	GenerateFacades(ws *types.Workspace, req types.GenerateFacadesRequest) (*types.RefactoringPlan, error)
 	UpdateFacades(ws *types.Workspace, req types.UpdateFacadesRequest) (*types.RefactoringPlan, error)
-	
+
 	// Import alias operations
 	CleanAliases(ws *types.Workspace, req types.CleanAliasesRequest) (*types.RefactoringPlan, error)
 	StandardizeImports(ws *types.Workspace, req types.StandardizeImportsRequest) (*types.RefactoringPlan, error)
 	ResolveAliasConflicts(ws *types.Workspace, req types.ResolveAliasConflictsRequest) (*types.RefactoringPlan, error)
 	ConvertAliases(ws *types.Workspace, req types.ConvertAliasesRequest) (*types.RefactoringPlan, error)
-	
+
 	// Dependency graph operations
 	MoveByDependencies(ws *types.Workspace, req types.MoveByDependenciesRequest) (*types.RefactoringPlan, error)
 	OrganizeByLayers(ws *types.Workspace, req types.OrganizeByLayersRequest) (*types.RefactoringPlan, error)
 	DetectCycles(ws *types.Workspace) (cycles, testCycles [][]string)
 	AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error)
-	
+
 	// Batch operations
 	BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error)
 
@@ -1068,7 +1068,7 @@ func (e *DefaultEngine) ExecutePlan(plan *types.RefactoringPlan) error {
 		if err != nil {
 			return fmt.Errorf("failed to apply changes: %w", err)
 		}
-		
+
 		// Validate that the refactored code compiles (if not skipped)
 		if !e.shouldSkipCompilation() {
 			if err := e.validateCompilation(plan.AffectedFiles); err != nil {
@@ -1090,21 +1090,21 @@ func (e *DefaultEngine) validateCompilation(affectedFiles []string) error {
 	if len(affectedFiles) == 0 {
 		return nil
 	}
-	
+
 	// Get unique directories that need compilation checking
 	dirsToCheck := make(map[string]bool)
 	for _, file := range affectedFiles {
 		dir := filepath.Dir(file)
 		dirsToCheck[dir] = true
 	}
-	
+
 	// Check compilation for each affected directory
 	for dir := range dirsToCheck {
 		if err := e.checkDirectoryCompilation(dir); err != nil {
 			return fmt.Errorf("compilation failed in %s: %w", dir, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -1113,12 +1113,12 @@ func (e *DefaultEngine) checkDirectoryCompilation(dir string) error {
 	// Use go build to check compilation without creating binaries
 	cmd := exec.Command("go", "build", "-o", "/dev/null", ".")
 	cmd.Dir = dir
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("go build failed: %s", string(output))
 	}
-	
+
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	gotypes "go/types"
 	"io"
 	"log/slog"
 	"os"
@@ -117,6 +118,8 @@ type ChangeSignatureOperation struct {
 	altered    []AlteredDecl
 	derefIdx   int
 	derefSkips []pkgtypes.SkippedSite
+	derefNil   derefNilMode // how the body compares the dereferenced parameter with nil
+	derefErr   error        // first call-site finding that aborts the whole change
 }
 
 // AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
@@ -314,6 +317,9 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	callSiteCount := op.updateCallSites(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
 	op.updateReturnStatements(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
 	op.updateAssignmentLHS(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
+	if op.derefErr != nil {
+		return nil, op.derefErr
+	}
 	plan.SkippedSites = append(plan.SkippedSites, op.derefSkips...)
 	op.addDefaultValueImports(ws, plan)
 	op.buildImpactAnalysis(ws, plan, primaryFuncDecl, callSiteCount)
@@ -881,7 +887,11 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 						"callExpr.End", callExpr.End())
 				}
 				// Generate new call arguments based on new signature
-				newCall := op.generateNewCall(callExpr, ref, ws, refFile.OriginalContent)
+				var info *gotypes.Info
+				if op.DerefParam {
+					info = refFile.Package.TypesInfo
+				}
+				newCall := op.generateNewCall(callExpr, ref, ws, refFile.OriginalContent, info)
 				if newCall != "" {
 					start := op.tokenPosToOffset(ws, callExpr.Pos())
 					end := op.tokenPosToOffset(ws, callExpr.End())
@@ -945,7 +955,7 @@ func (op *ChangeSignatureOperation) containsReference(callExpr *ast.CallExpr, po
 	}
 }
 
-func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref *pkgtypes.Reference, ws *pkgtypes.Workspace, fileContent []byte) string {
+func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref *pkgtypes.Reference, ws *pkgtypes.Workspace, fileContent []byte, info *gotypes.Info) string {
 	// Extract existing arguments from source text to preserve original formatting
 	existingArgs := make([]string, len(callExpr.Args))
 	for i, arg := range callExpr.Args {
@@ -955,7 +965,7 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 	}
 
 	if op.DerefParam {
-		if reason := op.derefArgs(existingArgs, callExpr, ws, fileContent); reason != "" {
+		if reason := op.derefArgs(existingArgs, callExpr, ws, fileContent, info); reason != "" {
 			op.skipSite(ref, reason, string(fileContent[op.tokenPosToOffset(ws, callExpr.Pos()):op.tokenPosToOffset(ws, callExpr.End())]))
 			return ""
 		}

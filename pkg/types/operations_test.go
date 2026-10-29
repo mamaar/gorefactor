@@ -250,9 +250,9 @@ func TestIssue(t *testing.T) {
 
 func TestIssueType(t *testing.T) {
 	testCases := []struct {
-		name     string
+		name      string
 		issueType IssueType
-		expected IssueType
+		expected  IssueType
 	}{
 		{"IssueCompilationError", IssueCompilationError, 0},
 		{"IssueImportCycle", IssueImportCycle, 1},

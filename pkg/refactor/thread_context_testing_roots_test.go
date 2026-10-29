@@ -145,7 +145,7 @@ func TestThreadContext_ShadowedTestingParamHelperIsClimbed(t *testing.T) {
 
 func TestThreadContext_ShadowedTestingParamInTestDeclUsesTODO(t *testing.T) {
 	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
-		"p/lib.go": seedSrc,
+		"p/lib.go":    seedSrc,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {\n\tfor _, t := range []int{1} {\n\t\t_ = t\n\t\tSeed()\n\t}\n}\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
@@ -157,7 +157,7 @@ func TestThreadContext_ShadowedTestingParamInTestDeclUsesTODO(t *testing.T) {
 
 func TestThreadContext_ShadowedTestingParamInRunClosureUsesTODO(t *testing.T) {
 	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
-		"p/lib.go": seedSrc,
+		"p/lib.go":    seedSrc,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {\n\tt.Run(\"a\", func(t *testing.T) {\n\t\tfor _, t := range []int{1} {\n\t\t\t_ = t\n\t\t\tSeed()\n\t\t}\n\t})\n}\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
@@ -169,7 +169,7 @@ func TestThreadContext_ShadowedTestingParamInRunClosureUsesTODO(t *testing.T) {
 
 func TestThreadContext_HelperWithShadowedAndUnshadowedSites(t *testing.T) {
 	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
-		"p/lib.go": seedSrc,
+		"p/lib.go":    seedSrc,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tSeed()\n\tfor _, t := range items {\n\t\t_ = t\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, nil) }\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed", "helper"}, "Funcs")
@@ -181,7 +181,7 @@ func TestThreadContext_HelperWithShadowedAndUnshadowedSites(t *testing.T) {
 
 func TestThreadContext_UnshadowedTestingParamPassesTContext(t *testing.T) {
 	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
-		"p/lib.go": seedSrc,
+		"p/lib.go":    seedSrc,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tfor _, i := range items {\n\t\t_ = i\n\t\tSeed()\n\t}\n}\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
@@ -192,7 +192,7 @@ func TestThreadContext_UnshadowedTestingParamPassesTContext(t *testing.T) {
 
 func TestThreadContext_TwoTestingParamsFirstShadowedSecondVisibleIsRoot(t *testing.T) {
 	ws, plan := buildThreadPlanWithWorkspace(t, map[string]string{
-		"p/lib.go": seedSrc,
+		"p/lib.go":    seedSrc,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(a *testing.T, b *testing.T, items []int) {\n\tfor _, a := range items {\n\t\t_ = a\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, t, nil) }\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")

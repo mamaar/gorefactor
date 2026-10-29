@@ -3,7 +3,9 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	gotypes "go/types"
+	"slices"
 
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
 )
@@ -35,8 +37,34 @@ func (op *ChangeSignatureOperation) derefTarget(decl *ast.FuncDecl) (int, error)
 	return idx, nil
 }
 
+// derefNilMode records how the body compares the parameter with nil, which
+// decides what arguments the call sites may pass.
+type derefNilMode int
+
+const (
+	derefNoNilCheck  derefNilMode = iota
+	derefNilCombined              // only `p == nil || *p == nil`-style pairs: a nil argument stays caught
+	derefNilBare                  // a lone nil comparison folds to a constant: arguments must be non-nil
+)
+
+// derefBody is the state of one planDerefBody walk.
+type derefBody struct {
+	op      *ChangeSignatureOperation
+	ws      *pkgtypes.Workspace
+	info    *gotypes.Info
+	file    *pkgtypes.File
+	plan    *pkgtypes.RefactoringPlan
+	obj     gotypes.Object
+	param   *ast.Ident
+	nilable bool // T is a slice or map
+	dropped [][2]token.Pos
+	handled map[ast.Node]bool
+	err     error
+}
+
 // planDerefBody drops the * of every dereference of the parameter at op.derefIdx,
-// and refuses when the parameter is used in any other way.
+// folds its nil comparisons, and refuses when the parameter is used in any
+// other way.
 func (op *ChangeSignatureOperation) planDerefBody(ws *pkgtypes.Workspace, pkg *pkgtypes.Package, file *pkgtypes.File, decl *ast.FuncDecl, plan *pkgtypes.RefactoringPlan) error {
 	info := pkg.TypesInfo
 	if info == nil || decl.Body == nil {
@@ -56,45 +84,263 @@ func (op *ChangeSignatureOperation) planDerefBody(ws *pkgtypes.Workspace, pkg *p
 	if obj == nil {
 		return fmt.Errorf("deref_param: no type information for parameter %s", param.Name)
 	}
-
-	refuse := func(n ast.Node, why string) error {
-		pos := ws.FileSet.Position(n.Pos())
-		return fmt.Errorf("deref_param: parameter %s %s at %s:%d; only plain reads of *%s can be rewritten", param.Name, why, pos.Filename, pos.Line, param.Name)
+	b := &derefBody{op: op, ws: ws, info: info, file: file, plan: plan, obj: obj, param: param, handled: map[ast.Node]bool{}}
+	switch obj.Type().(*gotypes.Pointer).Elem().Underlying().(type) {
+	case *gotypes.Slice, *gotypes.Map:
+		b.nilable = true
 	}
+	op.derefNil = derefNoNilCheck
+	op.derefErr = nil
 
 	var stack []ast.Node
-	var err error
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
 		if n == nil {
 			stack = stack[:len(stack)-1]
 			return true
 		}
+		if b.err != nil || b.isDropped(n) {
+			return false
+		}
 		stack = append(stack, n)
-		id, ok := n.(*ast.Ident)
-		if err != nil || !ok || info.Uses[id] != obj {
-			return err == nil
+		switch n := n.(type) {
+		case *ast.BinaryExpr:
+			if (n.Op == token.LOR || n.Op == token.LAND) && !continuesChain(stack) {
+				b.foldChain(n, stack[len(stack)-2])
+			}
+		case *ast.Ident:
+			if info.Uses[n] == obj {
+				b.useOfParam(n, stack)
+			}
 		}
-		star, ok := stack[len(stack)-2].(*ast.StarExpr)
-		if !ok {
-			err = refuse(id, "is used other than as *"+param.Name)
+		if b.err != nil {
+			stack = stack[:len(stack)-1]
 			return false
 		}
-		if why := derefWriteOrAlias(stack[:len(stack)-2], star, info); why != "" {
-			err = refuse(star, why)
-			return false
-		}
-		start := op.tokenPosToOffset(ws, star.Star)
-		plan.Changes = append(plan.Changes, pkgtypes.Change{
-			File:        file.Path,
-			Start:       start,
-			End:         start + 1,
-			OldText:     "*",
-			NewText:     "",
-			Description: fmt.Sprintf("Drop dereference of parameter %s", param.Name),
-		})
 		return true
 	})
-	return err
+	return b.err
+}
+
+// continuesChain reports whether the last node on stack is an operand of an
+// enclosing binary expression with the same operator.
+func continuesChain(stack []ast.Node) bool {
+	if len(stack) < 2 {
+		return false
+	}
+	n := stack[len(stack)-1].(*ast.BinaryExpr)
+	outer, ok := stack[len(stack)-2].(*ast.BinaryExpr)
+	return ok && outer.Op == n.Op
+}
+
+// isDropped reports whether n lies wholly inside source that is being deleted.
+func (b *derefBody) isDropped(n ast.Node) bool {
+	for _, r := range b.dropped {
+		if r[0] <= n.Pos() && n.End() <= r[1] {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *derefBody) refuse(n ast.Node, why string) {
+	pos := b.ws.FileSet.Position(n.Pos())
+	b.err = fmt.Errorf("deref_param: parameter %s %s at %s:%d; only plain reads of *%s and foldable nil comparisons can be rewritten", b.param.Name, why, pos.Filename, pos.Line, b.param.Name)
+}
+
+func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
+	parent := stack[len(stack)-2]
+	if bin, ok := parent.(*ast.BinaryExpr); ok && b.nilCmp(bin) != token.ILLEGAL {
+		if b.handled[bin] {
+			return
+		}
+		b.op.derefNil = derefNilBare
+		b.foldConstant(bin, stack[len(stack)-3], b.nilCmp(bin) == token.NEQ)
+		return
+	}
+	star, ok := parent.(*ast.StarExpr)
+	if !ok {
+		b.refuse(id, "is used other than as *"+b.param.Name+" or in a nil comparison")
+		return
+	}
+	if why := derefWriteOrAlias(stack[:len(stack)-2], star, b.info); why != "" {
+		b.refuse(star, why)
+		return
+	}
+	start := b.op.tokenPosToOffset(b.ws, star.Star)
+	b.plan.Changes = append(b.plan.Changes, pkgtypes.Change{
+		File:        b.file.Path,
+		Start:       start,
+		End:         start + 1,
+		OldText:     "*",
+		NewText:     "",
+		Description: fmt.Sprintf("Drop dereference of parameter %s", b.param.Name),
+	})
+}
+
+func (b *derefBody) isParam(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && b.info.Uses[id] == b.obj
+}
+
+func isNilIdent(e ast.Expr, info *gotypes.Info) bool {
+	id, ok := e.(*ast.Ident)
+	if !ok || info == nil {
+		return false
+	}
+	_, isNil := info.Uses[id].(*gotypes.Nil)
+	return isNil
+}
+
+// nilCmp returns == or != when e compares the parameter with nil, else ILLEGAL.
+func (b *derefBody) nilCmp(e ast.Expr) token.Token {
+	bin, ok := e.(*ast.BinaryExpr)
+	if !ok || (bin.Op != token.EQL && bin.Op != token.NEQ) {
+		return token.ILLEGAL
+	}
+	if b.isParam(bin.X) && isNilIdent(bin.Y, b.info) || isNilIdent(bin.X, b.info) && b.isParam(bin.Y) {
+		return bin.Op
+	}
+	return token.ILLEGAL
+}
+
+func (b *derefBody) isDerefParam(e ast.Expr) bool {
+	star, ok := e.(*ast.StarExpr)
+	return ok && b.isParam(star.X)
+}
+
+// pairedCheck classifies e as the second half of a combined form: sameNil is
+// `*p == nil` (`*p != nil` under &&), emptiness is `len(*p) == 0`
+// (`len(*p) > 0` or `!= 0` under &&).
+func (b *derefBody) pairedCheck(e ast.Expr, isOr bool) (sameNil, emptiness bool) {
+	bin, ok := e.(*ast.BinaryExpr)
+	if !ok {
+		return false, false
+	}
+	nilOp, lenOps := token.NEQ, []token.Token{token.GTR, token.NEQ}
+	if isOr {
+		nilOp, lenOps = token.EQL, []token.Token{token.EQL}
+	}
+	if bin.Op == nilOp && b.isDerefParam(bin.X) && isNilIdent(bin.Y, b.info) {
+		return true, false
+	}
+	call, ok := bin.X.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 || !b.isDerefParam(call.Args[0]) || !slices.Contains(lenOps, bin.Op) {
+		return false, false
+	}
+	fn, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false, false
+	}
+	if _, builtin := b.info.Uses[fn].(*gotypes.Builtin); !builtin || fn.Name != "len" {
+		return false, false
+	}
+	zero, ok := bin.Y.(*ast.BasicLit)
+	return false, ok && zero.Kind == token.INT && zero.Value == "0"
+}
+
+// foldChain rewrites the operands of the || / && chain n that compare the
+// parameter with nil: a combined pair shrinks to one operand, a lone
+// `p == nil` under || or `p != nil` under && is dropped as constant false / true.
+func (b *derefBody) foldChain(n *ast.BinaryExpr, parent ast.Node) {
+	ops := flattenChain(n)
+	isOr := n.Op == token.LOR
+	remove := make([]bool, len(ops))
+	for i, e := range ops {
+		tok := b.nilCmp(e)
+		if tok == token.ILLEGAL {
+			continue
+		}
+		b.handled[e] = true
+		if (tok == token.EQL) != isOr {
+			b.refuse(e, "makes the whole "+n.Op.String()+" chain a constant")
+			return
+		}
+		if b.nilable && i+1 < len(ops) {
+			sameNil, emptiness := b.pairedCheck(ops[i+1], isOr)
+			if sameNil || emptiness {
+				if b.op.derefNil == derefNoNilCheck {
+					b.op.derefNil = derefNilCombined
+				}
+				remove[i+1], remove[i] = sameNil, emptiness
+				continue
+			}
+		}
+		b.op.derefNil = derefNilBare
+		remove[i] = true
+	}
+	end := len(ops)
+	for end > 0 && remove[end-1] {
+		end--
+	}
+	if end == 0 {
+		b.foldConstant(n, parent, !isOr)
+		return
+	}
+	for i := 0; i < end; i++ {
+		if remove[i] {
+			b.drop(ops[i].Pos(), ops[i+1].Pos())
+		}
+	}
+	if end < len(ops) {
+		b.drop(ops[end-1].End(), ops[len(ops)-1].End())
+	}
+}
+
+// flattenChain lists the operands of a chain of one || or && operator.
+func flattenChain(e *ast.BinaryExpr) []ast.Expr {
+	var ops []ast.Expr
+	for _, side := range []ast.Expr{e.X, e.Y} {
+		if bin, ok := side.(*ast.BinaryExpr); ok && bin.Op == e.Op {
+			ops = append(ops, flattenChain(bin)...)
+		} else {
+			ops = append(ops, side)
+		}
+	}
+	return ops
+}
+
+// foldConstant handles a nil check (a comparison or a whole chain of them) that
+// folds to value: only a false condition of an if with no init and no else can
+// go, together with the if.
+func (b *derefBody) foldConstant(cond ast.Expr, parent ast.Node, value bool) {
+	ifs, ok := parent.(*ast.IfStmt)
+	if !ok || ifs.Cond != cond || ifs.Init != nil || ifs.Else != nil || value {
+		b.refuse(cond, fmt.Sprintf("is nil-checked where the check folds to %t and cannot simply be removed", value))
+		return
+	}
+	start, end := b.op.tokenPosToOffset(b.ws, ifs.Pos()), b.op.tokenPosToOffset(b.ws, ifs.End())
+	content := b.file.OriginalContent
+	lineStart, lineEnd := start, end
+	for lineStart > 0 && (content[lineStart-1] == ' ' || content[lineStart-1] == '\t') {
+		lineStart--
+	}
+	for lineEnd < len(content) && (content[lineEnd] == ' ' || content[lineEnd] == '\t') {
+		lineEnd++
+	}
+	if (lineStart == 0 || content[lineStart-1] == '\n') && lineEnd < len(content) && content[lineEnd] == '\n' {
+		start, end = lineStart, lineEnd+1
+	}
+	b.dropped = append(b.dropped, [2]token.Pos{ifs.Pos(), ifs.End()})
+	b.plan.Changes = append(b.plan.Changes, pkgtypes.Change{
+		File:        b.file.Path,
+		Start:       start,
+		End:         end,
+		OldText:     string(content[start:end]),
+		Description: fmt.Sprintf("Remove nil check of parameter %s that is always false", b.param.Name),
+	})
+}
+
+// drop deletes the source between from and to.
+func (b *derefBody) drop(from, to token.Pos) {
+	start, end := b.op.tokenPosToOffset(b.ws, from), b.op.tokenPosToOffset(b.ws, to)
+	b.dropped = append(b.dropped, [2]token.Pos{from, to})
+	b.plan.Changes = append(b.plan.Changes, pkgtypes.Change{
+		File:        b.file.Path,
+		Start:       start,
+		End:         end,
+		OldText:     string(b.file.OriginalContent[start:end]),
+		Description: fmt.Sprintf("Drop nil comparison of parameter %s", b.param.Name),
+	})
 }
 
 // derefWriteOrAlias explains why star, whose ancestors are outer, cannot become
@@ -162,7 +408,7 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 // derefArg rewrites the argument at op.derefIdx of a call to pass a value: &x
 // becomes x and any other expression e becomes *e. It reports why a call
 // cannot be rewritten, or "" when it can.
-func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallExpr, ws *pkgtypes.Workspace, content []byte) string {
+func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallExpr, ws *pkgtypes.Workspace, content []byte, info *gotypes.Info) string {
 	if len(callExpr.Args) != len(op.NewParams) {
 		return "arguments do not match the parameters one to one"
 	}
@@ -173,6 +419,9 @@ func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallE
 			break
 		}
 		arg = p.X
+	}
+	if done, reason := op.derefNilGuard(args, arg, callExpr, ws, info); done {
+		return reason
 	}
 	text := func(e ast.Expr) string {
 		return string(content[op.tokenPosToOffset(ws, e.Pos()):op.tokenPosToOffset(ws, e.End())])
@@ -197,7 +446,37 @@ func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallE
 	return ""
 }
 
+// derefNilGuard checks arg against the body's nil comparisons of the parameter:
+// they were folded assuming a non-nil argument (&x, &T{...}), or for combined
+// forms also a literal nil, so any other argument fails the whole change. It
+// reports done when the argument is settled and no further rewrite applies.
+func (op *ChangeSignatureOperation) derefNilGuard(args []string, arg ast.Expr, callExpr *ast.CallExpr, ws *pkgtypes.Workspace, info *gotypes.Info) (done bool, reason string) {
+	if op.derefNil == derefNoNilCheck {
+		return false, ""
+	}
+	if u, ok := arg.(*ast.UnaryExpr); ok && u.Op == token.AND {
+		return false, ""
+	}
+	if op.derefNil == derefNilCombined && isNilIdent(arg, info) {
+		args[op.derefIdx] = "nil"
+		return true, ""
+	}
+	pos := ws.FileSet.Position(callExpr.Pos())
+	op.failDeref(fmt.Errorf("deref_param: %s checks parameter %s against nil, but the argument at %s:%d may be nil, so *e would panic where the callee handled nil", op.FunctionName, op.NewParams[op.derefIdx].Name, pos.Filename, pos.Line))
+	return true, "argument may be nil"
+}
+
+// failDeref keeps the first error that must abort the whole change.
+func (op *ChangeSignatureOperation) failDeref(err error) {
+	if op.derefErr == nil {
+		op.derefErr = err
+	}
+}
+
 // skipSite records a reference deref_param could not rewrite.
 func (op *ChangeSignatureOperation) skipSite(ref *pkgtypes.Reference, reason, snippet string) {
+	if op.derefNil != derefNoNilCheck {
+		op.failDeref(fmt.Errorf("deref_param: %s checks its parameter against nil, so every reference must be rewritable, but %s:%d: %s", op.FunctionName, ref.File, ref.Line, reason))
+	}
 	op.derefSkips = append(op.derefSkips, pkgtypes.SkippedSite{File: ref.File, Line: ref.Line, Reason: reason, Snippet: snippet})
 }

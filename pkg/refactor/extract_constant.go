@@ -14,7 +14,7 @@ type ExtractConstantOperation struct {
 	Position     token.Pos // Position of the literal to extract
 	ConstantName string
 	Scope        pkgtypes.RenameScope // PackageScope or WorkspaceScope
-	TargetFile   string                // Optional: specific file to place the constant
+	TargetFile   string               // Optional: specific file to place the constant
 }
 
 func (op *ExtractConstantOperation) Type() pkgtypes.OperationType {
@@ -178,7 +178,7 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 				NewText:     op.ConstantName,
 				Description: fmt.Sprintf("Replace literal with constant %s", op.ConstantName),
 			})
-			
+
 			// Add to affected files if not already present
 			if !contains(plan.AffectedFiles, occurrence.File) {
 				plan.AffectedFiles = append(plan.AffectedFiles, occurrence.File)
@@ -216,7 +216,7 @@ func (op *ExtractConstantOperation) findLiteralAtPosition(file *pkgtypes.File, p
 		if n == nil {
 			return false
 		}
-		
+
 		// Check if this is a literal at our position
 		switch lit := n.(type) {
 		case *ast.BasicLit:
@@ -259,7 +259,7 @@ func (op *ExtractConstantOperation) getLiteralValueAndType(expr ast.Expr) (strin
 		case token.STRING:
 			return lit.Value, "string"
 		case token.INT:
-			return lit.Value, ""  // Type will be inferred
+			return lit.Value, "" // Type will be inferred
 		case token.FLOAT:
 			return lit.Value, "float64"
 		}

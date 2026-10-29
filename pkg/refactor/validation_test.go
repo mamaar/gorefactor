@@ -358,7 +358,7 @@ func TestValidator_validateGoSyntax(t *testing.T) {
 			hasError := err != nil
 
 			if hasError != tc.expectError {
-				t.Errorf("Expected validateGoSyntax('%s') error status to be %v, got %v (error: %v)", 
+				t.Errorf("Expected validateGoSyntax('%s') error status to be %v, got %v (error: %v)",
 					tc.code, tc.expectError, hasError, err)
 			}
 		})

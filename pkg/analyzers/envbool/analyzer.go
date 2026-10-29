@@ -211,4 +211,3 @@ func buildEnvSuggestion(paramName, pattern string) string {
 	}
 	return "Replace '" + paramName + "' with an interface or concrete value"
 }
-

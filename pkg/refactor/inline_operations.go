@@ -56,7 +56,7 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	var methodSymbol *types.Symbol
 	var sourcePackage *types.Package
-	
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil {
 			if structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
@@ -67,7 +67,7 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 			}
 		}
 	}
-	
+
 	if sourcePackage == nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -84,7 +84,7 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 			}
 		}
 	}
-	
+
 	if methodSymbol == nil {
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -319,7 +319,7 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 					end := fset.Position(callExpr.End()).Offset
 					if start < len(targetFile.OriginalContent) && end <= len(targetFile.OriginalContent) {
 						callText := string(targetFile.OriginalContent[start:end])
-						
+
 						// Extract arguments
 						var args []string
 						for _, arg := range callExpr.Args {
@@ -329,7 +329,7 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 								args = append(args, string(targetFile.OriginalContent[argStart:argEnd]))
 							}
 						}
-						
+
 						calls = append(calls, MethodCall{
 							Start:      start,
 							End:        end,
@@ -447,7 +447,6 @@ func replaceIdentToken(src, oldIdent, newText string) string {
 	return result.String()
 }
 
-
 // InlineVariableOperation implements inlining a variable with its value
 type InlineVariableOperation struct {
 	VariableName string
@@ -497,7 +496,7 @@ func (op *InlineVariableOperation) Execute(ws *types.Workspace) (*types.Refactor
 	}
 
 	var changes []types.Change
-	
+
 	// Replace all variable references with the value
 	for _, ref := range references {
 		changes = append(changes, types.Change{
@@ -620,7 +619,7 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 				}
 			}
 		}
-		
+
 		// Also check for short variable declarations (var := value)
 		if assignStmt, ok := n.(*ast.AssignStmt); ok && assignStmt.Tok == token.DEFINE {
 			for i, lhs := range assignStmt.Lhs {
@@ -637,7 +636,7 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 				}
 			}
 		}
-		
+
 		return true
 	})
 

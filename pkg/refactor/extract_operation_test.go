@@ -10,11 +10,11 @@ import (
 
 func TestExtractMethodOperation_Type(t *testing.T) {
 	op := &ExtractMethodOperation{
-		SourceFile:   "test.go",
-		StartLine:    10,
-		EndLine:      20,
+		SourceFile:    "test.go",
+		StartLine:     10,
+		EndLine:       20,
 		NewMethodName: "extractedMethod",
-		TargetStruct: "TestStruct",
+		TargetStruct:  "TestStruct",
 	}
 
 	if op.Type() != types.ExtractOperation {
@@ -103,10 +103,10 @@ func TestExtractMethodOperation_Description(t *testing.T) {
 
 func TestExtractInterfaceOperation_Type(t *testing.T) {
 	op := &ExtractInterfaceOperation{
-		SourceStruct:    "TestStruct",
-		InterfaceName:   "TestInterface",
-		Methods:         []string{"Method1", "Method2"},
-		TargetPackage:   "interfaces",
+		SourceStruct:  "TestStruct",
+		InterfaceName: "TestInterface",
+		Methods:       []string{"Method1", "Method2"},
+		TargetPackage: "interfaces",
 	}
 
 	if op.Type() != types.ExtractOperation {
@@ -190,11 +190,11 @@ func TestExtractInterfaceOperation_Description(t *testing.T) {
 
 func TestExtractVariableOperation_Type(t *testing.T) {
 	op := &ExtractVariableOperation{
-		SourceFile:    "test.go",
-		StartLine:     15,
-		EndLine:       15,
-		VariableName:  "extractedVar",
-		Expression:    "someComplexExpression()",
+		SourceFile:   "test.go",
+		StartLine:    15,
+		EndLine:      15,
+		VariableName: "extractedVar",
+		Expression:   "someComplexExpression()",
 	}
 
 	if op.Type() != types.ExtractOperation {
@@ -371,9 +371,9 @@ func (t *TestStruct) Method2() string {
 
 	// Create a test package
 	pkg := &types.Package{
-		Path:    "main",
-		Name:    "main",
-		Dir:     "/test",
+		Path: "main",
+		Name: "main",
+		Dir:  "/test",
 		Files: map[string]*types.File{
 			"test.go": testFile,
 		},
@@ -390,4 +390,3 @@ func (t *TestStruct) Method2() string {
 		},
 	}
 }
-

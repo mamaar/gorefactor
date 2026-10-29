@@ -13,14 +13,14 @@ import (
 
 // Result is the typed result returned for MCP consumption.
 type Result struct {
-	Function            string `json:"function"`
-	File                string `json:"file"`
-	Line                int    `json:"line"`
-	CyclomaticComplexity int   `json:"cyclomatic_complexity"`
-	CognitiveComplexity  int   `json:"cognitive_complexity"`
-	LinesOfCode          int   `json:"lines_of_code"`
-	Parameters           int   `json:"parameters"`
-	MaxNestingDepth      int   `json:"max_nesting_depth"`
+	Function             string `json:"function"`
+	File                 string `json:"file"`
+	Line                 int    `json:"line"`
+	CyclomaticComplexity int    `json:"cyclomatic_complexity"`
+	CognitiveComplexity  int    `json:"cognitive_complexity"`
+	LinesOfCode          int    `json:"lines_of_code"`
+	Parameters           int    `json:"parameters"`
+	MaxNestingDepth      int    `json:"max_nesting_depth"`
 	Level                string `json:"level"`
 }
 

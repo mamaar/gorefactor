@@ -205,7 +205,7 @@ func TestValidationError_Error(t *testing.T) {
 func TestErrorChaining(t *testing.T) {
 	// Test error wrapping and unwrapping
 	originalErr := errors.New("original error")
-	
+
 	refactorErr := &RefactorError{
 		Type:    FileSystemError,
 		Message: "File operation failed",
@@ -219,7 +219,7 @@ func TestErrorChaining(t *testing.T) {
 	var err error = refactorErr
 	errMsg := err.Error()
 	expectedMsg := "/test/file.go:10:5: File operation failed"
-	
+
 	if errMsg != expectedMsg {
 		t.Errorf("Expected error message '%s', got '%s'", expectedMsg, errMsg)
 	}

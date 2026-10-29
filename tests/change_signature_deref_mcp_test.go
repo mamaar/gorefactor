@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/mamaar/gorefactor/tests/mcptest"
 )
 
@@ -28,7 +30,7 @@ func derefArgs(extra map[string]any) map[string]any {
 
 func TestChangeSignature_DerefParamRewritesDeclBodyAndCallSites(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
-		"p/f.go": derefTarget,
+		"p/f.go":   derefTarget,
 		"p/use.go": "package p\n\nfunc Use(ptr *[]int) int {\n\tx := []int{1}\n\ta := sum(&x, 1)\n\tb := sum(ptr, 2)\n\tc := sum(&[]int{3}, 3)\n\treturn a + b + c\n}\n",
 	})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
@@ -67,11 +69,10 @@ func TestChangeSignature_DerefParamParenthesizesNonPrimaryArgument(t *testing.T)
 
 func TestChangeSignature_DerefParamRefusesNonDerefUseOfParam(t *testing.T) {
 	cases := map[string]string{
-		"nil compare": "package p\n\nfunc sum(b *[]int, k int) int {\n\tif b == nil {\n\t\treturn 0\n\t}\n\treturn len(*b)\n}\n",
-		"passed on":   "package p\n\nfunc other(b *[]int) int { return len(*b) }\n\nfunc sum(b *[]int, k int) int { return other(b) }\n",
-		"assigned":    "package p\n\nfunc sum(b *[]int, k int) int {\n\tb = nil\n\treturn k\n}\n",
-		"address":     "package p\n\nfunc sum(b *[]int, k int) int {\n\tpp := &b\n\treturn len(**pp)\n}\n",
-		"write thru":  "package p\n\nfunc sum(b *[]int, k int) int {\n\t*b = nil\n\treturn k\n}\n",
+		"passed on":  "package p\n\nfunc other(b *[]int) int { return len(*b) }\n\nfunc sum(b *[]int, k int) int { return other(b) }\n",
+		"assigned":   "package p\n\nfunc sum(b *[]int, k int) int {\n\tb = nil\n\treturn k\n}\n",
+		"address":    "package p\n\nfunc sum(b *[]int, k int) int {\n\tpp := &b\n\treturn len(**pp)\n}\n",
+		"write thru": "package p\n\nfunc sum(b *[]int, k int) int {\n\t*b = nil\n\treturn k\n}\n",
 	}
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -122,5 +123,182 @@ func TestChangeSignature_DerefParamReportsFuncValueReferenceAsSkipped(t *testing
 
 	if sites, _ := out["skipped_sites"].([]any); len(sites) != 1 {
 		t.Errorf("skipped_sites = %v, want 1 entry", out["skipped_sites"])
+	}
+}
+
+func derefNamed(fn string, params ...map[string]any) map[string]any {
+	return map[string]any{"function_name": fn, "source_file": "p/f.go", "subcommand": "deref_param", "params": params}
+}
+
+func param(name, typ string) map[string]any { return map[string]any{"name": name, "type": typ} }
+
+func runDeref(t *testing.T, files map[string]string, args map[string]any) (dir string, res *mcpsdk.CallToolResult) {
+	t.Helper()
+	dir = writeInlineWorkspace(t, files)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	t.Cleanup(func() { sess.Close() })
+	return dir, changeSig(t, sess, args)
+}
+
+func wantDerefRefusal(t *testing.T, dir string, res *mcpsdk.CallToolResult, files map[string]string, contains string) {
+	t.Helper()
+	if !res.IsError || !strings.Contains(errText(res), "deref_param") || !strings.Contains(errText(res), contains) {
+		t.Errorf("want deref_param refusal containing %q, got IsError=%v %q", contains, res.IsError, errText(res))
+	}
+	for path, src := range files {
+		if got := fileText(t, dir, path); got != src {
+			t.Errorf("%s changed:\n%s", path, got)
+		}
+	}
+}
+
+func TestChangeSignature_DerefParamFoldsNilChecks(t *testing.T) {
+	cases := []struct {
+		name, params, cond, caller, want string
+	}{
+		{"map nil or nil", "m *map[string]int", "m == nil || *m == nil", "&x", "if m == nil {"},
+		{"slice nonnil and nonnil", "m *[]int", "m != nil && *m != nil", "&x", "if m != nil {"},
+		{"empty or nil", "m *[]int", "m == nil || len(*m) == 0", "&x", "if len(m) == 0 {"},
+		{"nonempty gt", "m *[]int", "m != nil && len(*m) > 0", "&x", "if len(m) > 0 {"},
+		{"nonempty ne", "m *[]int", "m != nil && len(*m) != 0", "&x", "if len(m) != 0 {"},
+		{"in longer or chain", "m *[]int", "k == 1 || m == nil || len(*m) == 0", "&x", "if k == 1 || len(m) == 0 {"},
+		{"in longer and chain", "m *[]int", "k == 1 && m != nil && len(*m) > 0 && k < 5", "&x", "if k == 1 && len(m) > 0 && k < 5 {"},
+		{"nil literal caller", "m *[]int", "m == nil || len(*m) == 0", "nil", "if len(m) == 0 {"},
+		{"composite caller", "m *[]int", "m == nil || *m == nil", "&[]int{1}", "if m == nil {"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			typ := strings.TrimPrefix(strings.Fields(c.params)[1], "*")
+			f := "package p\n\nfunc g(" + c.params + ", k int) int {\n\tif " + c.cond + " {\n\t\treturn 0\n\t}\n\treturn len(*m)\n}\n"
+			use := "package p\n\nfunc Use() int {\n\tvar x " + typ + "\n\t_ = x\n\treturn g(" + c.caller + ", 1)\n}\n"
+			dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("g", param("m", typ), param("k", "int")))
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", errText(res))
+			}
+			assertFileContains(t, dir, "p/f.go", c.want)
+			assertFileContains(t, dir, "p/f.go", "return len(m)")
+			want := "g(x, 1)"
+			if c.caller == "nil" {
+				want = "g(nil, 1)"
+			} else if strings.HasPrefix(c.caller, "&[]") {
+				want = "g([]int{1}, 1)"
+			}
+			assertFileContains(t, dir, "p/use.go", want)
+			goVets(t, dir, "")
+		})
+	}
+}
+
+func TestChangeSignature_DerefParamNilCheckRealCases(t *testing.T) {
+	t.Run("getPlantCounts", func(t *testing.T) {
+		f := "package p\n\nfunc getPlantCounts(report *map[string]interface{}) float64 {\n\tif report == nil || *report == nil {\n\t\treturn 0\n\t}\n\tvar t float64\n\tfor k := range *report {\n\t\tif v, ok := (*report)[k].(float64); ok {\n\t\t\tt += v\n\t\t}\n\t}\n\treturn t\n}\n"
+		use := "package p\n\nfunc Use() float64 {\n\treportI := map[string]interface{}{}\n\treturn getPlantCounts(&reportI)\n}\n"
+		dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("getPlantCounts", param("report", "map[string]interface{}")))
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", errText(res))
+		}
+		assertFileContains(t, dir, "p/f.go", "if report == nil {")
+		assertFileContains(t, dir, "p/f.go", "(report)[k]")
+		assertFileContains(t, dir, "p/use.go", "getPlantCounts(reportI)")
+		goVets(t, dir, "")
+	})
+	t.Run("isPersistedPoEqual", func(t *testing.T) {
+		f := "package p\n\nimport \"bytes\"\n\ntype Planner struct{}\n\nfunc f() ([]byte, error) { return nil, nil }\n\nfunc (p *Planner) isPersistedPoEqual(headID string, order *[]byte) bool {\n\tcached, err := f()\n\tif err != nil || cached == nil || order == nil {\n\t\treturn false\n\t}\n\treturn bytes.Equal(cached, *order)\n}\n"
+		use := "package p\n\nfunc (p *Planner) Use(order []byte) bool {\n\treturn p.isPersistedPoEqual(\"h\", &order)\n}\n"
+		dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("Planner.isPersistedPoEqual", param("headID", "string"), param("order", "[]byte")))
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", errText(res))
+		}
+		assertFileContains(t, dir, "p/f.go", "if err != nil || cached == nil {")
+		assertFileContains(t, dir, "p/f.go", "bytes.Equal(cached, order)")
+		assertFileContains(t, dir, "p/use.go", "p.isPersistedPoEqual(\"h\", order)")
+		goVets(t, dir, "")
+	})
+	t.Run("refuse bare nil check with pointer variable caller", func(t *testing.T) {
+		files := map[string]string{
+			"p/f.go":   "package p\n\ntype Item struct{}\ntype Card struct{}\n\nfunc m(items *[]Item) *Card {\n\tif items == nil {\n\t\treturn nil\n\t}\n\t_ = len(*items)\n\treturn &Card{}\n}\n",
+			"p/use.go": "package p\n\nfunc Use(data *[]Item) *Card {\n\treturn m(data)\n}\n",
+		}
+		dir, res := runDeref(t, files, derefNamed("m", param("items", "[]Item")))
+		wantDerefRefusal(t, dir, res, files, "use.go:4")
+	})
+	t.Run("refuse combined check with pointer variable caller", func(t *testing.T) {
+		files := map[string]string{
+			"p/f.go":   "package p\n\ntype Feature struct{}\n\nfunc h(ctx int, features *[]Feature) {\n\tif features == nil || len(*features) == 0 {\n\t\treturn\n\t}\n\t_ = (*features)[0]\n}\n",
+			"p/use.go": "package p\n\nfunc Use(agsFeatures *[]Feature) {\n\th(1, agsFeatures)\n}\n",
+		}
+		dir, res := runDeref(t, files, derefNamed("h", param("ctx", "int"), param("features", "[]Feature")))
+		wantDerefRefusal(t, dir, res, files, "may be nil")
+	})
+}
+
+func TestChangeSignature_DerefParamBareNilCheckFolds(t *testing.T) {
+	use := "package p\n\nfunc Use() int {\n\tvar x string\n\treturn g(&x, 1)\n}\n"
+	cases := []struct {
+		name, body, want, notWant string
+	}{
+		{"if deleted", "\tif s == nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n", "func g(s string, k int) int {\n\treturn len(s)\n}", "s == nil"},
+		{"or operand dropped", "\tif k == 0 || s == nil || len(*s) == 0 {\n\t\treturn 0\n\t}\n\treturn k\n", "if k == 0 || len(s) == 0 {", "s == nil"},
+		{"trailing or operands dropped", "\tif k == 0 || s == nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n", "if k == 0 {", "s == nil"},
+		{"and operand dropped", "\tif s != nil && len(*s) > k {\n\t\treturn 0\n\t}\n\treturn 1\n", "if len(s) > k {", "s != nil"},
+		{"all or operands fold, if deleted", "\tif s == nil || s == nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n", "func g(s string, k int) int {\n\treturn len(s)\n}", "s == nil"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := "package p\n\nfunc g(s *string, k int) int {\n" + c.body + "}\n"
+			dir, res := runDeref(t, map[string]string{"p/f.go": f, "p/use.go": use}, derefNamed("g", param("s", "string"), param("k", "int")))
+			if res.IsError {
+				t.Fatalf("unexpected error: %s", errText(res))
+			}
+			assertFileContains(t, dir, "p/f.go", c.want)
+			if got := fileText(t, dir, "p/f.go"); strings.Contains(got, c.notWant) {
+				t.Errorf("f.go still contains %q:\n%s", c.notWant, got)
+			}
+			assertFileContains(t, dir, "p/use.go", "g(x, 1)")
+			goVets(t, dir, "")
+		})
+	}
+}
+
+func TestChangeSignature_DerefParamRefusesUnfoldableNilChecks(t *testing.T) {
+	bodies := map[string]string{
+		"whole condition true": "\tif s != nil {\n\t\treturn len(*s)\n\t}\n\treturn 0\n",
+		"if with else":         "\tif s == nil {\n\t\treturn 0\n\t} else {\n\t\treturn len(*s)\n\t}\n",
+		"if with init":         "\tif _ = k; s == nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n",
+		"assigned":             "\tmissing := s == nil\n\t_ = missing\n\treturn len(*s)\n",
+		"returned":             "\t_ = len(*s)\n\treturn map[bool]int{true: 1}[s == nil]\n",
+		"false operand in and": "\tif k == 1 && s == nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n",
+		"true operand in or":   "\tif k == 1 || s != nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n",
+		"negated":              "\tif !(s == nil) {\n\t\treturn len(*s)\n\t}\n\treturn 0\n",
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			files := map[string]string{
+				"p/f.go":   "package p\n\nfunc g(s *string, k int) int {\n" + body + "}\n",
+				"p/use.go": "package p\n\nfunc Use() int {\n\tvar x string\n\treturn g(&x, 1)\n}\n",
+			}
+			dir, res := runDeref(t, files, derefNamed("g", param("s", "string"), param("k", "int")))
+			wantDerefRefusal(t, dir, res, files, "f.go:")
+		})
+	}
+}
+
+func TestChangeSignature_DerefParamNilCheckCallSiteGuard(t *testing.T) {
+	bare := "package p\n\nfunc g(s *string, k int) int {\n\tif s == nil {\n\t\treturn 0\n\t}\n\treturn len(*s)\n}\n"
+	combined := "package p\n\nfunc g(s *[]int, k int) int {\n\tif s == nil || len(*s) == 0 {\n\t\treturn 0\n\t}\n\treturn len(*s)\n}\n"
+	cases := []struct {
+		name, f, use, typ string
+	}{
+		{"bare with nil literal", bare, "package p\n\nfunc Use() int {\n\treturn g(nil, 1)\n}\n", "string"},
+		{"bare with function value", bare, "package p\n\nvar fn = g\n", "string"},
+		{"combined with expression", combined, "package p\n\nfunc Use(s *[]int) int {\n\treturn g(s, 1)\n}\n", "[]int"},
+		{"combined with function value", combined, "package p\n\nvar fn = g\n", "[]int"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{"p/f.go": c.f, "p/use.go": c.use}
+			dir, res := runDeref(t, files, derefNamed("g", param("s", c.typ), param("k", "int")))
+			wantDerefRefusal(t, dir, res, files, "use.go:")
+		})
 	}
 }
