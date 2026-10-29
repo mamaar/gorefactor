@@ -93,6 +93,7 @@ The server communicates over stdio using the MCP protocol.
 | `fix_error_wrapping` | Auto-fix error wrapping |
 | `detect_missing_context_params` | Find functions that should accept `context.Context` |
 | `detect_environment_booleans` | Find environment variable boolean patterns |
+| `detect_variadics` | Find variadic functions, methods and interface methods, counting how many calls pass zero, one or many variadic arguments or spread a slice, across all build configurations |
 
 ### Import Management
 
@@ -120,11 +121,11 @@ Files are selected with the Go toolchain's own rules: `//go:build` and `// +buil
 
 `load_workspace` and `workspace_status` report the set as `build_configs` (name, GOOS, GOARCH, cgo, tags and the number of files only that configuration adds) and list `uncovered_files`: files no configuration can include, such as `//go:build ignore`, an unsatisfiable constraint, or a file that does not parse.
 
-These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete` and `unused`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it, where references from `_test.go` files and from unused code do not count. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
+These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete`, `unused` and `detect_variadics`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it, where references from `_test.go` files and from unused code do not count. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
 
 `batch_operations` plans each step as the standalone tool would: `rename_symbol`, `rename_method` and `rename_field` steps under every configuration, `move_symbol` steps as described above, and `rename_package` and `move_package` steps in the default configuration only. Every step is planned against the unmodified workspace, and two steps whose edits overlap fail the batch. `move_by_dependencies` picks its candidates in the default configuration and plans each like `move_symbol`; every candidate that passes is then moved in one combined plan, whatever its source package. A candidate whose move is refused, or that uses a symbol moved in the same call from another package, stays where it is and is listed in `skipped_sites`.
 
-These tools act on the default configuration only and can miss files excluded by build constraints: `rename_package`, `move_package`, `move_dir`, `move_packages`, `analyze_symbol`, `analyze_dependencies`, `detect_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
+These tools act on the default configuration only and can miss files excluded by build constraints: `rename_package`, `move_package`, `move_dir`, `move_packages`, `analyze_symbol`, `analyze_dependencies`, `detect_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers other than `detect_variadics`, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
 
 Plan results from the tools that plan under every configuration carry:
 

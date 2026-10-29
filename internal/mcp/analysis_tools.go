@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -224,6 +225,32 @@ type MissingContextViolationItem struct {
 	FunctionName string   `json:"function_name"`
 	Signature    string   `json:"signature"`
 	ContextCalls []string `json:"context_calls"`
+}
+
+// --- detect_variadics ---
+
+type DetectVariadicsInput struct {
+	Package string `json:"package,omitempty" jsonschema:"list only the declarations of this package; calls are still counted across the workspace"`
+}
+
+type VariadicItem struct {
+	Function  string   `json:"function"`
+	Signature string   `json:"signature"`
+	File      string   `json:"file"`
+	Line      int      `json:"line"`
+	Column    int      `json:"column"`
+	Configs   []string `json:"configs,omitempty"`
+	CallSites int      `json:"call_sites"`
+	ZeroArgs  int      `json:"zero_args"`
+	OneArg    int      `json:"one_arg"`
+	ManyArgs  int      `json:"many_args"`
+	Spread    int      `json:"spread"`
+	ValueUses int      `json:"value_uses"`
+}
+
+type VariadicTypeErrorItem struct {
+	File  string `json:"file"`
+	Error string `json:"error"`
 }
 
 // --- detect_boolean_branching ---
@@ -640,15 +667,68 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			out["bodiless_packages"] = bodiless
 		}
 		if len(report.Unchecked) > 0 {
-			var unchecked []UncoveredFileInfo
-			for _, u := range report.Unchecked {
-				info := UncoveredFileInfo{File: relativeTo(ws.RootPath, u.Source.Path), Reason: u.Reason}
-				for _, c := range u.Configs {
-					info.Configs = append(info.Configs, c.String())
-				}
-				unchecked = append(unchecked, info)
+			out["uncovered_files"] = uncheckedFileInfos(report.Unchecked, ws.RootPath)
+		}
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "detect_variadics",
+		Description: "Detect variadic functions, methods and methods of top-level named interfaces, and how the workspace calls each one, to find variadics added to avoid updating call sites: a parameter that every call leaves empty or fills with one value is a candidate for removal or a plain parameter. " +
+			"Each finding counts call_sites, split into zero_args, one_arg and many_args by the number of variadic arguments passed, and spread for calls passing a slice (xs...), plus value_uses for uses as a func value, whose calls cannot be counted. " +
+			"Calls come from the whole workspace including test files and generated code, merged across build configurations; package limits only which declarations are listed. A call through an interface counts for the interface method and not for its implementations, which are listed separately. Calls from outside the workspace are not visible, so low counts on an exported function prove nothing about its external callers. " +
+			"Declarations in generated files, func literals, named func types and anonymous or local interfaces are not listed. Files no configuration type-checks are listed in uncovered_files: calls in them are missing from the counts, and variadics they declare are missing from the list. Non-test files with a type error under some configuration are listed with their first error in type_error_files: calls inside an erroring expression may be missing from the counts. configs names the configurations declaring a finding, omitted when all do.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectVariadicsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+		request := refactor.VariadicsRequest{}
+		if in.Package != "" {
+			// The joined path covers a directory only another configuration holds a package in.
+			request.Packages = []string{in.Package, types.ResolvePackagePath(ws, in.Package), filepath.Join(ws.RootPath, in.Package)}
+		}
+		report, err := state.GetEngine().VariadicsAcrossConfigs(request)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := make([]VariadicItem, len(report.Findings))
+		for i, f := range report.Findings {
+			items[i] = VariadicItem{
+				Function:  f.Function,
+				Signature: f.Signature,
+				File:      relativeTo(ws.RootPath, f.File),
+				Line:      f.Line,
+				Column:    f.Column,
+				Configs:   f.Configs,
+				CallSites: f.CallSites,
+				ZeroArgs:  f.ZeroArgs,
+				OneArg:    f.OneArg,
+				ManyArgs:  f.ManyArgs,
+				Spread:    f.Spread,
+				ValueUses: f.ValueUses,
 			}
-			out["uncovered_files"] = unchecked
+		}
+		out := map[string]any{
+			"variadics":   items,
+			"total_count": len(items),
+		}
+		if len(report.Configs) > 1 {
+			out["build_configs"] = report.Configs
+		}
+		if len(report.Unchecked) > 0 {
+			out["uncovered_files"] = uncheckedFileInfos(report.Unchecked, ws.RootPath)
+		}
+		if len(report.TypeErrors) > 0 {
+			typeErrors := make([]VariadicTypeErrorItem, len(report.TypeErrors))
+			for i, e := range report.TypeErrors {
+				typeErrors[i] = VariadicTypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
+			}
+			out["type_error_files"] = typeErrors
 		}
 		return textResult(out), nil, nil
 	})
