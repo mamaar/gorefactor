@@ -1151,12 +1151,14 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 // already present in the local module cache — see the skip guard below,
 // mirrored from TestParser_WorkspaceImporter_ExternalModuleFallback).
 func TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport(t *testing.T) {
-	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "golang.org/x/tools")
+	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}} {{.Version}} {{.Sum}} {{.GoModSum}}", "golang.org/x/tools")
 	cmd.Env = append(os.Environ(), "GOPROXY=off")
 	out, err := cmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) == "" {
+	fields := strings.Fields(string(out))
+	if err != nil || len(fields) != 4 {
 		t.Skip("golang.org/x/tools not present in the local module cache; skipping")
 	}
+	version, sum, goModSum := fields[1], fields[2], fields[3]
 
 	tempDir := t.TempDir()
 	writeFile := func(rel, content string) {
@@ -1169,10 +1171,10 @@ func TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport(t *testing.T) {
 		}
 	}
 
-	writeFile("go.mod", "module example.com/testws\n\ngo 1.26.0\n\nrequire golang.org/x/tools v0.50.0\n")
+	writeFile("go.mod", "module example.com/testws\n\ngo 1.26.0\n\nrequire golang.org/x/tools "+version+"\n")
 	writeFile("go.sum",
-		"golang.org/x/tools v0.50.0 h1:c2ifzfcuY7L90lZ2aKd8S4K2NpASF08SZx9ZuJkHmSU=\n"+
-			"golang.org/x/tools v0.50.0/go.mod h1:7ulVMw3831Mwi5EZD6RomGyffr4VFjuNYXf2BbCEAV0=\n")
+		"golang.org/x/tools "+version+" "+sum+"\n"+
+			"golang.org/x/tools "+version+"/go.mod "+goModSum+"\n")
 	writeFile("foo/foo.go", `package foo
 
 func Process(name string) string { return name }
