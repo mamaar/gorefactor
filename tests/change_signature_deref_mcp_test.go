@@ -415,3 +415,44 @@ func TestChangeSignature_DerefParamDropsParenthesesAroundDereferenceOnly(t *test
 	assertFileContains(t, dir, "p/f.go", "(len(b)+1)*2")
 	goVets(t, dir, "")
 }
+
+func TestChangeSignature_DerefParamAcceptsRecursivePassThrough(t *testing.T) {
+	f := "package p\n\nfunc expr(r int, fields *map[string]bool, k string) string {\n\tif fields == nil || *fields == nil {\n\t\treturn k\n\t}\n\tif r > 0 {\n\t\treturn expr(r-1, fields, k)\n\t}\n\treturn k + expr(0, fields, k)\n}\n\ntype T struct{}\n\nfunc (T) m(fields *[]int) int {\n\tif len(*fields) == 0 {\n\t\treturn 0\n\t}\n\treturn T{}.m(fields)\n}\n"
+	use := "package p\n\nfunc Use() {\n\tfs := map[string]bool{}\n\t_ = expr(1, &fs, \"k\")\n\tls := []int{1}\n\t_ = T{}.m(&ls)\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, derefNamed("expr", param("r", "int"), param("fields", "map[string]bool"), param("k", "string")))
+	changeSigOK(t, sess, derefNamed("T.m", param("fields", "[]int")))
+
+	assertFileContains(t, dir, "p/f.go", "return expr(r-1, fields, k)")
+	assertFileContains(t, dir, "p/f.go", "k + expr(0, fields, k)")
+	assertFileContains(t, dir, "p/f.go", "return T{}.m(fields)")
+	assertFileContains(t, dir, "p/use.go", "expr(1, fs, \"k\")")
+	assertFileContains(t, dir, "p/use.go", "T{}.m(ls)")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_DerefParamRefusesPassThroughThatIsNotRecursive(t *testing.T) {
+	cases := map[string]string{
+		"other function":     "func other(x *[]int, y int) int { return len(*x) }\n\nfunc g(p *[]int, k int) int { return other(p, k) }\n",
+		"different position": "func g(p *[]int, q *[]int) int { return g(q, p) }\n",
+		"same-named other":   "type T struct{}\n\nfunc (T) g(p *[]int) int { return 0 }\n\nfunc g(p *[]int) int { return T{}.g(p) }\n",
+	}
+	for name, decl := range cases {
+		t.Run(name, func(t *testing.T) {
+			files := map[string]string{"p/f.go": "package p\n\n" + decl, "p/use.go": "package p\n\nfunc Use() {\n\tvar x []int\n\t_ = x\n}\n"}
+			var args map[string]any
+			if name == "different position" {
+				args = derefNamed("g", param("p", "[]int"), param("q", "*[]int"))
+			} else if name == "other function" {
+				args = derefNamed("g", param("p", "[]int"), param("k", "int"))
+			} else {
+				args = derefNamed("g", param("p", "[]int"))
+			}
+			dir, res := runDeref(t, files, args)
+			wantDerefRefusal(t, dir, res, files, "f.go:")
+		})
+	}
+}

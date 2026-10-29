@@ -115,11 +115,12 @@ type ChangeSignatureOperation struct {
 	// declaration and NewParams from *T into T, rewriting the body and calls.
 	DerefParam bool
 
-	altered    []AlteredDecl
-	derefIdx   int
-	derefSkips []pkgtypes.SkippedSite
-	derefNil   derefNilMode // how the body compares the dereferenced parameter with nil
-	derefErr   error        // first call-site finding that aborts the whole change
+	altered       []AlteredDecl
+	derefIdx      int
+	derefParamObj gotypes.Object // the parameter at derefIdx in the function body
+	derefSkips    []pkgtypes.SkippedSite
+	derefNil      derefNilMode // how the body compares the dereferenced parameter with nil
+	derefErr      error        // first call-site finding that aborts the whole change
 }
 
 // AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
@@ -656,14 +657,15 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 		if i > 0 {
 			signature.WriteString(", ")
 		}
+		if sharesTypeWithNext(funcDecl, op.NewParams, i) {
+			signature.WriteString(param.Name)
+			continue
+		}
 		switch {
 		case param.Name != "":
 			signature.WriteString(param.Name + " ")
 		case named:
 			signature.WriteString("_ ") // Go rejects a list that mixes named and unnamed
-		}
-		if sharesTypeWithNext(funcDecl, op.NewParams, i) {
-			continue
 		}
 		signature.WriteString(param.Type)
 	}

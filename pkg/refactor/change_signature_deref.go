@@ -57,7 +57,8 @@ type derefBody struct {
 	plan    *pkgtypes.RefactoringPlan
 	obj     gotypes.Object
 	param   *ast.Ident
-	nilable bool // T is a slice or map
+	fn      gotypes.Object // the function being changed
+	nilable bool           // T is a slice or map
 	dropped [][2]token.Pos
 	handled map[ast.Node]bool
 	err     error
@@ -85,7 +86,8 @@ func (op *ChangeSignatureOperation) planDerefBody(ws *pkgtypes.Workspace, pkg *p
 	if obj == nil {
 		return fmt.Errorf("deref_param: no type information for parameter %s", param.Name)
 	}
-	b := &derefBody{op: op, ws: ws, info: info, file: file, plan: plan, obj: obj, param: param, handled: map[ast.Node]bool{}}
+	op.derefParamObj = obj
+	b := &derefBody{op: op, ws: ws, info: info, file: file, plan: plan, obj: obj, param: param, fn: info.Defs[decl.Name], handled: map[ast.Node]bool{}}
 	switch obj.Type().(*gotypes.Pointer).Elem().Underlying().(type) {
 	case *gotypes.Slice, *gotypes.Map:
 		b.nilable = true
@@ -158,6 +160,9 @@ func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 		b.foldConstant(bin, stack[len(stack)-3], b.nilCmp(bin) == token.NEQ)
 		return
 	}
+	if b.isRecursivePass(id, parent) {
+		return
+	}
 	star, ok := parent.(*ast.StarExpr)
 	if !ok {
 		b.refuse(id, "is used other than as *"+b.param.Name+" or in a nil comparison")
@@ -185,6 +190,25 @@ func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 		NewText:     id.Name,
 		Description: fmt.Sprintf("Drop dereference of parameter %s", b.param.Name),
 	})
+}
+
+// isRecursivePass reports whether id is the argument at the parameter's own
+// position in a direct recursive call: both sides change type together.
+func (b *derefBody) isRecursivePass(id *ast.Ident, parent ast.Node) bool {
+	call, ok := parent.(*ast.CallExpr)
+	if !ok || b.op.derefIdx >= len(call.Args) || call.Args[b.op.derefIdx] != id {
+		return false
+	}
+	var callee *ast.Ident
+	switch f := call.Fun.(type) {
+	case *ast.Ident:
+		callee = f
+	case *ast.SelectorExpr:
+		callee = f.Sel
+	default:
+		return false
+	}
+	return b.fn != nil && b.info.Uses[callee] == b.fn
 }
 
 func (b *derefBody) isParam(e ast.Expr) bool {
@@ -438,6 +462,9 @@ func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallE
 			break
 		}
 		arg = p.X
+	}
+	if id, ok := arg.(*ast.Ident); ok && info.Uses[id] == op.derefParamObj {
+		return "" // recursive pass of the parameter itself, left as is
 	}
 	if done, reason := op.derefNilGuard(args, arg, callExpr, ws, info); done {
 		return reason
