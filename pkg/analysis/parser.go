@@ -835,12 +835,12 @@ func (c *typeErrors) firstPerFile(fset *token.FileSet, tests []testAST) map[stri
 // production-only rescue view Import hands to a genuinely in-progress
 // package.
 //
-// The resulting Defs/Uses are merged into pkg.TypesInfo so every consumer
+// The resulting Defs/Uses/Types are merged into pkg.TypesInfo so every consumer
 // that already reads pkg.TypesInfo for pkg.TestFiles (BuildReferenceIndex
 // chief among them, since it does not distinguish in-package from external
 // test files) sees these identifiers exactly the way it already sees
-// in-package ones. The merge is safe because the two Info maps are keyed by
-// *ast.Ident pointers drawn from disjoint file sets — nothing in pkg's own
+// in-package ones. The merge is safe because the Info maps are keyed by
+// AST node pointers drawn from disjoint file sets — nothing in pkg's own
 // combined check can share a key with a file checked here.
 //
 // External test files that carry errors are excluded like in-package ones and
@@ -884,6 +884,9 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 	}
 	for ident, obj := range res.info.Uses {
 		pkg.TypesInfo.Uses[ident] = obj
+	}
+	for expr, tv := range res.info.Types {
+		pkg.TypesInfo.Types[expr] = tv
 	}
 }
 

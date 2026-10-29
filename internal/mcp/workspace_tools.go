@@ -64,6 +64,17 @@ func uncoveredFileInfos(cov analysis.Covering, root string) []UncoveredFileInfo 
 	return out
 }
 
+func uncheckedFileInfos(files []analysis.UncheckedFile, root string) []UncoveredFileInfo {
+	out := make([]UncoveredFileInfo, len(files))
+	for i, u := range files {
+		out[i] = UncoveredFileInfo{File: relativeTo(root, u.Source.Path), Reason: u.Reason}
+		for _, c := range u.Configs {
+			out[i].Configs = append(out[i].Configs, c.String())
+		}
+	}
+	return out
+}
+
 // relativeTo returns path relative to root with forward slashes, or path
 // itself when it cannot be made relative.
 func relativeTo(root, path string) string {
