@@ -59,7 +59,7 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 
 	candidates := op.identifySharedSymbols(ws)
 
-	packageCoupling := packageCouplingOf(ws)
+	packageCoupling := packageCouplingOf(ws, declaredSymbolCounts(ws))
 
 	suggestedMoves := make([]types.SuggestedMove, 0, len(candidates))
 	affectedPackagesSet := make(map[string]bool)
@@ -476,30 +476,6 @@ func (op *OrganizeByLayersOperation) classifyPackage(packagePath string) string 
 	return "Unclassified"
 }
 
-// detectCycles returns the production and in-package-test import cycles as
-// closed import-path lists, building the dependency graph if it is missing.
-func detectCycles(ws *types.Workspace) (cycles, testCycles [][]string) {
-	ensureDependencyGraph(ws)
-	if ws.Dependencies == nil {
-		return [][]string{}, [][]string{}
-	}
-	return importPathCycles(ws, ws.Dependencies.ImportCycles), importPathCycles(ws, ws.Dependencies.TestImportCycles)
-}
-
-// importPathCycles rewrites filesystem-path cycles as import paths, falling
-// back to the path relative to the workspace root.
-func importPathCycles(ws *types.Workspace, cycles [][]string) [][]string {
-	out := make([][]string, 0, len(cycles))
-	for _, cycle := range cycles {
-		named := make([]string, len(cycle))
-		for i, fsPath := range cycle {
-			named[i] = importPathOf(ws, fsPath)
-		}
-		out = append(out, named)
-	}
-	return out
-}
-
 func importPathOf(ws *types.Workspace, fsPath string) string {
 	if pkg := ws.Packages[fsPath]; pkg != nil && pkg.ImportPath != "" {
 		return pkg.ImportPath
@@ -542,9 +518,9 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 
 	ensureDependencyGraph(ws)
 
-	impact := &types.ImpactAnalysis{PackageCoupling: packageCouplingOf(ws)}
+	impact := &types.ImpactAnalysis{PackageCoupling: packageCouplingOf(ws, declaredSymbolCounts(ws))}
 	if op.Request.DetectBackwardsDeps {
-		impact.BackwardsDependencies = op.detectBackwardsDependencies(ws)
+		impact.BackwardsDependencies = detectBackwardsDependencies(ws)
 	}
 	if op.Request.SuggestMoves {
 		impact.SuggestedMoves = op.generateSuggestedMoves(ws)
@@ -563,16 +539,13 @@ func ensureDependencyGraph(ws *types.Workspace) {
 	_, _ = analysis.NewDependencyAnalyzer(ws, logger).BuildDependencyGraph()
 }
 
-// packageCouplingOf returns import counts and symbol counts per package, keyed by filesystem path.
-func packageCouplingOf(ws *types.Workspace) map[string]types.PackageCouplingInfo {
+// packageCouplingOf returns import counts and symbol counts per package, keyed
+// by filesystem path.
+func packageCouplingOf(ws *types.Workspace, symbolCounts map[string]int) map[string]types.PackageCouplingInfo {
 	incoming := computeIncomingDeps(ws)
 	coupling := make(map[string]types.PackageCouplingInfo, len(ws.Packages))
-	for fsPath, pkg := range ws.Packages {
-		info := types.PackageCouplingInfo{IncomingDeps: incoming[fsPath]}
-		if pkg.Symbols != nil {
-			info.SymbolCount = len(pkg.Symbols.Functions) + len(pkg.Symbols.Types) +
-				len(pkg.Symbols.Variables) + len(pkg.Symbols.Constants)
-		}
+	for fsPath := range ws.Packages {
+		info := types.PackageCouplingInfo{IncomingDeps: incoming[fsPath], SymbolCount: symbolCounts[fsPath]}
 		if ws.Dependencies != nil {
 			info.OutgoingDeps = len(ws.Dependencies.PackageImports[fsPath])
 		}
@@ -609,7 +582,7 @@ func packageTier(importPath string) int {
 	return -1
 }
 
-func (op *AnalyzeDependenciesOperation) detectBackwardsDependencies(ws *types.Workspace) []types.BackwardDependency {
+func detectBackwardsDependencies(ws *types.Workspace) []types.BackwardDependency {
 	deps := []types.BackwardDependency{}
 	if ws.Dependencies == nil {
 		return deps

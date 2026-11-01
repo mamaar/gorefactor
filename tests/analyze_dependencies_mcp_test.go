@@ -3,6 +3,7 @@ package tests_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -83,5 +84,89 @@ func TestAnalyzeDependencies_InnerImportingOuterIsBackwardsDependency(t *testing
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("dependency = %s, want it to mention %q", raw, want)
 		}
+	}
+}
+
+func TestAnalyzeDependencies_CountsImportsAndSymbolsOfEveryConfig(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"a/a.go":         "package a\n\nfunc A() int { return 1 }\n",
+		"a/a_windows.go": "package a\n\nimport \"example.com/threadmcp/b\"\n\nfunc W() int { return b.B() }\n",
+		"a/a_linux.go":   "package a\n\nfunc L() int { return 1 }\n",
+		"b/b.go":         "package b\n\nfunc B() int { return 1 }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "analyze_dependencies", map[string]any{})
+
+	raw, _ := json.Marshal(out)
+	var got struct {
+		Coupling map[string]struct {
+			Outgoing int `json:"outgoing_deps"`
+			Incoming int `json:"incoming_deps"`
+			Symbols  int `json:"symbol_count"`
+		} `json:"package_coupling"`
+		Graph struct {
+			PackageImports map[string][]string
+			PackageDeps    map[string][]string
+		} `json:"dependency_graph"`
+		Configs []string `json:"build_configs"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	var aDir, bDir string
+	for d := range got.Graph.PackageImports {
+		if strings.HasSuffix(d, "/a") {
+			aDir = d
+		}
+	}
+	for d := range got.Coupling {
+		if strings.HasSuffix(d, "/b") {
+			bDir = d
+		}
+	}
+	if !slices.Contains(got.Graph.PackageImports[aDir], "example.com/threadmcp/b") {
+		t.Errorf("PackageImports[a] = %v, want the windows-only import", got.Graph.PackageImports[aDir])
+	}
+	if !slices.Contains(got.Graph.PackageDeps[aDir], bDir) {
+		t.Errorf("PackageDeps[a] = %v, want %s", got.Graph.PackageDeps[aDir], bDir)
+	}
+	if c := got.Coupling[bDir]; c.Incoming != 1 {
+		t.Errorf("b incoming_deps = %d, want 1", c.Incoming)
+	}
+	if c := got.Coupling[aDir]; c.Symbols != 3 || c.Outgoing != 1 {
+		t.Errorf("a coupling = %+v, want 3 symbols and 1 outgoing", c)
+	}
+	if len(got.Configs) < 2 {
+		t.Errorf("build_configs = %v, want several", got.Configs)
+	}
+}
+
+func TestAnalyzeDependencies_CyclesAreObjectsNamingTheirConfigs(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"a/a.go":         "package a\n\nfunc A() int { return 1 }\n",
+		"a/a_windows.go": "package a\n\nimport \"example.com/threadmcp/b\"\n\nfunc W() int { return b.B() }\n",
+		"b/b.go":         "package b\n\nimport \"example.com/threadmcp/a\"\n\nfunc B() int { return a.A() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "analyze_dependencies", map[string]any{})
+
+	graph, _ := out["dependency_graph"].(map[string]any)
+	cycles, _ := graph["ImportCycles"].([]any)
+	if len(cycles) != 1 {
+		t.Fatalf("ImportCycles = %v, want one", graph["ImportCycles"])
+	}
+	cycle, _ := cycles[0].(map[string]any)
+	if p, _ := cycle["packages"].([]any); len(p) != 3 {
+		t.Errorf("packages = %v, want a closed path of 3", cycle["packages"])
+	}
+	if c, _ := cycle["configs"].([]any); len(c) == 0 {
+		t.Errorf("configs = %v, want the windows configuration", cycle["configs"])
+	}
+	if tc, ok := graph["TestImportCycles"].([]any); !ok || len(tc) != 0 {
+		t.Errorf("TestImportCycles = %#v, want an empty list", graph["TestImportCycles"])
 	}
 }
