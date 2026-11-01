@@ -427,33 +427,42 @@ func sourcePackageName(ws *types.Workspace, dir string, files []*analysis.Source
 	return name
 }
 
-// rewritePackageClause returns file's content with the package clause
-// identifier changed from oldName to newName, located via the file's AST so a
-// stray "package oldName" inside a doc comment can't be hit. An external test
-// package (oldName_test) becomes newName_test; a file with any other clause
-// (an ignore-tagged package main, say) is returned unchanged. It fails when the
-// clause must change but the file has no usable AST.
-func rewritePackageClause(fset *token.FileSet, file *analysis.SourceFile, oldName, newName string) (string, error) {
-	content := string(file.Content)
+// packageClauseEdit locates the package clause identifier of file and the name
+// it must take when oldName becomes newName, via the file's AST so a stray
+// "package oldName" inside a doc comment can't be hit. An external test package
+// (oldName_test) becomes newName_test; a file with any other clause (an
+// ignore-tagged package main, say) needs no edit (ok is false). It fails when
+// the clause must change but the file has no usable AST.
+func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, newName string) (start, end int, replacement string, ok bool, err error) {
 	if oldName == newName {
-		return content, nil
+		return 0, 0, "", false, nil
 	}
 	if file.AST == nil || file.AST.Name == nil || file.AST.Name.Name == "" {
-		return "", fmt.Errorf("cannot rewrite the package clause of %s: file does not parse: %v", file.Path, file.Err)
+		return 0, 0, "", false, fmt.Errorf("cannot rewrite the package clause of %s: file does not parse: %v", file.Path, file.Err)
 	}
-	var replacement string
 	switch file.AST.Name.Name {
 	case oldName:
 		replacement = newName
 	case oldName + "_test":
 		replacement = newName + "_test"
 	default:
-		return content, nil
+		return 0, 0, "", false, nil
 	}
-	start := fset.Position(file.AST.Name.Pos()).Offset
-	end := fset.Position(file.AST.Name.End()).Offset
-	if start < 0 || end > len(content) || start >= end || content[start:end] != file.AST.Name.Name {
-		return "", fmt.Errorf("cannot locate the package clause of %s: file changed since it was loaded", file.Path)
+	start = fset.Position(file.AST.Name.Pos()).Offset
+	end = fset.Position(file.AST.Name.End()).Offset
+	if start < 0 || end > len(file.Content) || start >= end || string(file.Content[start:end]) != file.AST.Name.Name {
+		return 0, 0, "", false, fmt.Errorf("cannot locate the package clause of %s: file changed since it was loaded", file.Path)
+	}
+	return start, end, replacement, true, nil
+}
+
+// rewritePackageClause returns file's content with its package clause renamed
+// as packageClauseEdit describes, or unchanged when no edit is needed.
+func rewritePackageClause(fset *token.FileSet, file *analysis.SourceFile, oldName, newName string) (string, error) {
+	content := string(file.Content)
+	start, end, replacement, ok, err := packageClauseEdit(fset, file, oldName, newName)
+	if err != nil || !ok {
+		return content, err
 	}
 	return content[:start] + replacement + content[end:], nil
 }

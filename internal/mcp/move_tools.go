@@ -133,7 +133,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_package",
-		Description: "Move an entire package to a new location. Updates all import paths across the workspace. Acts on the default build configuration only and can miss files excluded by build constraints.",
+		Description: "Move an entire package to a new location. Updates all import paths across the workspace. Moves and rewrites every .go file regardless of build constraints.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MovePackageInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -163,7 +163,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_dir",
-		Description: "Move a directory (and all packages inside it) to a new location. Acts on the default build configuration only and can miss files excluded by build constraints.",
+		Description: "Move a directory (and all packages inside it) to a new location. Moves and rewrites every .go file regardless of build constraints.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveDirInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -189,7 +189,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_packages",
-		Description: "Move multiple packages atomically. All import references are updated in a single operation. Acts on the default build configuration only and can miss files excluded by build constraints.",
+		Description: "Move multiple packages atomically. All import references are updated in a single operation. Moves and rewrites every .go file regardless of build constraints.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MovePackagesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 

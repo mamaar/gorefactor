@@ -845,6 +845,9 @@ func (op *RenameSymbolOperation) Description() string {
 // RenamePackageOperation implements package renaming
 type RenamePackageOperation struct {
 	Request types.RenamePackageRequest
+	// Sources holds every .go file of the workspace, so files excluded by the
+	// loaded build configuration are renamed and rewritten too.
+	Sources *analysis.SourceTree
 }
 
 func (op *RenamePackageOperation) Type() types.OperationType {
@@ -904,19 +907,30 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 		Reversible:    true,
 	}
 
-	// Find the package to rename
-	targetPackage := ws.Packages[op.Request.PackagePath]
-
 	// Step 1: Update package declaration in all files within the package
-	for _, file := range targetPackage.Files {
-		change, err := op.generatePackageDeclarationChange(file, op.Request.OldPackageName, op.Request.NewPackageName)
+	files, err := sourceFilesOf(op.Sources, op.Request.PackagePath)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		start, end, _, ok, err := packageClauseEdit(ws.FileSet, file, op.Request.OldPackageName, op.Request.NewPackageName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate package declaration change for %s: %v", file.Path, err)
 		}
-		if change != nil {
-			plan.Changes = append(plan.Changes, *change)
-			plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
+		if !ok {
+			continue
 		}
+		oldText := string(file.Content[start:end])
+		newText := strings.Replace(oldText, op.Request.OldPackageName, op.Request.NewPackageName, 1)
+		plan.Changes = append(plan.Changes, types.Change{
+			File:        file.Path,
+			Start:       start,
+			End:         end,
+			OldText:     oldText,
+			NewText:     newText,
+			Description: fmt.Sprintf("Update package declaration from %s to %s", oldText, newText),
+		})
+		plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
 	}
 
 	// Step 2: Update import statements in other packages (if requested)
@@ -1799,51 +1813,6 @@ func calculateByteOffset(filePath string, line, column int) int {
 
 // Helper methods for RenamePackageOperation
 
-func (op *RenamePackageOperation) generatePackageDeclarationChange(file *types.File, oldName, newName string) (*types.Change, error) {
-	content := string(file.OriginalContent)
-	lines := strings.Split(content, "\n")
-
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "package ") {
-			parts := strings.Fields(trimmed)
-			if len(parts) >= 2 && parts[1] == oldName {
-				// Calculate byte position of the package name
-				startByte := 0
-				for j := range i {
-					startByte += len(lines[j]) + 1 // +1 for newline
-				}
-
-				// Find the start of the package name within the line
-				packageKeywordPos := strings.Index(line, "package")
-				if packageKeywordPos == -1 {
-					continue
-				}
-
-				nameStartInLine := packageKeywordPos + len("package")
-				// Skip whitespace to find the actual name
-				for nameStartInLine < len(line) && (line[nameStartInLine] == ' ' || line[nameStartInLine] == '\t') {
-					nameStartInLine++
-				}
-
-				startByte += nameStartInLine
-				endByte := startByte + len(oldName)
-
-				return &types.Change{
-					File:        file.Path,
-					Start:       startByte,
-					End:         endByte,
-					OldText:     oldName,
-					NewText:     newName,
-					Description: fmt.Sprintf("Update package declaration from %s to %s", oldName, newName),
-				}, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("package declaration not found in file %s", file.Path)
-}
-
 func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, packagePath, newPackageName string) ([]types.Change, []string, error) {
 	var changes []types.Change
 	var affectedFiles []string
@@ -1851,13 +1820,10 @@ func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, pac
 	// Get the import path for this package
 	importPath := packagePathToImportPath(ws, packagePath)
 
-	// Find all files that import this package
-	for _, pkg := range ws.Packages {
-		if pkg.Path == packagePath {
-			continue // Skip the package itself
-		}
-
-		for _, file := range pkg.Files {
+	// Find all files that import this package; external test files in its own
+	// directory do too.
+	for _, dir := range op.Sources.Dirs() {
+		for _, file := range op.Sources.Dir(dir) {
 			hasImport, fileChanges, err := op.generateFileImportUpdate(file, importPath, newPackageName)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to update imports in %s: %v", file.Path, err)
@@ -1873,8 +1839,8 @@ func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, pac
 	return changes, affectedFiles, nil
 }
 
-func (op *RenamePackageOperation) generateFileImportUpdate(file *types.File, importPath, newPackageName string) (bool, []types.Change, error) {
-	content := string(file.OriginalContent)
+func (op *RenamePackageOperation) generateFileImportUpdate(file *analysis.SourceFile, importPath, newPackageName string) (bool, []types.Change, error) {
+	content := string(file.Content)
 
 	// Check if this file imports the target package
 	if !strings.Contains(content, `"`+importPath+`"`) {

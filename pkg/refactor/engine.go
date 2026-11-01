@@ -285,7 +285,7 @@ func (e *DefaultEngine) RenameSymbolAcrossConfigs(req types.RenameSymbolRequest)
 
 // RenamePackage implements package renaming
 func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error) {
-	operation := &RenamePackageOperation{Request: req}
+	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -297,6 +297,7 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate rename package plan: %w", err)
 	}
+	plan.Coverage.Configs = e.coveredConfigNames()
 
 	// Analyze impact
 	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)

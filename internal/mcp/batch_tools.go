@@ -21,7 +21,7 @@ func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Execute multiple refactoring operations as an atomic batch. Every step is planned against the unmodified workspace and nothing is written unless all steps plan; steps whose edits overlap fail the batch; for example, two move_symbol steps that share a target package or a referring file overlap and must be run as separate calls. " +
 			"rename_symbol, rename_method and rename_field steps are planned under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace, " +
 			"and move_symbol is planned for the default configuration and checked under the others, as in the standalone tools. " +
-			"rename_package and move_package steps act on the default build configuration only and can miss files excluded by build constraints. " +
+			"rename_package and move_package steps rewrite every .go file regardless of build constraints. " +
 			"A batch is refused when a rename_package or move_package step shares a package with any other step (as a symbol, method or field package, a move's source or target, or another package step), " +
 			"or when a step names no package at all next to a package step; run those steps as separate calls.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in BatchOperationsInput) (*mcpsdk.CallToolResult, any, error) {
