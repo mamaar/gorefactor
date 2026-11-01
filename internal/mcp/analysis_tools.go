@@ -45,7 +45,7 @@ type SymbolInfo struct {
 	RefCount  int             `json:"reference_count"`
 	Refs      []ReferenceInfo `json:"references,omitempty"`
 	// Declarations is set when build configurations declare the symbol in
-	// more than one place; File, Line and Column are the first configuration's.
+	// more than one place; File, Line and Column are the default configuration's, else the first that declares it.
 	Declarations []DeclarationInfo `json:"declarations,omitempty"`
 	// BuildConfigs is set when there is more than one build configuration.
 	BuildConfigs []string `json:"build_configs,omitempty"`
@@ -1897,7 +1897,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_dependencies",
-		Description: "Analyze the dependency graph of the workspace without changing it. Covers every build configuration: imports, dependencies and symbol counts are those of all files, and build_configs lists the configurations when there is more than one. Returns package_coupling (import and symbol counts per package) and dependency_graph: PackageImports (package directory to the import paths of its non-test files), PackageDeps (package directory to the directories of the workspace packages it depends on, transitively, through non-test files), and ImportCycles and TestImportCycles (each {packages: closed path of package directories, configs: the configurations it occurs in, omitted when all}; cycles are found under each configuration separately, so edges from different configurations never combine). detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages, computed in the default build configuration only (as move_by_dependencies picks its candidates).",
+		Description: "Analyze the dependency graph of the workspace without changing it. Covers every build configuration: imports, dependencies and symbol counts are those of all files, and build_configs lists the configurations when there is more than one. Returns package_coupling (import and symbol counts per package) and dependency_graph: PackageImports (package directory to the import paths of its non-test files), PackageDeps (package directory to the directories of the workspace packages it depends on, transitively, through non-test files), and ImportCycles and TestImportCycles (each {packages: closed path of package directories, one per group of mutually importing packages, so a package in the group may not appear in it; configs: the configurations where the group is cyclic, omitted when all}; cycles are found under each configuration separately, so edges from different configurations never combine). detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages, computed in the default build configuration only (as move_by_dependencies picks its candidates).",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeDependenciesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
