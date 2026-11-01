@@ -1622,6 +1622,34 @@ func TestTypeCheck_OnlyTestFileWithErrorIsExcluded(t *testing.T) {
 	}
 }
 
+func TestTypeCheck_TestOnlyPackageIsCheckedAndExcludesBrokenTestFile(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":                   "package p\n\nfunc F() {}\n",
+		"integration/good_test.go": "package integration\n\nimport \"example.com/w/p\"\n\nfunc useF() { p.F() }\n",
+		"integration/bad_test.go":  "package integration\n\nimport _ \"example.com/missing/dep\"\n",
+	})
+	_, _, pkg := checkedDir(t, root, "integration")
+
+	if got := excludedNames(pkg); !slices.Equal(got, []string{"bad_test.go"}) {
+		t.Fatalf("ExcludedTestFiles = %v, want only bad_test.go", got)
+	}
+	if pkg.TypesPkg == nil || !usesIn(pkg, "good_test.go", "F") {
+		t.Error("good_test.go's call of p.F is missing from the package's type information")
+	}
+}
+
+func TestTypeCheck_ExternalTestOnlyPackageIsChecked(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":                  "package p\n\nfunc F() {}\n",
+		"integration/ext_test.go": "package integration_test\n\nimport \"example.com/w/p\"\n\nfunc useF() { p.F() }\n",
+	})
+	_, _, pkg := checkedDir(t, root, "integration")
+
+	if pkg.TypesPkg == nil || !usesIn(pkg, "ext_test.go", "F") {
+		t.Error("ext_test.go's call of p.F is missing from the package's type information")
+	}
+}
+
 func TestTypeCheck_TestFileDependingOnExcludedFileIsExcludedWithItsOwnError(t *testing.T) {
 	root := writeWorkspace(t, map[string]string{
 		"p/p.go":           "package p\n\nfunc F() {}\n",

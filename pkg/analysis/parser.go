@@ -130,7 +130,7 @@ func (p *GoParser) ParseFile(filename string) (*types.File, error) {
 
 // ParsePackage builds the package in dir from the files that match the parser's
 // build config. It returns (nil, nil) when dir has .go files but none usable
-// as a non-test file under that config.
+// under that config.
 func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 	if err := p.sources.AddDir(dir); err != nil {
 		return nil, &types.RefactorError{
@@ -164,6 +164,9 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 	}
 	collectImports(pkg)
 
+	if pkg.Name == "" {
+		p.nameFromTests(pkg)
+	}
 	if pkg.Name == "" {
 		return nil, nil
 	}
@@ -213,6 +216,17 @@ func (p *GoParser) addSource(pkg *types.Package, src *SourceFile) {
 		pkg.Name = src.AST.Name.Name
 		pkg.Path = p.inferPackagePath(pkg.Dir, src.AST.Name.Name)
 	}
+}
+
+// nameFromTests names a package of test files only after its first test
+// file, with any _test suffix trimmed.
+func (p *GoParser) nameFromTests(pkg *types.Package) {
+	names := slices.Sorted(maps.Keys(pkg.TestFiles))
+	if len(names) == 0 {
+		return
+	}
+	pkg.Name = strings.TrimSuffix(pkg.TestFiles[names[0]].AST.Name.Name, "_test")
+	pkg.Path = p.inferPackagePath(pkg.Dir, pkg.Name)
 }
 
 // collectImports sets pkg.Imports to the distinct imports of its non-test
@@ -607,24 +621,17 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 		p.typeCheckHook(pkg)
 	}
 
-	files := productionASTs(pkg)
-	if len(files) == 0 {
-		// Nothing to check (e.g. every file in the package failed to parse).
-		// Still mark it checked: leaving TypesChecked false would make every
-		// future import of this package re-enter here on the (cheap, but
-		// pointless) chance that files might appear.
-		p.mu.Lock()
-		pkg.TypesChecked = true
-		p.mu.Unlock()
-		return
-	}
-
 	// Include in-package test files so identifiers declared or used in _test.go
 	// land in Defs/Uses. Without them, object-identity lookups (FindMemberReferences)
 	// silently miss every test-file reference. External test packages (package x_test)
 	// carry a different package name and cannot be checked in the same pass.
-	pkgName := files[0].Name.Name
-	inPackage, external := testASTs(pkg, pkgName)
+	files := productionASTs(pkg)
+	inPackage, external := testASTs(pkg, pkg.Name)
+	if len(files) == 0 && len(inPackage) == 0 {
+		// A package of external test files only: they are its own check, since
+		// there is nothing for them to merge into.
+		inPackage, external = external, nil
+	}
 
 	res := p.checkSheddingTests(ws, pkg, files, inPackage)
 	if res.err != nil {
@@ -1271,9 +1278,10 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 			// populated package even on error, so re-checking a failed
 			// package would not improve on this and would re-trigger the
 			// same cascade of dependency re-checks the memoisation exists to
-			// prevent. typesPkg is nil here only if the package had zero
-			// parseable files, in which case there is nothing useful
-			// to hand back and the stdlib fallback below is the last resort.
+			// prevent. typesPkg is nil here only for a package of test files
+			// whose every test file was excluded, in which case there is
+			// nothing useful to hand back and the stdlib fallback below is
+			// the last resort.
 			if typesPkg != nil {
 				return typesPkg, nil
 			}
@@ -1316,8 +1324,7 @@ func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotype
 
 	files := productionASTs(pkg)
 	if len(files) == 0 {
-		// Nothing to check — same "zero parseable files" case typeCheckLocked
-		// itself guards, just without anywhere to store the result.
+		// A package of test files only: its production view is empty.
 		return gotypes.NewPackage(pkg.ImportPath, pkg.Name), nil
 	}
 
