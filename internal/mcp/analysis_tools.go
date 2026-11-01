@@ -20,6 +20,7 @@ import (
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
 	"github.com/mamaar/gorefactor/pkg/analyzers/missingctx"
+	"github.com/mamaar/gorefactor/pkg/analyzers/nilnil"
 	"github.com/mamaar/gorefactor/pkg/analyzers/nilreceiver"
 	"github.com/mamaar/gorefactor/pkg/analyzers/switchchain"
 	"github.com/mamaar/gorefactor/pkg/refactor"
@@ -257,6 +258,12 @@ type VariadicTypeErrorItem struct {
 // --- detect_nil_receiver_checks ---
 
 type DetectNilReceiverChecksInput struct {
+	Package string `json:"package,omitempty" jsonschema:"specific package to analyze"`
+}
+
+// --- detect_nil_nil_returns ---
+
+type DetectNilNilReturnsInput struct {
 	Package string `json:"package,omitempty" jsonschema:"specific package to analyze"`
 }
 
@@ -904,6 +911,32 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		results, _ := rr.Result.([]*nilreceiver.Result)
+		return textResult(map[string]any{
+			"violations":  results,
+			"total_count": len(results),
+		}), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "detect_nil_nil_returns",
+		Description: "Detect returns of nil for every result of a function whose last result is error, such as `return nil, nil`, which leave callers with neither a value nor an error; a sentinel error is usually clearer. Func literals are judged by their own signature (in_closure). result_types lists the non-error result types as written, so nil slices and maps, which often mean an empty result, can be filtered out. Bare returns of named results, `return f()`, generated files and test files are not checked.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectNilNilReturnsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
+
+		rr, err := analyzers.Run(ws, nilnil.Analyzer, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		results, _ := rr.Result.([]*nilnil.Result)
 		return textResult(map[string]any{
 			"violations":  results,
 			"total_count": len(results),
