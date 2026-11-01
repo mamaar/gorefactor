@@ -78,7 +78,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "generate_facades",
-		Description: "Auto-generate facade packages for a set of modules, re-exporting their public API.",
+		Description: "Auto-generate facade packages for a set of modules, re-exporting their public API. Symbols from every build configuration are re-exported: those declared in files with a build constraint, GOOS/GOARCH suffix or cgo go into facade_*.go files carrying the same constraint, so the facade builds wherever the source does. An existing generated facade is regenerated in place.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in GenerateFacadesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -105,7 +105,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "update_facades",
-		Description: "Update existing facade packages to reflect changes in the underlying packages they re-export from.",
+		Description: "Update existing facade packages to reflect changes in the underlying packages they re-export from, across every build configuration. Generated facade*.go files are regenerated whole and deleted when no longer needed; hand-written files are never touched.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in UpdateFacadesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
