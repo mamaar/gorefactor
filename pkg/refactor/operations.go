@@ -854,9 +854,12 @@ func (op *RenamePackageOperation) Type() types.OperationType {
 	return types.RenamePackageOperation
 }
 
-func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
-	// Check that source package exists
-	dir, exists := findSourceDir(op.Sources, op.Request.PackagePath)
+// target resolves the package directory and its current package name.
+func (op *RenamePackageOperation) target(ws *types.Workspace) (dir, name string, err error) {
+	dir, exists, err := findSourceDir(ws, op.Sources, op.Request.PackagePath)
+	if err != nil {
+		return "", "", err
+	}
 	if !exists {
 		var availablePackages []string
 		for pkgPath := range ws.Packages {
@@ -875,14 +878,22 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 			}
 		}
 
-		return &types.RefactorError{
+		return "", "", &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: message.String(),
 		}
 	}
+	return dir, sourcePackageName(ws, dir, op.Sources.Dir(dir)), nil
+}
 
-	// Check that the current package name matches what the user expects
-	if name := sourcePackageName(ws, dir, op.Sources.Dir(dir)); name != op.Request.OldPackageName {
+func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
+	_, name, err := op.target(ws)
+	if err != nil {
+		return err
+	}
+
+	// OldPackageName is optional; when given it must match the current name
+	if op.Request.OldPackageName != "" && op.Request.OldPackageName != name {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: fmt.Sprintf("package name mismatch: expected %s, found %s", op.Request.OldPackageName, name),
@@ -908,13 +919,16 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 	}
 
 	// Step 1: Update package declaration in all files within the package
-	dir, _ := findSourceDir(op.Sources, op.Request.PackagePath)
+	dir, oldName, err := op.target(ws)
+	if err != nil {
+		return nil, err
+	}
 	files, err := sourceFilesOf(op.Sources, dir)
 	if err != nil {
 		return nil, err
 	}
 	for _, file := range files {
-		start, end, _, ok, err := packageClauseEdit(ws.FileSet, file, op.Request.OldPackageName, op.Request.NewPackageName)
+		start, end, replacement, ok, err := packageClauseEdit(ws.FileSet, file, oldName, op.Request.NewPackageName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate package declaration change for %s: %v", file.Path, err)
 		}
@@ -922,14 +936,13 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 			continue
 		}
 		oldText := string(file.Content[start:end])
-		newText := strings.Replace(oldText, op.Request.OldPackageName, op.Request.NewPackageName, 1)
 		plan.Changes = append(plan.Changes, types.Change{
 			File:        file.Path,
 			Start:       start,
 			End:         end,
 			OldText:     oldText,
-			NewText:     newText,
-			Description: fmt.Sprintf("Update package declaration from %s to %s", oldText, newText),
+			NewText:     replacement,
+			Description: fmt.Sprintf("Update package declaration from %s to %s", oldText, replacement),
 		})
 		plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
 	}

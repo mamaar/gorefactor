@@ -32,28 +32,37 @@ func sourceFilesOf(tree *analysis.SourceTree, dir string) ([]*analysis.SourceFil
 	files := tree.Dir(dir)
 	for _, f := range files {
 		if f.Content == nil && f.Err != nil {
-			return nil, fmt.Errorf("cannot move %s: %w", f.Path, f.Err)
+			return nil, fmt.Errorf("cannot read %s: %w", f.Path, f.Err)
 		}
 	}
 	return files, nil
 }
 
-// findSourceDir returns the source-tree directory holding Go files that source
-// names: an absolute directory, or a suffix of one on a path-separator boundary.
-func findSourceDir(tree *analysis.SourceTree, source string) (string, bool) {
-	match := ""
-	for _, dir := range tree.Dirs() {
-		if len(tree.Dir(dir)) == 0 {
+// findSourceDir resolves source to a source-tree directory holding Go files.
+// source may be an absolute directory, one relative to the workspace root, or
+// an import path; failing those, a path-suffix of exactly one directory. Several
+// suffix matches are an error listing them; ok is false when nothing matches.
+func findSourceDir(ws *types.Workspace, tree *analysis.SourceTree, source string) (dir string, ok bool, err error) {
+	var suffixed []string
+	for _, d := range tree.Dirs() {
+		if len(tree.Dir(d)) == 0 {
 			continue
 		}
-		if dir == source {
-			return dir, true
+		if d == source || d == filepath.Join(ws.RootPath, source) || packagePathToImportPath(ws, d) == source {
+			return d, true, nil
 		}
-		if match == "" && strings.HasSuffix(dir, string(filepath.Separator)+source) {
-			match = dir
+		if strings.HasSuffix(d, string(filepath.Separator)+source) {
+			suffixed = append(suffixed, d)
 		}
 	}
-	return match, match != ""
+	switch len(suffixed) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return suffixed[0], true, nil
+	}
+	return "", false, fmt.Errorf("package %q is ambiguous: it matches %s; use a path relative to the workspace root or an import path",
+		source, strings.Join(suffixed, ", "))
 }
 
 // appendContentRewrites adds a whole-file change for every source-tree file
@@ -109,7 +118,9 @@ func (op *MovePackageOperation) Validate(ws *types.Workspace) error {
 		return fmt.Errorf("target package cannot be empty")
 	}
 
-	if _, ok := findSourceDir(op.Sources, op.Request.SourcePackage); !ok {
+	if _, ok, err := findSourceDir(ws, op.Sources, op.Request.SourcePackage); err != nil {
+		return err
+	} else if !ok {
 		return fmt.Errorf("source package %s not found in workspace", op.Request.SourcePackage)
 	}
 
@@ -149,7 +160,10 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		Reversible:    true,
 	}
 
-	sourceDir, ok := findSourceDir(op.Sources, op.Request.SourcePackage)
+	sourceDir, ok, err := findSourceDir(ws, op.Sources, op.Request.SourcePackage)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("source package %s not found", op.Request.SourcePackage)
 	}
@@ -434,7 +448,7 @@ func sourcePackageName(ws *types.Workspace, dir string, files []*analysis.Source
 // ignore-tagged package main, say) needs no edit (ok is false). It fails when
 // the clause must change but the file has no usable AST.
 func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, newName string) (start, end int, replacement string, ok bool, err error) {
-	if oldName == newName {
+	if oldName == newName || oldName == "main" {
 		return 0, 0, "", false, nil
 	}
 	if file.AST == nil || file.AST.Name == nil || file.AST.Name.Name == "" {
@@ -450,9 +464,6 @@ func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, 
 	}
 	start = fset.Position(file.AST.Name.Pos()).Offset
 	end = fset.Position(file.AST.Name.End()).Offset
-	if start < 0 || end > len(file.Content) || start >= end || string(file.Content[start:end]) != file.AST.Name.Name {
-		return 0, 0, "", false, fmt.Errorf("cannot locate the package clause of %s: file changed since it was loaded", file.Path)
-	}
 	return start, end, replacement, true, nil
 }
 
@@ -498,7 +509,9 @@ func (op *MovePackagesOperation) Validate(ws *types.Workspace) error {
 			return fmt.Errorf("target package at index %d cannot be empty", i)
 		}
 
-		if _, ok := findSourceDir(op.Sources, mapping.SourcePackage); !ok {
+		if _, ok, err := findSourceDir(ws, op.Sources, mapping.SourcePackage); err != nil {
+			return err
+		} else if !ok {
 			return fmt.Errorf("source package %s not found in workspace", mapping.SourcePackage)
 		}
 	}

@@ -135,3 +135,14 @@ func TestBatchRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	assertFileContains(t, dir, "old/p_plan9.go", "package fresh\n")
 	assertFileContains(t, dir, "use/use_plan9.go", "fresh.Plan9()")
 }
+
+func TestMCPRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
+	dir := writeFiles(t, excludedOnlyRenameWorkspace())
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "rename_package", map[string]any{"package_path": "old", "new_package_name": "fresh"})
+
+	assertFileContains(t, dir, "old/p_plan9.go", "package fresh\n")
+	assertFileContains(t, dir, "use/use_plan9.go", "fresh.Plan9()")
+}

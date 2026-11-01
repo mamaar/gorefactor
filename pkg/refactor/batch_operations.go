@@ -55,27 +55,30 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 		step.packages = []string{resolveOptionalPackage(ws, raw["from_package"]), resolveOptionalPackage(ws, raw["to_package"])}
 		step.plan = func() (*types.RefactoringPlan, error) { return e.MoveSymbolAcrossConfigs(req) }
 	case "rename_package":
-		resolved := types.ResolvePackagePath(ws, raw["package_path"])
-		oldName := raw["old_name"]
-		if dir, ok := findSourceDir(e.set.Sources(), resolved); oldName == "" && ok {
-			oldName = sourcePackageName(ws, dir, e.set.Sources().Dir(dir))
+		dir, err := e.resolveStepPackage(ws, raw["package_path"])
+		if err != nil {
+			return nil, err
 		}
 		req := types.RenamePackageRequest{
-			OldPackageName: oldName,
+			OldPackageName: raw["old_name"],
 			NewPackageName: raw["new_name"],
-			PackagePath:    resolved,
+			PackagePath:    dir,
 			UpdateImports:  true,
 		}
-		step.packages = []string{resolveOptionalPackage(ws, raw["package_path"])}
+		step.packages = []string{dir}
 		step.renamesPackage = true
 		step.plan = func() (*types.RefactoringPlan, error) { return e.RenamePackage(ws, req) }
 	case "move_package":
+		dir, err := e.resolveStepPackage(ws, raw["source"])
+		if err != nil {
+			return nil, err
+		}
 		req := types.MovePackageRequest{
-			SourcePackage: types.ResolvePackagePath(ws, raw["source"]),
+			SourcePackage: dir,
 			TargetPackage: raw["target"],
 			UpdateImports: true,
 		}
-		step.packages = []string{resolveOptionalPackage(ws, raw["source"]), resolveOptionalPackage(ws, raw["target"])}
+		step.packages = []string{dir, resolveOptionalPackage(ws, raw["target"])}
 		step.renamesPackage = true
 		step.plan = func() (*types.RefactoringPlan, error) { return e.MovePackage(ws, req) }
 	case "rename_method":
@@ -139,6 +142,23 @@ func findPackageStepConflict(steps []*batchStep) error {
 		}
 	}
 	return nil
+}
+
+// resolveStepPackage resolves a package the way the package operations do, so
+// forms that name the same directory compare equal; a name that matches no
+// source directory falls back to ResolvePackagePath.
+func (e *DefaultEngine) resolveStepPackage(ws *types.Workspace, path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	dir, ok, err := findSourceDir(ws, e.set.Sources(), path)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return types.ResolvePackagePath(ws, path), nil
+	}
+	return dir, nil
 }
 
 func resolveOptionalPackage(ws *types.Workspace, path string) string {

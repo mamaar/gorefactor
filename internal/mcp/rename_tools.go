@@ -67,7 +67,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "rename_package",
-		Description: "Rename a Go package. Updates the package declaration in all files and import statements across the workspace. Rewrites every .go file in the workspace regardless of build constraints.",
+		Description: "Rename a Go package. Updates the package declaration in all files and import statements across the workspace. Considers every .go file in the workspace regardless of build constraints; it rewrites only the package clauses and the importers' qualified references.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenamePackageInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -76,16 +76,9 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
-		resolved := types.ResolvePackagePath(ws, in.PackagePath)
-		pkg := ws.Packages[resolved]
-		oldName := ""
-		if pkg != nil {
-			oldName = pkg.Name
-		}
 		plan, err := state.GetEngine().RenamePackage(ws, types.RenamePackageRequest{
-			OldPackageName: oldName,
 			NewPackageName: in.NewPackageName,
-			PackagePath:    resolved,
+			PackagePath:    in.PackagePath,
 			UpdateImports:  true,
 		})
 		if err != nil {

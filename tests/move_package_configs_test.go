@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -161,7 +162,7 @@ func TestBatchMovePackageRewritesImporterExcludedByDefaultConfig(t *testing.T) {
 	assertGone(t, dir, "p/p_plan9.go")
 }
 
-func TestMovePackageMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
+func TestMovePackagesMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"p/p_plan9.go":     "package p\n\nfunc Plan9() {}\n",
 		"use/use_plan9.go": "package use\n\nimport \"scratch/p\"\n\nfunc U9() { p.Plan9() }\n",
@@ -188,7 +189,7 @@ func TestMovePackageMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	}
 }
 
-func TestMovePackageOnlyExcludedFiles(t *testing.T) {
+func TestMovePackageMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	dir := writeFiles(t, map[string]string{
 		"p/p_plan9.go":     "package p\n\nfunc Plan9() {}\n",
 		"use/use_plan9.go": "package use\n\nimport \"scratch/p\"\n\nfunc U9() { p.Plan9() }\n",
@@ -205,5 +206,127 @@ func TestMovePackageOnlyExcludedFiles(t *testing.T) {
 	assertGone(t, dir, "p/p_plan9.go")
 	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/q"`) {
 		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
+	}
+}
+
+func TestMoveDirRenamesBaseDirClauseOfExcludedFileAndLeavesIgnoredMain(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a/a.go":       "package a\n\nfunc A() {}\n",
+		"a/a_plan9.go": "package a\n\nfunc Plan9() {}\n",
+		"a/gen.go":     "//go:build ignore\n\npackage main\n\nfunc main() {}\n",
+		"use/use.go":   "package use\n\nimport \"scratch/a\"\n\nfunc U() { a.A() }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	plan, err := eng.MoveDir(ws, types.MoveDirRequest{SourceDir: "a", TargetDir: "b"})
+	if err != nil {
+		t.Fatalf("MoveDir: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "b/a_plan9.go", "package b\n")
+	assertFileContains(t, dir, "b/gen.go", "package main\n")
+	assertFileContains(t, dir, "use/use.go", "b.A()")
+}
+
+func TestMovePackageKeepsMainClause(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"cmd/a/main.go": "package main\n\nfunc main() {}\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "cmd/a", TargetPackage: "cmd/b"})
+	if err != nil {
+		t.Fatalf("MovePackage: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "cmd/b/main.go", "package main\n")
+}
+
+func TestMovePackagePrefersExactDirOverSuffixMatch(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a/p/ap.go":    "package p\n",
+		"p/p_plan9.go": "package p\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "p", TargetPackage: "q"})
+	if err != nil {
+		t.Fatalf("MovePackage: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertGone(t, dir, "p/p_plan9.go")
+	assertFileContains(t, dir, "q/p_plan9.go", "package q")
+	assertFileContains(t, dir, "a/p/ap.go", "package p")
+}
+
+func TestMovePackageRefusesAmbiguousSuffix(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a/p/ap.go": "package p\n",
+		"b/p/bp.go": "package p\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	_, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "p", TargetPackage: "q"})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") ||
+		!strings.Contains(err.Error(), "a/p") || !strings.Contains(err.Error(), "b/p") {
+		t.Fatalf("err = %v, want an ambiguity error listing both candidates", err)
+	}
+}
+
+func TestMovePackageAndRenamePackageAcceptImportPathOfExcludedOnlyPackage(t *testing.T) {
+	files := map[string]string{
+		"p/p_plan9.go":     "package p\n\nfunc Plan9() {}\n",
+		"use/use_plan9.go": "package use\n\nimport \"scratch/p\"\n\nfunc U9() { p.Plan9() }\n",
+	}
+	t.Run("move_package", func(t *testing.T) {
+		dir := writeFiles(t, maps.Clone(files))
+		eng := createEngine(t)
+		ws := loadWorkspace(t, eng, dir)
+		plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "scratch/p", TargetPackage: "q"})
+		if err != nil {
+			t.Fatalf("MovePackage: %v", err)
+		}
+		if err := eng.ExecutePlan(plan); err != nil {
+			t.Fatalf("ExecutePlan: %v", err)
+		}
+		assertFileContains(t, dir, "q/p_plan9.go", "package q")
+	})
+	t.Run("rename_package", func(t *testing.T) {
+		dir := writeFiles(t, maps.Clone(files))
+		eng := createEngine(t)
+		ws := loadWorkspace(t, eng, dir)
+		plan, err := eng.RenamePackage(ws, types.RenamePackageRequest{PackagePath: "scratch/p", NewPackageName: "fresh", UpdateImports: true})
+		if err != nil {
+			t.Fatalf("RenamePackage: %v", err)
+		}
+		if err := eng.ExecutePlan(plan); err != nil {
+			t.Fatalf("ExecutePlan: %v", err)
+		}
+		assertFileContains(t, dir, "p/p_plan9.go", "package fresh")
+	})
+}
+
+func TestBatchRefusesPackageStepsNamingSamePackageByDifferentForms(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"p/p_plan9.go": "package p\n\nfunc Plan9() {}\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	msg := batchError(t, sess, batchArgs(false,
+		`{"type":"rename_package","package_path":"p","new_name":"fresh"}`,
+		`{"type":"move_package","source":"scratch/p","target":"q"}`))
+	if !strings.Contains(msg, "both refer to package") {
+		t.Errorf("error = %s, want a same-package conflict", msg)
 	}
 }
