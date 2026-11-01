@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -78,15 +79,33 @@ func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDepend
 	}
 	defer e.endRun(importsRun{})
 
-	plan, err := e.AnalyzeDependencies(views[0].Workspace, req)
-	if err != nil {
-		return nil, err
+	primary := views[0].Workspace
+	// Suggested moves match references by type information when available.
+	e.EnsureTypeChecked(primary)
+	op := &AnalyzeDependenciesOperation{Request: req}
+	if err := op.Validate(primary); err != nil {
+		return nil, fmt.Errorf("analyze dependencies operation validation failed: %w", err)
 	}
+
 	graph := mergeGraphs(views)
 	union := unionWorkspace(views, graph)
-	plan.Impact.PackageCoupling = packageCouplingOf(union, declaredSymbolCounts(workspacesOf(views)...))
+	wss := make([]*types.Workspace, len(views))
+	for i, v := range views {
+		wss[i] = v.Workspace
+	}
+	impact := &types.ImpactAnalysis{PackageCoupling: packageCouplingOf(union, declaredSymbolCounts(wss...))}
 	if req.DetectBackwardsDeps {
-		plan.Impact.BackwardsDependencies = detectBackwardsDependencies(union)
+		impact.BackwardsDependencies = detectBackwardsDependencies(union)
+	}
+	if req.SuggestMoves {
+		impact.SuggestedMoves = op.generateSuggestedMoves(primary)
+	}
+	plan := &types.RefactoringPlan{
+		Operations:    []types.Operation{op},
+		Changes:       make([]types.Change, 0),
+		AffectedFiles: make([]string, 0),
+		Reversible:    true,
+		Impact:        impact,
 	}
 	return &DependenciesReport{Configs: viewNames(views), Graph: graph, Plan: plan}, nil
 }
@@ -106,18 +125,31 @@ func mergeGraphs(views []*analysis.View) DependencyGraphReport {
 		PackageImports: make(map[string][]string),
 		PackageDeps:    make(map[string][]string),
 	}
-	configs := viewNames(views)
-	cycles := make([][][]string, len(views))
-	testCycles := make([][][]string, len(views))
+	cycles := make([][]groupedCycle, len(views))
+	testCycles := make([][]groupedCycle, len(views))
 	for i, v := range views {
 		g := v.Workspace.Dependencies
 		unionInto(out.PackageImports, g.PackageImports)
 		unionInto(out.PackageDeps, g.PackageDeps)
-		cycles[i], testCycles[i] = g.ImportCycles, g.TestImportCycles
+		production := analysis.ImportGraph(v.Workspace).Production
+		for _, c := range g.ImportCycles {
+			cycles[i] = append(cycles[i], groupedCycle{c, strings.Join(analysis.Component(production, c[0]), "\x00")})
+		}
+		for _, c := range g.TestImportCycles {
+			testCycles[i] = append(testCycles[i], groupedCycle{c, c[0]})
+		}
 	}
+	configs := viewNames(views)
 	out.ImportCycles = mergeCycles(configs, cycles)
 	out.TestImportCycles = mergeCycles(configs, testCycles)
 	return out
+}
+
+// groupedCycle is a closed path and the key of what it belongs to: the member
+// set of its strongly connected component, or for a test cycle its package.
+type groupedCycle struct {
+	path  []string
+	group string
 }
 
 // unionInto adds the values of from to those of into, keeping each sorted and distinct.
@@ -129,17 +161,17 @@ func unionInto(into, from map[string][]string) {
 	}
 }
 
-// mergeCycles merges the closed paths each configuration reports. A cycle
-// several configurations report, from whichever package, is one entry.
-func mergeCycles(configs []string, perView [][][]string) []ImportCycle {
+// mergeCycles merges the cycles each configuration reports. Cycles of one
+// group are one entry, showing the path of the first configuration that has it
+// and naming every configuration where the group is cyclic.
+func mergeCycles(configs []string, perView [][]groupedCycle) []ImportCycle {
 	found := make(map[string]*ImportCycle)
 	for i, cycles := range perView {
 		for _, c := range cycles {
-			key := cycleKey(c)
-			f := found[key]
+			f := found[c.group]
 			if f == nil {
-				f = &ImportCycle{Packages: c}
-				found[key] = f
+				f = &ImportCycle{Packages: c.path}
+				found[c.group] = f
 			}
 			f.Configs = append(f.Configs, configs[i])
 		}
@@ -153,18 +185,6 @@ func mergeCycles(configs []string, perView [][][]string) []ImportCycle {
 	}
 	slices.SortFunc(out, func(a, b ImportCycle) int { return slices.Compare(a.Packages, b.Packages) })
 	return out
-}
-
-// cycleKey identifies a closed path by its members in order, from the smallest.
-func cycleKey(closed []string) string {
-	ring := closed[:len(closed)-1]
-	at := 0
-	for i, p := range ring {
-		if p < ring[at] {
-			at = i
-		}
-	}
-	return strings.Join(append(slices.Clone(ring[at:]), ring[:at]...), "\x00")
 }
 
 // importPathCycles names the members of cycles by import path.
@@ -244,12 +264,4 @@ func declaredSymbolCounts(wss ...*types.Workspace) map[string]int {
 		counts[path] = len(sites)
 	}
 	return counts
-}
-
-func workspacesOf(views []*analysis.View) []*types.Workspace {
-	wss := make([]*types.Workspace, len(views))
-	for i, v := range views {
-		wss[i] = v.Workspace
-	}
-	return wss
 }

@@ -170,3 +170,28 @@ func TestAnalyzeDependencies_CyclesAreObjectsNamingTheirConfigs(t *testing.T) {
 		t.Errorf("TestImportCycles = %#v, want an empty list", graph["TestImportCycles"])
 	}
 }
+
+func TestAnalyzeDependencies_ImportOnlyInTagFileIsInPackageImports(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"a/a.go":      "package a\n\nfunc A() int { return 1 }\n",
+		"a/a_tagx.go": "//go:build tagx\n\npackage a\n\nimport \"example.com/threadmcp/b\"\n\nfunc X() int { return b.B() }\n",
+		"b/b.go":      "package b\n\nfunc B() int { return 1 }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "analyze_dependencies", map[string]any{})
+
+	graph, _ := out["dependency_graph"].(map[string]any)
+	imports, _ := graph["PackageImports"].(map[string]any)
+	for d, v := range imports {
+		if !strings.HasSuffix(d, "/a") {
+			continue
+		}
+		if l, _ := v.([]any); len(l) != 1 || l[0] != "example.com/threadmcp/b" {
+			t.Errorf("PackageImports[a] = %v, want the tagx-only import", v)
+		}
+		return
+	}
+	t.Errorf("PackageImports = %v, want an entry for a", imports)
+}

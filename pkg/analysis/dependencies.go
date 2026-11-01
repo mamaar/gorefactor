@@ -186,6 +186,19 @@ func importCycles(edges map[string][]string) [][]string {
 	return cycles
 }
 
+// Component returns the sorted members of the strongly connected component of
+// start in edges.
+func Component(edges map[string][]string, start string) []string {
+	var members []string
+	for n := range reachable(edges, start) {
+		if reachable(edges, n)[start] {
+			members = append(members, n)
+		}
+	}
+	slices.Sort(members)
+	return members
+}
+
 // testImportCycles returns, per package, the closed path through which an
 // in-package test import leads back to the package via production edges.
 func testImportCycles(g Imports) [][]string {

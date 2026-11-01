@@ -184,3 +184,19 @@ func TestDetectCycles_TestCycleThroughTaggedTestFile(t *testing.T) {
 		t.Errorf("test cycle configs empty, want the windows configuration")
 	}
 }
+
+func TestDetectCycles_ExtraEdgeInOneConfigDoesNotSplitTheCycle(t *testing.T) {
+	out := callDetectCycles(t, map[string]string{
+		"a/a.go":         "package a\n\nimport \"example.com/cyc/b\"\n\nfunc A() int { return b.B() }\n",
+		"a/a_windows.go": "package a\n\nimport \"example.com/cyc/c\"\n\nfunc W() int { return c.C() }\n",
+		"b/b.go":         "package b\n\nimport \"example.com/cyc/c\"\n\nfunc B() int { return c.C() }\n",
+		"c/c.go":         "package c\n\nimport \"example.com/cyc/a\"\n\nfunc C() int { return a.A() }\n",
+	})
+
+	if out.Found != 1 || len(out.Cycles) != 1 {
+		t.Fatalf("cycles = %+v, want one", out.Cycles)
+	}
+	if len(out.Cycles[0].Configs) != 0 {
+		t.Errorf("configs = %v, want none (cyclic in every configuration)", out.Cycles[0].Configs)
+	}
+}

@@ -7,24 +7,30 @@ import (
 
 func TestMergeCycles(t *testing.T) {
 	configs := []string{"linux", "windows", "darwin"}
+	abc := []string{"a", "b", "c", "a"}
+	ac := []string{"a", "c", "a"}
 	cases := []struct {
 		name    string
-		perView [][][]string
+		perView [][]groupedCycle
 		want    []ImportCycle
 	}{
 		{
-			name:    "same cycle rotated in two views is one entry naming both",
-			perView: [][][]string{{{"a", "b", "c", "a"}}, {{"b", "c", "a", "b"}}, nil},
-			want:    []ImportCycle{{Packages: []string{"a", "b", "c", "a"}, Configs: []string{"linux", "windows"}}},
+			name: "one group with different paths is one entry showing the first path",
+			perView: [][]groupedCycle{
+				{{abc, "abc"}},
+				{{ac, "abc"}},
+				nil,
+			},
+			want: []ImportCycle{{Packages: abc, Configs: []string{"linux", "windows"}}},
 		},
 		{
-			name:    "cycle in every view names no configs",
-			perView: [][][]string{{{"a", "b", "a"}}, {{"a", "b", "a"}}, {{"a", "b", "a"}}},
-			want:    []ImportCycle{{Packages: []string{"a", "b", "a"}}},
+			name:    "group cyclic in every view names no configs",
+			perView: [][]groupedCycle{{{ac, "ac"}}, {{ac, "ac"}}, {{ac, "ac"}}},
+			want:    []ImportCycle{{Packages: ac}},
 		},
 		{
-			name:    "distinct cycles stay apart and sort by path",
-			perView: [][][]string{{{"c", "d", "c"}}, {{"a", "b", "a"}}, nil},
+			name:    "distinct groups stay apart and sort by path",
+			perView: [][]groupedCycle{{{[]string{"c", "d", "c"}, "cd"}}, {{[]string{"a", "b", "a"}, "ab"}}, nil},
 			want: []ImportCycle{
 				{Packages: []string{"a", "b", "a"}, Configs: []string{"windows"}},
 				{Packages: []string{"c", "d", "c"}, Configs: []string{"linux"}},
@@ -32,7 +38,7 @@ func TestMergeCycles(t *testing.T) {
 		},
 		{
 			name:    "no cycles gives an empty non-nil list",
-			perView: [][][]string{nil, nil, nil},
+			perView: [][]groupedCycle{nil, nil, nil},
 			want:    []ImportCycle{},
 		},
 	}
