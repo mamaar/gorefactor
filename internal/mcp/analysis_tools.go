@@ -20,6 +20,7 @@ import (
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/analyzers/ifinit"
 	"github.com/mamaar/gorefactor/pkg/analyzers/missingctx"
+	"github.com/mamaar/gorefactor/pkg/analyzers/nilreceiver"
 	"github.com/mamaar/gorefactor/pkg/analyzers/switchchain"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -251,6 +252,12 @@ type VariadicItem struct {
 type VariadicTypeErrorItem struct {
 	File  string `json:"file"`
 	Error string `json:"error"`
+}
+
+// --- detect_nil_receiver_checks ---
+
+type DetectNilReceiverChecksInput struct {
+	Package string `json:"package,omitempty" jsonschema:"specific package to analyze"`
 }
 
 // --- detect_boolean_branching ---
@@ -876,6 +883,30 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
+		}), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "detect_nil_receiver_checks",
+		Description: "Detect methods that compare their own receiver to nil, anywhere in the body and including compound conditions. Generated and test files are skipped. first_statement marks checks in the condition of the method's first statement; receiver_type shows whether the receiver is a pointer or another nillable type such as a map.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectNilReceiverChecksInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		rr, err := analyzers.Run(ws, nilreceiver.Analyzer, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		results, _ := rr.Result.([]*nilreceiver.Result)
+		return textResult(map[string]any{
+			"violations":  results,
+			"total_count": len(results),
 		}), nil, nil
 	})
 

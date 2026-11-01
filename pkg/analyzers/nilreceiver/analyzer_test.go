@@ -1,0 +1,224 @@
+package nilreceiver_test
+
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	gotypes "go/types"
+	"testing"
+
+	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/analyzers/nilreceiver"
+	"github.com/mamaar/gorefactor/pkg/types"
+)
+
+func run(t *testing.T, src string) []*nilreceiver.Result {
+	t.Helper()
+	ws, _ := workspace(t, src)
+	return analyze(t, ws)
+}
+
+func workspace(t *testing.T, src string) (*types.Workspace, *types.Package) {
+	t.Helper()
+	fset := token.NewFileSet()
+	astFile, err := parser.ParseFile(fset, "testpkg.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	info := &gotypes.Info{Defs: map[*ast.Ident]gotypes.Object{}, Uses: map[*ast.Ident]gotypes.Object{}}
+	conf := gotypes.Config{Error: func(error) {}}
+	typesPkg, _ := conf.Check("test/testpkg", fset, []*ast.File{astFile}, info)
+
+	file := &types.File{Path: "testpkg.go", AST: astFile, OriginalContent: []byte(src)}
+	pkg := &types.Package{
+		Name:       "testpkg",
+		Path:       "test/testpkg",
+		ImportPath: "test/testpkg",
+		Files:      map[string]*types.File{"testpkg.go": file},
+		TypesPkg:   typesPkg,
+		TypesInfo:  info,
+	}
+	file.Package = pkg
+	return &types.Workspace{Packages: map[string]*types.Package{"test/testpkg": pkg}, FileSet: fset}, pkg
+}
+
+func analyze(t *testing.T, ws *types.Workspace) []*nilreceiver.Result {
+	t.Helper()
+	rr, err := analyzers.Run(ws, nilreceiver.Analyzer, "")
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	results, ok := rr.Result.([]*nilreceiver.Result)
+	if !ok {
+		t.Fatalf("unexpected result type %T", rr.Result)
+	}
+	return results
+}
+
+func TestFirstStatementGuardIsReported(t *testing.T) {
+	results := run(t, `package testpkg
+
+type T struct{}
+
+func (r *T) M() int {
+	if r == nil {
+		return 0
+	}
+	return 1
+}
+`)
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	got := results[0]
+	if got.Function != "T.M" || got.Receiver != "r" || got.ReceiverType != "*T" {
+		t.Errorf("identity = %q %q %q", got.Function, got.Receiver, got.ReceiverType)
+	}
+	if !got.FirstStatement {
+		t.Error("FirstStatement = false, want true")
+	}
+	if got.Line != 6 || got.Code != "if r == nil {" {
+		t.Errorf("site = %d %q", got.Line, got.Code)
+	}
+}
+
+func TestChecksOutsideTheFirstStatementAreReported(t *testing.T) {
+	results := run(t, `package testpkg
+
+type T struct{ x *int }
+
+func (r *T) NotEqual() {
+	println()
+	if r != nil {
+		println()
+	}
+}
+
+func (r *T) Reversed() {
+	println()
+	if nil == r {
+		return
+	}
+}
+
+func (r *T) Compound() {
+	println()
+	if r == nil || r.x == nil {
+		return
+	}
+}
+
+func (r *T) InClosure() func() bool {
+	return func() bool { return r == nil }
+}
+`)
+	want := []string{"T.NotEqual", "T.Reversed", "T.Compound", "T.InClosure"}
+	if len(results) != len(want) {
+		t.Fatalf("got %d results, want %d", len(results), len(want))
+	}
+	for i, r := range results {
+		if r.Function != want[i] {
+			t.Errorf("results[%d] = %s, want %s", i, r.Function, want[i])
+		}
+		if r.FirstStatement {
+			t.Errorf("%s: FirstStatement = true", r.Function)
+		}
+	}
+}
+
+func TestCompoundFirstStatementGuardCountsAsFirst(t *testing.T) {
+	results := run(t, `package testpkg
+
+type T struct{ x *int }
+
+func (r *T) M() {
+	if r == nil || r.x == nil {
+		return
+	}
+}
+`)
+	if len(results) != 1 || !results[0].FirstStatement {
+		t.Fatalf("got %+v", results)
+	}
+}
+
+func TestOtherNilChecksAreNotReported(t *testing.T) {
+	results := run(t, `package testpkg
+
+type T struct{ x *int }
+
+func (r *T) Field() bool { return r.x == nil }
+
+func (r *T) Param(p *T) bool { return p == nil }
+
+func (r *T) Shadowed(other *T) bool {
+	r = other
+	{
+		r := other
+		return r == nil
+	}
+}
+
+func (*T) Unnamed(p *T) bool { return p == nil }
+
+func Plain(r *T) bool { return r == nil }
+`)
+	if len(results) != 0 {
+		t.Fatalf("got %+v, want none", results[0])
+	}
+}
+
+func TestNonPointerAndGenericReceiverTypes(t *testing.T) {
+	results := run(t, `package testpkg
+
+type M map[string]int
+
+func (m M) Empty() bool { return m == nil }
+
+type Box[V any] struct{}
+
+func (b *Box[V]) Empty() bool { return b == nil }
+`)
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2", len(results))
+	}
+	if results[0].Function != "M.Empty" || results[0].ReceiverType != "M" {
+		t.Errorf("map receiver = %q %q", results[0].Function, results[0].ReceiverType)
+	}
+	if results[1].Function != "Box.Empty" || results[1].ReceiverType != "*Box[V]" {
+		t.Errorf("generic receiver = %q %q", results[1].Function, results[1].ReceiverType)
+	}
+}
+
+func TestPackageWithoutTypeInfoMatchesByName(t *testing.T) {
+	ws, pkg := workspace(t, `package testpkg
+
+type T struct{}
+
+func (r *T) M() bool { return r == nil }
+`)
+	pkg.TypesInfo = nil
+	if results := analyze(t, ws); len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+}
+
+func TestGeneratedFilesAreSkipped(t *testing.T) {
+	results := run(t, `// Code generated by protoc-gen-go. DO NOT EDIT.
+
+package testpkg
+
+type T struct{ X int }
+
+func (r *T) GetX() int {
+	if r != nil {
+		return r.X
+	}
+	return 0
+}
+`)
+	if len(results) != 0 {
+		t.Fatalf("got %+v, want none", results[0])
+	}
+}
