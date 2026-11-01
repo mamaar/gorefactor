@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"go/ast"
 	"go/token"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -40,8 +43,23 @@ func run(pass *analysis.Pass) (any, error) {
 	return results, nil
 }
 
+// isGoTestEntryPoint reports whether name is one go test calls itself: a
+// Test, Benchmark, Fuzz or Example prefix not followed by a lowercase letter.
+func isGoTestEntryPoint(name string) bool {
+	for _, prefix := range []string{"Test", "Benchmark", "Fuzz", "Example"} {
+		rest, ok := strings.CutPrefix(name, prefix)
+		if !ok {
+			continue
+		}
+		r, _ := utf8.DecodeRuneInString(rest)
+		return rest == "" || !unicode.IsLower(r)
+	}
+	return false
+}
+
 func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte) []*Result {
 	var results []*Result
+	isTestFile := strings.HasSuffix(pass.Fset.Position(file.Pos()).Filename, "_test.go")
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		funcDecl, ok := n.(*ast.FuncDecl)
@@ -49,8 +67,11 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte) []*Result 
 			return true
 		}
 
-		// Skip main() and init()
+		// Signatures fixed by the toolchain cannot take a ctx parameter.
 		if funcDecl.Name.Name == "main" || funcDecl.Name.Name == "init" {
+			return false
+		}
+		if isTestFile && funcDecl.Recv == nil && isGoTestEntryPoint(funcDecl.Name.Name) {
 			return false
 		}
 

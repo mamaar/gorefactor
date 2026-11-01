@@ -47,9 +47,11 @@ func writeVerifyTypesWorkspace(t *testing.T, files map[string]string) *types.Wor
 func findVerifyFile(t *testing.T, ws *types.Workspace, rel string) *types.File {
 	t.Helper()
 	for _, pkg := range ws.Packages {
-		for _, f := range pkg.Files {
-			if strings.HasSuffix(f.Path, rel) {
-				return f
+		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
+			for _, f := range group {
+				if strings.HasSuffix(f.Path, rel) {
+					return f
+				}
 			}
 		}
 	}
@@ -107,6 +109,59 @@ func g() {
 	}
 	if !strings.Contains(res.NewErrors[0], "oops") {
 		t.Errorf("expected the new error to mention the bad argument, got: %s", res.NewErrors[0])
+	}
+}
+
+func TestVerifyPlanTypes_ExternalTestFile(t *testing.T) {
+	files := func() map[string]string {
+		return map[string]string{
+			"foo/lib.go": "package foo\n\nfunc F(x int) {}\n",
+			"foo/lib_ext_test.go": `package foo_test
+
+import "example.com/verifytest/foo"
+
+func g() {
+	foo.F(1)
+}
+`,
+		}
+	}
+	for _, tc := range []struct {
+		name, newText string
+		wantOK        bool
+	}{
+		{"type error is reported", `foo.F("oops")`, false},
+		{"valid edit is OK", "foo.F(2)", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := writeVerifyTypesWorkspace(t, files())
+			f := findVerifyFile(t, ws, "foo/lib_ext_test.go")
+			plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "foo.F(1)", tc.newText)}}
+
+			res := VerifyPlanTypes(ws, plan)
+			if res.Skipped != "" {
+				t.Fatalf("unexpected skip: %s", res.Skipped)
+			}
+			if res.OK() != tc.wantOK {
+				t.Fatalf("OK() = %v, want %v; new errors: %v", res.OK(), tc.wantOK, res.NewErrors)
+			}
+		})
+	}
+}
+
+func TestVerifyPlanTypes_ExternalTestFilesOnly(t *testing.T) {
+	ws := writeVerifyTypesWorkspace(t, map[string]string{
+		"foo/lib_ext_test.go": "package foo_test\n\nfunc f(x int) {}\n\nfunc g() {\n\tf(1)\n}\n",
+	})
+	f := findVerifyFile(t, ws, "foo/lib_ext_test.go")
+	plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "f(1)", `f("oops")`)}}
+
+	res := VerifyPlanTypes(ws, plan)
+	if res.Skipped != "" {
+		t.Fatalf("unexpected skip: %s", res.Skipped)
+	}
+	if res.OK() {
+		t.Fatal("expected a new type error, got none")
 	}
 }
 

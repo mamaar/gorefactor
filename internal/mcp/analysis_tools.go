@@ -895,7 +895,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "detect_nil_receiver_checks",
-		Description: "Detect methods that compare their own receiver to nil, anywhere in the body and including compound conditions. Generated and test files are skipped. first_statement marks checks in the condition of the method's first statement; receiver_type shows whether the receiver is a pointer or another nillable type such as a map.",
+		Description: "Detect methods that compare their own receiver to nil, anywhere in the body and including compound conditions. Generated files are skipped. first_statement marks checks in the condition of the method's first statement; receiver_type shows whether the receiver is a pointer or another nillable type such as a map.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectNilReceiverChecksInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -919,7 +919,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "detect_nil_nil_returns",
-		Description: "Detect returns of nil for every result of a function whose last result is error, such as `return nil, nil`, which leave callers with neither a value nor an error; a sentinel error is usually clearer. Func literals are judged by their own signature (in_closure). result_types lists the non-error result types as written, so nil slices and maps, which often mean an empty result, can be filtered out. Bare returns of named results, `return f()`, generated files and test files are not checked.",
+		Description: "Detect returns of nil for every result of a function whose last result is error, such as `return nil, nil`, which leave callers with neither a value nor an error; a sentinel error is usually clearer. Func literals are judged by their own signature (in_closure). result_types lists the non-error result types as written, so nil slices and maps, which often mean an empty result, can be filtered out. Bare returns of named results, `return f()` and generated files are not checked.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectNilNilReturnsInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
