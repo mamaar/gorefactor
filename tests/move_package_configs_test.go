@@ -160,3 +160,50 @@ func TestBatchMovePackageRewritesImporterExcludedByDefaultConfig(t *testing.T) {
 	assertFileContains(t, dir, "q/p_plan9.go", "package q")
 	assertGone(t, dir, "p/p_plan9.go")
 }
+
+func TestMovePackageMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"p/p_plan9.go":     "package p\n\nfunc Plan9() {}\n",
+		"use/use_plan9.go": "package use\n\nimport \"scratch/p\"\n\nfunc U9() { p.Plan9() }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
+		Packages:  []types.PackageMapping{{SourcePackage: "p", TargetPackage: "q"}},
+		TargetDir: "q",
+	})
+	if err != nil {
+		t.Fatalf("MovePackages: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertGone(t, dir, "p/p_plan9.go")
+	if got := readRel(t, dir, "q/p_plan9.go"); !strings.Contains(got, "package q") {
+		t.Errorf("q/p_plan9.go clause not renamed:\n%s", got)
+	}
+	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/q"`) {
+		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
+	}
+}
+
+func TestMovePackageOnlyExcludedFiles(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"p/p_plan9.go":     "package p\n\nfunc Plan9() {}\n",
+		"use/use_plan9.go": "package use\n\nimport \"scratch/p\"\n\nfunc U9() { p.Plan9() }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "p", TargetPackage: "q"})
+	if err != nil {
+		t.Fatalf("MovePackage: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertGone(t, dir, "p/p_plan9.go")
+	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/q"`) {
+		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
+	}
+}

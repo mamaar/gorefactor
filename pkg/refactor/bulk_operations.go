@@ -38,6 +38,24 @@ func sourceFilesOf(tree *analysis.SourceTree, dir string) ([]*analysis.SourceFil
 	return files, nil
 }
 
+// findSourceDir returns the source-tree directory holding Go files that source
+// names: an absolute directory, or a suffix of one on a path-separator boundary.
+func findSourceDir(tree *analysis.SourceTree, source string) (string, bool) {
+	match := ""
+	for _, dir := range tree.Dirs() {
+		if len(tree.Dir(dir)) == 0 {
+			continue
+		}
+		if dir == source {
+			return dir, true
+		}
+		if match == "" && strings.HasSuffix(dir, string(filepath.Separator)+source) {
+			match = dir
+		}
+	}
+	return match, match != ""
+}
+
 // appendContentRewrites adds a whole-file change for every source-tree file
 // that skip does not exclude and that rewrite alters.
 func appendContentRewrites(plan *types.RefactoringPlan, tree *analysis.SourceTree, skip func(*analysis.SourceFile) bool,
@@ -91,15 +109,7 @@ func (op *MovePackageOperation) Validate(ws *types.Workspace) error {
 		return fmt.Errorf("target package cannot be empty")
 	}
 
-	// Check if source package exists
-	found := false
-	for pkgPath := range ws.Packages {
-		if strings.HasSuffix(pkgPath, op.Request.SourcePackage) || pkgPath == op.Request.SourcePackage {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if _, ok := findSourceDir(op.Sources, op.Request.SourcePackage); !ok {
 		return fmt.Errorf("source package %s not found in workspace", op.Request.SourcePackage)
 	}
 
@@ -139,18 +149,15 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		Reversible:    true,
 	}
 
-	// Find source package
-	var sourcePackage *types.Package
-	for _, pkg := range ws.Packages {
-		if pkg.Path == op.Request.SourcePackage ||
-			strings.HasSuffix(pkg.Path, string(filepath.Separator)+op.Request.SourcePackage) {
-			sourcePackage = pkg
-			break
-		}
-	}
-	if sourcePackage == nil {
+	sourceDir, ok := findSourceDir(op.Sources, op.Request.SourcePackage)
+	if !ok {
 		return nil, fmt.Errorf("source package %s not found", op.Request.SourcePackage)
 	}
+	sourceFiles, err := sourceFilesOf(op.Sources, sourceDir)
+	if err != nil {
+		return nil, err
+	}
+	sourceName := sourcePackageName(ws, sourceDir, sourceFiles)
 
 	// Resolve the destination here rather than trusting the caller to have done
 	// it. MovePackagesOperation.Execute builds MovePackageOperation values
@@ -163,7 +170,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		return nil, fmt.Errorf("resolving target package %q: %w", op.Request.TargetPackage, err)
 	}
 
-	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
+	sourceImportPath := packagePathToImportPath(ws, sourceDir)
 	targetImportPath := packagePathToImportPath(ws, targetPackagePath)
 	targetPkgName := filepath.Base(targetPackagePath)
 	if targetImportPath == "" {
@@ -172,17 +179,13 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 
 	// Generate file move changes for each file in the source directory,
 	// whatever its build constraints (including _test.go files).
-	sourceFiles, err := sourceFilesOf(op.Sources, sourcePackage.Dir)
-	if err != nil {
-		return nil, err
-	}
 	for _, file := range sourceFiles {
 		if len(file.Content) == 0 {
 			continue
 		}
 		// For an external test file (package <name>_test) the clause
 		// rewrite correctly yields <targetPkgName>_test.
-		newContent, err := rewritePackageClause(ws.FileSet, file, sourcePackage.Name, targetPkgName)
+		newContent, err := rewritePackageClause(ws.FileSet, file, sourceName, targetPkgName)
 		if err != nil {
 			return nil, err
 		}
@@ -220,7 +223,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 	if op.Request.UpdateImports && sourceImportPath != "" && targetImportPath != "" {
 		quoted := `"` + sourceImportPath + `"`
 		appendContentRewrites(plan, op.Sources,
-			func(f *analysis.SourceFile) bool { return f.Dir == sourcePackage.Dir },
+			func(f *analysis.SourceFile) bool { return f.Dir == sourceDir },
 			func(content string) string { return strings.ReplaceAll(content, quoted, `"`+targetImportPath+`"`) },
 			fmt.Sprintf("Update import path from %s to %s", sourceImportPath, targetImportPath))
 	}
@@ -486,15 +489,7 @@ func (op *MovePackagesOperation) Validate(ws *types.Workspace) error {
 			return fmt.Errorf("target package at index %d cannot be empty", i)
 		}
 
-		// Check if source package exists
-		found := false
-		for pkgPath := range ws.Packages {
-			if strings.HasSuffix(pkgPath, mapping.SourcePackage) || pkgPath == mapping.SourcePackage {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, ok := findSourceDir(op.Sources, mapping.SourcePackage); !ok {
 			return fmt.Errorf("source package %s not found in workspace", mapping.SourcePackage)
 		}
 	}
