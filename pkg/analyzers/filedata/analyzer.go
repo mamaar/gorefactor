@@ -23,7 +23,7 @@ var Analyzer = &analysis.Analyzer{
 	Name:       "filedata",
 	Doc:        "provides raw file content to downstream analyzers",
 	Run:        run,
-	ResultType: reflect.TypeOf((*Data)(nil)),
+	ResultType: reflect.TypeFor[*Data](),
 }
 
 func run(pass *analysis.Pass) (any, error) {

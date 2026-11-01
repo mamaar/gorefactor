@@ -21,8 +21,8 @@ func funcBody(src, decl string) string {
 		return ""
 	}
 	rest := src[start:]
-	if end := strings.Index(rest, "\n}\n"); end >= 0 {
-		return rest[:end]
+	if before, _, ok := strings.Cut(rest, "\n}\n"); ok {
+		return before
 	}
 	return rest
 }

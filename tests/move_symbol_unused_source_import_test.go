@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -25,9 +26,7 @@ func moveUnusedImportFixture(t *testing.T, extra map[string]string) string {
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.One() + src.Two() }\n",
 		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.One() + src.Two() }\n",
 	}
-	for k, v := range extra {
-		files[k] = v
-	}
+	maps.Copy(files, extra)
 	return writeInlineWorkspace(t, files)
 }
 

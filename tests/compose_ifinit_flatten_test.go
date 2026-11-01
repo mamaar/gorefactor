@@ -154,7 +154,7 @@ func reasonsIn(result map[string]any) string {
 // test measures nesting without re-parsing.
 func maxIndent(src string) int {
 	deepest := 0
-	for _, line := range strings.Split(src, "\n") {
+	for line := range strings.SplitSeq(src, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}

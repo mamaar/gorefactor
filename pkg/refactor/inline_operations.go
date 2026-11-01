@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -411,8 +412,8 @@ func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *toke
 	exprText := src[exprStart:exprEnd]
 
 	// Apply replacements in reverse order (adjusted to be relative to exprText)
-	for i := len(replacements) - 1; i >= 0; i-- {
-		r := replacements[i]
+	for _, r := range slices.Backward(replacements) {
+
 		relStart := r.start - exprStart
 		relEnd := r.end - exprStart
 		exprText = exprText[:relStart] + r.text + exprText[relEnd:]

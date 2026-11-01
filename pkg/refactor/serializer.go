@@ -438,7 +438,7 @@ func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedCont
 	maxLines := max(len(modifiedLines), len(originalLines))
 
 	lineNum := 1
-	for i := 0; i < maxLines; i++ {
+	for i := range maxLines {
 		var originalLine, modifiedLine string
 
 		if i < len(originalLines) {

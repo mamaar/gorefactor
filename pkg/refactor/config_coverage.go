@@ -152,13 +152,12 @@ func mentions(src *analysis.SourceFile, names map[string]bool, skip map[int]bool
 			continue
 		}
 		seen[lit] = true
-		found = append(found, mention{name: lit, Reference: types.Reference{
+		found = append(found, mention{name: lit,
 			File:    src.Path,
 			Offset:  at.Offset,
 			Line:    at.Line,
 			Column:  at.Column,
-			Context: lineAt(src.Content, at.Offset),
-		}})
+			Context: lineAt(src.Content, at.Offset)})
 		if firstOnly {
 			break
 		}
@@ -357,14 +356,13 @@ func unresolvedMentions(v *analysis.View, names map[string]bool) []unresolvedMen
 		ast.Walk(w, e.File.AST)
 		for _, id := range w.found {
 			at := v.Workspace.FileSet.Position(id.Pos())
-			out = append(out, unresolvedMention{file: e.File, err: e.Err, mention: mention{name: id.Name, Reference: types.Reference{
+			out = append(out, unresolvedMention{file: e.File, err: e.Err, name: id.Name,
 				Position: id.Pos(),
 				File:     e.File.Path,
 				Offset:   at.Offset,
 				Line:     at.Line,
 				Column:   at.Column,
-				Context:  lineAt(e.File.OriginalContent, at.Offset),
-			}}})
+				Context:  lineAt(e.File.OriginalContent, at.Offset)})
 		}
 	}
 	return out

@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -75,9 +76,7 @@ func TestMoveSymbol_ReferenceQualifiersRespectExistingImports(t *testing.T) {
 
 	args := map[string]any{"symbol": "FolderError", "from_package": "a/model", "to_package": "b/model"}
 	dry := map[string]any{"dry_run": true}
-	for k, v := range args {
-		dry[k] = v
-	}
+	maps.Copy(dry, args)
 	dryOut := callJSON(t, sess, "move_symbol", dry)
 	diffs, _ := dryOut["diffs"].([]any)
 	if len(diffs) == 0 {

@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	gotypes "go/types"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -146,8 +147,8 @@ func applyFixes(t *testing.T, fset *token.FileSet, src string, diags []analysis.
 	}
 
 	patched := src
-	for i := len(edits) - 1; i >= 0; i-- {
-		patched = patched[:edits[i].start] + edits[i].text + patched[edits[i].end:]
+	for _, edit := range slices.Backward(edits) {
+		patched = patched[:edit.start] + edit.text + patched[edit.end:]
 	}
 	return texts, patched
 }
@@ -357,7 +358,7 @@ func TestSemanticEquivalence(t *testing.T) {
 
 func exprString(t *testing.T, fixed string) string {
 	t.Helper()
-	for _, line := range strings.Split(fixed, "\n") {
+	for line := range strings.SplitSeq(fixed, "\n") {
 		if strings.Contains(line, "return") && !strings.Contains(line, "func ") {
 			return strings.TrimSpace(line)
 		}
@@ -413,12 +414,7 @@ func freeVars(e ast.Expr) []string {
 }
 
 func contains(haystack []string, needle string) bool {
-	for _, s := range haystack {
-		if s == needle {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, needle)
 }
 
 // TestFloatComparisonIsNotFlipped is the NaN regression: `!(x < y)` is true

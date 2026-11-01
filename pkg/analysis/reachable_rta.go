@@ -128,9 +128,9 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		}
 		for _, T := range converted.Keys() {
 			mset := prog.MethodSets.MethodSet(T)
-			for i := range mset.Len() {
-				if names[mset.At(i).Obj().Name()] {
-					addRoot(prog.MethodValue(mset.At(i)), &added)
+			for method := range mset.Methods() {
+				if names[method.Obj().Name()] {
+					addRoot(prog.MethodValue(method), &added)
 				}
 			}
 		}

@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -147,10 +148,8 @@ func changesConflict(s *Serializer, a, b types.Change) bool {
 
 func sharesOwner(a, b []int) bool {
 	for _, x := range a {
-		for _, y := range b {
-			if x == y {
-				return true
-			}
+		if slices.Contains(b, x) {
+			return true
 		}
 	}
 	return false

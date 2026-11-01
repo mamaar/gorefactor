@@ -150,13 +150,13 @@ func scopeTypes(checked *gotypes.Package) []*gotypes.Named {
 func (b *ifaceSurveyor) declareScope(own *gotypes.Package) {
 	for _, named := range scopeTypes(own) {
 		if iface, ok := asInterfaceType(named); ok {
-			for i := range iface.NumExplicitMethods() {
-				b.declare(iface.ExplicitMethod(i))
+			for method := range iface.ExplicitMethods() {
+				b.declare(method)
 			}
 			continue
 		}
-		for i := range named.NumMethods() {
-			b.declare(named.Method(i))
+		for method := range named.Methods() {
+			b.declare(method)
 		}
 	}
 }
@@ -286,8 +286,8 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 		collectIfaceTypes(t.Key(), seen, add)
 		collectIfaceTypes(t.Elem(), seen, add)
 	case *gotypes.Tuple:
-		for i := range t.Len() {
-			collectIfaceTypes(t.At(i).Type(), seen, add)
+		for v := range t.Variables() {
+			collectIfaceTypes(v.Type(), seen, add)
 		}
 	case *gotypes.Signature:
 		collectIfaceTypes(t.Params(), seen, add)
@@ -403,8 +403,8 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 // spans the COMPLETED method set, so a method promoted from an embedded
 // interface (io.WriteCloser's Write, from io.Writer) is found.
 func interfaceMethodNamed(iface *gotypes.Interface, name string) *gotypes.Func {
-	for i := range iface.NumMethods() {
-		if m := iface.Method(i); m.Name() == name {
+	for m := range iface.Methods() {
+		if m := m; m.Name() == name {
 			return m
 		}
 	}

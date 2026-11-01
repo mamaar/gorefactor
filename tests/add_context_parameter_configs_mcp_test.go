@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,9 +42,7 @@ func addContextOK(t *testing.T, sess *mcptest.Session, args map[string]any) map[
 
 func fArgs(file string, extra map[string]any) map[string]any {
 	args := map[string]any{"function_name": "f", "source_file": file}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

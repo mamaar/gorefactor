@@ -1061,8 +1061,8 @@ func funcHasContextParam(f *gotypes.Func) bool {
 		return false
 	}
 	params := sig.Params()
-	for i := 0; i < params.Len(); i++ {
-		if analysis.IsContextType(params.At(i).Type()) {
+	for v := range params.Variables() {
+		if analysis.IsContextType(v.Type()) {
 			return true
 		}
 	}
@@ -1306,11 +1306,7 @@ func matchSourceFiles(ws *pkgtypes.Workspace, path string) []fileHit {
 // keyed them.
 func allNamedFilesOf(pkg *pkgtypes.Package) map[string]*pkgtypes.File {
 	files := make(map[string]*pkgtypes.File, len(pkg.Files)+len(pkg.TestFiles))
-	for k, f := range pkg.Files {
-		files[k] = f
-	}
-	for k, f := range pkg.TestFiles {
-		files[k] = f
-	}
+	maps.Copy(files, pkg.Files)
+	maps.Copy(files, pkg.TestFiles)
 	return files
 }

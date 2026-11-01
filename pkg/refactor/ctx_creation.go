@@ -31,9 +31,9 @@ func RemoveInternalCtxCreation(ws *pkgtypes.Workspace, sourceFilePath string, fu
 	var funcDecl *ast.FuncDecl
 	targetName := funcName
 	var receiverType string
-	if idx := strings.Index(funcName, "."); idx >= 0 {
-		receiverType = funcName[:idx]
-		targetName = funcName[idx+1:]
+	if before, after, ok := strings.Cut(funcName, "."); ok {
+		receiverType = before
+		targetName = after
 	}
 
 	ast.Inspect(sourceFile.AST, func(n ast.Node) bool {

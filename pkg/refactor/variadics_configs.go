@@ -172,13 +172,12 @@ func (r *variadicsRun) addDecl(v *analysis.View, fn *gotypes.Func, decl *funcDec
 			return p.Name()
 		}
 		pos := v.Workspace.FileSet.Position(fn.Pos())
-		d = &variadicDecl{key: key, VariadicFinding: VariadicFinding{
+		d = &variadicDecl{key: key,
 			Function:  name,
 			Signature: gotypes.ObjectString(fn, qualifier),
 			File:      decl.File.Path,
 			Line:      pos.Line,
-			Column:    pos.Column,
-		}}
+			Column:    pos.Column}
 		r.decls[site] = d
 	}
 	d.Configs = append(d.Configs, v.Config.String())

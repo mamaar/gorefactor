@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	gotypes "go/types"
 	"sort"
+	"strings"
 	"unicode"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -378,8 +379,8 @@ func checkSplitInterfaceImplementers(ws *types.Workspace, pkg *types.Package, mo
 // unexported and declared in pkg; nil when there is none.
 func firstUnexportedMethod(iface *gotypes.Interface, pkg *gotypes.Package) *gotypes.Func {
 	var first *gotypes.Func
-	for i := range iface.NumMethods() {
-		m := iface.Method(i)
+	for m := range iface.Methods() {
+		m := m
 		if !m.Exported() && m.Pkg() == pkg && (first == nil || m.Name() < first.Name()) {
 			first = m
 		}
@@ -458,12 +459,12 @@ func joinLocations(locs []string) string {
 }
 
 func joinStrings(items []string) string {
-	out := ""
+	var out strings.Builder
 	for i, item := range items {
 		if i > 0 {
-			out += ", "
+			out.WriteString(", ")
 		}
-		out += item
+		out.WriteString(item)
 	}
-	return out
+	return out.String()
 }

@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -22,9 +23,7 @@ func derefArgs(extra map[string]any) map[string]any {
 			{"name": "k", "type": "int"},
 		},
 	}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

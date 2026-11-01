@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -18,9 +19,7 @@ func moveHelperArgs() map[string]any {
 func mvWorkspace(t *testing.T, extra map[string]string) string {
 	t.Helper()
 	files := map[string]string{"src/src.go": mvSrc, "dst/dst.go": mvDst}
-	for k, v := range extra {
-		files[k] = v
-	}
+	maps.Copy(files, extra)
 	return writeInlineWorkspace(t, files)
 }
 

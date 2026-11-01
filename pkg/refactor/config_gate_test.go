@@ -26,7 +26,7 @@ func (g *fakeGate) refuse(blockers []types.Blocker) error {
 }
 
 func blockerAt(file string, offset int) types.Blocker {
-	return types.Blocker{Reference: types.Reference{File: file, Offset: offset}}
+	return types.Blocker{File: file, Offset: offset}
 }
 
 func TestPlanAcrossViews_BlockerInAnyViewStopsTheMerge(t *testing.T) {
@@ -46,7 +46,7 @@ func TestPlanAcrossViews_BlockerInAnyViewStopsTheMerge(t *testing.T) {
 	if err != refused || plan != nil {
 		t.Fatalf("plan = %v, err = %v; want the gate's refusal and no plan", plan, err)
 	}
-	want := []types.Blocker{{Reference: types.Reference{File: "/ws/use_tagx.go", Offset: 7}, Configs: []string{tagged.Config.String()}}}
+	want := []types.Blocker{{File: "/ws/use_tagx.go", Offset: 7, Configs: []string{tagged.Config.String()}}}
 	if len(gate.seen) != 1 || !reflect.DeepEqual(gate.seen[0], want) {
 		t.Errorf("gate saw %+v, want %+v", gate.seen, want)
 	}
@@ -104,7 +104,7 @@ func TestBlockersAcrossViews_OneBlockerPerSiteWithoutConfigsWhenEveryViewSeesIt(
 	}
 	want := []types.Blocker{
 		blockerAt("/ws/use.go", 3),
-		{Reference: types.Reference{File: "/ws/use_default.go", Offset: 9}, Configs: []string{primary.Config.String()}},
+		{File: "/ws/use_default.go", Offset: 9, Configs: []string{primary.Config.String()}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("blockers = %+v, want %+v", got, want)

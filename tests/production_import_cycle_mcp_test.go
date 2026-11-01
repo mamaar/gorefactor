@@ -17,7 +17,7 @@ func TestRenameSymbol_ReportsProductionImportCycleAndSessionSurvives(t *testing.
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		res := renameSymbol(t, sess, map[string]any{"symbol": "F", "new_name": "H", "dry_run": true})
 		if res.IsError {
 			t.Fatalf("call %d: rename_symbol failed: %s", i, errText(res))
@@ -43,7 +43,7 @@ func TestRenameSymbol_ProductionSelfImportIsReportedAndSessionSurvives(t *testin
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		res := renameSymbol(t, sess, map[string]any{"symbol": "F", "new_name": "H", "dry_run": true})
 		if res.IsError {
 			t.Fatalf("call %d: rename_symbol failed: %s", i, errText(res))

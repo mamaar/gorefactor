@@ -203,8 +203,8 @@ func lookupPkgObj(t *testing.T, pkg *gotypes.Package, name string) gotypes.Objec
 	if !ok {
 		t.Fatalf("%q is not a named type", typeName)
 	}
-	for i := range named.NumMethods() {
-		if m := named.Method(i); m.Name() == methodName {
+	for m := range named.Methods() {
+		if m := m; m.Name() == methodName {
 			return canonicalObject(m)
 		}
 	}

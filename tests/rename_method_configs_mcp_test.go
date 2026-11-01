@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -26,9 +27,7 @@ func renameMethod(t *testing.T, sess *mcptest.Session, args map[string]any) *mcp
 
 func renameTMToN(extra map[string]any) map[string]any {
 	args := map[string]any{"type_name": "T", "method_name": "M", "new_method_name": "N"}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

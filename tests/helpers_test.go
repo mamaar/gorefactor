@@ -208,7 +208,7 @@ func unifiedDiff(expected, actual string) string {
 
 	maxLen := max(len(actualLines), len(expectedLines))
 
-	for i := 0; i < maxLen; i++ {
+	for i := range maxLen {
 		var eLine, aLine string
 		haveE, haveA := i < len(expectedLines), i < len(actualLines)
 		if haveE {

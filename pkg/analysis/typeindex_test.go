@@ -89,8 +89,8 @@ func (ti *testIndex) lookup(t *testing.T, name string) gotypes.Object {
 		if !ok {
 			continue
 		}
-		for i := range named.NumMethods() {
-			if m := named.Method(i); m.Name() == methodName {
+		for m := range named.Methods() {
+			if m := m; m.Name() == methodName {
 				return canonicalObject(m)
 			}
 		}

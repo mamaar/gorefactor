@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,9 +43,7 @@ func addMArgs(file string, extra map[string]any) map[string]any {
 		"default_value": "0",
 		"position":      1,
 	}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

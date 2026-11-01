@@ -389,8 +389,8 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 	case *gotypes.Slice, *gotypes.Map:
 		direct = true
 	}
-	for i := len(outer) - 1; i >= 0; i-- {
-		switch p := outer[i].(type) {
+	for _, o := range slices.Backward(outer) {
+		switch p := o.(type) {
 		case *ast.ParenExpr:
 			top = p
 			continue

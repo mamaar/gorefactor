@@ -22,9 +22,7 @@ func mbdWorkspace(t *testing.T, extra map[string]string) string {
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.Shared() }\n",
 		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.Shared() }\n",
 	}
-	for k, v := range extra {
-		files[k] = v
-	}
+	maps.Copy(files, extra)
 	return writeInlineWorkspace(t, files)
 }
 

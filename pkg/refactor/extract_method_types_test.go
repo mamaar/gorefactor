@@ -431,7 +431,7 @@ func (m *MyStruct) ProcessData(items []string, count int) error {
 	if strings.Contains(decl, "interface{}") {
 		t.Errorf("generated method contains interface{} types:\n%s", decl)
 	}
-	sigLine := strings.SplitN(decl, "\n", 2)[0]
+	sigLine, _, _ := strings.Cut(decl, "\n")
 	if !strings.Contains(sigLine, "items []string") {
 		t.Errorf("expected items to keep its []string type, got:\n%s", sigLine)
 	}
@@ -493,7 +493,7 @@ func (p *Processor) Run(result *Result, data []string) {
 
 	decl := declOf(t, plan)
 	t.Logf("generated method:\n%s", decl)
-	sigLine := strings.SplitN(decl, "\n", 2)[0]
+	sigLine, _, _ := strings.Cut(decl, "\n")
 
 	if strings.Contains(decl, "interface{}") {
 		t.Errorf("generated method contains interface{} types:\n%s", decl)

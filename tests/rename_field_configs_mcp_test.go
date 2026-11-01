@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -26,9 +27,7 @@ func renameField(t *testing.T, sess *mcptest.Session, args map[string]any) *mcps
 
 func renameTAToB(extra map[string]any) map[string]any {
 	args := map[string]any{"type_name": "T", "field_name": "A", "new_field_name": "B"}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

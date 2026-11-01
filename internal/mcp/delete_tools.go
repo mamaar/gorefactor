@@ -39,10 +39,7 @@ func safeDeleteConfirmMessage(symbol string, refs []types.Blocker) string {
 	}
 	b.WriteString(":\n")
 
-	n := len(refs)
-	if n > maxListedRefs {
-		n = maxListedRefs
-	}
+	n := min(len(refs), maxListedRefs)
 	for _, ref := range refs[:n] {
 		fmt.Fprintf(&b, "  %s:%d%s\n", ref.File, ref.Line, ref.Note())
 	}

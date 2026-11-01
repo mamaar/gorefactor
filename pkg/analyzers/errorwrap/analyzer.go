@@ -73,7 +73,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 		Doc:        "detects improper error wrapping: bare returns, %v instead of %w, and no descriptive context",
 		Run:        makeRun(cfg),
 		Requires:   []*analysis.Analyzer{filedata.Analyzer},
-		ResultType: reflect.TypeOf(([]*Result)(nil)),
+		ResultType: reflect.TypeFor[[]*Result](),
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
@@ -446,9 +447,7 @@ func (w *walker) resolveCascade(list []ast.Stmt, idx int, declared scope, newNam
 // yet when this is used to evaluate whether it is even safe to commit.
 func augmentScope(declared scope, newNames []*ast.Ident) scope {
 	augmented := make(scope, len(declared)+len(newNames))
-	for k, v := range declared {
-		augmented[k] = v
-	}
+	maps.Copy(augmented, declared)
 	for _, id := range newNames {
 		augmented[id.Name] = declaredName{ident: id}
 	}

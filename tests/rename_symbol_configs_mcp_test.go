@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -21,9 +22,7 @@ func renameSymbol(t *testing.T, sess *mcptest.Session, args map[string]any) *mcp
 
 func renameFToG(extra map[string]any) map[string]any {
 	args := map[string]any{"symbol": "f", "new_name": "g"}
-	for k, v := range extra {
-		args[k] = v
-	}
+	maps.Copy(args, extra)
 	return args
 }
 

@@ -989,13 +989,13 @@ func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
 	// for the other goroutines to pile up behind it.
 	var dep strings.Builder
 	dep.WriteString("package dep\n\ntype T int\n")
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		fmt.Fprintf(&dep, "\nfunc F%d(a, b T) T { x := a + b; y := x * 2; return y - a }\n", i)
 	}
 	writeFile("dep/dep.go", dep.String())
 
 	const dependents = 8
-	for i := 0; i < dependents; i++ {
+	for i := range dependents {
 		writeFile(fmt.Sprintf("user%d/user%d.go", i, i), fmt.Sprintf(`package user%d
 
 import "test/conc/dep"
@@ -1013,7 +1013,7 @@ func Use() dep.T {
 	}
 
 	pkgs := make([]*types.Package, 0, dependents)
-	for i := 0; i < dependents; i++ {
+	for i := range dependents {
 		importPath := fmt.Sprintf("test/conc/user%d", i)
 		fsPath, ok := ws.ImportToPath[importPath]
 		if !ok {

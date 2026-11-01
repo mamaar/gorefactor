@@ -156,8 +156,7 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 		a.SetWithin(key)
 	}
 	sites, bodiless, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
-	var unreached *analysis.WithinUnreachedError
-	if errors.As(err, &unreached) {
+	if _, ok := errors.AsType[*analysis.WithinUnreachedError](err); ok {
 		r.withinErr = err
 		return true, nil
 	}

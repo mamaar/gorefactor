@@ -387,7 +387,7 @@ func (p *GoParser) UpdateFile(file *types.File) error {
 
 func parseGoMod(content []byte) *types.Module {
 	module := &types.Module{GoMod: string(content)}
-	for _, line := range strings.Split(string(content), "\n") {
+	for line := range strings.SplitSeq(string(content), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "module ") {
 			module.Path = strings.TrimSpace(strings.TrimPrefix(line, "module"))
@@ -879,15 +879,9 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 		return
 	}
 	pkg.ExternalTestTypesPkg = res.pkg
-	for ident, obj := range res.info.Defs {
-		pkg.TypesInfo.Defs[ident] = obj
-	}
-	for ident, obj := range res.info.Uses {
-		pkg.TypesInfo.Uses[ident] = obj
-	}
-	for expr, tv := range res.info.Types {
-		pkg.TypesInfo.Types[expr] = tv
-	}
+	maps.Copy(pkg.TypesInfo.Defs, res.info.Defs)
+	maps.Copy(pkg.TypesInfo.Uses, res.info.Uses)
+	maps.Copy(pkg.TypesInfo.Types, res.info.Types)
 }
 
 // BindWorkspace attaches p to ws as ws's workspace importer, without going
