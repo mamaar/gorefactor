@@ -474,6 +474,12 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 				}
 			}
 
+			if ifacePkg := packageOfSymbol(ws, ifaceSym); ifacePkg != nil {
+				if m, err := resolver.ResolveSymbol(ifacePkg, ifaceSym.Name+"."+methodName); err == nil {
+					allRefSymbols = append(allRefSymbols, m)
+				}
+			}
+
 			impls, _ := resolver.FindInterfaceImplementations(ifaceSym)
 			for _, impl := range impls {
 				if impl.Name == typeName {

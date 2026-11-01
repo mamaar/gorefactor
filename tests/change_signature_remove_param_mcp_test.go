@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -229,4 +230,37 @@ func TestChangeSignature_RemoveParamDropsConversionArgument(t *testing.T) {
 
 	assertFileContains(t, dir, "p/use.go", "f(1)")
 	goVets(t, dir, "")
+}
+
+func TestChangeSignature_PropagateRewritesCallsThroughTheInterface(t *testing.T) {
+	files := map[string]string{
+		"p/iface.go": removeParamIface,
+		"p/a.go":     "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n",
+		"p/b.go":     "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + 1 }\n",
+	}
+	t.Run("remove_param", func(t *testing.T) {
+		dir := writeInlineWorkspace(t, maps.Clone(files))
+		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+		defer sess.Close()
+
+		args := removeParamArgs("A.Run", "p/a.go", param("n", "int"))
+		args["propagate"] = true
+		changeSigOK(t, sess, args)
+
+		assertFileContains(t, dir, "p/iface.go", "r.Run(1)")
+		goVets(t, dir, "")
+	})
+	t.Run("add_param", func(t *testing.T) {
+		dir := writeInlineWorkspace(t, maps.Clone(files))
+		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+		defer sess.Close()
+
+		changeSigOK(t, sess, map[string]any{
+			"function_name": "A.Run", "source_file": "p/a.go", "subcommand": "add_param",
+			"params": intParams("n", "m", "k"), "default_value": "0", "position": 2, "propagate": true,
+		})
+
+		assertFileContains(t, dir, "p/iface.go", "r.Run(1, 2, 0)")
+		goVets(t, dir, "")
+	})
 }
