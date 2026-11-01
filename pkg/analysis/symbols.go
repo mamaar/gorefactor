@@ -549,13 +549,14 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 
 		// Fast path: when both entry and target have types.Object, use pointer equality.
 		// This eliminates false positives from name shadowing across packages.
-		if targetObj != nil && entry.TypesObject != nil {
+		switch {
+		case targetObj != nil && entry.TypesObject != nil:
 			if !sameObject(entry.TypesObject, targetObj) {
 				skippedReasons["types_object_mismatch"]++
 				continue
 			}
 			// Object identity confirmed — skip string-based checks
-		} else if entry.IsSelector {
+		case entry.IsSelector:
 			// Fallback: string-based matching
 			// Method call path (receiver.Method) — check if method belongs to receiver's type
 			if entry.IsMethodCall && symbol.Kind == types.MethodSymbol {
@@ -570,7 +571,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 					continue
 				}
 			}
-		} else {
+		default:
 			// Unqualified reference — must be in the same package
 			if !sr.isSamePackage(entry.File.Package, symbol.Package) {
 				skippedReasons["package_mismatch"]++

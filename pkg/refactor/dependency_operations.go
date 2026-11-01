@@ -444,20 +444,20 @@ func (op *OrganizeByLayersOperation) generateLayerReport(ws *types.Workspace) st
 	report.WriteString("## Architectural Layers\n\n")
 
 	if op.Request.DomainLayer != "" {
-		report.WriteString(fmt.Sprintf("**Domain Layer**: %s\n", op.Request.DomainLayer))
+		fmt.Fprintf(&report, "**Domain Layer**: %s\n", op.Request.DomainLayer)
 	}
 	if op.Request.InfrastructureLayer != "" {
-		report.WriteString(fmt.Sprintf("**Infrastructure Layer**: %s\n", op.Request.InfrastructureLayer))
+		fmt.Fprintf(&report, "**Infrastructure Layer**: %s\n", op.Request.InfrastructureLayer)
 	}
 	if op.Request.ApplicationLayer != "" {
-		report.WriteString(fmt.Sprintf("**Application Layer**: %s\n", op.Request.ApplicationLayer))
+		fmt.Fprintf(&report, "**Application Layer**: %s\n", op.Request.ApplicationLayer)
 	}
 
 	report.WriteString("\n## Package Classification\n\n")
 
 	for pkgPath := range ws.Packages {
 		layer := op.classifyPackage(pkgPath)
-		report.WriteString(fmt.Sprintf("- `%s` → %s Layer\n", pkgPath, layer))
+		fmt.Fprintf(&report, "- `%s` → %s Layer\n", pkgPath, layer)
 	}
 
 	return report.String()

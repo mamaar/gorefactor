@@ -569,7 +569,7 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 	var results []Result
 	for i, p := range params {
 		if mutated[a.paramObjs[i]] {
-			results = append(results, Result{Name: p.Name, Type: p.Type})
+			results = append(results, Result(p))
 		}
 	}
 
@@ -610,8 +610,7 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 		out[obj] = true
 	}
 
-	var visit func(ast.Node) bool
-	visit = func(n ast.Node) bool {
+	visit := func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.AssignStmt:
 			// `:=` is included deliberately: when the redeclared name already
@@ -847,8 +846,7 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 // the function the selection belongs to (as opposed to a nested closure).
 func (a *analyzer) hasBoundReturn() bool {
 	found := false
-	var visit func(ast.Node) bool
-	visit = func(n ast.Node) bool {
+	visit := func(n ast.Node) bool {
 		if found {
 			return false
 		}

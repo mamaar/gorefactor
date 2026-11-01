@@ -175,11 +175,11 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 	}
 	sort.Strings(files)
 
-	preview.WriteString(fmt.Sprintf("Preview of %d changes across %d files:\n\n", len(changes), len(files)))
+	fmt.Fprintf(&preview, "Preview of %d changes across %d files:\n\n", len(changes), len(files))
 
 	for _, file := range files {
 		changesForFile := fileChanges[file]
-		preview.WriteString(fmt.Sprintf("File: %s\n", file))
+		fmt.Fprintf(&preview, "File: %s\n", file)
 		preview.WriteString(strings.Repeat("-", len(file)+6) + "\n")
 
 		// Sort changes by position for logical order
@@ -188,18 +188,18 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 		})
 
 		for i, change := range changesForFile {
-			preview.WriteString(fmt.Sprintf("%d. %s\n", i+1, change.Description))
+			fmt.Fprintf(&preview, "%d. %s\n", i+1, change.Description)
 			if change.Delete {
 				preview.WriteString("   Action: delete file\n\n")
 				continue
 			}
-			preview.WriteString(fmt.Sprintf("   Position: %d-%d\n", change.Start, change.End))
+			fmt.Fprintf(&preview, "   Position: %d-%d\n", change.Start, change.End)
 
 			if change.OldText != "" {
-				preview.WriteString(fmt.Sprintf("   - %s\n", s.truncateText(change.OldText)))
+				fmt.Fprintf(&preview, "   - %s\n", s.truncateText(change.OldText))
 			}
 			if change.NewText != "" {
-				preview.WriteString(fmt.Sprintf("   + %s\n", s.truncateText(change.NewText)))
+				fmt.Fprintf(&preview, "   + %s\n", s.truncateText(change.NewText))
 			}
 			preview.WriteString("\n")
 		}
@@ -427,8 +427,8 @@ func (s *Serializer) RestoreFromBackup(filePath, backupPath string) error {
 func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedContent string) (string, error) {
 	var diff strings.Builder
 
-	diff.WriteString(fmt.Sprintf("--- %s\n", filePath))
-	diff.WriteString(fmt.Sprintf("+++ %s\n", filePath))
+	fmt.Fprintf(&diff, "--- %s\n", filePath)
+	fmt.Fprintf(&diff, "+++ %s\n", filePath)
 
 	// Split content into lines
 	originalLines := strings.Split(originalContent, "\n")
@@ -450,14 +450,14 @@ func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedCont
 
 		if originalLine != modifiedLine {
 			if originalLine != "" {
-				diff.WriteString(fmt.Sprintf("@@ -%d,1 +%d,1 @@\n", lineNum, lineNum))
-				diff.WriteString(fmt.Sprintf("-%s\n", originalLine))
+				fmt.Fprintf(&diff, "@@ -%d,1 +%d,1 @@\n", lineNum, lineNum)
+				fmt.Fprintf(&diff, "-%s\n", originalLine)
 			}
 			if modifiedLine != "" {
 				if originalLine == "" {
-					diff.WriteString(fmt.Sprintf("@@ -%d,0 +%d,1 @@\n", lineNum, lineNum))
+					fmt.Fprintf(&diff, "@@ -%d,0 +%d,1 @@\n", lineNum, lineNum)
 				}
-				diff.WriteString(fmt.Sprintf("+%s\n", modifiedLine))
+				fmt.Fprintf(&diff, "+%s\n", modifiedLine)
 			}
 		}
 		lineNum++

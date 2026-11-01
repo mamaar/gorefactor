@@ -97,7 +97,7 @@ func (ip inProcess) connect(ctx context.Context, t testing.TB) (*Session, error)
 	serverT, clientT := mcpsdk.NewInMemoryTransports()
 
 	ctx, cancel := context.WithCancel(ctx)
-	go server.Run(ctx, serverT)
+	go func() { _ = server.Run(ctx, serverT) }()
 
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, ip.clientOpts)
 	session, err := client.Connect(ctx, clientT, ip.sessionOpts)

@@ -326,8 +326,3 @@ func sameObject(a, b gotypes.Object) bool {
 	}
 	return ObjectIDOf(a) == ObjectIDOf(b)
 }
-
-// isPackageLevel reports whether obj is a package-level symbol.
-func isPackageLevel(obj gotypes.Object) bool {
-	return obj.Pkg() != nil && obj.Parent() == obj.Pkg().Scope()
-}

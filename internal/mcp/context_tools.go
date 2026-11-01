@@ -40,7 +40,8 @@ Set thread: true to thread a real context.Context transitively through every cal
 					"context expression, so a single fixed default cannot apply to all of them")), nil, nil
 		}
 
-		if len(in.CallSitesOf) > 0 {
+		switch {
+		case len(in.CallSitesOf) > 0:
 			switch {
 			case in.FunctionName != "" || in.SourceFile != "":
 				return errResult(fmt.Errorf("call_sites_of replaces function_name and source_file; pass one or the other")), nil, nil
@@ -49,9 +50,9 @@ Set thread: true to thread a real context.Context transitively through every cal
 			case in.EntryPackage == "":
 				return errResult(fmt.Errorf("call_sites_of needs entry_package: only call sites the entry program reaches are seeded")), nil, nil
 			}
-		} else if in.Within != "" {
+		case in.Within != "":
 			return errResult(fmt.Errorf("within_function needs call_sites_of")), nil, nil
-		} else if in.FunctionName == "" {
+		case in.FunctionName == "":
 			return errResult(fmt.Errorf("function_name is required unless call_sites_of is set")), nil, nil
 		}
 

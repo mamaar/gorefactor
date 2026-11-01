@@ -20,14 +20,6 @@ type addContextParameterPlanner struct {
 	req    types.AddContextParameterRequest
 }
 
-// ctxTarget is a declaration that gains the ctx parameter.
-type ctxTarget struct {
-	key    types.SymbolKey
-	name   string // as ChangeSignatureOperation names it: "f" or "Type.Method"
-	file   string
-	params []analysis.FuncParam
-}
-
 func (p *addContextParameterPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
 	return planSignatureView(&p.viewIndexes, p, v, linked)
 }
