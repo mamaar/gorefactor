@@ -38,6 +38,7 @@ func registerChangeSignatureTools(s *mcpsdk.Server, state *MCPServer) {
 - add_return: add a new return value (provide returns list with the new type included)
 - remove_return: remove a return value (provide returns list without the removed type)
 - deref_param: change one parameter from *T to T (provide the full params list with that parameter's type as T). Every use in the body must be a plain read *p, which becomes p; any other use refuses the change. Nil checks are folded: 'p == nil || *p == nil' and 'p == nil || len(*p) == 0' (slice/map T, and the && mirrors) become value checks and accept literal nil arguments; a lone 'p == nil' folds to false/true and needs every call site to pass &x, otherwise (or if the fold is not a removable if) the whole change is refused. Call sites pass x for &x and *e for any other argument; references that are not calls, and calls that cannot be rewritten, are listed in skipped_sites. Not supported for interface methods or with propagate.
+Generic functions and methods on generic types are refused.
 All call sites are updated automatically, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations gets the same change, and an abort names the configuration it came from.`,
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ChangeSignatureInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher

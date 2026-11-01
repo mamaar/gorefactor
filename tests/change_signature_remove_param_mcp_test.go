@@ -322,3 +322,22 @@ func TestChangeSignature_GenericTargetIsRefusedForEverySubcommand(t *testing.T) 
 		})
 	}
 }
+
+func TestChangeSignature_MethodOnGenericReceiverIsRefused(t *testing.T) {
+	f := "package p\n\ntype Stack[T any] struct{}\n\nfunc (s *Stack[T]) Push(x T, n int) int { return n }\n"
+	use := "package p\n\nfunc Use() int { return (&Stack[string]{}).Push(\"a\", 1) }\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := changeSig(t, sess, map[string]any{
+		"function_name": "Stack.Push", "source_file": "p/f.go", "subcommand": "remove_param",
+		"params": []map[string]any{param("x", "T")},
+	})
+
+	if !res.IsError || !strings.Contains(errText(res), "type parameters") {
+		t.Errorf("want a refusal mentioning type parameters, got IsError=%v %q", res.IsError, errText(res))
+	}
+	assertFileUnchanged(t, dir, "p/f.go", f)
+	assertFileUnchanged(t, dir, "p/use.go", use)
+}

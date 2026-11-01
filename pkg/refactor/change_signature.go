@@ -291,8 +291,8 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		op.Logger.Info("processing signature change", "function", op.FunctionName, "is_interface", isIface)
 	}
 
-	if decl := op.findFunction(sourceFile, op.FunctionName); !isIface && decl != nil && decl.Type.TypeParams.NumFields() > 0 {
-		return nil, fmt.Errorf("change_signature: %s declares type parameters, whose call sites (f[T](...)) cannot be rewritten", op.FunctionName)
+	if decl := op.findFunction(sourceFile, op.FunctionName); !isIface && decl != nil && hasTypeParams(decl) {
+		return nil, fmt.Errorf("change_signature: %s declares type parameters or has a generic receiver, which change_signature does not support", op.FunctionName)
 	}
 
 	op.derefSkips = nil
@@ -1397,6 +1397,25 @@ func receiverTypeName(funcDecl *ast.FuncDecl) string {
 		return ""
 	}
 	return baseTypeName(funcDecl.Recv.List[0].Type)
+}
+
+// hasTypeParams reports whether decl is generic or a method on a generic type.
+func hasTypeParams(decl *ast.FuncDecl) bool {
+	if decl.Type.TypeParams.NumFields() > 0 {
+		return true
+	}
+	if decl.Recv == nil || len(decl.Recv.List) == 0 {
+		return false
+	}
+	recv := decl.Recv.List[0].Type
+	if star, ok := recv.(*ast.StarExpr); ok {
+		recv = star.X
+	}
+	switch recv.(type) {
+	case *ast.IndexExpr, *ast.IndexListExpr:
+		return true
+	}
+	return false
 }
 
 // baseTypeName strips the pointer star from a type expression and returns the ident name.
