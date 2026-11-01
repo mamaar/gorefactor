@@ -95,3 +95,43 @@ func TestBatchRenamePackageRewritesFilesOfEveryConfiguration(t *testing.T) {
 
 	assertRenamedEverywhere(t, dir)
 }
+
+func excludedOnlyRenameWorkspace() map[string]string {
+	return map[string]string{
+		"old/p_plan9.go":   "package old\n\nfunc Plan9() {}\n",
+		"use/use_plan9.go": "package use\n\nimport \"scratch/old\"\n\nfunc U9() { old.Plan9() }\n",
+	}
+}
+
+func TestRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
+	dir := writeFiles(t, excludedOnlyRenameWorkspace())
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	plan, err := eng.RenamePackage(ws, types.RenamePackageRequest{
+		PackagePath:    filepath.Join(dir, "old"),
+		OldPackageName: "old",
+		NewPackageName: "fresh",
+		UpdateImports:  true,
+	})
+	if err != nil {
+		t.Fatalf("RenamePackage: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "old/p_plan9.go", "package fresh\n")
+	assertFileContains(t, dir, "use/use_plan9.go", "fresh.Plan9()")
+}
+
+func TestBatchRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
+	dir := writeFiles(t, excludedOnlyRenameWorkspace())
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "batch_operations", batchArgs(false,
+		`{"type":"rename_package","package_path":"old","new_name":"fresh"}`))
+
+	assertFileContains(t, dir, "old/p_plan9.go", "package fresh\n")
+	assertFileContains(t, dir, "use/use_plan9.go", "fresh.Plan9()")
+}

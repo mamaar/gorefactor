@@ -856,7 +856,7 @@ func (op *RenamePackageOperation) Type() types.OperationType {
 
 func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 	// Check that source package exists
-	targetPackage, exists := ws.Packages[op.Request.PackagePath]
+	dir, exists := findSourceDir(op.Sources, op.Request.PackagePath)
 	if !exists {
 		var availablePackages []string
 		for pkgPath := range ws.Packages {
@@ -882,10 +882,10 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check that the current package name matches what the user expects
-	if targetPackage.Name != op.Request.OldPackageName {
+	if name := sourcePackageName(ws, dir, op.Sources.Dir(dir)); name != op.Request.OldPackageName {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("package name mismatch: expected %s, found %s", op.Request.OldPackageName, targetPackage.Name),
+			Message: fmt.Sprintf("package name mismatch: expected %s, found %s", op.Request.OldPackageName, name),
 		}
 	}
 
@@ -908,7 +908,8 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 	}
 
 	// Step 1: Update package declaration in all files within the package
-	files, err := sourceFilesOf(op.Sources, op.Request.PackagePath)
+	dir, _ := findSourceDir(op.Sources, op.Request.PackagePath)
+	files, err := sourceFilesOf(op.Sources, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -935,7 +936,7 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 
 	// Step 2: Update import statements in other packages (if requested)
 	if op.Request.UpdateImports {
-		importChanges, affectedFiles, err := op.generateImportUpdates(ws, op.Request.PackagePath, op.Request.NewPackageName)
+		importChanges, affectedFiles, err := op.generateImportUpdates(ws, dir, op.Request.NewPackageName)
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate import updates: %v", err)
 		}

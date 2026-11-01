@@ -57,8 +57,8 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 	case "rename_package":
 		resolved := types.ResolvePackagePath(ws, raw["package_path"])
 		oldName := raw["old_name"]
-		if pkg := ws.Packages[resolved]; oldName == "" && pkg != nil {
-			oldName = pkg.Name
+		if dir, ok := findSourceDir(e.set.Sources(), resolved); oldName == "" && ok {
+			oldName = sourcePackageName(ws, dir, e.set.Sources().Dir(dir))
 		}
 		req := types.RenamePackageRequest{
 			OldPackageName: oldName,
