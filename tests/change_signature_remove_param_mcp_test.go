@@ -101,6 +101,48 @@ func TestChangeSignature_RemoveParamRefusals(t *testing.T) {
 			contains: []string{"use.go:4", "arguments"},
 		},
 		{
+			name:     "call passes a multi-value call to a variadic function, removing the fixed parameter",
+			target:   "func f(a int, xs ...int) int { return len(xs) }",
+			use:      "func g() (int, int) { return 1, 2 }\nfunc A() int { return f(g()) }",
+			remain:   []map[string]any{param("xs", "...int")},
+			contains: []string{"use.go:4", "multi-value"},
+		},
+		{
+			name:     "call passes a multi-value call to a variadic function, removing the variadic",
+			target:   "func f(a int, xs ...int) int { return a }",
+			use:      "func g() (int, int) { return 1, 2 }\nfunc A() int { return f(g()) }",
+			remain:   []map[string]any{param("a", "int")},
+			contains: []string{"use.go:4", "multi-value"},
+		},
+		{
+			name:     "method expression passes the receiver as an argument",
+			target:   "type T struct{}\n\nfunc (T) f(a int, xs ...int) int { return len(xs) }",
+			use:      "func A() int { return T.f(T{}, 1) }",
+			remain:   []map[string]any{param("xs", "...int")},
+			contains: []string{"use.go:3", "method expression"},
+		},
+		{
+			name:     "dropped argument calls a function",
+			target:   "func f(a, b int) int { return a }",
+			use:      "func h() int { return 1 }\nfunc A() int { return f(1, h()) }",
+			remain:   []map[string]any{param("a", "int")},
+			contains: []string{"use.go:4", "side effects"},
+		},
+		{
+			name:     "dropped argument receives from a channel",
+			target:   "func f(a, b int) int { return a }",
+			use:      "func A(c chan int) int { return f(1, <-c) }",
+			remain:   []map[string]any{param("a", "int")},
+			contains: []string{"use.go:3", "side effects"},
+		},
+		{
+			name:     "reference is not a call",
+			target:   "func f(a, b int) int { return a }",
+			use:      "var g = f",
+			remain:   []map[string]any{param("a", "int")},
+			contains: []string{"use.go:3", "not a call"},
+		},
+		{
 			name:     "unnamed removal is ambiguous",
 			target:   "func f(int, int) {}",
 			use:      "func A() { f(1, 2) }",
@@ -175,18 +217,16 @@ func TestChangeSignature_RemoveParamRefusesWhenImplementationBodyUsesIt(t *testi
 	assertFileUnchanged(t, dir, "p/b.go", b)
 }
 
-func TestChangeSignature_RemoveParamReportsFuncValueReferenceAsSkipped(t *testing.T) {
+func TestChangeSignature_RemoveParamDropsConversionArgument(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
-		"p/f.go":   "package p\n\nfunc f(a, b int) int { return a }\n",
-		"p/use.go": "package p\n\nvar g = f\n\nfunc Use() int { return f(1, 2) }\n",
+		"p/f.go":   "package p\n\nfunc f(a int, b int64) int { return a }\n",
+		"p/use.go": "package p\n\nfunc Use(x int) int { return f(1, int64(x)) }\n",
 	})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	out := changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("a", "int")))
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("a", "int")))
 
-	if sites, _ := out["skipped_sites"].([]any); len(sites) != 1 {
-		t.Errorf("skipped_sites = %v, want 1 entry", out["skipped_sites"])
-	}
 	assertFileContains(t, dir, "p/use.go", "f(1)")
+	goVets(t, dir, "")
 }

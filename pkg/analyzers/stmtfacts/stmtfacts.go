@@ -404,3 +404,29 @@ func ReferencesAny(n ast.Node, names map[string]bool) bool {
 
 	return found
 }
+
+// HasCallOrReceive reports whether any of the nodes contains a call or a channel
+// receive. A type assertion `x.(T)` is neither: it reads a value that is already
+// there, so repeating or not repeating it is unobservable. With a non-nil info,
+// type conversions are not calls; with nil, every call counts.
+func HasCallOrReceive(info *types.Info, nodes []ast.Node) bool {
+	found := false
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		ast.Inspect(n, func(node ast.Node) bool {
+			switch v := node.(type) {
+			case *ast.CallExpr:
+				found = found || info == nil || !info.Types[v.Fun].IsType()
+			case *ast.UnaryExpr:
+				found = found || v.Op == token.ARROW
+			}
+			return !found
+		})
+		if found {
+			return true
+		}
+	}
+	return false
+}

@@ -131,7 +131,8 @@ type ChangeSignatureOperation struct {
 	derefErr      error        // first call-site finding that aborts the whole change
 
 	removedIdx      int
-	removeOldParams []Parameter
+	removedCount    int      // parameters before the removal
+	removedVariadic bool     // the last of them is variadic
 	removeRefusals  []string // every site that stops a remove_param, reported together
 }
 
@@ -977,7 +978,10 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 	})
 
 	if !foundCallExpr {
-		if op.DerefParam || op.RemoveParam {
+		if op.RemoveParam {
+			op.refuseRemove(ws, ref.Position, "reference is not a call, so its argument cannot be removed")
+		}
+		if op.DerefParam {
 			op.skipSite(ref, "reference is not a call, so its argument cannot be rewritten", ref.Context)
 		}
 		if op.Logger != nil {

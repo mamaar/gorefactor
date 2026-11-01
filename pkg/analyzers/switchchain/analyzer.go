@@ -498,36 +498,6 @@ func (w *walker) strayComment(root *ast.IfStmt, links []*ast.IfStmt, final *ast.
 	return ""
 }
 
-// hasCallOrReceive reports whether any of the nodes contains a call or a channel
-// receive. A type assertion `x.(T)` is neither: it reads a value that is already
-// there, so repeating or not repeating it is unobservable.
-func hasCallOrReceive(nodes []ast.Node) bool {
-	found := false
-	for _, n := range nodes {
-		if n == nil {
-			continue
-		}
-		ast.Inspect(n, func(node ast.Node) bool {
-			if found {
-				return false
-			}
-			switch v := node.(type) {
-			case *ast.CallExpr:
-				found = true
-			case *ast.UnaryExpr:
-				if v.Op == token.ARROW {
-					found = true
-				}
-			}
-			return !found
-		})
-		if found {
-			return true
-		}
-	}
-	return false
-}
-
 // --- classification ---
 
 // plan is everything the renderer needs: the text between `switch` and the
@@ -670,7 +640,7 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 	// a function or draining a channel that many fewer times is observable, and
 	// unlike the tagged form there is no pure-path requirement standing in the
 	// way, since the operand can be any expression at all.
-	if hasCallOrReceive(chain.operandNodes) {
+	if stmtfacts.HasCallOrReceive(nil, chain.operandNodes) {
 		return p, "the asserted expression calls a function or receives from a channel, so a type switch would not evaluate it as often as the chain did"
 	}
 
@@ -853,7 +823,7 @@ func (w *walker) planTagged(chain taggedChain, init string) (plan, string) {
 	// evaluates a, then b if a did not match, then c, which is exactly the order
 	// and the short-circuiting of `x == a || x == b` followed by `x == c`. A
 	// call among them is evaluated as often as it was before.
-	if hasCallOrReceive([]ast.Node{chain.tagExpr}) {
+	if stmtfacts.HasCallOrReceive(nil, []ast.Node{chain.tagExpr}) {
 		return p, "the switch tag calls a function or receives from a channel, so a switch would evaluate it once where the chain evaluated it once per branch"
 	}
 

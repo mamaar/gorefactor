@@ -942,11 +942,12 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 	defer func() { p.checkStack = p.checkStack[:len(p.checkStack)-1] }()
 	conf := NewTypesConfig(p.importer, errs.add)
 	info := &gotypes.Info{
-		Types:     make(map[ast.Expr]gotypes.TypeAndValue),
-		Defs:      make(map[*ast.Ident]gotypes.Object),
-		Uses:      make(map[*ast.Ident]gotypes.Object),
-		Implicits: make(map[ast.Node]gotypes.Object),
-		Scopes:    make(map[ast.Node]*gotypes.Scope),
+		Types:      make(map[ast.Expr]gotypes.TypeAndValue),
+		Defs:       make(map[*ast.Ident]gotypes.Object),
+		Uses:       make(map[*ast.Ident]gotypes.Object),
+		Implicits:  make(map[ast.Node]gotypes.Object),
+		Scopes:     make(map[ast.Node]*gotypes.Scope),
+		Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
 	}
 	typesPkg, err := conf.Check(pkg.ImportPath, ws.FileSet, files, info)
 	return typesPkg, info, err
