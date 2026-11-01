@@ -57,6 +57,7 @@ func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatur
 	removedReturnIndex := -1
 	defaultReturnValue := ""
 	deref := false
+	removeParam := false
 
 	switch req.Subcommand {
 	case "add_return":
@@ -67,6 +68,8 @@ func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatur
 		}
 	case "deref_param":
 		deref = true
+	case "remove_param":
+		removeParam = true
 	case "remove_return":
 		// NewReturns is the list after removal, so the removed return was the one past its end.
 		removedReturnIndex = len(req.NewReturns)
@@ -85,6 +88,7 @@ func (req ChangeSignatureRequest) operation(logger *slog.Logger) *ChangeSignatur
 		RemovedReturnIndex:   removedReturnIndex,
 		DefaultReturnValue:   defaultReturnValue,
 		DerefParam:           deref,
+		RemoveParam:          removeParam,
 		CachedIndex:          req.CachedIndex,
 		Logger:               logger,
 	}
@@ -115,12 +119,20 @@ type ChangeSignatureOperation struct {
 	// declaration and NewParams from *T into T, rewriting the body and calls.
 	DerefParam bool
 
+	// RemoveParam drops the one parameter of the declaration that NewParams
+	// lacks, and the argument for it at every call.
+	RemoveParam bool
+
 	altered       []AlteredDecl
 	derefIdx      int
 	derefParamObj gotypes.Object // the parameter at derefIdx in the function body
 	derefSkips    []pkgtypes.SkippedSite
 	derefNil      derefNilMode // how the body compares the dereferenced parameter with nil
 	derefErr      error        // first call-site finding that aborts the whole change
+
+	removedIdx      int
+	removeOldParams []Parameter
+	removeRefusals  []string // every site that stops a remove_param, reported together
 }
 
 // AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
@@ -279,6 +291,12 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	}
 
 	op.derefSkips = nil
+	op.removeRefusals = nil
+	if op.RemoveParam {
+		if err := op.planRemoveParam(ws, sourcePackage, sourceFile, typeName, methodName, isIface); err != nil {
+			return nil, err
+		}
+	}
 	if op.DerefParam {
 		if isIface || op.PropagateToInterface {
 			return nil, fmt.Errorf("deref_param: interface methods and propagate are not supported")
@@ -320,6 +338,9 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	op.updateAssignmentLHS(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
 	if op.derefErr != nil {
 		return nil, op.derefErr
+	}
+	if len(op.removeRefusals) > 0 {
+		return nil, fmt.Errorf("remove_param: %s cannot be changed:\n%s", op.FunctionName, strings.Join(op.removeRefusals, "\n"))
 	}
 	plan.SkippedSites = append(plan.SkippedSites, op.derefSkips...)
 	op.addDefaultValueImports(ws, plan)
@@ -917,7 +938,7 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 				}
 				// Generate new call arguments based on new signature
 				var info *gotypes.Info
-				if op.DerefParam {
+				if op.DerefParam || op.RemoveParam {
 					info = refFile.Package.TypesInfo
 				}
 				newCall := op.generateNewCall(callExpr, ref, ws, refFile.OriginalContent, info)
@@ -956,7 +977,7 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 	})
 
 	if !foundCallExpr {
-		if op.DerefParam {
+		if op.DerefParam || op.RemoveParam {
 			op.skipSite(ref, "reference is not a call, so its argument cannot be rewritten", ref.Context)
 		}
 		if op.Logger != nil {
@@ -998,6 +1019,15 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 			op.skipSite(ref, reason, string(fileContent[op.tokenPosToOffset(ws, callExpr.Pos()):op.tokenPosToOffset(ws, callExpr.End())]))
 			return ""
 		}
+	}
+
+	if op.RemoveParam {
+		args, reason := op.removeArg(callExpr, existingArgs, info)
+		if reason != "" {
+			op.refuseRemove(ws, callExpr.Pos(), reason)
+			return ""
+		}
+		return op.callText(callExpr, ws, fileContent, strings.Join(args, ", "))
 	}
 
 	// Build new argument list; a trailing variadic parameter takes whatever
@@ -1059,8 +1089,11 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 		}
 	}
 
-	argStr := strings.Join(newArgs, ", ")
+	return op.callText(callExpr, ws, fileContent, strings.Join(newArgs, ", "))
+}
 
+// callText returns the call with its arguments replaced by argStr.
+func (op *ChangeSignatureOperation) callText(callExpr *ast.CallExpr, ws *pkgtypes.Workspace, fileContent []byte, argStr string) string {
 	// When FunctionName is "Repo.Save", use just the method name for calls
 	funcName := op.FunctionName
 	if strings.Contains(funcName, ".") {
@@ -1661,6 +1694,9 @@ func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
 				continue
 			}
 
+			if op.RemoveParam {
+				op.checkRemovedUnused(ws, implPkg, funcDecl)
+			}
 			oldSig := op.extractCurrentSignature(funcDecl)
 			newSig := op.generateNewSignature(funcDecl)
 

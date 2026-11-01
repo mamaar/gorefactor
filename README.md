@@ -95,7 +95,7 @@ The server communicates over stdio using the MCP protocol.
 | `fix_error_wrapping` | Auto-fix error wrapping |
 | `detect_missing_context_params` | Find functions that should accept `context.Context` |
 | `detect_environment_booleans` | Find environment variable boolean patterns |
-| `detect_variadics` | Find variadic functions, methods and interface methods, counting how many calls pass zero, one or many variadic arguments or spread a slice, across all build configurations |
+| `detect_variadics` | Find variadic functions, methods and interface methods, counting how many calls pass zero, one or many variadic arguments or spread a slice, across all build configurations; a variadic with `zero_args == call_sites` can be removed with `change_signature remove_param` |
 
 ### Import Management
 
