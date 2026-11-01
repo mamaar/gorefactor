@@ -294,3 +294,31 @@ func TestChangeSignature_ImplementationInTestFileIsRewrittenAndChecked(t *testin
 		assertFileUnchanged(t, dir, "p/b_test.go", b)
 	})
 }
+
+func TestChangeSignature_GenericTargetIsRefusedForEverySubcommand(t *testing.T) {
+	f := "package p\n\nfunc f[T any](x T, n int) int { return n }\n"
+	use := "package p\n\nfunc Use() int { return f[string](\"a\", 1) + f(2, 3) }\n"
+	subcommands := map[string]map[string]any{
+		"add_param":     {"params": []map[string]any{param("x", "T"), param("n", "int"), param("m", "int")}, "default_value": "0", "position": 2},
+		"remove_param":  {"params": []map[string]any{param("x", "T")}},
+		"add_return":    {"returns": []string{"int", "error"}},
+		"remove_return": {"returns": []string{}},
+	}
+	for sub, extra := range subcommands {
+		t.Run(sub, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+			args := map[string]any{"function_name": "f", "source_file": "p/f.go", "subcommand": sub}
+			maps.Copy(args, extra)
+
+			res := changeSig(t, sess, args)
+
+			if !res.IsError || !strings.Contains(errText(res), "type parameters") {
+				t.Errorf("want a refusal mentioning type parameters, got IsError=%v %q", res.IsError, errText(res))
+			}
+			assertFileUnchanged(t, dir, "p/f.go", f)
+			assertFileUnchanged(t, dir, "p/use.go", use)
+		})
+	}
+}

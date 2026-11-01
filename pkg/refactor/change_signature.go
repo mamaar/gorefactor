@@ -291,6 +291,10 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		op.Logger.Info("processing signature change", "function", op.FunctionName, "is_interface", isIface)
 	}
 
+	if decl := op.findFunction(sourceFile, op.FunctionName); !isIface && decl != nil && decl.Type.TypeParams.NumFields() > 0 {
+		return nil, fmt.Errorf("change_signature: %s declares type parameters, whose call sites (f[T](...)) cannot be rewritten", op.FunctionName)
+	}
+
 	op.derefSkips = nil
 	op.removeRefusals = nil
 	if op.RemoveParam {
