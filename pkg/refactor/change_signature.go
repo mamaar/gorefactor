@@ -1698,7 +1698,7 @@ func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
 		if implPkg == nil || impl.Name == skipType {
 			continue
 		}
-		for _, file := range implPkg.Files {
+		for _, file := range allFilesOf(implPkg) {
 			funcDecl := findFuncDeclForMethod(file, impl.Name, methodName)
 			if funcDecl == nil {
 				continue

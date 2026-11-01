@@ -264,3 +264,33 @@ func TestChangeSignature_PropagateRewritesCallsThroughTheInterface(t *testing.T)
 		goVets(t, dir, "")
 	})
 }
+
+func TestChangeSignature_ImplementationInTestFileIsRewrittenAndChecked(t *testing.T) {
+	a := "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n"
+	t.Run("rewritten", func(t *testing.T) {
+		dir := writeInlineWorkspace(t, map[string]string{
+			"p/iface.go": removeParamIface, "p/a.go": a,
+			"p/b_test.go": "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + 1 }\n",
+		})
+		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+		defer sess.Close()
+
+		changeSigOK(t, sess, removeParamArgs("Runner.Run", "p/iface.go", param("n", "int")))
+
+		assertFileContains(t, dir, "p/b_test.go", "Run(n int) int")
+		goVets(t, dir, "")
+	})
+	t.Run("body use refused", func(t *testing.T) {
+		b := "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + m }\n"
+		dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": removeParamIface, "p/a.go": a, "p/b_test.go": b})
+		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+		defer sess.Close()
+
+		res := changeSig(t, sess, removeParamArgs("Runner.Run", "p/iface.go", param("n", "int")))
+
+		if !res.IsError || !strings.Contains(errText(res), "b_test.go:5") {
+			t.Errorf("want a refusal naming b_test.go:5, got IsError=%v %q", res.IsError, errText(res))
+		}
+		assertFileUnchanged(t, dir, "p/b_test.go", b)
+	})
+}
