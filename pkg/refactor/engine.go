@@ -1291,7 +1291,7 @@ func (e *DefaultEngine) CreateFacade(ws *types.Workspace, req types.CreateFacade
 
 // GenerateFacades implements auto-generating facades
 func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateFacadesRequest) (*types.RefactoringPlan, error) {
-	operation := &GenerateFacadesOperation{Request: req, Sources: e.set.Sources()}
+	operation := &GenerateFacadesOperation{Request: req, Sources: e.set.Sources(), Covering: e.set.Covering()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1318,7 +1318,7 @@ func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateF
 
 // UpdateFacades implements updating existing facades
 func (e *DefaultEngine) UpdateFacades(ws *types.Workspace, req types.UpdateFacadesRequest) (*types.RefactoringPlan, error) {
-	operation := &UpdateFacadesOperation{Request: req, Sources: e.set.Sources()}
+	operation := &UpdateFacadesOperation{Request: req, Sources: e.set.Sources(), Covering: e.set.Covering()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {

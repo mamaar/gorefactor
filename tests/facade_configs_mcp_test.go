@@ -150,3 +150,68 @@ func TestUpdateFacadesRegeneratesInPlace(t *testing.T) {
 	}
 	assertBuildsEverywhere(t, dir)
 }
+
+func TestGenerateFacadesIgnoresFilesNoConfigIncludes(t *testing.T) {
+	dir := t.TempDir()
+	writeFacadeSource(t, dir)
+	mustWrite(t, filepath.Join(dir, "internal", "store", "gen.go"), "//go:build ignore\n\npackage main\n\nfunc Generate() {}\n")
+	generateFacades(t, dir)
+
+	got := strings.Join(facadeFiles(t, dir), " ")
+	want := "facade.go facade_linux.go facade_tagx_tags.go facade_windows.go"
+	if got != want {
+		t.Fatalf("facade files = %q, want %q", got, want)
+	}
+	if facade := readFile(t, filepath.Join(dir, "api", "store", "facade.go")); !strings.Contains(facade, "package store") {
+		t.Errorf("facade.go has the wrong package clause:\n%s", facade)
+	}
+	assertBuildsEverywhere(t, dir)
+}
+
+func TestGenerateFacadesBuildsWhenOnlyConstrainedFilesExport(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "go.mod"), "module scratch\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(dir, "internal", "store", "store.go"), "package store\n")
+	mustWrite(t, filepath.Join(dir, "internal", "store", "store_linux.go"), "package store\n\nfunc LinuxOnly() {}\n")
+	generateFacades(t, dir)
+
+	if got := strings.Join(facadeFiles(t, dir), " "); got != "facade.go facade_linux.go" {
+		t.Fatalf("facade files = %q, want facade.go facade_linux.go", got)
+	}
+	assertBuildsEverywhere(t, dir)
+}
+
+func TestUpdateFacadesDeletesStaleFilesWhenNothingIsExportedAnymore(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "go.mod"), "module scratch\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(dir, "internal", "store", "store.go"), "package store\n")
+	linux := filepath.Join(dir, "internal", "store", "store_linux.go")
+	mustWrite(t, linux, "package store\n\nfunc LinuxOnly() {}\n")
+	generateFacades(t, dir)
+	if err := os.Remove(linux); err != nil {
+		t.Fatal(err)
+	}
+	updateFacades(t, dir)
+
+	if got := facadeFiles(t, dir); len(got) != 0 {
+		t.Errorf("facade files = %v, want none", got)
+	}
+}
+
+func TestGenerateFacadesCgoFileGoesToCgoConstrainedFile(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "go.mod"), "module scratch\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(dir, "internal", "store", "store.go"), facadeSourceStore)
+	mustWrite(t, filepath.Join(dir, "internal", "store", "native.go"), "package store\n\n// int one(void) { return 1; }\nimport \"C\"\n\nfunc Native() int { return int(C.one()) }\n")
+	generateFacades(t, dir)
+
+	var cgoFile string
+	for _, name := range facadeFiles(t, dir) {
+		if text := readFile(t, filepath.Join(dir, "api", "store", name)); strings.Contains(text, "Native") {
+			cgoFile = text
+		}
+	}
+	if !strings.HasPrefix(cgoFile, "//go:build cgo\n") {
+		t.Errorf("Native is not in a file constrained to cgo:\n%s", cgoFile)
+	}
+}

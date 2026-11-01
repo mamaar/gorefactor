@@ -43,6 +43,8 @@ type facadeFile struct {
 // constraint of the file declaring them.
 type facadeBuilder struct {
 	files map[facadeKey]*facadeFile
+	// unconstrained is set when a source file is built under every configuration.
+	unconstrained bool
 }
 
 func newFacadeBuilder() *facadeBuilder {
@@ -57,6 +59,9 @@ func (b *facadeBuilder) add(importPath string, files []*analysis.SourceFile, kee
 			continue
 		}
 		key := facadeKeyOf(f)
+		if key == (facadeKey{}) {
+			b.unconstrained = true
+		}
 		for _, d := range exportedDecls(f.AST) {
 			if !keep(d.name) {
 				continue
@@ -169,12 +174,15 @@ func (ff *facadeFile) render(pkgName string) string {
 	} else if ff.key.suffix == "" {
 		fmt.Fprintf(&sb, "// Package %s provides a facade for accessing related functionality.\n", pkgName)
 	}
-	fmt.Fprintf(&sb, "// %s\npackage %s\n\nimport (\n", facadeMarker, pkgName)
+	fmt.Fprintf(&sb, "// %s\npackage %s\n\n", facadeMarker, pkgName)
 	imports := slices.Sorted(maps.Keys(ff.decls))
-	for _, imp := range imports {
-		fmt.Fprintf(&sb, "\t%q\n", imp)
+	if len(imports) > 0 {
+		sb.WriteString("import (\n")
+		for _, imp := range imports {
+			fmt.Fprintf(&sb, "\t%q\n", imp)
+		}
+		sb.WriteString(")\n\n")
 	}
-	sb.WriteString(")\n\n")
 	for _, imp := range imports {
 		decls := slices.SortedFunc(maps.Keys(ff.decls[imp]), func(a, b facadeDecl) int { return strings.Compare(a.name, b.name) })
 		for _, d := range decls {
@@ -194,6 +202,11 @@ func (ff *facadeFile) render(pkgName string) string {
 // and generated ones no longer needed deleted. A file that gorefactor did not
 // generate is never touched; one standing where a facade file belongs is an error.
 func (b *facadeBuilder) planFacadeDir(plan *types.RefactoringPlan, tree *analysis.SourceTree, dir, pkgName string) error {
+	// An unconstrained source file means the package builds everywhere, so the
+	// facade must too, even when only constrained files export anything.
+	if b.unconstrained && !b.empty() && b.files[facadeKey{}] == nil {
+		b.files[facadeKey{}] = &facadeFile{decls: make(map[string]map[facadeDecl]bool)}
+	}
 	existing := make(map[string]*analysis.SourceFile)
 	for _, f := range tree.Dir(dir) {
 		existing[f.Name] = f
@@ -246,14 +259,33 @@ func nonTestFiles(files []*analysis.SourceFile) []*analysis.SourceFile {
 	})
 }
 
-// packageNameOf returns the package clause of the first parsed file.
-func packageNameOf(files []*analysis.SourceFile) string {
-	for _, f := range files {
-		if f.AST != nil {
-			return f.AST.Name.Name
+// packageFiles returns the parsed non-test files of the package a directory
+// builds, and its name: files no build configuration includes, and files of
+// another package (such as a go:generate main), are left out. The name is the
+// most common package clause among the rest.
+func packageFiles(files []*analysis.SourceFile, uncovered map[string]bool) (string, []*analysis.SourceFile) {
+	candidates := slices.DeleteFunc(nonTestFiles(files), func(f *analysis.SourceFile) bool {
+		return f.AST == nil || uncovered[f.Path]
+	})
+	count := make(map[string]int)
+	name := ""
+	for _, f := range candidates {
+		n := f.AST.Name.Name
+		count[n]++
+		if count[n] > count[name] {
+			name = n
 		}
 	}
-	return ""
+	return name, slices.DeleteFunc(candidates, func(f *analysis.SourceFile) bool { return f.AST.Name.Name != name })
+}
+
+// uncoveredSet returns the paths of the files no build configuration includes.
+func uncoveredSet(c analysis.Covering) map[string]bool {
+	out := make(map[string]bool, len(c.Uncovered))
+	for _, u := range c.Uncovered {
+		out[u.Path] = true
+	}
+	return out
 }
 
 // importPathDirs maps the import path of every source-tree directory to it.
@@ -305,6 +337,8 @@ type GenerateFacadesOperation struct {
 	// Sources holds every .go file of the workspace, so symbols declared in
 	// files the loaded build configuration excludes are re-exported too.
 	Sources *analysis.SourceTree
+	// Covering names the files no build configuration includes.
+	Covering analysis.Covering
 }
 
 func (op *GenerateFacadesOperation) Type() types.OperationType {
@@ -343,6 +377,7 @@ func (op *GenerateFacadesOperation) Execute(ws *types.Workspace) (*types.Refacto
 		})
 	}
 	modulesDirAbs := filepath.Join(ws.RootPath, op.Request.ModulesDir)
+	uncovered := uncoveredSet(op.Covering)
 
 	for _, dir := range op.Sources.Dirs() {
 		if !strings.HasPrefix(dir, modulesDirAbs) || strings.Contains(dir, string(filepath.Separator)+"testdata") {
@@ -352,8 +387,7 @@ func (op *GenerateFacadesOperation) Execute(ws *types.Workspace) (*types.Refacto
 		if err != nil {
 			return nil, err
 		}
-		files = nonTestFiles(files)
-		name := packageNameOf(files)
+		name, files := packageFiles(files, uncovered)
 		importPath := packagePathToImportPath(ws, dir)
 		if name == "" || name == "main" || importPath == "" {
 			continue
@@ -378,6 +412,8 @@ type UpdateFacadesOperation struct {
 	// Sources holds every .go file of the workspace, so facade packages and the
 	// packages they re-export are read whatever their build constraints.
 	Sources *analysis.SourceTree
+	// Covering names the files no build configuration includes.
+	Covering analysis.Covering
 }
 
 func (op *UpdateFacadesOperation) Type() types.OperationType {
@@ -419,19 +455,17 @@ func (op *UpdateFacadesOperation) Execute(ws *types.Workspace) (*types.Refactori
 	}
 
 	sourceDirs := importPathDirs(ws, op.Sources)
+	uncovered := uncoveredSet(op.Covering)
 	keepAll := func(string) bool { return true }
 	for _, facadeDir := range facadeDirs {
 		files, err := sourceFilesOf(op.Sources, facadeDir)
 		if err != nil {
 			return nil, err
 		}
-		files = nonTestFiles(files)
+		pkgName, files := packageFiles(files, uncovered)
 
 		b := newFacadeBuilder()
 		for _, f := range files {
-			if f.AST == nil {
-				continue
-			}
 			for _, imp := range f.AST.Imports {
 				importPath := strings.Trim(imp.Path.Value, `"`)
 				dir, ok := sourceDirs[importPath]
@@ -442,13 +476,11 @@ func (op *UpdateFacadesOperation) Execute(ws *types.Workspace) (*types.Refactori
 				if err != nil {
 					return nil, err
 				}
-				b.add(importPath, nonTestFiles(srcFiles), keepAll)
+				_, srcFiles = packageFiles(srcFiles, uncovered)
+				b.add(importPath, srcFiles, keepAll)
 			}
 		}
-		if b.empty() {
-			continue
-		}
-		if err := b.planFacadeDir(plan, op.Sources, facadeDir, packageNameOf(files)); err != nil {
+		if err := b.planFacadeDir(plan, op.Sources, facadeDir, pkgName); err != nil {
 			return nil, err
 		}
 	}
