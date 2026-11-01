@@ -891,6 +891,12 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 	if err != nil {
 		return err
 	}
+	if name == "main" {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("cannot rename package main in %s: a command's package name must stay main", op.Request.PackagePath),
+		}
+	}
 
 	// OldPackageName is optional; when given it must match the current name
 	if op.Request.OldPackageName != "" && op.Request.OldPackageName != name {

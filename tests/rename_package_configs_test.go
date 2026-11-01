@@ -85,6 +85,23 @@ func TestRenamePackageRefusesUnparseableFileNeedingClauseRename(t *testing.T) {
 	}
 }
 
+func TestRenamePackageRefusesMain(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"cmd/a/main.go": "package main\n\nfunc main() {}\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+
+	_, err := eng.RenamePackage(ws, types.RenamePackageRequest{
+		PackagePath:    filepath.Join(dir, "cmd/a"),
+		NewPackageName: "fresh",
+		UpdateImports:  true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "package main") {
+		t.Fatalf("want refusal naming package main, got %v", err)
+	}
+}
+
 func TestBatchRenamePackageRewritesFilesOfEveryConfiguration(t *testing.T) {
 	dir := writeFiles(t, renamePackageWorkspace())
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
