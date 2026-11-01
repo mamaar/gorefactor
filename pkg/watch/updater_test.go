@@ -173,6 +173,38 @@ func TestUpdater_DeleteLastFileRemovesPackage(t *testing.T) {
 	}
 }
 
+func TestUpdater_DeletingLastNonTestFileKeepsPackageWithTests(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "a")
+	testPath := filepath.Join(pkgDir, "a_test.go")
+	_ = os.WriteFile(testPath, []byte("package a\n\nfunc helper() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: testPath, Op: fsnotify.Create}})
+
+	filePath := filepath.Join(pkgDir, "a.go")
+	_ = os.Remove(filePath)
+	u.HandleChanges([]ChangeEvent{{Path: filePath, Op: fsnotify.Remove}})
+
+	if u.FindPackage(pkgDir) == nil {
+		t.Fatal("package with test files left was removed")
+	}
+}
+
+func TestUpdater_ModifyInTestOnlyDirectoryKeepsPackage(t *testing.T) {
+	u, dir := setupWorkspace(t)
+	pkgDir := filepath.Join(dir, "pkg", "integration")
+	_ = os.MkdirAll(pkgDir, 0755)
+	testPath := filepath.Join(pkgDir, "run_test.go")
+	_ = os.WriteFile(testPath, []byte("package integration\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: testPath, Op: fsnotify.Create}})
+
+	_ = os.WriteFile(testPath, []byte("package integration\n\nfunc helper() {}\n"), 0644)
+	u.HandleChanges([]ChangeEvent{{Path: testPath, Op: fsnotify.Write}})
+
+	if u.FindPackage(pkgDir) == nil {
+		t.Fatal("test-only package removed by an edit to its test file")
+	}
+}
+
 func TestUpdater_NewDirectoryCreatesPackage(t *testing.T) {
 	u, dir := setupWorkspace(t)
 	initialCount := u.PackageCount()

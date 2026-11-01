@@ -99,8 +99,8 @@ func actionName(op fsnotify.Op) string {
 }
 
 // handleChange re-evaluates whether the changed file belongs to its package
-// under v's build config. A package left without non-test files is removed
-// from v's workspace.
+// under v's build config. A package left without files is removed from v's
+// workspace.
 func (u *WorkspaceUpdater) handleChange(v *analysis.View, c syncedChange) {
 	start := time.Now()
 
@@ -117,7 +117,7 @@ func (u *WorkspaceUpdater) handleChange(v *analysis.View, c syncedChange) {
 	}
 	v.Resolver.InvalidateCacheForFile(c.path)
 
-	if len(pkg.Files) == 0 {
+	if len(pkg.Files) == 0 && len(pkg.TestFiles) == 0 {
 		u.removePackage(v, pkg, start)
 		return
 	}
@@ -171,7 +171,7 @@ func (u *WorkspaceUpdater) rebuildPackage(v *analysis.View, pkg *types.Package, 
 }
 
 // createPackage builds the package in dir from the source tree and registers
-// it in v. A directory with no usable non-test files yields no package.
+// it in v. A directory with no usable files yields no package.
 func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start time.Time) {
 	pkg, err := v.Parser.ParsePackage(dir)
 	if err != nil {
