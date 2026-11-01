@@ -1167,13 +1167,24 @@ func (e *DefaultEngine) getModificationDescription(mod types.Modification) strin
 
 // Bulk operation implementations
 
+// coveredConfigNames names the build configurations that together include every
+// source file, primary first.
+func (e *DefaultEngine) coveredConfigNames() []string {
+	configs := e.set.Covering().Configs
+	names := make([]string, len(configs))
+	for i, c := range configs {
+		names[i] = c.String()
+	}
+	return names
+}
+
 // MovePackage implements moving entire packages
 func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRequest) (*types.RefactoringPlan, error) {
 	// Apply sensible defaults
 	req.CreateTarget = true
 	req.UpdateImports = true
 
-	operation := &MovePackageOperation{Request: req}
+	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1185,6 +1196,7 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move package plan: %w", err)
 	}
+	plan.Coverage.Configs = e.coveredConfigNames()
 
 	// Analyze impact
 	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
@@ -1203,7 +1215,7 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	// Apply sensible defaults
 	req.UpdateImports = true
 
-	operation := &MoveDirOperation{Request: req}
+	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1215,6 +1227,7 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move directory plan: %w", err)
 	}
+	plan.Coverage.Configs = e.coveredConfigNames()
 
 	// Analyze impact
 	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
@@ -1234,7 +1247,7 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	req.CreateTargets = true
 	req.UpdateImports = true
 
-	operation := &MovePackagesOperation{Request: req}
+	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1246,6 +1259,7 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move packages plan: %w", err)
 	}
+	plan.Coverage.Configs = e.coveredConfigNames()
 
 	// Analyze impact
 	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
