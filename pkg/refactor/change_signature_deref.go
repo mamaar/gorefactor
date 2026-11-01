@@ -519,7 +519,7 @@ func (op *ChangeSignatureOperation) failDeref(err error) {
 	}
 }
 
-// skipSite records a reference deref_param could not rewrite.
+// skipSite records a reference deref_param or remove_param could not rewrite.
 func (op *ChangeSignatureOperation) skipSite(ref *pkgtypes.Reference, reason, snippet string) {
 	if op.derefNil != derefNoNilCheck {
 		op.failDeref(fmt.Errorf("deref_param: %s checks its parameter against nil, so every reference must be rewritable, but %s:%d: %s", op.FunctionName, ref.File, ref.Line, reason))
