@@ -3,6 +3,7 @@ package missingctx_test
 import (
 	"go/parser"
 	"go/token"
+	"slices"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers"
@@ -125,5 +126,43 @@ func init() {
 	}
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations: main and init should be skipped, got %d", len(results))
+	}
+}
+
+func TestMissingCtx_SkipsGoTestEntryPoints(t *testing.T) {
+	src := `package testpkg
+
+import (
+	"context"
+	"slices"
+	"testing"
+)
+
+func TestX(t *testing.T)      { _ = context.Background() }
+func BenchmarkX(b *testing.B) { _ = context.Background() }
+func FuzzX(f *testing.F)      { _ = context.Background() }
+func ExampleX()               { _ = context.Background() }
+func Testify()                { _ = context.Background() }
+func helper(t *testing.T)     { _ = context.Background() }
+`
+	fileSet := token.NewFileSet()
+	astFile, err := parser.ParseFile(fileSet, "testpkg_test.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := &types.File{Path: "testpkg_test.go", AST: astFile, OriginalContent: []byte(src)}
+	pkg := &types.Package{Name: "testpkg", Path: "test/testpkg", TestFiles: map[string]*types.File{file.Path: file}}
+	ws := &types.Workspace{Packages: map[string]*types.Package{"test/testpkg": pkg}, FileSet: fileSet}
+
+	rr, err := analyzers.Run(ws, missingctx.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rr.Result.([]*missingctx.Result) {
+		got = append(got, r.FunctionName)
+	}
+	if want := []string{"Testify", "helper"}; !slices.Equal(got, want) {
+		t.Fatalf("reported %v, want %v", got, want)
 	}
 }

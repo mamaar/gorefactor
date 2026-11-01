@@ -8,7 +8,9 @@ import (
 	gotypes "go/types"
 	"io"
 	"log/slog"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -194,11 +196,50 @@ type packageVerifyResult struct {
 
 // verifyPackageTypes type-checks pkg twice — once as-is (the baseline) and
 // once with changesByFile applied in memory — and returns the errors present
-// only in the second pass.
+// only in the second pass. Its external test files are checked as their own
+// package, like (*analysis.GoParser).typeCheckLocked does, when the plan
+// changes one of them.
 func verifyPackageTypes(pkg *types.Package, changesByFile map[string][]types.Change, ser *Serializer, importer gotypes.Importer) packageVerifyResult {
-	baselineContents := packageFileContents(pkg, nil)
+	inPackage, external := packageFileGroups(pkg)
+	res := verifyFileGroup(pkg.ImportPath, inPackage, changesByFile, ser, importer)
+	if res.skipped != "" || !slices.ContainsFunc(external, func(f *types.File) bool { return changesByFile[f.Path] != nil }) {
+		return res
+	}
+	// The x_test files import pkg as already type-checked, so they are
+	// verified against its pre-plan API.
+	ext := verifyFileGroup(pkg.ImportPath+"_test", external, changesByFile, ser, importer)
+	if ext.skipped != "" {
+		return ext
+	}
+	res.newErrors = append(res.newErrors, ext.newErrors...)
+	return res
+}
+
+// packageFileGroups splits pkg's files into those checked together — the
+// non-test files and the test files declaring pkg.Name — and the external
+// test files (package x_test), which form a package of their own unless
+// there is nothing else to check them with.
+func packageFileGroups(pkg *types.Package) (inPackage, external []*types.File) {
+	inPackage = slices.Collect(maps.Values(pkg.Files))
+	for _, f := range pkg.TestFiles {
+		if f.AST.Name.Name == pkg.Name {
+			inPackage = append(inPackage, f)
+		} else {
+			external = append(external, f)
+		}
+	}
+	if len(inPackage) == 0 {
+		return external, nil
+	}
+	return inPackage, external
+}
+
+// verifyFileGroup diffs the type errors of files checked as package
+// importPath before and after changesByFile is applied.
+func verifyFileGroup(importPath string, files []*types.File, changesByFile map[string][]types.Change, ser *Serializer, importer gotypes.Importer) packageVerifyResult {
+	baselineContents := fileContents(files)
 	if len(baselineContents) == 0 {
-		return packageVerifyResult{skipped: fmt.Sprintf("package %s: no parseable files", pkg.ImportPath)}
+		return packageVerifyResult{skipped: fmt.Sprintf("package %s: no parseable files", importPath)}
 	}
 
 	baseFset := token.NewFileSet()
@@ -211,14 +252,14 @@ func verifyPackageTypes(pkg *types.Package, changesByFile map[string][]types.Cha
 		// re-parsing that same content here would mean something mutated it
 		// out from under us, which is exactly the kind of "can't trust the
 		// result" situation Skipped exists for.
-		return packageVerifyResult{skipped: fmt.Sprintf("package %s: baseline content unexpectedly failed to parse: %v", pkg.ImportPath, err)}
+		return packageVerifyResult{skipped: fmt.Sprintf("package %s: baseline content unexpectedly failed to parse: %v", importPath, err)}
 	}
-	baseErrs := checkPackageErrors(baseFset, importer, pkg.ImportPath, baseFiles)
+	baseErrs := checkPackageErrors(baseFset, importer, importPath, baseFiles)
 	baseline := normalizeErrorSet(baseErrs)
 
-	modContents, err := applyPlanToPackage(pkg, changesByFile, ser)
+	modContents, err := applyPlanToFiles(files, changesByFile, ser)
 	if err != nil {
-		return packageVerifyResult{skipped: fmt.Sprintf("package %s: failed to apply plan changes in memory: %v", pkg.ImportPath, err)}
+		return packageVerifyResult{skipped: fmt.Sprintf("package %s: failed to apply plan changes in memory: %v", importPath, err)}
 	}
 	if len(modContents) == 0 {
 		// The plan deletes every file in the package; there is nothing left
@@ -235,9 +276,9 @@ func verifyPackageTypes(pkg *types.Package, changesByFile map[string][]types.Cha
 		// error rather than as Skipped. Type-checking cannot proceed
 		// without a complete, valid file set for the package, so this is
 		// the only finding for this package.
-		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan produces invalid Go source: %v", pkg.ImportPath, err)}}
+		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan produces invalid Go source: %v", importPath, err)}}
 	}
-	modErrs := checkPackageErrors(modFset, importer, pkg.ImportPath, modFiles)
+	modErrs := checkPackageErrors(modFset, importer, importPath, modFiles)
 
 	var newErrs []string
 	for _, e := range modErrs {
@@ -249,33 +290,16 @@ func verifyPackageTypes(pkg *types.Package, changesByFile map[string][]types.Cha
 	return packageVerifyResult{newErrors: newErrs}
 }
 
-// packageFileContents returns file-path -> original content for pkg's
-// non-test files plus its same-package (in-package, not `x_test`) test
-// files, mirroring exactly which files (*analysis.GoParser).typeCheckLocked
-// folds into a single type-check pass. changesByFile is accepted only so
-// callers can tell whether a file is present at all; the content returned
-// here is always the original, unmodified content — this is the baseline
-// helper. See applyPlanToPackage for the modified-content equivalent.
-func packageFileContents(pkg *types.Package, _ map[string][]types.Change) map[string][]byte {
-	out := make(map[string][]byte, len(pkg.Files)+len(pkg.TestFiles))
-	for _, f := range pkg.Files {
-		if f == nil || f.AST == nil {
-			continue
-		}
-		out[f.Path] = f.OriginalContent
-	}
-	for _, f := range pkg.TestFiles {
-		if f == nil || f.AST == nil || f.AST.Name == nil || f.AST.Name.Name != pkg.Name {
-			// External test package (package foo_test) — not folded into
-			// the same check, same as typeCheckLocked.
-			continue
-		}
+// fileContents returns file-path -> original content for files.
+func fileContents(files []*types.File) map[string][]byte {
+	out := make(map[string][]byte, len(files))
+	for _, f := range files {
 		out[f.Path] = f.OriginalContent
 	}
 	return out
 }
 
-// applyPlanToPackage returns file-path -> content for pkg with
+// applyPlanToFiles returns file-path -> content for files with
 // changesByFile's edits applied in memory. A file targeted by a Delete
 // change is dropped entirely rather than "edited" — Change.Delete documents
 // Start/End/OldText/NewText as meaningless for a delete, and dropping the
@@ -283,45 +307,22 @@ func packageFileContents(pkg *types.Package, _ map[string][]types.Change) map[st
 // lets verification catch the fallout of a deletion (a sibling file left
 // referencing the now-gone symbol) instead of just skipping the file and
 // losing that signal.
-func applyPlanToPackage(pkg *types.Package, changesByFile map[string][]types.Change, ser *Serializer) (map[string][]byte, error) {
-	out := make(map[string][]byte, len(pkg.Files)+len(pkg.TestFiles))
-
-	addFile := func(f *types.File) error {
-		if f == nil || f.AST == nil {
-			return nil
-		}
+func applyPlanToFiles(files []*types.File, changesByFile map[string][]types.Change, ser *Serializer) (map[string][]byte, error) {
+	out := make(map[string][]byte, len(files))
+	for _, f := range files {
 		changes, ok := changesByFile[f.Path]
 		if !ok {
 			out[f.Path] = f.OriginalContent
-			return nil
+			continue
 		}
-		for _, c := range changes {
-			if c.Delete {
-				return nil // dropped, see doc comment above
-			}
+		if slices.ContainsFunc(changes, func(c types.Change) bool { return c.Delete }) {
+			continue // dropped, see doc comment above
 		}
 		modified, err := ser.ApplyChangesToContent(f.OriginalContent, changes)
 		if err != nil {
-			return fmt.Errorf("%s: %w", f.Path, err)
+			return nil, fmt.Errorf("%s: %w", f.Path, err)
 		}
 		out[f.Path] = modified
-		return nil
-	}
-
-	for _, f := range pkg.Files {
-		if err := addFile(f); err != nil {
-			return nil, err
-		}
-	}
-	for _, f := range pkg.TestFiles {
-		if f == nil || f.AST == nil || f.AST.Name == nil || f.AST.Name.Name != pkg.Name {
-			// External test package (package foo_test) — not folded into
-			// this check, changed or not; see packageFileContents.
-			continue
-		}
-		if err := addFile(f); err != nil {
-			return nil, err
-		}
 	}
 	return out, nil
 }
@@ -331,7 +332,7 @@ func applyPlanToPackage(pkg *types.Package, changesByFile map[string][]types.Cha
 // single go/types.Config.Check call must share one FileSet — mixing files
 // from different FileSets produces meaningless positions and, in some
 // go/types code paths, a nil-dereference — so callers must always build a
-// fresh FileSet per check (see verifyPackageTypes: baseFset and modFset are
+// fresh FileSet per check (see verifyFileGroup: baseFset and modFset are
 // never the same instance, and never ws.FileSet).
 func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, error) {
 	paths := make([]string, 0, len(contents))

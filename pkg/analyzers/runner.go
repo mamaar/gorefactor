@@ -4,7 +4,9 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
 	"reflect"
+	"slices"
 	"sort"
 
 	"golang.org/x/tools/go/analysis"
@@ -102,8 +104,11 @@ func RunPackage(ws *wstypes.Workspace, a *analysis.Analyzer, pkg *wstypes.Packag
 }
 
 func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer, report func(analysis.Diagnostic)) (*analysis.Pass, error) {
-	files := make([]*ast.File, 0, len(pkg.Files))
-	for _, f := range pkg.Files {
+	// Test files of both the package and its x_test package go in one pass:
+	// TypesInfo covers both, and no analyzer reads pass.Pkg.
+	srcFiles := slices.Concat(slices.Collect(maps.Values(pkg.Files)), slices.Collect(maps.Values(pkg.TestFiles)))
+	files := make([]*ast.File, 0, len(srcFiles))
+	for _, f := range srcFiles {
 		files = append(files, f.AST)
 	}
 
@@ -129,7 +134,7 @@ func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer
 
 	// Build file content map for filedata.
 	fd := &filedata.Data{Content: make(map[string][]byte)}
-	for _, f := range pkg.Files {
+	for _, f := range srcFiles {
 		fd.Content[f.Path] = f.OriginalContent
 	}
 
