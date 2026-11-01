@@ -428,9 +428,9 @@ func (re *ResolutionError) FormatError() string {
 
 	// Add context information
 	if re.Context != nil {
-		result.WriteString(fmt.Sprintf("  Scope: %v\n", re.Context.ScopeKind))
+		fmt.Fprintf(&result, "  Scope: %v\n", re.Context.ScopeKind)
 		if re.Context.ParentFunction != "" {
-			result.WriteString(fmt.Sprintf("  In function: %s\n", re.Context.ParentFunction))
+			fmt.Fprintf(&result, "  In function: %s\n", re.Context.ParentFunction)
 		}
 	}
 
@@ -438,7 +438,7 @@ func (re *ResolutionError) FormatError() string {
 	if len(re.Suggestions) > 0 {
 		result.WriteString("  Suggestions:\n")
 		for _, suggestion := range re.Suggestions {
-			result.WriteString(fmt.Sprintf("    • %s\n", suggestion))
+			fmt.Fprintf(&result, "    • %s\n", suggestion)
 		}
 	}
 
@@ -446,7 +446,7 @@ func (re *ResolutionError) FormatError() string {
 	if len(re.Similar) > 0 {
 		result.WriteString("  Similar symbols found:\n")
 		for _, symbol := range re.Similar {
-			result.WriteString(fmt.Sprintf("    • %s (%s) in %s\n", symbol.Name, symbol.Kind.String(), symbol.Package))
+			fmt.Fprintf(&result, "    • %s (%s) in %s\n", symbol.Name, symbol.Kind.String(), symbol.Package)
 		}
 	}
 

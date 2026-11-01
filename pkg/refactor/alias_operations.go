@@ -278,7 +278,7 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 			skip(reason)
 			continue
 		}
-		var obj gotypes.Object = pkg.TypesInfo.Implicits[importSpec]
+		obj := pkg.TypesInfo.Implicits[importSpec]
 		if importSpec.Name != nil {
 			obj = pkg.TypesInfo.Defs[importSpec.Name]
 		}

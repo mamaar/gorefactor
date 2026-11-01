@@ -36,7 +36,7 @@ func countEntries(dir string) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	names, err := f.Readdirnames(-1)
 	return len(names), err == nil
 }

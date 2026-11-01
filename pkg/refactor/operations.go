@@ -87,15 +87,15 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 
 		var message strings.Builder
-		message.WriteString(fmt.Sprintf("source package not found: %s\nAvailable packages:\n", ref.Package))
+		fmt.Fprintf(&message, "source package not found: %s\nAvailable packages:\n", ref.Package)
 		if len(availablePackages) == 0 {
 			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
 		} else {
 			for _, pkgPath := range availablePackages {
 				if pkg, exists := ws.Packages[pkgPath]; exists {
-					message.WriteString(fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name))
+					fmt.Fprintf(&message, "  - %s (Go package: %s)\n", pkgPath, pkg.Name)
 				} else {
-					message.WriteString(fmt.Sprintf("  - %s\n", pkgPath))
+					fmt.Fprintf(&message, "  - %s\n", pkgPath)
 				}
 			}
 		}
@@ -154,9 +154,9 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 			}
 
 			var message strings.Builder
-			message.WriteString(fmt.Sprintf("target package not found: %s (CreateTarget=false)\nAvailable packages:\n", op.Request.ToPackage))
+			fmt.Fprintf(&message, "target package not found: %s (CreateTarget=false)\nAvailable packages:\n", op.Request.ToPackage)
 			for _, pkg := range availablePackages {
-				message.WriteString(fmt.Sprintf("  - %s\n", pkg))
+				fmt.Fprintf(&message, "  - %s\n", pkg)
 			}
 			message.WriteString("\nTip: Use CreateTarget=true to create the target package automatically")
 
@@ -696,17 +696,17 @@ func (op *RenameSymbolOperation) buildAvailableSymbolsList(pkg *types.Package) [
 // formatSymbolNotFoundError creates a detailed error message with available symbols
 func (op *RenameSymbolOperation) formatSymbolNotFoundError(symbolName, packageName string, availableSymbols []string, originalErr error) error {
 	var message strings.Builder
-	message.WriteString(fmt.Sprintf("symbol not found: %s in package %s\nAvailable symbols (%d):",
-		symbolName, packageName, len(availableSymbols)))
+	fmt.Fprintf(&message, "symbol not found: %s in package %s\nAvailable symbols (%d):",
+		symbolName, packageName, len(availableSymbols))
 
 	if len(availableSymbols) == 0 {
 		message.WriteString("\n  (no symbols found - package may not be parsed correctly)")
 	} else {
 		for i, sym := range availableSymbols {
 			if i < 20 { // Limit output
-				message.WriteString(fmt.Sprintf("\n  - %s", sym))
+				fmt.Fprintf(&message, "\n  - %s", sym)
 			} else {
-				message.WriteString(fmt.Sprintf("\n  ... and %d more", len(availableSymbols)-20))
+				fmt.Fprintf(&message, "\n  ... and %d more", len(availableSymbols)-20)
 				break
 			}
 		}
@@ -861,13 +861,13 @@ func (op *RenamePackageOperation) Validate(ws *types.Workspace) error {
 		}
 
 		var message strings.Builder
-		message.WriteString(fmt.Sprintf("package not found: %s\nAvailable packages:\n", op.Request.PackagePath))
+		fmt.Fprintf(&message, "package not found: %s\nAvailable packages:\n", op.Request.PackagePath)
 		if len(availablePackages) == 0 {
 			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
 		} else {
 			for _, pkgPath := range availablePackages {
 				if pkg, exists := ws.Packages[pkgPath]; exists {
-					message.WriteString(fmt.Sprintf("  - %s (Go package: %s)\n", pkgPath, pkg.Name))
+					fmt.Fprintf(&message, "  - %s (Go package: %s)\n", pkgPath, pkg.Name)
 				}
 			}
 		}

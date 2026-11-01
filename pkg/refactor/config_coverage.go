@@ -443,7 +443,7 @@ func (r *configRun) reportTypeErrors(plan *types.RefactoringPlan) {
 		}
 		listed := make(map[*types.Package]bool)
 		for _, e := range v.ProductionErrors() {
-			if listed[e.Package] || !(slices.Contains(dirs, e.Package.Dir) || namesAny(e.File, names)) {
+			if listed[e.Package] || (!slices.Contains(dirs, e.Package.Dir) && !namesAny(e.File, names)) {
 				continue
 			}
 			listed[e.Package] = true

@@ -158,8 +158,8 @@ func (op *RenameMethodOperation) targetFunc(ws *types.Workspace) (*gotypes.Func,
 
 // memberSymbol returns the workspace symbol that declares f.
 func memberSymbol(ws *types.Workspace, f *gotypes.Func) (*types.Symbol, error) {
-	recv, ok := methodRecvType(f).(gotypes.Type)
-	if !ok || f.Pkg() == nil {
+	recv := methodRecvType(f)
+	if recv == nil || f.Pkg() == nil {
 		return nil, fmt.Errorf("%s is not a method of a workspace type", f.Name())
 	}
 	if ptr, ok := recv.(*gotypes.Pointer); ok {

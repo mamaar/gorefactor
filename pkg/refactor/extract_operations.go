@@ -555,7 +555,7 @@ func (op *ExtractInterfaceOperation) Description() string {
 
 func (op *ExtractInterfaceOperation) generateInterface(structSymbol *types.Symbol, sourcePackage *types.Package) string {
 	var interfaceCode strings.Builder
-	interfaceCode.WriteString(fmt.Sprintf("type %s interface {\n", op.InterfaceName))
+	fmt.Fprintf(&interfaceCode, "type %s interface {\n", op.InterfaceName)
 
 	for _, methodName := range op.Methods {
 		if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
@@ -563,7 +563,7 @@ func (op *ExtractInterfaceOperation) generateInterface(structSymbol *types.Symbo
 				if method.Name == methodName {
 					// Extract method signature without receiver
 					signature := op.extractMethodSignature(method.Signature)
-					interfaceCode.WriteString(fmt.Sprintf("\t%s%s\n", methodName, signature))
+					fmt.Fprintf(&interfaceCode, "\t%s%s\n", methodName, signature)
 					break
 				}
 			}

@@ -349,7 +349,8 @@ func TestChangeSignature_DerefParamRefusesWritesThatNeedTheCaller(t *testing.T) 
 	}
 	for name, decl := range cases {
 		t.Run(name, func(t *testing.T) {
-			typ := strings.TrimSuffix(strings.SplitN(decl, "*", 2)[1][:strings.Index(strings.SplitN(decl, "*", 2)[1], ")")], " ")
+			_, afterStar, _ := strings.Cut(decl, "*")
+			typ, _, _ := strings.Cut(afterStar, ")")
 			files := map[string]string{
 				"p/f.go":   "package p\n\n" + decl,
 				"p/use.go": "package p\n\nfunc Use() {\n\tvar x " + typ + "\n\tg(&x)\n}\n",
@@ -434,23 +435,27 @@ func TestChangeSignature_DerefParamAcceptsRecursivePassThrough(t *testing.T) {
 }
 
 func TestChangeSignature_DerefParamRefusesPassThroughThatIsNotRecursive(t *testing.T) {
-	cases := map[string]string{
-		"other function":     "func other(x *[]int, y int) int { return len(*x) }\n\nfunc g(p *[]int, k int) int { return other(p, k) }\n",
-		"different position": "func g(p *[]int, q *[]int) int { return g(q, p) }\n",
-		"same-named other":   "type T struct{}\n\nfunc (T) g(p *[]int) int { return 0 }\n\nfunc g(p *[]int) int { return T{}.g(p) }\n",
+	cases := map[string]struct {
+		decl string
+		args map[string]any
+	}{
+		"other function": {
+			"func other(x *[]int, y int) int { return len(*x) }\n\nfunc g(p *[]int, k int) int { return other(p, k) }\n",
+			derefNamed("g", param("p", "[]int"), param("k", "int")),
+		},
+		"different position": {
+			"func g(p *[]int, q *[]int) int { return g(q, p) }\n",
+			derefNamed("g", param("p", "[]int"), param("q", "*[]int")),
+		},
+		"same-named other": {
+			"type T struct{}\n\nfunc (T) g(p *[]int) int { return 0 }\n\nfunc g(p *[]int) int { return T{}.g(p) }\n",
+			derefNamed("g", param("p", "[]int")),
+		},
 	}
-	for name, decl := range cases {
+	for name, tt := range cases {
 		t.Run(name, func(t *testing.T) {
-			files := map[string]string{"p/f.go": "package p\n\n" + decl, "p/use.go": "package p\n\nfunc Use() {\n\tvar x []int\n\t_ = x\n}\n"}
-			var args map[string]any
-			if name == "different position" {
-				args = derefNamed("g", param("p", "[]int"), param("q", "*[]int"))
-			} else if name == "other function" {
-				args = derefNamed("g", param("p", "[]int"), param("k", "int"))
-			} else {
-				args = derefNamed("g", param("p", "[]int"))
-			}
-			dir, res := runDeref(t, files, args)
+			files := map[string]string{"p/f.go": "package p\n\n" + tt.decl, "p/use.go": "package p\n\nfunc Use() {\n\tvar x []int\n\t_ = x\n}\n"}
+			dir, res := runDeref(t, files, tt.args)
 			wantDerefRefusal(t, dir, res, files, "f.go:")
 		})
 	}

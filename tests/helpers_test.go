@@ -184,7 +184,7 @@ func checkDeleted(t *testing.T, fixtureDir, tmpDir string) {
 	t.Helper()
 	srcDir := filepath.Join("testdata", fixtureDir)
 
-	filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".deleted") {
 			return err
 		}
@@ -196,6 +196,9 @@ func checkDeleted(t *testing.T, fixtureDir, tmpDir string) {
 		}
 		return nil
 	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", srcDir, err)
+	}
 }
 
 // unifiedDiff produces a simple line-by-line diff between two strings.

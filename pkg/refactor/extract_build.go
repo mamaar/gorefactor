@@ -188,8 +188,7 @@ func formatDeclaration(declSrc string) (string, error) {
 // literal travels with the defer and its timing is unchanged.
 func selectionHasDefer(stmts []ast.Stmt) bool {
 	found := false
-	var visit func(ast.Node) bool
-	visit = func(n ast.Node) bool {
+	visit := func(n ast.Node) bool {
 		if found {
 			return false
 		}

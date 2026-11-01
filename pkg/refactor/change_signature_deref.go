@@ -173,7 +173,7 @@ func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 		return
 	}
 	// (*p) becomes p, not (p)
-	var from, to token.Pos = star.Star, star.End()
+	from, to := star.Star, star.End()
 	for i := len(stack) - 3; i >= 0; i-- {
 		paren, ok := stack[i].(*ast.ParenExpr)
 		if !ok {

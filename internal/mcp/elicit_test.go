@@ -20,7 +20,7 @@ func TestConfirmAccepted(t *testing.T) {
 		"decline":                  {&mcpsdk.ElicitResult{Action: "decline"}, false},
 		"cancel":                   {&mcpsdk.ElicitResult{Action: "cancel"}, false},
 		"unrecognized action":      {&mcpsdk.ElicitResult{Action: "maybe"}, false},
-		"response of another type": {&mcpsdk.ListRootsResult{}, false},
+		"response of another type": {&mcpsdk.ListRootsResult{}, false}, //nolint:staticcheck // every non-elicit InputResponse type is deprecated
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := confirmAccepted(tt.answer); got != tt.want {
@@ -51,7 +51,7 @@ func TestCanConfirm(t *testing.T) {
 			if err != nil {
 				t.Fatalf("server.Connect: %v", err)
 			}
-			t.Cleanup(func() { serverSession.Close() })
+			t.Cleanup(func() { _ = serverSession.Close() })
 
 			// A "2025-11-25" client states its capabilities in the handshake,
 			// which is what the session holds before any request arrives.
@@ -60,7 +60,7 @@ func TestCanConfirm(t *testing.T) {
 			if err != nil {
 				t.Fatalf("client.Connect: %v", err)
 			}
-			t.Cleanup(func() { clientSession.Close() })
+			t.Cleanup(func() { _ = clientSession.Close() })
 
 			if got := canConfirm(serverSession); got != tt.want {
 				t.Errorf("canConfirm = %v, want %v", got, tt.want)

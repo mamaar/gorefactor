@@ -137,7 +137,7 @@ func main() { target() }
 	})
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	var eng RefactorEngine = CreateEngineWithConfig(&EngineConfig{SkipCompilation: true, AllowBreaking: true}, logger)
+	eng := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true, AllowBreaking: true}, logger)
 
 	ws, err := eng.LoadWorkspace(dir)
 	if err != nil {
