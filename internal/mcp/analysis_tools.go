@@ -9,7 +9,6 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	goanalysis "golang.org/x/tools/go/analysis"
 
-	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/analyzers"
 	"github.com/mamaar/gorefactor/pkg/analyzers/booleanbranch"
 	"github.com/mamaar/gorefactor/pkg/analyzers/boolsimplify"
@@ -45,6 +44,21 @@ type SymbolInfo struct {
 	Signature string          `json:"signature,omitempty"`
 	RefCount  int             `json:"reference_count"`
 	Refs      []ReferenceInfo `json:"references,omitempty"`
+	// Declarations is set when build configurations declare the symbol in
+	// more than one place; File, Line and Column are the first configuration's.
+	Declarations []DeclarationInfo `json:"declarations,omitempty"`
+	// BuildConfigs is set when there is more than one build configuration.
+	BuildConfigs []string `json:"build_configs,omitempty"`
+	// UncoveredFiles are files next to the symbol or its references that no
+	// configuration type-checks, so references in them are missing.
+	UncoveredFiles []UncoveredFileInfo `json:"uncovered_files,omitempty"`
+}
+
+type DeclarationInfo struct {
+	File    string   `json:"file"`
+	Line    int      `json:"line"`
+	Column  int      `json:"column"`
+	Configs []string `json:"configs,omitempty"`
 }
 
 type ReferenceInfo struct {
@@ -503,7 +517,7 @@ type AnalyzeDependenciesInput struct {
 func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_symbol",
-		Description: "Analyze a symbol: find its definition, properties, and all references across the workspace. Only package-level symbols are addressable; function-local constants, types and variables are not.",
+		Description: "Analyze a symbol: find its definition, properties, and all references across the workspace under every build configuration, so declarations and callers in files excluded by build constraints are found. When configurations declare it in more than one place, `declarations` lists each with the configurations that declare it; `build_configs` and `uncovered_files` appear as for the planning tools. Only package-level symbols are addressable; function-local constants, types and variables are not.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeSymbolInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -513,24 +527,12 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		var symbol *types.Symbol
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			if pkg, ok := ws.Packages[resolved]; ok {
-				symbol = pkg.Symbols.FindSymbol(in.Symbol)
-			}
-		} else {
-			for _, pkg := range ws.Packages {
-				if s := pkg.Symbols.FindSymbol(in.Symbol); s != nil {
-					symbol = s
-					break
-				}
-			}
-		}
-		if symbol == nil {
-			return errResult(fmt.Errorf("symbol %s not found", in.Symbol)), nil, nil
+		report, err := state.GetEngine().AnalyzeSymbolAcrossConfigs(in.Symbol, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
+		symbol := report.Symbol
 		info := SymbolInfo{
 			Name:      symbol.Name,
 			Kind:      symbol.Kind.String(),
@@ -540,24 +542,21 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			Column:    symbol.Column,
 			Exported:  symbol.Exported,
 			Signature: symbol.Signature,
+			RefCount:  len(report.References),
 		}
-
-		idx, err := state.EnsureTypedReferenceIndex(ws)
-		if err != nil {
-			return errResult(err), nil, nil
+		if len(report.Declarations) > 1 {
+			for _, d := range report.Declarations {
+				info.Declarations = append(info.Declarations, DeclarationInfo{File: d.File, Line: d.Line, Column: d.Column, Configs: d.Configs})
+			}
 		}
-		resolver := analysis.NewSymbolResolver(ws, state.logger)
-		refs, err := resolver.FindReferencesIndexed(symbol, idx)
-		if err != nil {
-			return errResult(err), nil, nil
+		for _, ref := range report.References {
+			info.Refs = append(info.Refs, ReferenceInfo{File: ref.File, Line: ref.Line, Column: ref.Column})
 		}
-		info.RefCount = len(refs)
-		for _, ref := range refs {
-			info.Refs = append(info.Refs, ReferenceInfo{
-				File:   ref.File,
-				Line:   ref.Line,
-				Column: ref.Column,
-			})
+		if len(report.Configs) > 1 {
+			info.BuildConfigs = report.Configs
+		}
+		if len(report.Unchecked) > 0 {
+			info.UncoveredFiles = uncheckedFileInfos(report.Unchecked, ws.RootPath)
 		}
 		return textResult(info), nil, nil
 	})
