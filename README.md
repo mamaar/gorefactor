@@ -102,7 +102,7 @@ The server communicates over stdio using the MCP protocol.
 | Tool | Description |
 |------|-------------|
 | `clean_aliases` | Remove unnecessary import aliases |
-| `standardize_imports` | Standardize import grouping and ordering |
+| `standardize_imports` | Rewrite imports to use the alias each rule requires for a matching import path pattern |
 | `resolve_alias_conflicts` | Resolve conflicting import aliases |
 | `convert_aliases` | Convert between alias styles |
 
@@ -160,6 +160,8 @@ GoRefactor validates all transformations before applying them:
 - Reference tracking across the workspace
 
 A file watcher keeps the workspace state current as files change on disk.
+
+A plan is written all or nothing. Every file's new content is computed before anything is written, and if a file then fails to write or delete, the files already written are restored and directories created for new files are removed.
 
 GoRefactor does not edit a file that carries the Go generated-code header (`// Code generated ... DO NOT EDIT.` before the package clause). An operation whose plan edits one is refused before anything is written, the allow-breaking setting cannot override it, and `dry_run` returns `success: false` with a `blocking_issue` naming the files, diffs still shown. Change the generator's input and regenerate. `move_package`, `move_dir`, `move_packages` and `rename_package` still relocate generated files and rewrite their package clause and import paths, keeping the header. `touch` skips generated files and reports them as `skipped` with a reason; `run_go_fix` runs the Go toolchain's own `go fix` and is not covered.
 

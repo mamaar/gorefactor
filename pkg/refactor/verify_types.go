@@ -303,7 +303,7 @@ func fileContents(files []*types.File) map[string][]byte {
 // changesByFile's edits applied in memory. A file targeted by a Delete
 // change is dropped entirely rather than "edited" — Change.Delete documents
 // Start/End/OldText/NewText as meaningless for a delete, and dropping the
-// file mirrors what (*Serializer).deleteFile actually does on disk, which
+// file mirrors what deleteFile actually does on disk, which
 // lets verification catch the fallout of a deletion (a sibling file left
 // referencing the now-gone symbol) instead of just skipping the file and
 // losing that signal.

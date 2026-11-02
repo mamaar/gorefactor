@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"go/format"
 	"go/parser"
@@ -46,10 +47,8 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 	// directory instead — writing real files somewhere nobody asked for, with
 	// no error to show for it.
 	//
-	// This runs before anything is touched, and that ordering is the point: the
-	// loop below iterates a map, so a deletion can otherwise be applied before
-	// the bad write is reached, turning a rejected plan into a half-applied one
-	// that has already destroyed the sources.
+	// This runs before anything is touched: rollback restores what a failed
+	// plan wrote, but a stray write outside the workspace is not undone.
 	if err := validateChangePathsAbsolute(changes); err != nil {
 		return err
 	}
@@ -66,27 +65,154 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 		fileChanges[change.File] = append(fileChanges[change.File], change)
 	}
 
-	// Apply changes to each file. A file marked for deletion is removed from
-	// disk instead of being written; edit changes are applied normally.
-	for filePath, changesForFile := range fileChanges {
-		if fileHasDeletion(changesForFile) {
-			if err := s.deleteFile(filePath); err != nil {
-				return &refactorTypes.RefactorError{
-					Type:    refactorTypes.FileSystemError,
-					Message: fmt.Sprintf("failed to delete file %s: %v", filePath, err),
-				}
-			}
-			continue
-		}
-		if err := s.applyChangesToFile(filePath, changesForFile); err != nil {
+	// Compute every file's new content before touching the disk, so a change
+	// that fails to apply leaves no file written.
+	paths := make([]string, 0, len(fileChanges))
+	for filePath := range fileChanges {
+		paths = append(paths, filePath)
+	}
+	sort.Strings(paths)
+
+	steps := make([]fileStep, 0, len(paths))
+	for _, filePath := range paths {
+		step, err := s.prepareFile(filePath, fileChanges[filePath])
+		if err != nil {
 			return &refactorTypes.RefactorError{
 				Type:    refactorTypes.FileSystemError,
 				Message: fmt.Sprintf("failed to apply changes to file %s: %v", filePath, err),
 			}
 		}
+		steps = append(steps, step)
+	}
+
+	for i := range steps {
+		if err := steps[i].commit(); err != nil {
+			return errors.Join(&refactorTypes.RefactorError{
+				Type:    refactorTypes.FileSystemError,
+				Message: err.Error(),
+			}, rollback(steps[:i], &steps[i]))
+		}
 	}
 
 	return nil
+}
+
+// fileStep is one file's prepared write or deletion, with the pre-image
+// needed to undo it.
+type fileStep struct {
+	path    string
+	delete  bool
+	content []byte
+
+	existed bool
+	old     []byte
+	mode    os.FileMode
+	// createdDir is the outermost directory the write had to create, if any.
+	createdDir string
+}
+
+// prepareFile reads filePath's pre-image and computes its new content,
+// without writing anything. A file marked for deletion gets no new content.
+func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change) (fileStep, error) {
+	step := fileStep{path: filePath, delete: fileHasDeletion(changes), mode: 0644}
+	info, err := os.Stat(filePath)
+	switch {
+	case err == nil:
+		old, err := os.ReadFile(filePath)
+		if err != nil {
+			return step, fmt.Errorf("failed to read file: %v", err)
+		}
+		step.existed, step.old, step.mode = true, old, info.Mode().Perm()
+	case !os.IsNotExist(err):
+		return step, fmt.Errorf("failed to read file: %v", err)
+	}
+	if step.delete {
+		return step, nil
+	}
+	step.content, err = s.computeContent(filePath, step.old, changes)
+	return step, err
+}
+
+// commit writes or deletes the step's file.
+func (f *fileStep) commit() error {
+	if f.delete {
+		if err := deleteFile(f.path); err != nil {
+			return fmt.Errorf("failed to delete file %s: %v", f.path, err)
+		}
+		return nil
+	}
+	if !f.existed {
+		f.createdDir = outermostMissingDir(filepath.Dir(f.path))
+	}
+	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
+		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %v", f.path, err)
+	}
+	if err := os.WriteFile(f.path, f.content, 0644); err != nil {
+		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %v", f.path, err)
+	}
+	return nil
+}
+
+// undo puts the step's file back as it was before commit.
+func (f *fileStep) undo() error {
+	if !f.existed {
+		if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		removeCreatedDirs(filepath.Dir(f.path), f.createdDir)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(f.path, f.old, f.mode)
+}
+
+// rollback undoes the failed step and the committed steps before it in reverse
+// order, and reports every file it could not restore. A failed delete left its
+// file untouched, so it is not rewritten.
+func rollback(committed []fileStep, failed *fileStep) error {
+	if !failed.delete {
+		committed = append(committed, *failed)
+	}
+	var errs []error
+	for i := len(committed) - 1; i >= 0; i-- {
+		if err := committed[i].undo(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to restore %s: %v", committed[i].path, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// outermostMissingDir returns the outermost ancestor of dir (or dir itself)
+// that does not exist, or "" when dir exists.
+func outermostMissingDir(dir string) string {
+	missing := ""
+	for {
+		if _, err := os.Stat(dir); err == nil {
+			return missing
+		}
+		missing = dir
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return missing
+		}
+		dir = parent
+	}
+}
+
+// removeCreatedDirs removes dir and its ancestors up to and including top
+// while each is empty. It does nothing when top is "".
+func removeCreatedDirs(dir, top string) {
+	if top == "" {
+		return
+	}
+	for {
+		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) || dir == top {
+			return
+		}
+		dir = filepath.Dir(dir)
+	}
 }
 
 // validateChangePathsAbsolute rejects a change set containing any non-absolute
@@ -129,7 +255,7 @@ func fileHasDeletion(changes []refactorTypes.Change) bool {
 // and prunes parent directories that become empty as a result, so a moved
 // package leaves no empty husk behind. Pruning stops at the first non-empty
 // directory.
-func (s *Serializer) deleteFile(filePath string) error {
+func deleteFile(filePath string) error {
 	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -213,7 +339,7 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 // logical file) to in-memory content and returns the result, without
 // touching disk. It sorts changes into descending Start order and validates
 // they don't overlap before applying each one via applyChange — the same
-// offset-application semantics applyChangesToFile uses, factored out here so
+// offset-application semantics ApplyChanges uses, factored out here so
 // callers that never had a real file to read from disk (VerifyPlanTypes'
 // in-memory type-check verification, in particular) can reuse them exactly
 // rather than re-implementing the sort/validate/apply sequence.
@@ -241,50 +367,28 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	return []byte(modifiedContent), nil
 }
 
-// applyChangesToFile applies changes to a single file
-func (s *Serializer) applyChangesToFile(filePath string, changes []refactorTypes.Change) error {
-	// Read the current file content, or start with empty content for new files
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// File doesn't exist - it's a new file, start with empty content
-			content = []byte("")
-		} else {
-			return fmt.Errorf("failed to read file: %v", err)
-		}
-	}
-
+// computeContent applies changes to content, the current bytes of filePath
+// (empty for a new file), and organises imports and formats Go files.
+func (s *Serializer) computeContent(filePath string, content []byte, changes []refactorTypes.Change) ([]byte, error) {
 	modifiedBytes, err := s.ApplyChangesToContent(content, changes)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	if !strings.HasSuffix(filePath, ".go") {
+		return modifiedBytes, nil
 	}
 	modifiedContent := string(modifiedBytes)
-
-	// Organize imports and format the modified content if it's Go code
-	if strings.HasSuffix(filePath, ".go") {
-		if s.modulePath != "" {
-			modifiedContent = OrganizeImports(modifiedContent, s.modulePath, s.workspaceModules)
-		}
-
-		formatted, err := s.formatGoCode(modifiedContent)
-		if err != nil {
-			// If formatting fails, we still want to save the changes
-			// but log a warning
-			fmt.Fprintf(os.Stderr, "Warning: failed to format %s: %v\n", filePath, err)
-		} else {
-			modifiedContent = formatted
-		}
+	if s.modulePath != "" {
+		modifiedContent = OrganizeImports(modifiedContent, s.modulePath, s.workspaceModules)
 	}
-
-	// Write the modified content back to the file
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return fmt.Errorf("failed to create directory: %v", err)
+	formatted, err := s.formatGoCode(modifiedContent)
+	if err != nil {
+		// If formatting fails, we still want to save the changes
+		// but log a warning
+		fmt.Fprintf(os.Stderr, "Warning: failed to format %s: %v\n", filePath, err)
+		return []byte(modifiedContent), nil
 	}
-	if err := os.WriteFile(filePath, []byte(modifiedContent), 0644); err != nil {
-		return fmt.Errorf("failed to write file: %v", err)
-	}
-
-	return nil
+	return []byte(formatted), nil
 }
 
 // applyChange applies a single change to the content
@@ -374,53 +478,6 @@ func (s *Serializer) truncateText(text string, maxLength ...int) string {
 	}
 
 	return text[:length-3] + "..."
-}
-
-// BackupFile creates a backup of a file before modifications
-func (s *Serializer) BackupFile(filePath string) (string, error) {
-	backupPath := filePath + ".backup"
-
-	// Ensure the directory exists for both file and backup
-	if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
-		return "", fmt.Errorf("failed to create directory: %v", err)
-	}
-
-	// Read original file
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		// If file doesn't exist, it's a new file - no backup needed
-		if os.IsNotExist(err) {
-			// Create empty backup to indicate this was a new file
-			if err := os.WriteFile(backupPath, []byte(""), 0644); err != nil {
-				return "", fmt.Errorf("failed to create empty backup for new file: %v", err)
-			}
-			return backupPath, nil
-		}
-		return "", fmt.Errorf("failed to read original file: %v", err)
-	}
-
-	// Write backup
-	if err := os.WriteFile(backupPath, content, 0644); err != nil {
-		return "", fmt.Errorf("failed to create backup: %v", err)
-	}
-
-	return backupPath, nil
-}
-
-// RestoreFromBackup restores a file from its backup
-func (s *Serializer) RestoreFromBackup(filePath, backupPath string) error {
-	// Read backup content
-	content, err := os.ReadFile(backupPath)
-	if err != nil {
-		return fmt.Errorf("failed to read backup file: %v", err)
-	}
-
-	// Restore original file
-	if err := os.WriteFile(filePath, content, 0644); err != nil {
-		return fmt.Errorf("failed to restore file: %v", err)
-	}
-
-	return nil
 }
 
 // GenerateDiff generates a unified diff between original and modified content

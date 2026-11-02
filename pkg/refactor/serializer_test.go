@@ -523,84 +523,6 @@ func TestSerializer_truncateText(t *testing.T) {
 	}
 }
 
-func TestSerializer_BackupFile(t *testing.T) {
-	serializer := NewSerializer()
-
-	// Create a temporary test file
-	tempDir := t.TempDir()
-	testFile := filepath.Join(tempDir, "test.go")
-	originalContent := "package test\n"
-
-	err := os.WriteFile(testFile, []byte(originalContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Create backup
-	backupPath, err := serializer.BackupFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to create backup: %v", err)
-	}
-
-	// Verify backup exists
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		t.Error("Expected backup file to exist")
-	}
-
-	// Verify backup content
-	backupContent, err := os.ReadFile(backupPath)
-	if err != nil {
-		t.Fatalf("Failed to read backup file: %v", err)
-	}
-
-	if string(backupContent) != originalContent {
-		t.Error("Expected backup content to match original")
-	}
-}
-
-func TestSerializer_RestoreFromBackup(t *testing.T) {
-	serializer := NewSerializer()
-
-	// Create a temporary test file
-	tempDir := t.TempDir()
-	testFile := filepath.Join(tempDir, "test.go")
-	originalContent := "package test\n"
-
-	err := os.WriteFile(testFile, []byte(originalContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Create backup
-	backupPath, err := serializer.BackupFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to create backup: %v", err)
-	}
-
-	// Modify the original file
-	modifiedContent := "package modified\n"
-	err = os.WriteFile(testFile, []byte(modifiedContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to modify test file: %v", err)
-	}
-
-	// Restore from backup
-	err = serializer.RestoreFromBackup(testFile, backupPath)
-	if err != nil {
-		t.Fatalf("Failed to restore from backup: %v", err)
-	}
-
-	// Verify file was restored
-	restoredContent, err := os.ReadFile(testFile)
-	if err != nil {
-		t.Fatalf("Failed to read restored file: %v", err)
-	}
-
-	if string(restoredContent) != originalContent {
-		t.Error("Expected restored content to match original")
-	}
-}
-
 func TestSerializer_ValidateFileStructure(t *testing.T) {
 	serializer := NewSerializer()
 
@@ -853,7 +775,7 @@ func TestApplyChanges_AllowsFileGeneratedByGorefactor(t *testing.T) {
 	}
 }
 
-func TestApplyChangesToFile_AddedImportKeepsNeighbourComment(t *testing.T) {
+func TestApplyChanges_AddedImportKeepsNeighbourComment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.go")
 	src := "package a\n\nimport (\n\t\"bytes\"\n\t//nolint:gosec\n\t\"crypto/md5\"\n\t\"encoding/json\"\n)\n"
 	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
@@ -862,7 +784,7 @@ func TestApplyChangesToFile_AddedImportKeepsNeighbourComment(t *testing.T) {
 	insert := strings.Index(src, "\t\"bytes\"\n") + len("\t\"bytes\"\n")
 	s := NewSerializer()
 	s.SetModuleInfo("example.com/m", nil)
-	err := s.applyChangesToFile(path, []refactorTypes.Change{{File: path, Start: insert, End: insert, NewText: "\t\"context\"\n"}})
+	err := s.ApplyChanges(nil, []refactorTypes.Change{{File: path, Start: insert, End: insert, NewText: "\t\"context\"\n"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -870,5 +792,59 @@ func TestApplyChangesToFile_AddedImportKeepsNeighbourComment(t *testing.T) {
 	want := "package a\n\nimport (\n\t\"bytes\"\n\t\"context\"\n\t//nolint:gosec\n\t\"crypto/md5\"\n\t\"encoding/json\"\n)\n"
 	if string(got) != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestApplyChanges_ApplyFailureWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	a := writeFixture(t, dir, "a.go", "package p\n")
+	z := writeFixture(t, dir, "z.go", "package p\n")
+
+	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+		replaceXChange(a),
+		{File: z, Start: 0, End: 1, OldText: "x", NewText: "y", Description: "Replace text"},
+	})
+	if err == nil {
+		t.Fatal("expected the plan to fail")
+	}
+	requireContent(t, a, "package p\n")
+	requireContent(t, z, "package p\n")
+}
+
+func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	for _, sub := range []string{"a", "b", "d"} {
+		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	x := writeFixture(t, dir, "a/x.go", "package a\n")
+	y := writeFixture(t, dir, "b/y.go", "package b\n")
+	z := filepath.Join(dir, "c", "new", "z.go")
+	w := filepath.Join(dir, "d", "w.go")
+	if err := os.Chmod(filepath.Join(dir, "d"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "d"), 0o755) })
+
+	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+		replaceXChange(x),
+		{File: y, Delete: true, Description: "Remove file"},
+		{File: z, NewText: "package new\n", Description: "Create file"},
+		{File: w, NewText: "package d\n", Description: "Create file"},
+	})
+	if err == nil {
+		t.Fatal("expected the write into the read-only directory to fail")
+	}
+	if !strings.Contains(err.Error(), w) {
+		t.Errorf("error should name the failing file, got: %v", err)
+	}
+	requireContent(t, x, "package a\n")
+	requireContent(t, y, "package b\n")
+	if _, statErr := os.Stat(filepath.Join(dir, "c")); !os.IsNotExist(statErr) {
+		t.Errorf("directory created for the rolled-back file was left behind: %v", statErr)
 	}
 }

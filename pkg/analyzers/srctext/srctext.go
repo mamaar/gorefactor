@@ -39,7 +39,7 @@ import (
 // silently deleted when the block is hoisted somewhere else.
 //
 // The returned text keeps its original indentation. Callers do not need to
-// re-indent it — Serializer.applyChangesToFile runs the result through
+// re-indent it — Serializer.ApplyChanges runs the result through
 // format.Source, which regenerates all leading whitespace from the parsed
 // structure.
 func BlockText(fset *token.FileSet, content []byte, block *ast.BlockStmt) string {
