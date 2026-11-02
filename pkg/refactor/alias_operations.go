@@ -302,7 +302,7 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 				}
 				return true
 			})
-			if taken := nameTakenAt(pkg, file, pkgName, target, uses); taken != nil {
+			if taken := nameTakenAt(pkg.TypesPkg, pkgName, target, uses); taken != nil {
 				skip(fmt.Sprintf("name %q is already declared at %s", target, ws.FileSet.Position(taken.Pos())))
 				continue
 			}
@@ -351,16 +351,11 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 	return changes
 }
 
-// nameTakenAt returns the declaration that name would clash with, either in
-// scope at the import or at one of the uses of pkgName.
-func nameTakenAt(pkg *types.Package, file *types.File, pkgName *gotypes.PkgName, name string, uses []*ast.Ident) gotypes.Object {
-	if fileScope := pkg.TypesInfo.Scopes[file.AST]; fileScope != nil {
-		if _, obj := fileScope.LookupParent(name, token.NoPos); obj != nil && obj != pkgName {
-			return obj
-		}
-	}
+// nameTakenAt returns the declaration that name would clash with at one of the
+// uses of pkgName, looked up through the scopes of tp.
+func nameTakenAt(tp *gotypes.Package, pkgName *gotypes.PkgName, name string, uses []*ast.Ident) gotypes.Object {
 	for _, id := range uses {
-		scope := pkg.TypesPkg.Scope().Innermost(id.Pos())
+		scope := tp.Scope().Innermost(id.Pos())
 		if scope == nil {
 			continue
 		}
