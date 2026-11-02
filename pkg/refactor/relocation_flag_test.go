@@ -54,7 +54,6 @@ func TestMovePackagesPlanMarksEveryChangeAsRelocation(t *testing.T) {
 			{SourcePackage: "a", TargetPackage: filepath.Join(dir, "ma")},
 			{SourcePackage: "b", TargetPackage: filepath.Join(dir, "mb")},
 		},
-		TargetDir:     dir,
 		CreateTargets: true,
 		UpdateImports: true,
 	})

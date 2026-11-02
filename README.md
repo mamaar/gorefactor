@@ -47,7 +47,7 @@ The server communicates over stdio using the MCP protocol.
 | `move_symbol` | Move a function, type, constant, or variable between packages; refused when it would leave another build configuration broken |
 | `move_package` | Move an entire package to a new location. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
 | `move_dir` | Move a directory of packages. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
-| `move_packages` | Move multiple packages at once. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
+| `move_packages` | Move multiple packages at once, planned as one move: packages that import each other and files that import several of them see every new path and name. A mapping that shares a source or target with another is refused, and so is a target that already holds Go files. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
 | `rename_symbol` | Rename a symbol across the workspace |
 | `rename_method` | Rename a method on a type |
 | `rename_field` | Rename a struct field and update all references, including selector expressions, keyed composite literals, and promoted access through embedding |
