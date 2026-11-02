@@ -45,13 +45,13 @@ The server communicates over stdio using the MCP protocol.
 | Tool | Description |
 |------|-------------|
 | `move_symbol` | Move a function, type, constant, or variable between packages; refused when it would leave another build configuration broken |
-| `move_package` | Move an entire package to a new location (default build configuration only) |
-| `move_dir` | Move a directory of packages (default build configuration only) |
-| `move_packages` | Move multiple packages at once (default build configuration only) |
+| `move_package` | Move an entire package to a new location |
+| `move_dir` | Move a directory of packages |
+| `move_packages` | Move multiple packages at once |
 | `rename_symbol` | Rename a symbol across the workspace |
 | `rename_method` | Rename a method on a type |
 | `rename_field` | Rename a struct field and update all references, including selector expressions, keyed composite literals, and promoted access through embedding |
-| `rename_package` | Rename a package (default build configuration only) |
+| `rename_package` | Rename a package |
 | `extract_function` | Extract a code block into a new function |
 | `extract_method` | Extract a code block into a new method |
 | `extract_interface` | Extract an interface from a struct's methods |
@@ -125,9 +125,11 @@ Files are selected with the Go toolchain's own rules: `//go:build` and `// +buil
 
 These tools plan under every configuration and merge the results: `rename_symbol`, `rename_method`, `rename_field`, `change_signature`, `add_context_parameter`, `inline_function`, `inline_method`, `safe_delete`, `unused` and `detect_variadics`. Declarations of the same package, receiver and name in differently constrained files are changed together, identical edits are applied once, and conflicting edits abort the operation naming both configurations. `safe_delete` is blocked by a reference in any configuration, and `unused` reports a symbol only when no configuration uses it, where references from `_test.go` files and from unused code do not count. `move_symbol` is planned in the default configuration and refused when another configuration references or declares the symbol.
 
-`batch_operations` plans each step as the standalone tool would: `rename_symbol`, `rename_method` and `rename_field` steps under every configuration, `move_symbol` steps as described above, and `rename_package` and `move_package` steps in the default configuration only. Every step is planned against the unmodified workspace, and two steps whose edits overlap fail the batch. `move_by_dependencies` picks its candidates in the default configuration and plans each like `move_symbol`; every candidate that passes is then moved in one combined plan, whatever its source package. A candidate whose move is refused, or that uses a symbol moved in the same call from another package, stays where it is and is listed in `skipped_sites`.
+`rename_package`, `move_package`, `move_dir` and `move_packages` do not plan per configuration: they rewrite every `.go` file in the tree regardless of build constraints, so there is nothing to merge. A package is addressed by an absolute directory, a path relative to the workspace root, an import path, or a path suffix that matches exactly one directory.
 
-These tools act on the default configuration only and can miss files excluded by build constraints: `rename_package`, `move_package`, `move_dir`, `move_packages`, `analyze_symbol`, `analyze_dependencies`, `detect_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers other than `detect_variadics`, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
+`batch_operations` plans each step as the standalone tool would: `rename_symbol`, `rename_method` and `rename_field` steps under every configuration, `move_symbol` steps as described above, and `rename_package` and `move_package` steps under every configuration. Every step is planned against the unmodified workspace, and two steps whose edits overlap fail the batch. `move_by_dependencies` picks its candidates in the default configuration and plans each like `move_symbol`; every candidate that passes is then moved in one combined plan, whatever its source package. A candidate whose move is refused, or that uses a symbol moved in the same call from another package, stays where it is and is listed in `skipped_sites`.
+
+These tools act on the default configuration only and can miss files excluded by build constraints: `analyze_symbol`, `analyze_dependencies`, `detect_cycles`, `generate_facades` and `update_facades`. The per-file tools (the `detect_*` and `fix_*` analyzers other than `detect_variadics`, `complexity`, `extract_*`, `inline_variable`, the import tools, `create_facade`, `organize_by_layers` and `run_go_fix`) only see files the default configuration includes.
 
 Plan results from the tools that plan under every configuration carry:
 

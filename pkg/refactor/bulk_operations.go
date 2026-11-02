@@ -2,10 +2,12 @@ package refactor
 
 import (
 	"fmt"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -24,9 +26,80 @@ func packageAllFiles(pkg *types.Package) []*types.File {
 	return all
 }
 
+// sourceFilesOf returns every .go file in dir whatever its build constraints,
+// refusing a directory holding a file that could not be read.
+func sourceFilesOf(tree *analysis.SourceTree, dir string) ([]*analysis.SourceFile, error) {
+	files := tree.Dir(dir)
+	for _, f := range files {
+		if f.Content == nil && f.Err != nil {
+			return nil, fmt.Errorf("cannot read %s: %w", f.Path, f.Err)
+		}
+	}
+	return files, nil
+}
+
+// findSourceDir resolves source to a source-tree directory holding Go files.
+// source may be an absolute directory, one relative to the workspace root, or
+// an import path; failing those, a path-suffix of exactly one directory. Several
+// suffix matches are an error listing them; ok is false when nothing matches.
+func findSourceDir(ws *types.Workspace, tree *analysis.SourceTree, source string) (dir string, ok bool, err error) {
+	var suffixed []string
+	for _, d := range tree.Dirs() {
+		if len(tree.Dir(d)) == 0 {
+			continue
+		}
+		if d == source || d == filepath.Join(ws.RootPath, source) || packagePathToImportPath(ws, d) == source {
+			return d, true, nil
+		}
+		if strings.HasSuffix(d, string(filepath.Separator)+source) {
+			suffixed = append(suffixed, d)
+		}
+	}
+	switch len(suffixed) {
+	case 0:
+		return "", false, nil
+	case 1:
+		return suffixed[0], true, nil
+	}
+	return "", false, fmt.Errorf("package %q is ambiguous: it matches %s; use a path relative to the workspace root or an import path",
+		source, strings.Join(suffixed, ", "))
+}
+
+// appendContentRewrites adds a whole-file change for every source-tree file
+// that skip does not exclude and that rewrite alters.
+func appendContentRewrites(plan *types.RefactoringPlan, tree *analysis.SourceTree, skip func(*analysis.SourceFile) bool,
+	rewrite func(string) string, description string) {
+	for _, dir := range tree.Dirs() {
+		for _, file := range tree.Dir(dir) {
+			if skip(file) || len(file.Content) == 0 {
+				continue
+			}
+			content := string(file.Content)
+			newContent := rewrite(content)
+			if newContent == content {
+				continue
+			}
+			plan.Changes = append(plan.Changes, types.Change{
+				File:        file.Path,
+				Start:       0,
+				End:         len(file.Content),
+				OldText:     content,
+				NewText:     newContent,
+				Description: description,
+			})
+			if !contains(plan.AffectedFiles, file.Path) {
+				plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
+			}
+		}
+	}
+}
+
 // MovePackageOperation implements moving entire packages
 type MovePackageOperation struct {
 	Request types.MovePackageRequest
+	// Sources holds every .go file of the workspace, so files excluded by the
+	// loaded build configuration are moved and rewritten too.
+	Sources *analysis.SourceTree
 }
 
 func (op *MovePackageOperation) Type() types.OperationType {
@@ -45,15 +118,9 @@ func (op *MovePackageOperation) Validate(ws *types.Workspace) error {
 		return fmt.Errorf("target package cannot be empty")
 	}
 
-	// Check if source package exists
-	found := false
-	for pkgPath := range ws.Packages {
-		if strings.HasSuffix(pkgPath, op.Request.SourcePackage) || pkgPath == op.Request.SourcePackage {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if _, ok, err := findSourceDir(ws, op.Sources, op.Request.SourcePackage); err != nil {
+		return err
+	} else if !ok {
 		return fmt.Errorf("source package %s not found in workspace", op.Request.SourcePackage)
 	}
 
@@ -93,18 +160,18 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		Reversible:    true,
 	}
 
-	// Find source package
-	var sourcePackage *types.Package
-	for _, pkg := range ws.Packages {
-		if pkg.Path == op.Request.SourcePackage ||
-			strings.HasSuffix(pkg.Path, string(filepath.Separator)+op.Request.SourcePackage) {
-			sourcePackage = pkg
-			break
-		}
+	sourceDir, ok, err := findSourceDir(ws, op.Sources, op.Request.SourcePackage)
+	if err != nil {
+		return nil, err
 	}
-	if sourcePackage == nil {
+	if !ok {
 		return nil, fmt.Errorf("source package %s not found", op.Request.SourcePackage)
 	}
+	sourceFiles, err := sourceFilesOf(op.Sources, sourceDir)
+	if err != nil {
+		return nil, err
+	}
+	sourceName := sourcePackageName(ws, sourceDir, sourceFiles)
 
 	// Resolve the destination here rather than trusting the caller to have done
 	// it. MovePackagesOperation.Execute builds MovePackageOperation values
@@ -117,25 +184,25 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		return nil, fmt.Errorf("resolving target package %q: %w", op.Request.TargetPackage, err)
 	}
 
-	sourceImportPath := packagePathToImportPath(ws, sourcePackage.Path)
+	sourceImportPath := packagePathToImportPath(ws, sourceDir)
 	targetImportPath := packagePathToImportPath(ws, targetPackagePath)
 	targetPkgName := filepath.Base(targetPackagePath)
 	if targetImportPath == "" {
 		return nil, fmt.Errorf("cannot determine the import path for target package %s", targetPackagePath)
 	}
 
-	// Generate file move changes for each file in the source package,
-	// including its _test.go files (which the parser stores separately in
-	// TestFiles — omitting them would leave the tests behind).
-	for _, file := range packageAllFiles(sourcePackage) {
-		if len(file.OriginalContent) == 0 {
+	// Generate file move changes for each file in the source directory,
+	// whatever its build constraints (including _test.go files).
+	for _, file := range sourceFiles {
+		if len(file.Content) == 0 {
 			continue
 		}
-		content := string(file.OriginalContent)
-		// Replace package declaration. For an external test file
-		// (package <name>_test) the same prefix replace correctly yields
-		// <targetPkgName>_test.
-		newContent := rewritePackageClause(ws, file, content, sourcePackage.Name, targetPkgName)
+		// For an external test file (package <name>_test) the clause
+		// rewrite correctly yields <targetPkgName>_test.
+		newContent, err := rewritePackageClause(ws.FileSet, file, sourceName, targetPkgName)
+		if err != nil {
+			return nil, err
+		}
 		// Rewrite the package's own import path within the moved content. This
 		// is a no-op for ordinary files (a package never imports itself) but
 		// is essential for an external test file (package <name>_test), which
@@ -144,7 +211,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		if op.Request.UpdateImports && sourceImportPath != "" && targetImportPath != "" {
 			newContent = strings.ReplaceAll(newContent, `"`+sourceImportPath+`"`, `"`+targetImportPath+`"`)
 		}
-		targetFilePath := filepath.Join(targetPackagePath, filepath.Base(file.Path))
+		targetFilePath := filepath.Join(targetPackagePath, file.Name)
 
 		// Create file at target location
 		plan.Changes = append(plan.Changes, types.Change{
@@ -164,40 +231,15 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		plan.AffectedFiles = append(plan.AffectedFiles, file.Path, targetFilePath)
 	}
 
-	// Update import paths in all dependent files
+	// Update import paths in all dependent files. The source directory's own
+	// files are already fully rewritten and moved above; touching their old
+	// paths here would collide with the delete change.
 	if op.Request.UpdateImports && sourceImportPath != "" && targetImportPath != "" {
 		quoted := `"` + sourceImportPath + `"`
-		for _, pkg := range ws.Packages {
-			// The source package's own files are already fully rewritten and
-			// moved above; touching their old paths here would collide with
-			// the delete change.
-			if pkg == sourcePackage {
-				continue
-			}
-			for _, file := range packageAllFiles(pkg) {
-				if len(file.OriginalContent) == 0 {
-					continue
-				}
-				content := string(file.OriginalContent)
-				if !strings.Contains(content, quoted) {
-					continue
-				}
-				newContent := strings.ReplaceAll(content, quoted, `"`+targetImportPath+`"`)
-				if newContent != content {
-					plan.Changes = append(plan.Changes, types.Change{
-						File:        file.Path,
-						Start:       0,
-						End:         len(file.OriginalContent),
-						OldText:     content,
-						NewText:     newContent,
-						Description: fmt.Sprintf("Update import path from %s to %s", sourceImportPath, targetImportPath),
-					})
-					if !contains(plan.AffectedFiles, file.Path) {
-						plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
-					}
-				}
-			}
-		}
+		appendContentRewrites(plan, op.Sources,
+			func(f *analysis.SourceFile) bool { return f.Dir == sourceDir },
+			func(content string) string { return strings.ReplaceAll(content, quoted, `"`+targetImportPath+`"`) },
+			fmt.Sprintf("Update import path from %s to %s", sourceImportPath, targetImportPath))
 	}
 
 	return markRelocation(plan), nil
@@ -206,6 +248,7 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 // MoveDirOperation implements moving directory structures
 type MoveDirOperation struct {
 	Request types.MoveDirRequest
+	Sources *analysis.SourceTree
 }
 
 func (op *MoveDirOperation) Type() types.OperationType {
@@ -255,46 +298,48 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	sourceDirPath := filepath.Join(ws.RootPath, op.Request.SourceDir)
 	targetDirPath := filepath.Join(ws.RootPath, op.Request.TargetDir)
 
-	// Step 1: Find every package whose directory lies within the source dir.
-	// The boundary-aware prefix check keeps "internal/foo" from also matching
-	// a sibling "internal/foobar".
-	var movedPackages []*types.Package
-	for _, pkg := range ws.Packages {
-		if pkg.Dir == sourceDirPath || strings.HasPrefix(pkg.Dir, sourceDirPath+string(filepath.Separator)) {
-			movedPackages = append(movedPackages, pkg)
+	// Step 1: Find every directory within the source dir that holds Go files,
+	// whatever their build constraints. The boundary-aware prefix check keeps
+	// "internal/foo" from also matching a sibling "internal/foobar".
+	var movedDirs []string
+	for _, dir := range op.Sources.Dirs() {
+		if (dir == sourceDirPath || strings.HasPrefix(dir, sourceDirPath+string(filepath.Separator))) && len(op.Sources.Dir(dir)) > 0 {
+			movedDirs = append(movedDirs, dir)
 		}
 	}
-	if len(movedPackages) == 0 {
+	if len(movedDirs) == 0 {
 		return nil, fmt.Errorf("no packages found in source directory %s", op.Request.SourceDir)
 	}
 
-	// Step 2: Build the rewrite for each moved package and record which files
-	// are physically moving (so the Step 4 sweep can skip them).
-	rewrites := make([]dirPkgRewrite, 0, len(movedPackages))
-	rewriteByDir := make(map[string]dirPkgRewrite, len(movedPackages))
-	movedFilePaths := make(map[string]bool)
+	// Step 2: Build the rewrite for each moved package and collect its files.
+	rewrites := make([]dirPkgRewrite, 0, len(movedDirs))
+	rewriteByDir := make(map[string]dirPkgRewrite, len(movedDirs))
+	filesByDir := make(map[string][]*analysis.SourceFile, len(movedDirs))
 
-	for _, pkg := range movedPackages {
-		rel, err := filepath.Rel(sourceDirPath, pkg.Dir)
+	for _, dir := range movedDirs {
+		files, err := sourceFilesOf(op.Sources, dir)
 		if err != nil {
-			return nil, fmt.Errorf("computing target path for package %s: %w", pkg.Dir, err)
+			return nil, err
+		}
+		filesByDir[dir] = files
+		rel, err := filepath.Rel(sourceDirPath, dir)
+		if err != nil {
+			return nil, fmt.Errorf("computing target path for package %s: %w", dir, err)
 		}
 		targetPkgDir := filepath.Join(targetDirPath, rel)
 		newName := filepath.Base(targetPkgDir)
+		oldName := sourcePackageName(ws, dir, files)
 		rw := dirPkgRewrite{
-			oldImportPath: packagePathToImportPath(ws, pkg.Path),
+			oldImportPath: packagePathToImportPath(ws, dir),
 			newImportPath: packagePathToImportPath(ws, targetPkgDir),
-			oldName:       pkg.Name,
+			oldName:       oldName,
 			newName:       newName,
 			// Only rename when the directory's base name changed AND is a
 			// legal Go identifier; otherwise keep the original package name.
-			renamed: newName != pkg.Name && isValidGoIdentifier(newName),
+			renamed: newName != oldName && isValidGoIdentifier(newName),
 		}
 		rewrites = append(rewrites, rw)
-		rewriteByDir[pkg.Dir] = rw
-		for _, file := range packageAllFiles(pkg) {
-			movedFilePaths[file.Path] = true
-		}
+		rewriteByDir[dir] = rw
 	}
 
 	// rewriteContent applies, in a single pass, every moved package's
@@ -326,15 +371,19 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 
 	// Step 3: Move every file (source + test) of each moved package. Each file
 	// is rewritten once and its original deleted.
-	for _, pkg := range movedPackages {
-		self := rewriteByDir[pkg.Dir]
-		for _, file := range packageAllFiles(pkg) {
-			if len(file.OriginalContent) == 0 {
+	for _, dir := range movedDirs {
+		self := rewriteByDir[dir]
+		for _, file := range filesByDir[dir] {
+			if len(file.Content) == 0 {
 				continue
 			}
-			content := string(file.OriginalContent)
+			content := string(file.Content)
 			if self.renamed {
-				content = rewritePackageClause(ws, file, content, self.oldName, self.newName)
+				var err error
+				content, err = rewritePackageClause(ws.FileSet, file, self.oldName, self.newName)
+				if err != nil {
+					return nil, err
+				}
 			}
 			content = rewriteContent(content)
 
@@ -358,67 +407,81 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	}
 
 	// Step 4: Rewrite imports (and renamed-package references) in every other
-	// workspace file that is not itself being moved.
+	// source file that is not itself being moved.
 	if op.Request.UpdateImports {
-		for _, pkg := range ws.Packages {
-			for _, file := range packageAllFiles(pkg) {
-				if movedFilePaths[file.Path] || len(file.OriginalContent) == 0 {
-					continue
-				}
-				content := string(file.OriginalContent)
-				newContent := rewriteContent(content)
-				if newContent == content {
-					continue
-				}
-				plan.Changes = append(plan.Changes, types.Change{
-					File:        file.Path,
-					Start:       0,
-					End:         len(file.OriginalContent),
-					OldText:     content,
-					NewText:     newContent,
-					Description: fmt.Sprintf("Update references after moving %s to %s", op.Request.SourceDir, op.Request.TargetDir),
-				})
-				if !contains(plan.AffectedFiles, file.Path) {
-					plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
-				}
-			}
-		}
+		appendContentRewrites(plan, op.Sources,
+			func(f *analysis.SourceFile) bool { _, moved := rewriteByDir[f.Dir]; return moved },
+			rewriteContent,
+			fmt.Sprintf("Update references after moving %s to %s", op.Request.SourceDir, op.Request.TargetDir))
 	}
 
 	return markRelocation(plan), nil
 }
 
-// rewritePackageClause returns content with the package clause identifier
-// changed from oldName to newName, located precisely via the file's AST so a
-// stray "package oldName" inside a doc comment can't be hit by mistake. An
-// external test package (package oldName_test) is renamed to newName_test.
-// Returns content unchanged when the file has no usable AST or its package
-// name matches neither form. content must be the file's original, unmodified
-// source (the AST offsets are relative to it).
-func rewritePackageClause(ws *types.Workspace, file *types.File, content, oldName, newName string) string {
-	if file.AST == nil || file.AST.Name == nil || ws.FileSet == nil {
-		return content
+// sourcePackageName returns the package name of dir: the loaded package's, or
+// for a directory no loaded configuration includes, the first non-main clause
+// among its files (falling back to the first clause of any kind).
+func sourcePackageName(ws *types.Workspace, dir string, files []*analysis.SourceFile) string {
+	if pkg := ws.Packages[dir]; pkg != nil {
+		return pkg.Name
 	}
-	var replacement string
+	name := ""
+	for _, f := range files {
+		if f.AST == nil || f.AST.Name == nil || f.AST.Name.Name == "" {
+			continue
+		}
+		clause := strings.TrimSuffix(f.AST.Name.Name, "_test")
+		if clause != "main" {
+			return clause
+		}
+		if name == "" {
+			name = clause
+		}
+	}
+	return name
+}
+
+// packageClauseEdit locates the package clause identifier of file and the name
+// it must take when oldName becomes newName, via the file's AST so a stray
+// "package oldName" inside a doc comment can't be hit. An external test package
+// (oldName_test) becomes newName_test; a file with any other clause (an
+// ignore-tagged package main, say) needs no edit (ok is false). It fails when
+// the clause must change but the file has no usable AST.
+func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, newName string) (start, end int, replacement string, ok bool, err error) {
+	if oldName == newName || oldName == "main" {
+		return 0, 0, "", false, nil
+	}
+	if file.AST == nil || file.AST.Name == nil || file.AST.Name.Name == "" {
+		return 0, 0, "", false, fmt.Errorf("cannot rewrite the package clause of %s: file does not parse: %v", file.Path, file.Err)
+	}
 	switch file.AST.Name.Name {
 	case oldName:
 		replacement = newName
 	case oldName + "_test":
 		replacement = newName + "_test"
 	default:
-		return content
+		return 0, 0, "", false, nil
 	}
-	start := ws.FileSet.Position(file.AST.Name.Pos()).Offset
-	end := ws.FileSet.Position(file.AST.Name.End()).Offset
-	if start < 0 || end > len(content) || start >= end || content[start:end] != file.AST.Name.Name {
-		return content
+	start = fset.Position(file.AST.Name.Pos()).Offset
+	end = fset.Position(file.AST.Name.End()).Offset
+	return start, end, replacement, true, nil
+}
+
+// rewritePackageClause returns file's content with its package clause renamed
+// as packageClauseEdit describes, or unchanged when no edit is needed.
+func rewritePackageClause(fset *token.FileSet, file *analysis.SourceFile, oldName, newName string) (string, error) {
+	content := string(file.Content)
+	start, end, replacement, ok, err := packageClauseEdit(fset, file, oldName, newName)
+	if err != nil || !ok {
+		return content, err
 	}
-	return content[:start] + replacement + content[end:]
+	return content[:start] + replacement + content[end:], nil
 }
 
 // MovePackagesOperation implements moving multiple packages atomically
 type MovePackagesOperation struct {
 	Request types.MovePackagesRequest
+	Sources *analysis.SourceTree
 }
 
 func (op *MovePackagesOperation) Type() types.OperationType {
@@ -446,15 +509,9 @@ func (op *MovePackagesOperation) Validate(ws *types.Workspace) error {
 			return fmt.Errorf("target package at index %d cannot be empty", i)
 		}
 
-		// Check if source package exists
-		found := false
-		for pkgPath := range ws.Packages {
-			if strings.HasSuffix(pkgPath, mapping.SourcePackage) || pkgPath == mapping.SourcePackage {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if _, ok, err := findSourceDir(ws, op.Sources, mapping.SourcePackage); err != nil {
+			return err
+		} else if !ok {
 			return fmt.Errorf("source package %s not found in workspace", mapping.SourcePackage)
 		}
 	}
@@ -477,7 +534,7 @@ func (op *MovePackagesOperation) Execute(ws *types.Workspace) (*types.Refactorin
 			CreateTarget:  op.Request.CreateTargets,
 			UpdateImports: op.Request.UpdateImports,
 		}
-		subOp := &MovePackageOperation{Request: subReq}
+		subOp := &MovePackageOperation{Request: subReq, Sources: op.Sources}
 		// A failed mapping must surface. Skipping it silently produces the
 		// worst possible outcome for an "atomic" move: a plan that reports
 		// success having quietly dropped part of what was asked for.
