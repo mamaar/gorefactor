@@ -152,12 +152,12 @@ func (b *derefBody) refuse(n ast.Node, why string) {
 
 func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 	parent := stack[len(stack)-2]
-	if bin, ok := parent.(*ast.BinaryExpr); ok && b.nilCmp(bin) != token.ILLEGAL {
+	if bin, ok := parent.(*ast.BinaryExpr); ok && nilComparison(b.info, b.obj, bin) != token.ILLEGAL {
 		if b.handled[bin] {
 			return
 		}
 		b.op.derefNil = derefNilBare
-		b.foldConstant(bin, stack[len(stack)-3], b.nilCmp(bin) == token.NEQ)
+		b.foldConstant(bin, stack[len(stack)-3], nilComparison(b.info, b.obj, bin) == token.NEQ)
 		return
 	}
 	if b.isRecursivePass(id, parent) {
@@ -225,13 +225,14 @@ func isNilIdent(e ast.Expr, info *gotypes.Info) bool {
 	return isNil
 }
 
-// nilCmp returns == or != when e compares the parameter with nil, else ILLEGAL.
-func (b *derefBody) nilCmp(e ast.Expr) token.Token {
+// nilComparison returns == or != when e compares obj with nil, else ILLEGAL.
+func nilComparison(info *gotypes.Info, obj gotypes.Object, e ast.Expr) token.Token {
 	bin, ok := e.(*ast.BinaryExpr)
 	if !ok || (bin.Op != token.EQL && bin.Op != token.NEQ) {
 		return token.ILLEGAL
 	}
-	if b.isParam(bin.X) && isNilIdent(bin.Y, b.info) || isNilIdent(bin.X, b.info) && b.isParam(bin.Y) {
+	isObj := func(x ast.Expr) bool { id, ok := x.(*ast.Ident); return ok && info.Uses[id] == obj }
+	if isObj(bin.X) && isNilIdent(bin.Y, info) || isNilIdent(bin.X, info) && isObj(bin.Y) {
 		return bin.Op
 	}
 	return token.ILLEGAL
@@ -280,7 +281,7 @@ func (b *derefBody) foldChain(n *ast.BinaryExpr, parent ast.Node) {
 	isOr := n.Op == token.LOR
 	remove := make([]bool, len(ops))
 	for i, e := range ops {
-		tok := b.nilCmp(e)
+		tok := nilComparison(b.info, b.obj, e)
 		if tok == token.ILLEGAL {
 			continue
 		}
@@ -302,22 +303,33 @@ func (b *derefBody) foldChain(n *ast.BinaryExpr, parent ast.Node) {
 		b.op.derefNil = derefNilBare
 		remove[i] = true
 	}
+	if slices.Contains(remove, false) {
+		for _, r := range chainDeletions(ops, remove) {
+			b.drop(r[0], r[1])
+		}
+		return
+	}
+	b.foldConstant(n, parent, !isOr)
+}
+
+// chainDeletions returns the source ranges whose deletion removes the operands
+// of the chain ops marked in remove, with their operators; at least one
+// operand must stay.
+func chainDeletions(ops []ast.Expr, remove []bool) [][2]token.Pos {
 	end := len(ops)
 	for end > 0 && remove[end-1] {
 		end--
 	}
-	if end == 0 {
-		b.foldConstant(n, parent, !isOr)
-		return
-	}
+	var dels [][2]token.Pos
 	for i := 0; i < end; i++ {
 		if remove[i] {
-			b.drop(ops[i].Pos(), ops[i+1].Pos())
+			dels = append(dels, [2]token.Pos{ops[i].Pos(), ops[i+1].Pos()})
 		}
 	}
 	if end < len(ops) {
-		b.drop(ops[end-1].End(), ops[len(ops)-1].End())
+		dels = append(dels, [2]token.Pos{ops[end-1].End(), ops[len(ops)-1].End()})
 	}
+	return dels
 }
 
 // flattenChain lists the operands of a chain of one || or && operator.
@@ -344,16 +356,7 @@ func (b *derefBody) foldConstant(cond ast.Expr, parent ast.Node, value bool) {
 	}
 	start, end := b.op.tokenPosToOffset(b.ws, ifs.Pos()), b.op.tokenPosToOffset(b.ws, ifs.End())
 	content := b.file.OriginalContent
-	lineStart, lineEnd := start, end
-	for lineStart > 0 && (content[lineStart-1] == ' ' || content[lineStart-1] == '\t') {
-		lineStart--
-	}
-	for lineEnd < len(content) && (content[lineEnd] == ' ' || content[lineEnd] == '\t') {
-		lineEnd++
-	}
-	if (lineStart == 0 || content[lineStart-1] == '\n') && lineEnd < len(content) && content[lineEnd] == '\n' {
-		start, end = lineStart, lineEnd+1
-	}
+	start, end = wholeLines(content, start, end)
 	b.dropped = append(b.dropped, [2]token.Pos{ifs.Pos(), ifs.End()})
 	b.plan.Changes = append(b.plan.Changes, pkgtypes.Change{
 		File:        b.file.Path,
@@ -362,6 +365,22 @@ func (b *derefBody) foldConstant(cond ast.Expr, parent ast.Node, value bool) {
 		OldText:     string(content[start:end]),
 		Description: fmt.Sprintf("Remove nil check of parameter %s that is always false", b.param.Name),
 	})
+}
+
+// wholeLines widens [start, end) to the lines it fills when only blanks share
+// them, so deleting it leaves no empty line behind.
+func wholeLines(content []byte, start, end int) (int, int) {
+	lineStart, lineEnd := start, end
+	for lineStart > 0 && (content[lineStart-1] == ' ' || content[lineStart-1] == '\t') {
+		lineStart--
+	}
+	for lineEnd < len(content) && (content[lineEnd] == ' ' || content[lineEnd] == '\t') {
+		lineEnd++
+	}
+	if (lineStart == 0 || content[lineStart-1] == '\n') && lineEnd < len(content) && content[lineEnd] == '\n' {
+		return lineStart, lineEnd + 1
+	}
+	return start, end
 }
 
 // drop deletes the source between from and to.

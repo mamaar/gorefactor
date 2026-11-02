@@ -94,7 +94,7 @@ func TestChangeSignature_RemoveOnlyReturnTurnsAssignmentsIntoCalls(t *testing.T)
 
 func TestChangeSignature_RemoveReturnRefusesWhenTheRemovedVariableIsReadLater(t *testing.T) {
 	f := "package p\n\nfunc f() (int, error) { return 1, nil }\n"
-	use := "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err != nil {\n\t\treturn 0\n\t}\n\treturn x\n}\n"
+	use := "package p\n\nfunc Use() int {\n\tx, err := f()\n\tprintln(err.Error())\n\treturn x\n}\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
@@ -393,4 +393,19 @@ func TestChangeSignature_AddReturnRefusesFunctionWithoutResultsThatNeverReturns(
 		t.Errorf("want a refusal naming f.go:3 that is not the raw type error, got IsError=%v %q", res.IsError, errText(res))
 	}
 	assertFileUnchanged(t, dir, "p/f.go", f)
+}
+
+func TestChangeSignature_RemoveReturnTurnsDefineWithNoNewVariableIntoAssign(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\nfunc f() (int, error) { return 1, nil }\n",
+		"p/use.go": "package p\n\nfunc Use() int {\n\tvar a int\n\ta, err := f()\n\tif err != nil {\n\t\treturn 0\n\t}\n\treturn a\n}\n\nfunc Blank() {\n\t_, err := f()\n\tif err != nil {\n\t\treturn\n\t}\n}\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
+
+	assertFileContains(t, dir, "p/use.go", "\ta = f()\n")
+	assertFileContains(t, dir, "p/use.go", "\t_ = f()\n")
+	goVets(t, dir, "")
 }

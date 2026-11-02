@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/ast/edge"
@@ -59,7 +60,7 @@ func (op *ChangeSignatureOperation) planReturns(
 	}
 
 	decls := buildFuncDeclIndex(ws)
-	sites := 0
+	var calls []plannedCall
 	for _, t := range targets {
 		if d := decls[canonicalFunc(t)]; d != nil && d.Decl != nil {
 			op.planReturnBody(ws, d, n, plan)
@@ -68,12 +69,72 @@ func (op *ChangeSignatureOperation) planReturns(
 			op.refuse(ws, u.Pos, fmt.Sprintf("%s is used as a func value, so its results cannot be changed", t.Name()))
 		}
 		for _, site := range idx.CallSitesOf(t) {
-			if op.planReturnCall(ws, idx, site, t, plan) {
-				sites++
+			fold := foldPlan{Refusals: addedResultRefusals(site)}
+			if op.RemovedReturnIndex >= 0 {
+				fold = removedResultFold(site.Pkg.TypesInfo, idx, site, op.RemovedReturnIndex)
 			}
+			calls = append(calls, plannedCall{site: site, target: t, fold: fold})
+		}
+	}
+	live := op.liveCalls(ws, calls)
+
+	sites := 0
+	folded := map[*pkgtypes.File][]pkgtypes.Change{}
+	for _, c := range live {
+		if op.planReturnCall(ws, c, plan, folded) {
+			sites++
+		}
+	}
+	for file, changes := range folded {
+		for _, spec := range unusedImportsAfterRemoval(ws, file, changes) {
+			plan.Changes = append(plan.Changes, removeImportSpec(ws, file, spec))
 		}
 	}
 	return sites, nil
+}
+
+// plannedCall is a call site of a target with how its result change folds.
+type plannedCall struct {
+	site   analysis.CallSite
+	target *gotypes.Func
+	fold   foldPlan
+}
+
+// liveCalls returns the calls that are not deleted with the dead branch of
+// another call's fold, after recording the refusals of the rest. Folds that
+// edit the same source are refused too.
+func (op *ChangeSignatureOperation) liveCalls(ws *pkgtypes.Workspace, calls []plannedCall) []plannedCall {
+	var live []plannedCall
+	for i, c := range calls {
+		deleted := slices.ContainsFunc(calls[:i:i], func(o plannedCall) bool { return o.site.File == c.site.File && foldDeletes(o.fold, c.site.Call.Pos()) }) ||
+			slices.ContainsFunc(calls[i+1:], func(o plannedCall) bool { return o.site.File == c.site.File && foldDeletes(o.fold, c.site.Call.Pos()) })
+		if !deleted {
+			live = append(live, c)
+		}
+	}
+	for i, c := range live {
+		for _, r := range c.fold.Refusals {
+			op.refuse(ws, r.Pos, r.Reason)
+		}
+		for _, o := range live[:i] {
+			if o.site.File != c.site.File {
+				continue
+			}
+			for _, e1 := range c.fold.Edits {
+				for _, e2 := range o.fold.Edits {
+					if e1.Start < e2.End && e2.Start < e1.End {
+						op.refuse(ws, e1.Start, "this nil check is folded together with the one of another removed error result at "+ws.FileSet.Position(e2.Start).String()+", which cannot be done")
+					}
+				}
+			}
+		}
+	}
+	return live
+}
+
+// foldDeletes reports whether the fold deletes the source at pos.
+func foldDeletes(f foldPlan, pos token.Pos) bool {
+	return slices.ContainsFunc(f.Dropped, func(r [2]token.Pos) bool { return r[0] <= pos && pos < r[1] })
 }
 
 // namedResultsAfterChange returns the named results of decl with the change
@@ -130,23 +191,16 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 	})
 }
 
-// planReturnCall rewrites the call site of target and reports whether it did.
-// A site it cannot rewrite is recorded as a refusal.
+// planReturnCall rewrites the call site of c and reports whether it did. A
+// call with refusals is left as it is. The edits that fold nil checks are also
+// added to folded, by file, to find the imports they free.
 func (op *ChangeSignatureOperation) planReturnCall(
-	ws *pkgtypes.Workspace, refs *analysis.ReferenceIndex, site analysis.CallSite, target *gotypes.Func, plan *pkgtypes.RefactoringPlan,
+	ws *pkgtypes.Workspace, c plannedCall, plan *pkgtypes.RefactoringPlan, folded map[*pkgtypes.File][]pkgtypes.Change,
 ) bool {
-	var refusals []returnRefusal
-	if op.RemovedReturnIndex >= 0 {
-		refusals = removedResultRefusals(site.Pkg.TypesInfo, refs, site, op.RemovedReturnIndex)
-	} else {
-		refusals = addedResultRefusals(site)
-	}
-	for _, r := range refusals {
-		op.refuse(ws, r.Pos, r.Reason)
-	}
-	if len(refusals) > 0 {
+	if len(c.fold.Refusals) > 0 {
 		return false
 	}
+	site, target := c.site, c.target
 
 	content := site.File.OriginalContent
 	off := func(p token.Pos) int { return ws.FileSet.Position(p).Offset }
@@ -164,20 +218,26 @@ func (op *ChangeSignatureOperation) planReturnCall(
 			Description: fmt.Sprintf("Capture discarded return values for call to %s", name),
 		}
 	case *ast.AssignStmt:
-		change = op.assignChange(p, site.Call, content, off, name)
+		change = op.assignChange(p, site.Call, site.Pkg.TypesInfo, content, off, name)
 	default:
 		return false // go and defer statements discard every result
 	}
 	change.File = site.File.Path
 	change.OldText = string(content[change.Start:change.End])
 	plan.Changes = append(plan.Changes, change)
+	for _, e := range c.fold.Edits {
+		fc := foldChange(ws, site.File, e)
+		plan.Changes = append(plan.Changes, fc)
+		folded[site.File] = append(folded[site.File], fc)
+	}
 	addAffected(plan, site.File.Path)
 	return true
 }
 
 // assignChange returns the change that adds a blank to, or drops the last
-// variable from, the left side of assign, whose right side is call.
-func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *ast.CallExpr, content []byte, off func(token.Pos) int, name string) pkgtypes.Change {
+// variable from, the left side of assign, whose right side is call. A `:=`
+// left with no new variable becomes `=`.
+func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *ast.CallExpr, info *gotypes.Info, content []byte, off func(token.Pos) int, name string) pkgtypes.Change {
 	last := assign.Lhs[len(assign.Lhs)-1]
 	if op.NewReturnPosition >= 0 {
 		return pkgtypes.Change{
@@ -192,10 +252,18 @@ func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *a
 			Description: fmt.Sprintf("Remove assignment LHS for call to %s", name),
 		}
 	}
-	return pkgtypes.Change{
+	change := pkgtypes.Change{
 		Start: off(assign.Lhs[len(assign.Lhs)-2].End()), End: off(last.End()),
 		Description: fmt.Sprintf("Update assignment LHS for call to %s", name),
 	}
+	declares := slices.ContainsFunc(assign.Lhs[:len(assign.Lhs)-1], func(l ast.Expr) bool {
+		id, ok := l.(*ast.Ident)
+		return ok && id.Name != "_" && info.Defs[id] != nil
+	})
+	if assign.Tok == token.DEFINE && !declares {
+		change.End, change.NewText = off(assign.TokPos)+len(token.DEFINE.String()), " ="
+	}
+	return change
 }
 
 func addAffected(plan *pkgtypes.RefactoringPlan, file string) {
@@ -249,43 +317,52 @@ func embeddedCallRefusal(call *ast.CallExpr, verb string) returnRefusal {
 	return returnRefusal{Pos: call.Pos(), Reason: fmt.Sprintf("the call is used in an expression or declaration (a return value, argument or operand), so its results cannot be %s", verb)}
 }
 
-// removedResultRefusals returns why the call at site cannot lose its result
-// idx: it is used in an expression, or the variable it is assigned to is read
-// anywhere (the reads are in Read), or is a named result returned bare. An
-// empty result means the call can be rewritten.
-func removedResultRefusals(info *gotypes.Info, refs *analysis.ReferenceIndex, site analysis.CallSite, idx int) []returnRefusal {
+// removedResultFold plans how the call at site loses its result idx. Its
+// refusals say why it cannot: the call is used in an expression, or the variable
+// it is assigned to is read in a way that cannot fold (the reads are in Read),
+// or is a named result returned bare. No refusals means the call can be
+// rewritten; the edits then fold the nil checks of an error variable that goes
+// away with the result.
+func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site analysis.CallSite, idx int) foldPlan {
+	refuse := func(pos token.Pos, why string) foldPlan {
+		return foldPlan{Refusals: []returnRefusal{{Pos: pos, Reason: why}}}
+	}
 	use, parent := callUseOf(site.Cursor)
 	switch use {
 	case useEmbedded:
-		return []returnRefusal{embeddedCallRefusal(site.Call, "reduced")}
+		return foldPlan{Refusals: []returnRefusal{embeddedCallRefusal(site.Call, "reduced")}}
 	case useDiscarded:
-		return nil
+		return foldPlan{}
 	}
 	assign := parent.(*ast.AssignStmt)
 	if idx >= len(assign.Lhs) {
-		return []returnRefusal{{Pos: site.Call.Pos(), Reason: "the assignment does not match the call's results"}}
+		return refuse(site.Call.Pos(), "the assignment does not match the call's results")
 	}
 	id, ok := assign.Lhs[idx].(*ast.Ident)
 	if !ok {
-		return []returnRefusal{{Pos: assign.Lhs[idx].Pos(), Reason: "the removed result is stored in a field or element, which would stop being assigned"}}
+		return refuse(assign.Lhs[idx].Pos(), "the removed result is stored in a field or element, which would stop being assigned")
 	}
 	if id.Name == "_" {
-		return nil
+		return foldPlan{}
 	}
 	obj := info.ObjectOf(id)
 	if obj == nil {
-		return []returnRefusal{{Pos: id.Pos(), Reason: fmt.Sprintf("no type information to check whether %s is read", id.Name)}}
+		return refuse(id.Pos(), fmt.Sprintf("no type information to check whether %s is read", id.Name))
 	}
-	var refusals []returnRefusal
+	var reads []returnRefusal
+	var writes []token.Pos
 	for _, u := range refs.NonCallUsesOf(obj) {
-		if !isAssignTarget(u.Cursor) {
-			refusals = append(refusals, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
+		if isAssignTarget(u.Cursor) {
+			writes = append(writes, u.Pos)
+			continue
 		}
+		reads = append(reads, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
 	}
+	plan := foldErrorReads(info, site, assign, idx, obj, reads, writes)
 	if ret := bareReturnOfResult(info, site.Cursor, obj); ret != nil {
-		refusals = append(refusals, returnRefusal{Pos: ret.Pos(), Reason: fmt.Sprintf("%s is a named result and this bare return reads it", id.Name)})
+		plan.Refusals = append(plan.Refusals, returnRefusal{Pos: ret.Pos(), Reason: fmt.Sprintf("%s is a named result and this bare return reads it", id.Name)})
 	}
-	return refusals
+	return plan
 }
 
 // bareReturnOfResult returns a bare return in a function enclosing at that
