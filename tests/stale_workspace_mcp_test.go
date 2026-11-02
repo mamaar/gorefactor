@@ -150,7 +150,7 @@ func TestChangeSignature_ConsecutiveApplies(t *testing.T) {
 }
 
 const (
-	buildExcluded = "//go:build neverset\n\n"
+	buildExcluded = "//go:build ignore\n\n"
 	constrainBase = "package lib\n\nfunc Base() {}\n"
 )
 

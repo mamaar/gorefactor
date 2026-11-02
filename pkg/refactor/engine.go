@@ -59,7 +59,6 @@ type RefactorEngine interface {
 	// Dependency graph operations
 	MoveByDependencies(ws *types.Workspace, req types.MoveByDependenciesRequest) (*types.RefactoringPlan, error)
 	OrganizeByLayers(ws *types.Workspace, req types.OrganizeByLayersRequest) (*types.RefactoringPlan, error)
-	DetectCycles(ws *types.Workspace) (cycles, testCycles [][]string)
 	AnalyzeDependencies(ws *types.Workspace, req types.AnalyzeDependenciesRequest) (*types.RefactoringPlan, error)
 
 	// Batch operations
@@ -1292,7 +1291,7 @@ func (e *DefaultEngine) CreateFacade(ws *types.Workspace, req types.CreateFacade
 
 // GenerateFacades implements auto-generating facades
 func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateFacadesRequest) (*types.RefactoringPlan, error) {
-	operation := &GenerateFacadesOperation{Request: req}
+	operation := &GenerateFacadesOperation{Request: req, Sources: e.set.Sources(), Covering: e.set.Covering()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1319,7 +1318,7 @@ func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateF
 
 // UpdateFacades implements updating existing facades
 func (e *DefaultEngine) UpdateFacades(ws *types.Workspace, req types.UpdateFacadesRequest) (*types.RefactoringPlan, error) {
-	operation := &UpdateFacadesOperation{Request: req}
+	operation := &UpdateFacadesOperation{Request: req, Sources: e.set.Sources(), Covering: e.set.Covering()}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1508,12 +1507,6 @@ func (e *DefaultEngine) OrganizeByLayers(ws *types.Workspace, req types.Organize
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
-}
-
-// DetectCycles reports production import cycles and import cycles through
-// in-package test files as closed lists of import paths. It changes nothing.
-func (e *DefaultEngine) DetectCycles(ws *types.Workspace) (cycles, testCycles [][]string) {
-	return detectCycles(ws)
 }
 
 // AnalyzeDependencies implements analyzing dependency flow

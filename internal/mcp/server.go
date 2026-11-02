@@ -148,26 +148,6 @@ func (s *MCPServer) EnsureReferenceIndex(ws *types.Workspace) (*analysis.Referen
 	return s.viewOf(ws).ReferenceIndex()
 }
 
-// EnsureTypedReferenceIndex type-checks every package and returns a reference
-// index that covers them all. An index cached before type-checking (or after
-// only a few packages were checked) has no object-identity data for the rest,
-// so it is discarded and rebuilt.
-func (s *MCPServer) EnsureTypedReferenceIndex(ws *types.Workspace) (*analysis.ReferenceIndex, error) {
-	unchecked := false
-	for _, pkg := range ws.Packages {
-		if pkg.TypesInfo == nil {
-			unchecked = true
-			break
-		}
-	}
-	view := s.viewOf(ws)
-	if unchecked {
-		s.engine.EnsureTypeChecked(ws)
-		view.InvalidateReferenceIndex()
-	}
-	return view.ReferenceIndex()
-}
-
 // InvalidateReferenceIndex marks the cached reference index of every built
 // view as stale.
 func (s *MCPServer) InvalidateReferenceIndex() {

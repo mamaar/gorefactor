@@ -96,20 +96,23 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "detect_cycles",
-		Description: "Report production import cycles and import cycles through in-package test files, as import paths. Each entry is one path per group of mutually importing packages, so a package in the group may not appear in it. Read-only; default build configuration only.",
+		Description: "Report production import cycles and import cycles through in-package test files, as import paths. Cycles are found under each build configuration separately and merged. Each entry has packages, one closed path per group of mutually importing packages, so a package in the group may not appear in it, and configs, the configurations it occurs in, omitted when it occurs in all. build_configs lists the configurations when there is more than one. Read-only.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in struct{}) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
 
-		ws, err := state.GetWorkspace()
+		report, err := state.GetEngine().DetectCycles()
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		cycles, testCycles := state.GetEngine().DetectCycles(ws)
-		return textResult(map[string]any{
-			"cycles_found": len(cycles),
-			"cycles":       cycles,
-			"test_cycles":  testCycles,
-		}), nil, nil
+		out := map[string]any{
+			"cycles_found": len(report.Cycles),
+			"cycles":       report.Cycles,
+			"test_cycles":  report.TestCycles,
+		}
+		if len(report.Configs) > 1 {
+			out["build_configs"] = report.Configs
+		}
+		return textResult(out), nil, nil
 	})
 }

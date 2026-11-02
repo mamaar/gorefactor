@@ -9,7 +9,6 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	goanalysis "golang.org/x/tools/go/analysis"
 
-	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/analyzers"
 	"github.com/mamaar/gorefactor/pkg/analyzers/booleanbranch"
 	"github.com/mamaar/gorefactor/pkg/analyzers/boolsimplify"
@@ -45,6 +44,21 @@ type SymbolInfo struct {
 	Signature string          `json:"signature,omitempty"`
 	RefCount  int             `json:"reference_count"`
 	Refs      []ReferenceInfo `json:"references,omitempty"`
+	// Declarations is set when build configurations declare the symbol in
+	// more than one place; File, Line and Column are the default configuration's, else the first that declares it.
+	Declarations []DeclarationInfo `json:"declarations,omitempty"`
+	// BuildConfigs is set when there is more than one build configuration.
+	BuildConfigs []string `json:"build_configs,omitempty"`
+	// UncoveredFiles are files next to the symbol or its references that no
+	// configuration type-checks, so references in them are missing.
+	UncoveredFiles []UncoveredFileInfo `json:"uncovered_files,omitempty"`
+}
+
+type DeclarationInfo struct {
+	File    string   `json:"file"`
+	Line    int      `json:"line"`
+	Column  int      `json:"column"`
+	Configs []string `json:"configs,omitempty"`
 }
 
 type ReferenceInfo struct {
@@ -503,7 +517,7 @@ type AnalyzeDependenciesInput struct {
 func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_symbol",
-		Description: "Analyze a symbol: find its definition, properties, and all references across the workspace. Only package-level symbols are addressable; function-local constants, types and variables are not.",
+		Description: "Analyze a symbol: find its definition, properties, and all references across the workspace under every build configuration, so declarations and callers in files excluded by build constraints are found. When configurations declare it in more than one place, `declarations` lists each with the configurations that declare it; `build_configs` and `uncovered_files` appear as for the planning tools. Only package-level symbols are addressable; function-local constants, types and variables are not.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeSymbolInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -513,24 +527,12 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		var symbol *types.Symbol
-		if in.Package != "" {
-			resolved := types.ResolvePackagePath(ws, in.Package)
-			if pkg, ok := ws.Packages[resolved]; ok {
-				symbol = pkg.Symbols.FindSymbol(in.Symbol)
-			}
-		} else {
-			for _, pkg := range ws.Packages {
-				if s := pkg.Symbols.FindSymbol(in.Symbol); s != nil {
-					symbol = s
-					break
-				}
-			}
-		}
-		if symbol == nil {
-			return errResult(fmt.Errorf("symbol %s not found", in.Symbol)), nil, nil
+		report, err := state.GetEngine().AnalyzeSymbolAcrossConfigs(in.Symbol, in.Package)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
+		symbol := report.Symbol
 		info := SymbolInfo{
 			Name:      symbol.Name,
 			Kind:      symbol.Kind.String(),
@@ -540,24 +542,21 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			Column:    symbol.Column,
 			Exported:  symbol.Exported,
 			Signature: symbol.Signature,
+			RefCount:  len(report.References),
 		}
-
-		idx, err := state.EnsureTypedReferenceIndex(ws)
-		if err != nil {
-			return errResult(err), nil, nil
+		if len(report.Declarations) > 1 {
+			for _, d := range report.Declarations {
+				info.Declarations = append(info.Declarations, DeclarationInfo{File: d.File, Line: d.Line, Column: d.Column, Configs: d.Configs})
+			}
 		}
-		resolver := analysis.NewSymbolResolver(ws, state.logger)
-		refs, err := resolver.FindReferencesIndexed(symbol, idx)
-		if err != nil {
-			return errResult(err), nil, nil
+		for _, ref := range report.References {
+			info.Refs = append(info.Refs, ReferenceInfo{File: ref.File, Line: ref.Line, Column: ref.Column})
 		}
-		info.RefCount = len(refs)
-		for _, ref := range refs {
-			info.Refs = append(info.Refs, ReferenceInfo{
-				File:   ref.File,
-				Line:   ref.Line,
-				Column: ref.Column,
-			})
+		if len(report.Configs) > 1 {
+			info.BuildConfigs = report.Configs
+		}
+		if len(report.Unchecked) > 0 {
+			info.UncoveredFiles = uncheckedFileInfos(report.Unchecked, ws.RootPath)
 		}
 		return textResult(info), nil, nil
 	})
@@ -1898,7 +1897,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "analyze_dependencies",
-		Description: "Analyze the dependency graph of the workspace without changing it. Returns package_coupling (import and symbol counts per package) and dependency_graph: PackageImports (package directory to the import paths of its non-test files), PackageDeps (package directory to the directories of the workspace packages it depends on, transitively, through non-test files), and ImportCycles and TestImportCycles (closed paths of package directories). detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages.",
+		Description: "Analyze the dependency graph of the workspace without changing it. Covers every build configuration: imports, dependencies and symbol counts are those of all files, and build_configs lists the configurations when there is more than one. Returns package_coupling (import and symbol counts per package) and dependency_graph: PackageImports (package directory to the import paths of its non-test files), PackageDeps (package directory to the directories of the workspace packages it depends on, transitively, through non-test files), and ImportCycles and TestImportCycles (each {packages: closed path of package directories, one per group of mutually importing packages, so a package in the group may not appear in it; configs: the configurations where the group is cyclic, omitted when all}; cycles are found under each configuration separately, so edges from different configurations never combine). detect_backwards adds backwards_dependencies, imports from an inner layer (domain, core, model) to an outer one (handler, infra, repository), classified by package name. suggest_moves adds suggested_moves, exported symbols referenced from two or more other packages, with the referencing packages, computed in the default build configuration only (as move_by_dependencies picks its candidates).",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in AnalyzeDependenciesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -1907,7 +1906,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		plan, err := state.GetEngine().AnalyzeDependencies(ws, types.AnalyzeDependenciesRequest{
+		report, err := state.GetEngine().AnalyzeDependenciesAcrossConfigs(types.AnalyzeDependenciesRequest{
 			Workspace:           ws.RootPath,
 			DetectBackwardsDeps: in.DetectBackwards,
 			SuggestMoves:        in.SuggestMoves,
@@ -1915,12 +1914,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+		plan := report.Plan
 		impact := *plan.Impact
 		result := map[string]any{
 			"affected_files":   plan.AffectedFiles,
 			"change_count":     len(plan.Changes),
 			"package_coupling": impact.PackageCoupling,
-			"dependency_graph": ws.Dependencies,
+			"dependency_graph": report.Graph,
+		}
+		if len(report.Configs) > 1 {
+			result["build_configs"] = report.Configs
 		}
 		if in.SuggestMoves {
 			result["suggested_moves"] = impact.SuggestedMoves
