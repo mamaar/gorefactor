@@ -263,10 +263,12 @@ func (e *DefaultEngine) RenameSymbolAcrossConfigs(req types.RenameSymbolRequest)
 
 // RenamePackage implements package renaming
 func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error) {
-	views, err := e.set.Views()
+	run := &typesRun{}
+	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, err
 	}
+	defer e.endRun(run)
 	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -1079,10 +1081,12 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	req.CreateTarget = true
 	req.UpdateImports = true
 
-	views, err := e.set.Views()
+	run := &typesRun{}
+	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, err
 	}
+	defer e.endRun(run)
 	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -1107,10 +1111,12 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	// Apply sensible defaults
 	req.UpdateImports = true
 
-	views, err := e.set.Views()
+	run := &typesRun{}
+	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, err
 	}
+	defer e.endRun(run)
 	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -1136,10 +1142,12 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	req.CreateTargets = true
 	req.UpdateImports = true
 
-	views, err := e.set.Views()
+	run := &typesRun{}
+	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, err
 	}
+	defer e.endRun(run)
 	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation

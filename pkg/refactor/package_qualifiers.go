@@ -19,8 +19,8 @@ type pkgRename struct {
 	oldPath, oldName, newName string
 }
 
-// qualifierRewrite returns file's content with extra and the qualifier edits of
-// qualifierEdits applied, plus the imports that kept their old name.
+// qualifierRewrite returns file's content with extra and the edits of
+// packageQualifierEdits applied, plus the imports that kept their old name.
 func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysis.SourceFile, renames []pkgRename, extra ...textEdit) (string, []types.SkippedSite, error) {
 	changes, skipped, err := packageQualifierEdits(views, fset, file, renames)
 	if err != nil {
@@ -42,7 +42,7 @@ func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysi
 func packageQualifierEdits(views []*analysis.View, fset *token.FileSet, file *analysis.SourceFile, renames []pkgRename) ([]types.Change, []types.SkippedSite, error) {
 	var imported []pkgRename
 	for _, r := range renames {
-		if strings.Contains(string(file.Content), strconv.Quote(r.oldPath)) {
+		if strings.Contains(string(file.Content), `"`+r.oldPath+`"`) || strings.Contains(string(file.Content), "`"+r.oldPath+"`") {
 			imported = append(imported, r)
 		}
 	}

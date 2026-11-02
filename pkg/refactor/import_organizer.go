@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -135,7 +136,9 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 
 // newImportEntry returns the sortable entry for spec, without leading comments.
 func newImportEntry(spec *ast.ImportSpec) importEntry {
-	e := importEntry{path: strings.Trim(spec.Path.Value, `"`)}
+	// The parser accepted the literal, so it unquotes; raw strings included.
+	path, _ := strconv.Unquote(spec.Path.Value)
+	e := importEntry{path: path}
 	if spec.Name != nil {
 		e.alias = spec.Name.Name
 	}

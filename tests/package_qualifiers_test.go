@@ -288,3 +288,68 @@ func TestRenamePackageRefusesUnparseableImporterNeedingQualifierEdits(t *testing
 	}
 	assertFileContains(t, dir, "old/old.go", "package old")
 }
+
+func TestMovePackagesReportsImportsKeptAsAlias(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"old/old.go": oldPkgSource,
+		"use/use.go": "package use\n\nimport \"scratch/old\"\n\nvar fresh = 1\n\nfunc U() string { return old.Foo() }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
+		Packages:  []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
+		TargetDir: "lib",
+	})
+	if err != nil {
+		t.Fatalf("MovePackages: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "use/use.go", `old "scratch/lib/fresh"`)
+	assertSkipped(t, plan, "use/use.go")
+	vetAs(t, dir, "linux")
+}
+
+func TestRenamePackageRewritesRawStringImport(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"old/old.go": oldPkgSource,
+		"use/use.go": "package use\n\nimport `scratch/old`\n\nfunc U() string { return old.Foo() }\n",
+	})
+	renameOldToFresh(t, dir, "old")
+	assertFileContains(t, dir, "use/use.go", "fresh.Foo()")
+	vetAs(t, dir, "linux")
+}
+
+// Both packages become util under b/, so only the first import can take the name.
+func TestMoveDirKeepsAliasWhenTwoPackagesGetTheSameName(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"a/x/util/u.go": "package foo\n\nfunc F() string { return \"\" }\n",
+		"a/y/util/u.go": "package bar\n\nfunc G() string { return \"\" }\n",
+		"use/use.go":    "package use\n\nimport (\n\t\"scratch/a/x/util\"\n\t\"scratch/a/y/util\"\n)\n\nfunc U() string { return foo.F() + bar.G() }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+	plan, err := eng.MoveDir(ws, types.MoveDirRequest{SourceDir: "a", TargetDir: "b"})
+	if err != nil {
+		t.Fatalf("MoveDir: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "use/use.go", "util.F() + bar.G()")
+	assertFileContains(t, dir, "use/use.go", `bar "scratch/b/y/util"`)
+	assertSkipped(t, plan, "use/use.go")
+	vetAs(t, dir, "linux")
+}
+
+func TestMovePackageReportsMovedFileKeptAsAliasAtItsTarget(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"old/old.go":      oldPkgSource,
+		"old/old_test.go": "package old_test\n\nimport (\n\t\"testing\"\n\n\t\"scratch/old\"\n)\n\nfunc TestFoo(t *testing.T) {\n\tfresh := 1\n\t_ = fresh\n\t_ = old.Foo()\n}\n",
+	})
+	plan := moveOldToFresh(t, dir)
+	assertFileContains(t, dir, "lib/fresh/old_test.go", `old "scratch/lib/fresh"`)
+	assertSkipped(t, plan, "lib/fresh/old_test.go")
+	vetAs(t, dir, "linux")
+}

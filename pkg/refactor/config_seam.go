@@ -225,6 +225,18 @@ type viewPreparer interface {
 	finish()
 }
 
+// typesRun is a run that type-checks secondary views on demand and releases
+// their type information when it finishes.
+type typesRun struct{ views []*analysis.View }
+
+func (r *typesRun) prepare(views []*analysis.View) { r.views = views }
+
+func (r *typesRun) finish() {
+	for _, v := range r.views[1:] {
+		v.ReleaseTypeInfo()
+	}
+}
+
 // beginRun takes the run lock and prepares p for the views of the covering
 // set, which it returns primary first. endRun must follow when it succeeds.
 func (e *DefaultEngine) beginRun(p viewPreparer) ([]*analysis.View, error) {
