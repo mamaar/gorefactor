@@ -848,6 +848,8 @@ type RenamePackageOperation struct {
 	// Sources holds every .go file of the workspace, so files excluded by the
 	// loaded build configuration are renamed and rewritten too.
 	Sources *analysis.SourceTree
+	// Views are the build configurations that type-check the importers.
+	Views []*analysis.View
 }
 
 func (op *RenamePackageOperation) Type() types.OperationType {
@@ -955,15 +957,8 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 
 	// Step 2: Update import statements in other packages (if requested)
 	if op.Request.UpdateImports {
-		importChanges, affectedFiles, err := op.generateImportUpdates(ws, dir, op.Request.NewPackageName)
-		if err != nil {
+		if err := op.addQualifierUpdates(ws, plan, dir, oldName); err != nil {
 			return nil, fmt.Errorf("failed to generate import updates: %v", err)
-		}
-		plan.Changes = append(plan.Changes, importChanges...)
-		for _, file := range affectedFiles {
-			if !contains(plan.AffectedFiles, file) {
-				plan.AffectedFiles = append(plan.AffectedFiles, file)
-			}
 		}
 	}
 
@@ -1831,85 +1826,29 @@ func calculateByteOffset(filePath string, line, column int) int {
 	return offset
 }
 
-// Helper methods for RenamePackageOperation
-
-func (op *RenamePackageOperation) generateImportUpdates(ws *types.Workspace, packagePath, newPackageName string) ([]types.Change, []string, error) {
-	var changes []types.Change
-	var affectedFiles []string
-
-	// Get the import path for this package
-	importPath := packagePathToImportPath(ws, packagePath)
-
-	// Find all files that import this package; external test files in its own
-	// directory do too.
-	for _, dir := range op.Sources.Dirs() {
-		for _, file := range op.Sources.Dir(dir) {
-			hasImport, fileChanges, err := op.generateFileImportUpdate(file, importPath, newPackageName)
+// addQualifierUpdates renames the qualified uses of the package at dir in every
+// file that imports it, the package's own external test files included.
+func (op *RenamePackageOperation) addQualifierUpdates(ws *types.Workspace, plan *types.RefactoringPlan, dir, oldName string) error {
+	importPath := packagePathToImportPath(ws, dir)
+	newName := op.Request.NewPackageName
+	if importPath == "" || oldName == newName {
+		return nil
+	}
+	renames := []pkgRename{{oldPath: importPath, oldName: oldName, newName: newName}}
+	for _, d := range op.Sources.Dirs() {
+		for _, file := range op.Sources.Dir(d) {
+			changes, skipped, err := packageQualifierEdits(op.Views, ws.FileSet, file, renames)
 			if err != nil {
-				return nil, nil, fmt.Errorf("failed to update imports in %s: %v", file.Path, err)
+				return err
 			}
-
-			if hasImport && len(fileChanges) > 0 {
-				changes = append(changes, fileChanges...)
-				affectedFiles = append(affectedFiles, file.Path)
-			}
-		}
-	}
-
-	return changes, affectedFiles, nil
-}
-
-func (op *RenamePackageOperation) generateFileImportUpdate(file *analysis.SourceFile, importPath, newPackageName string) (bool, []types.Change, error) {
-	content := string(file.Content)
-
-	// Check if this file imports the target package
-	if !strings.Contains(content, `"`+importPath+`"`) {
-		return false, nil, nil
-	}
-
-	// For files that use the old package name, we need to update qualified references
-	// This is a simplified implementation - a full implementation would parse the AST
-	lines := strings.Split(content, "\n")
-
-	// Find all qualified references to the old package name and update them
-	var changes []types.Change
-	oldPackageName := lastPathComponent(importPath) // Get default package name from import path
-
-	if oldPackageName == newPackageName {
-		// If the package name doesn't actually change (just the internal declaration), no updates needed
-		return true, nil, nil
-	}
-
-	for i, line := range lines {
-		if strings.Contains(line, oldPackageName+".") {
-			// Replace qualified references
-			newLine := strings.ReplaceAll(line, oldPackageName+".", newPackageName+".")
-			if newLine != line {
-				// Calculate byte positions
-				startByte := 0
-				for j := range i {
-					startByte += len(lines[j]) + 1
-				}
-				endByte := startByte + len(line)
-
-				change := types.Change{
-					File:        file.Path,
-					Start:       startByte,
-					End:         endByte,
-					OldText:     line,
-					NewText:     newLine,
-					Description: fmt.Sprintf("Update qualified references from %s to %s", oldPackageName, newPackageName),
-				}
-				changes = append(changes, change)
+			plan.SkippedSites = append(plan.SkippedSites, skipped...)
+			plan.Changes = append(plan.Changes, changes...)
+			if len(changes) > 0 && !contains(plan.AffectedFiles, file.Path) {
+				plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
 			}
 		}
 	}
-
-	if len(changes) > 0 {
-		return true, changes, nil
-	}
-
-	return true, nil, nil
+	return nil
 }
 
 // RenameMethodOperation renames a method of a struct or interface type. Uses

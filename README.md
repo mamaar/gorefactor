@@ -45,13 +45,13 @@ The server communicates over stdio using the MCP protocol.
 | Tool | Description |
 |------|-------------|
 | `move_symbol` | Move a function, type, constant, or variable between packages; refused when it would leave another build configuration broken |
-| `move_package` | Move an entire package to a new location |
-| `move_dir` | Move a directory of packages |
-| `move_packages` | Move multiple packages at once |
+| `move_package` | Move an entire package to a new location. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
+| `move_dir` | Move a directory of packages. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
+| `move_packages` | Move multiple packages at once. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
 | `rename_symbol` | Rename a symbol across the workspace |
 | `rename_method` | Rename a method on a type |
 | `rename_field` | Rename a struct field and update all references, including selector expressions, keyed composite literals, and promoted access through embedding |
-| `rename_package` | Rename a package |
+| `rename_package` | Rename a package. Uses of the old package name are renamed; a file that cannot be renamed safely keeps the old name as an import alias and is listed in `skipped_sites`. Aliased and dot imports are only re-pathed. |
 | `extract_function` | Extract a code block into a new function |
 | `extract_method` | Extract a code block into a new method |
 | `extract_interface` | Extract an interface from a struct's methods |

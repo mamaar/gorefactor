@@ -263,7 +263,11 @@ func (e *DefaultEngine) RenameSymbolAcrossConfigs(req types.RenameSymbolRequest)
 
 // RenamePackage implements package renaming
 func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error) {
-	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources()}
+	views, err := e.set.Views()
+	if err != nil {
+		return nil, err
+	}
+	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1075,7 +1079,11 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	req.CreateTarget = true
 	req.UpdateImports = true
 
-	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources()}
+	views, err := e.set.Views()
+	if err != nil {
+		return nil, err
+	}
+	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1099,7 +1107,11 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	// Apply sensible defaults
 	req.UpdateImports = true
 
-	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources()}
+	views, err := e.set.Views()
+	if err != nil {
+		return nil, err
+	}
+	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
@@ -1124,7 +1136,11 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	req.CreateTargets = true
 	req.UpdateImports = true
 
-	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources()}
+	views, err := e.set.Views()
+	if err != nil {
+		return nil, err
+	}
+	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
 	if err := operation.Validate(ws); err != nil {
