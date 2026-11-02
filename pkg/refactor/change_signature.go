@@ -330,16 +330,10 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 
 	resolver, idx := op.initResolver(ws)
 
-	// Parse FunctionName into typeName + methodName if dotted
-	var typeName, methodName string
-	isDotted := strings.Contains(op.FunctionName, ".")
-	if isDotted {
-		parts := strings.SplitN(op.FunctionName, ".", 2)
-		typeName, methodName = parts[0], parts[1]
-	}
+	typeName, methodName, isMethod := op.methodTarget(sourceFile)
 
 	// Determine if target is an interface method
-	isIface := isDotted && isInterfaceMethod(sourceFile, typeName, methodName)
+	isIface := isMethod && isInterfaceMethod(sourceFile, typeName, methodName)
 
 	if op.Logger != nil {
 		op.Logger.Info("processing signature change", "function", op.FunctionName, "is_interface", isIface)
@@ -379,7 +373,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	var primaryFuncDecl *ast.FuncDecl // for impact analysis
 
 	var members []*gotypes.Func
-	if isDotted {
+	if isMethod {
 		var err error
 		members, err = op.signatureMembers(ws, sourcePackage, typeName, methodName, isIface)
 		if err != nil {
@@ -625,6 +619,21 @@ func (op *ChangeSignatureOperation) Description() string {
 }
 
 // Helper methods
+
+// methodTarget returns the receiver type and name of the method op changes, which
+// is named Type.Method or by a bare name that finds a method declaration. isMethod
+// is false for a plain function.
+func (op *ChangeSignatureOperation) methodTarget(file *pkgtypes.File) (typeName, methodName string, isMethod bool) {
+	if strings.Contains(op.FunctionName, ".") {
+		parts := strings.SplitN(op.FunctionName, ".", 2)
+		return parts[0], parts[1], true
+	}
+	decl := op.findFunction(file, op.FunctionName)
+	if decl == nil || decl.Recv == nil {
+		return "", "", false
+	}
+	return receiverTypeName(decl), decl.Name.Name, true
+}
 
 func (op *ChangeSignatureOperation) findFunction(file *pkgtypes.File, funcName string) *ast.FuncDecl {
 	if file.AST == nil {

@@ -916,6 +916,9 @@ func (op *ThreadContextOperation) expandInterfaces(
 	if err := op.externalInterfaceAbort(ws, f); err != nil {
 		return nil, err
 	}
+	if err := stdMethodError("thread context through", f); err != nil {
+		return nil, err
+	}
 
 	return op.interfaceSurvey(ws).expansionOf(f), nil
 }

@@ -20,6 +20,9 @@ func (op *ChangeSignatureOperation) signatureMembers(
 	if err != nil {
 		return nil, err
 	}
+	if err := stdMethodError("change", seed); err != nil {
+		return nil, err
+	}
 	survey := surveyInterfaces(ws)
 	if !isIface && !op.PropagateToInterface {
 		if ext, ok := survey.externalInterfaceOf(seed); ok {
@@ -36,9 +39,18 @@ func (op *ChangeSignatureOperation) signatureMembers(
 		return nil, nil
 	}
 
-	return propagatedMembers(survey, seed, func(f *gotypes.Func, ext ifaceCandidate) error {
+	members, err := propagatedMembers(survey, seed, func(f *gotypes.Func, ext ifaceCandidate) error {
 		return externalInterfaceError("change", f, ext)
 	})
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range members {
+		if err := stdMethodError("change", m); err != nil {
+			return nil, err
+		}
+	}
+	return members, nil
 }
 
 // propagatedMembers returns the methods that change with seed when the change

@@ -210,6 +210,9 @@ func (r *unusedParamsRun) judge(
 	variadic := strings.HasPrefix(old[len(old)-1].Type, "...")
 	blockers := r.blockersOf(paramKey{key, i})
 	for _, t := range targets {
+		if err := stdMethodError("remove a parameter of", t); err != nil {
+			return err.Error(), false
+		}
 		for _, u := range idx.NonCallUsesOf(t) {
 			p := ws.FileSet.Position(u.Pos)
 			blockers[p.String()] = blocker{p, fmt.Sprintf("%s is used as a func value at %s", t.Name(), p)}
