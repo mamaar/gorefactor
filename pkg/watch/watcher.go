@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
 )
 
 // ChangeEvent represents a single filesystem change to a .go file.
@@ -48,7 +50,7 @@ func NewWatcher(rootPath string, debounce time.Duration, logger *slog.Logger) (*
 	return w, nil
 }
 
-// addDirs walks rootPath and adds every non-hidden, non-vendor directory.
+// addDirs walks rootPath and adds every directory the go tool does not ignore.
 func (w *Watcher) addDirs() error {
 	return filepath.WalkDir(w.rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -57,8 +59,7 @@ func (w *Watcher) addDirs() error {
 		if !d.IsDir() {
 			return nil
 		}
-		name := d.Name()
-		if strings.HasPrefix(name, ".") || name == "vendor" {
+		if analysis.InSkippedDir(w.rootPath, path) {
 			return filepath.SkipDir
 		}
 		return w.fsw.Add(path)
@@ -132,6 +133,9 @@ func (w *Watcher) accept(ev fsnotify.Event) bool {
 
 // maybeAddDir adds path to the watch set if it is a directory.
 func (w *Watcher) maybeAddDir(path string) {
+	if analysis.InSkippedDir(w.rootPath, path) {
+		return
+	}
 	// Best effort — ignore errors for non-dirs, symlinks, etc.
 	if err := w.fsw.Add(path); err != nil {
 		w.logger.Debug("could not add to watch", "path", path, "err", err)

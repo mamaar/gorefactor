@@ -204,3 +204,33 @@ func assertContainsPath(t *testing.T, batch []ChangeEvent, path string) {
 	}
 	t.Fatalf("batch does not contain %s; got %v", path, batch)
 }
+
+func TestWatcher_CreatedTestdataDirNotWatched(t *testing.T) {
+	dir := t.TempDir()
+	writeGoFile(t, dir, "init.go", "package p\n")
+
+	w, err := NewWatcher(dir, 50*time.Millisecond, testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = w.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	out := make(chan []ChangeEvent, 10)
+	go func() { _ = w.Run(ctx, out) }()
+
+	td := filepath.Join(dir, "testdata")
+	if err := os.Mkdir(td, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	writeGoFile(t, td, "x.go", "package x\n")
+
+	select {
+	case batch := <-out:
+		t.Fatalf("expected no events from testdata, got %d", len(batch))
+	case <-ctx.Done():
+	}
+}

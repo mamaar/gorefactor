@@ -1929,3 +1929,39 @@ func TestParser_InvalidateTypeCheck_CycleIntroducedAfterLoadIsReported(t *testin
 	assertCycleReported(t, pkgA, "FA", "example.com/w/a", "example.com/w/b")
 	assertCycleReported(t, pkgB, "FB", "example.com/w/a", "example.com/w/b")
 }
+
+func TestParseWorkspace_SkipsTestdataAndUnderscoreDirs(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"a/a.go":            "package a\n",
+		"a/testdata/x/x.go": "package x\n",
+		"_skip/y/y.go":      "package y\n",
+		"b/_gen/z.go":       "package z\n",
+		"testdata/top/t.go": "package top\n",
+	})
+	_, ws, err := parseWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for path := range ws.Packages {
+		rel, _ := filepath.Rel(root, path)
+		got = append(got, rel)
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"a"}) {
+		t.Errorf("packages = %v, want [a]", got)
+	}
+}
+
+func TestInSkippedDir_RootIsExempt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "testdata", "_root")
+	if InSkippedDir(root, root) {
+		t.Error("root itself must not be skipped")
+	}
+	if !InSkippedDir(root, filepath.Join(root, "a", "testdata")) {
+		t.Error("testdata below root must be skipped")
+	}
+	if InSkippedDir(root, filepath.Join(root, "a", "b")) {
+		t.Error("plain dir must not be skipped")
+	}
+}

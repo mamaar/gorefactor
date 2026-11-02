@@ -257,6 +257,9 @@ func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 	}
 	defer s.invalidateCovering()
 	path = absDir(path)
+	if InSkippedDir(s.root, filepath.Dir(path)) {
+		return nil, nil
+	}
 	if _, err := os.Stat(path); err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err

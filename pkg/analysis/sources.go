@@ -184,10 +184,10 @@ func (t *SourceTree) readFile(dir, name string) *SourceFile {
 	return f
 }
 
-// Load walks root, skipping dot-directories and vendor, and loads every
+// Load walks root, skipping directories the go tool ignores (see InSkippedDir), and loads every
 // directory it finds in parallel.
 func (t *SourceTree) Load(root string) error {
-	w := &treeWalker{}
+	w := &treeWalker{root: root}
 	if err := filepath.WalkDir(root, w.visit); err != nil {
 		return err
 	}
@@ -206,7 +206,10 @@ func (t *SourceTree) Load(root string) error {
 	return l.err
 }
 
-type treeWalker struct{ dirs []string }
+type treeWalker struct {
+	root string
+	dirs []string
+}
 
 func (w *treeWalker) visit(path string, d fs.DirEntry, err error) error {
 	if err != nil {
@@ -215,11 +218,30 @@ func (w *treeWalker) visit(path string, d fs.DirEntry, err error) error {
 	if !d.IsDir() {
 		return nil
 	}
-	if name := d.Name(); strings.HasPrefix(name, ".") || name == "vendor" {
+	if InSkippedDir(w.root, path) {
 		return filepath.SkipDir
 	}
 	w.dirs = append(w.dirs, path)
 	return nil
+}
+
+// InSkippedDir reports whether dir, below root, is or sits inside a directory
+// the go tool ignores: vendor, testdata, or a name starting with "." or "_".
+// The root itself is never skipped.
+func InSkippedDir(root, dir string) bool {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." {
+		return false
+	}
+	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+		if name == ".." {
+			return false
+		}
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "vendor" || name == "testdata" {
+			return true
+		}
+	}
+	return false
 }
 
 type treeLoader struct {
