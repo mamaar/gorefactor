@@ -615,7 +615,7 @@ func (op *SafeDeleteOperation) analyzeImpact(ws *pkgtypes.Workspace, symbol *pkg
 	if forced {
 		issues = append(issues, pkgtypes.Issue{
 			Type:        pkgtypes.IssueCompilationError,
-			Severity:    pkgtypes.Error,
+			Severity:    pkgtypes.Warning,
 			Description: "Forced deletion will remove references, likely causing compilation errors",
 		})
 	}

@@ -53,11 +53,6 @@ func (p *safeDeletePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) 
 	blocking = outsideFiles(blocking, v.ExcludedTestFiles())
 
 	plan := op.removalPlan(ws, targets, blocking)
-	impact, err := v.Analyzer.AnalyzeImpact(op)
-	if err != nil {
-		return configResult{}, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-	plan.Impact = impact
 	plan.Operations = []types.Operation{op}
 
 	res := configResult{

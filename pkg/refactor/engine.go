@@ -65,7 +65,6 @@ type RefactorEngine interface {
 	BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error)
 
 	// Analysis
-	AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error)
 	ValidateRefactoring(plan *types.RefactoringPlan) error
 	EnsureTypeChecked(ws *types.Workspace)
 	EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath string)
@@ -139,13 +138,6 @@ func (e *DefaultEngine) viewOf(ws *types.Workspace) *analysis.View {
 func (e *DefaultEngine) parserFor(ws *types.Workspace) *analysis.GoParser {
 	if v := e.viewOf(ws); v != nil {
 		return v.Parser
-	}
-	return nil
-}
-
-func (e *DefaultEngine) analyzerFor(ws *types.Workspace) *analysis.DependencyAnalyzer {
-	if v := e.viewOf(ws); v != nil {
-		return v.Analyzer
 	}
 	return nil
 }
@@ -224,13 +216,6 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 		return nil, fmt.Errorf("failed to generate move plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -262,13 +247,6 @@ func (e *DefaultEngine) RenameSymbol(ws *types.Workspace, req types.RenameSymbol
 		return nil, fmt.Errorf("failed to generate rename plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -298,13 +276,6 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 	}
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -329,13 +300,6 @@ func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethod
 		return nil, fmt.Errorf("failed to generate rename method plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -375,13 +339,6 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 		return nil, fmt.Errorf("failed to generate rename field plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -407,7 +364,7 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 	if req.EntryPackage != "" || len(req.CallSitesOf) > 0 {
 		return nil, fmt.Errorf("entry_package and call_sites_of need every build configuration; use ThreadContextAcrossConfigs")
 	}
-	plan, _, err := e.threadContext(ws, e.parserFor(ws), e.analyzerFor(ws), nil, req, nil, stop, nil)
+	plan, _, err := e.threadContext(ws, e.parserFor(ws), nil, req, nil, stop, nil)
 	return plan, err
 }
 
@@ -536,7 +493,7 @@ type threadContextPlanner struct {
 }
 
 func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
-	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, v.Analyzer, p.indexOf(v), p.req, linked, p.stop, p.reach)
+	plan, op, err := p.engine.threadContext(v.Workspace, v.Parser, p.indexOf(v), p.req, linked, p.stop, p.reach)
 	if err != nil && !isSymbolNotFound(err) {
 		return configResult{}, err
 	}
@@ -557,14 +514,13 @@ func (e *DefaultEngine) AddContextParameterAcrossConfigs(req types.AddContextPar
 	return e.planAcrossConfigs(&addContextParameterPlanner{engine: e, req: req})
 }
 
-// threadContext plans context threading in ws with the parser and analyzer of
-// the view that owns it, seeding the functions linked names next to the
+// threadContext plans context threading in ws with the parser of the view
+// that owns it, seeding the functions linked names next to the
 // request's seed. A nil idx makes the operation build its own reference index.
 // It also returns the operation the plan was built by.
 func (e *DefaultEngine) threadContext(
 	ws *types.Workspace,
 	parser *analysis.GoParser,
-	analyzer *analysis.DependencyAnalyzer,
 	idx *analysis.ReferenceIndex,
 	req types.ThreadContextRequest,
 	linked types.SymbolKeySet,
@@ -613,13 +569,6 @@ func (e *DefaultEngine) threadContext(
 		return nil, nil, fmt.Errorf("failed to generate thread context plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := analyzer.AnalyzeImpact(operation)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, operation, nil
@@ -654,13 +603,6 @@ func (e *DefaultEngine) ExtractMethod(ws *types.Workspace, req types.ExtractMeth
 		return nil, fmt.Errorf("failed to generate extract method plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -696,13 +638,6 @@ func (e *DefaultEngine) ExtractFunction(ws *types.Workspace, req types.ExtractFu
 		return nil, fmt.Errorf("failed to generate extract function plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -728,13 +663,6 @@ func (e *DefaultEngine) ExtractInterface(ws *types.Workspace, req types.ExtractI
 		return nil, fmt.Errorf("failed to generate extract interface plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -761,13 +689,6 @@ func (e *DefaultEngine) ExtractVariable(ws *types.Workspace, req types.ExtractVa
 		return nil, fmt.Errorf("failed to generate extract variable plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -792,13 +713,6 @@ func (e *DefaultEngine) InlineMethod(ws *types.Workspace, req types.InlineMethod
 		return nil, fmt.Errorf("failed to generate inline method plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -834,13 +748,6 @@ func (e *DefaultEngine) InlineVariable(ws *types.Workspace, req types.InlineVari
 		return nil, fmt.Errorf("failed to generate inline variable plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -865,13 +772,6 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 		return nil, fmt.Errorf("failed to generate inline function plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -926,12 +826,6 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 		return nil, fmt.Errorf("failed to generate safe delete plan: %w", err)
 	}
 
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -950,12 +844,6 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 		return nil, fmt.Errorf("failed to generate change signature plan: %w", err)
 	}
 
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -967,16 +855,6 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 // configuration that declares it.
 func (e *DefaultEngine) ChangeSignatureAcrossConfigs(req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
 	return e.planAcrossConfigs(&changeSignaturePlanner{engine: e, req: req})
-}
-
-// AnalyzeImpact analyzes the impact of a refactoring operation
-func (e *DefaultEngine) AnalyzeImpact(ws *types.Workspace, op types.Operation) (*types.ImpactAnalysis, error) {
-	analyzer := e.analyzerFor(ws)
-	if analyzer == nil {
-		return nil, fmt.Errorf("workspace not loaded")
-	}
-
-	return analyzer.AnalyzeImpact(op)
 }
 
 // ValidateRefactoring validates a complete refactoring plan
@@ -1187,13 +1065,6 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	}
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1218,13 +1089,6 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	}
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1250,13 +1114,6 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	}
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1277,13 +1134,6 @@ func (e *DefaultEngine) CreateFacade(ws *types.Workspace, req types.CreateFacade
 		return nil, fmt.Errorf("failed to generate create facade plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1304,13 +1154,6 @@ func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateF
 		return nil, fmt.Errorf("failed to generate facades plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1331,13 +1174,6 @@ func (e *DefaultEngine) UpdateFacades(ws *types.Workspace, req types.UpdateFacad
 		return nil, fmt.Errorf("failed to generate update facades plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1358,13 +1194,6 @@ func (e *DefaultEngine) CleanAliases(ws *types.Workspace, req types.CleanAliases
 		return nil, fmt.Errorf("failed to generate clean aliases plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1386,13 +1215,6 @@ func (e *DefaultEngine) StandardizeImports(ws *types.Workspace, req types.Standa
 		return nil, fmt.Errorf("failed to generate standardize imports plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1413,13 +1235,6 @@ func (e *DefaultEngine) ResolveAliasConflicts(ws *types.Workspace, req types.Res
 		return nil, fmt.Errorf("failed to generate resolve alias conflicts plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1440,13 +1255,6 @@ func (e *DefaultEngine) ConvertAliases(ws *types.Workspace, req types.ConvertAli
 		return nil, fmt.Errorf("failed to generate convert aliases plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil
@@ -1497,13 +1305,6 @@ func (e *DefaultEngine) OrganizeByLayers(ws *types.Workspace, req types.Organize
 		return nil, fmt.Errorf("failed to generate organize by layers plan: %w", err)
 	}
 
-	// Analyze impact
-	impact, err := e.analyzerFor(ws).AnalyzeImpact(operation)
-	if err != nil {
-		return nil, fmt.Errorf("failed to analyze impact: %w", err)
-	}
-
-	plan.Impact = impact
 	plan.Operations = []types.Operation{operation}
 
 	return plan, nil

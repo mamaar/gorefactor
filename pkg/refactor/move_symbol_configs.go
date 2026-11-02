@@ -65,9 +65,6 @@ func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) 
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate move plan: %w", err)
 	}
-	if plan.Impact, err = v.Analyzer.AnalyzeImpact(op); err != nil {
-		return configResult{}, fmt.Errorf("failed to analyze impact: %w", err)
-	}
 	plan.Operations = []types.Operation{op}
 
 	p.moved = make(map[types.SymbolKey]string, len(op.moved))

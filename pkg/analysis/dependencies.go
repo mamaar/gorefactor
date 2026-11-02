@@ -45,20 +45,6 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, er
 	return graph, nil
 }
 
-// AnalyzeImpact analyzes impact of a potential change
-func (da *DependencyAnalyzer) AnalyzeImpact(op types.Operation) (*types.ImpactAnalysis, error) {
-	// For now, return a basic impact analysis for all operations
-	// TODO: Implement operation-specific impact analysis
-	impact := &types.ImpactAnalysis{
-		AffectedPackages: make([]string, 0),
-		AffectedFiles:    make([]string, 0),
-		AffectedSymbols:  make([]*types.Symbol, 0),
-		PotentialIssues:  make([]types.Issue, 0),
-		ImportChanges:    make([]types.ImportChange, 0),
-	}
-	return impact, nil
-}
-
 // DetectCycles detects import cycles in package graph
 func (da *DependencyAnalyzer) DetectCycles() ([][]string, error) {
 	if da.workspace.Dependencies == nil {
