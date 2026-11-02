@@ -279,7 +279,8 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 			newName:       newName,
 			// Only rename when the directory's base name changed AND is a
 			// legal Go identifier; otherwise keep the original package name.
-			renamed: newName != oldName && isValidGoIdentifier(newName),
+			// A main package keeps its name, so its external tests keep main.X.
+			renamed: newName != oldName && oldName != "main" && isValidGoIdentifier(newName),
 		}
 		rewrites = append(rewrites, rw)
 		rewriteByDir[m.source] = rw

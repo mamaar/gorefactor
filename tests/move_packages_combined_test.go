@@ -148,3 +148,38 @@ func TestMovePackagesViaMCPWithoutTargetDir(t *testing.T) {
 	assertFileContains(t, dir, "use/use.go", `"scratch/lib/fresh"`)
 	assertFileContains(t, dir, "use/use.go", "fresh.Foo()")
 }
+
+func TestMovePackageOfMainKeepsQualifierInExternalTest(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"cmd/a/main.go":      "package main\n\nfunc Foo() string { return \"\" }\n\nfunc main() { _ = Foo() }\n",
+		"cmd/a/main_test.go": "package main_test\n\nimport (\n\t\"testing\"\n\n\t\"scratch/cmd/a\"\n)\n\nfunc TestFoo(t *testing.T) { _ = main.Foo() }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "cmd/a", TargetPackage: "cmd/b"})
+	if err != nil {
+		t.Fatalf("MovePackage: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "cmd/b/main_test.go", "main.Foo()")
+	vetAs(t, dir, "linux")
+}
+
+func TestMovePackageRepathsImporterThatAlreadyDidNotParse(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"old/old.go": oldPkgSource,
+		"use/use.go": "package use\n\nimport \"scratch/old\"\n\nfunc U() string { return old.Foo( }\n",
+	})
+	eng := createEngine(t)
+	ws := loadWorkspace(t, eng, dir)
+	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "old", TargetPackage: "lib/old"})
+	if err != nil {
+		t.Fatalf("MovePackage: %v", err)
+	}
+	if err := eng.ExecutePlan(plan); err != nil {
+		t.Fatalf("ExecutePlan: %v", err)
+	}
+	assertFileContains(t, dir, "use/use.go", `"scratch/lib/old"`)
+}
