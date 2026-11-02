@@ -60,7 +60,6 @@ func (e *DefaultEngine) UnusedParamsAcrossConfigs(req UnusedParamsRequest) (*Unu
 		detectRun:  newDetectRun(req.Packages),
 		decls:      make(map[declSite]*unusedParamDecl),
 		declaredIn: make(map[declSite][]string),
-		signatures: make(map[declKey]map[string]bool),
 		calls:      make(map[declKey]map[token.Pos]bool),
 		blockers:   make(map[paramKey]map[string]blocker),
 		readBy:     make(map[paramKey][]declSite),
@@ -97,6 +96,7 @@ type unusedParam struct {
 type unusedParamDecl struct {
 	UnusedParamFinding
 	key    declKey
+	shape  string
 	params map[int]*unusedParam
 }
 
@@ -104,8 +104,6 @@ type unusedParamDecl struct {
 type unusedParamsRun struct {
 	detectRun
 	decls map[declSite]*unusedParamDecl
-	// signatures holds the signatures each function is declared with.
-	signatures map[declKey]map[string]bool
 	// declaredIn names the configurations declaring each candidate.
 	declaredIn map[declSite][]string
 	// calls is keyed by Lparen, which every link of a method chain shares.
@@ -129,7 +127,7 @@ func (r *unusedParamsRun) visit(v *analysis.View) error {
 	}
 	ws := v.Workspace
 	decls := buildFuncDeclIndex(ws)
-	var survey *ifaceSurvey
+	survey := surveyInterfaces(ws)
 	for fn, decl := range decls {
 		if decl.Decl == nil || decl.Decl.Body == nil || decl.File.Generated || !r.wanted(decl.Pkg) {
 			continue
@@ -141,10 +139,7 @@ func (r *unusedParamsRun) visit(v *analysis.View) error {
 		key := declKey{symbol, fn.Pkg().Name()}
 		site := declSite{decl.File.Path, fn.Pos()}
 		r.declaredIn[site] = append(r.declaredIn[site], v.Config.String())
-		if r.signatures[key] == nil {
-			r.signatures[key] = make(map[string]bool)
-		}
-		r.signatures[key][funcSignature(fn)] = true
+		r.recordSignature(key, declShape(decl))
 		old := (&ChangeSignatureOperation{}).extractParamList(decl.Decl.Type.Params)
 		found := false
 		for i := range old {
@@ -160,14 +155,7 @@ func (r *unusedParamsRun) visit(v *analysis.View) error {
 					continue
 				}
 			}
-			var methodSurvey *ifaceSurvey
-			if fn.Signature().Recv() != nil {
-				if survey == nil {
-					survey = surveyInterfaces(ws)
-				}
-				methodSurvey = survey
-			}
-			reason, propagate := r.judge(ws, idx, decls, methodSurvey, fn, key, old, i)
+			reason, propagate := r.judge(ws, idx, decls, survey, fn, key, old, i)
 			r.add(v, fn, decl, key, i, name, reason, propagate)
 			found = true
 		}
@@ -203,7 +191,7 @@ func (r *unusedParamsRun) judge(
 		return err.Error(), false
 	}
 	targets := []*gotypes.Func{fn}
-	if survey != nil {
+	if fn.Signature().Recv() != nil {
 		members, err := propagatedMembers(survey, fn, func(f *gotypes.Func, ext ifaceCandidate) error {
 			return fmt.Errorf("%s implements %s, which is declared outside the workspace and cannot be changed", funcLabel(f), ext.label())
 		})
@@ -274,7 +262,7 @@ func (r *unusedParamsRun) add(v *analysis.View, fn *gotypes.Func, decl *funcDecl
 	d := r.decls[site]
 	if d == nil {
 		pos := v.Workspace.FileSet.Position(fn.Pos())
-		d = &unusedParamDecl{key: key, params: make(map[int]*unusedParam)}
+		d = &unusedParamDecl{key: key, shape: declShape(decl), params: make(map[int]*unusedParam)}
 		d.Function, d.Signature = key.displayName(), funcSignature(fn)
 		d.File, d.Line, d.Column = decl.File.Path, pos.Line, pos.Column
 		r.decls[site] = d
@@ -320,21 +308,6 @@ func (r *unusedParamsRun) report(views []*analysis.View) *UnusedParamsReport {
 	return out
 }
 
-// otherSignature returns a signature d's function is declared with under
-// another configuration that differs from d's, or "".
-func (r *unusedParamsRun) otherSignature(d *unusedParamDecl) string {
-	var others []string
-	for sig := range r.signatures[d.key] {
-		if sig != d.Signature {
-			others = append(others, sig)
-		}
-	}
-	if len(others) == 0 {
-		return ""
-	}
-	return slices.Min(others)
-}
-
 // reasonFor returns why remove_param refuses the parameter, or "": the
 // refusal of the declaration itself first, then a variant of the function that
 // differs in signature or reads the parameter, then the first refused site by
@@ -343,9 +316,8 @@ func (r *unusedParamsRun) reasonFor(pk paramKey, site declSite, d *unusedParamDe
 	if p.reason != "" {
 		return p.reason
 	}
-	if other := r.otherSignature(d); other != "" {
-		return fmt.Sprintf("%s in %s has signature %s, which differs from %s, the signature it is changed from under another build configuration; make the declarations agree first",
-			d.Function, d.File, other, d.Signature)
+	if reason := r.signatureRefusal(d.key, d.Function, d.File, d.shape); reason != "" {
+		return reason
 	}
 	if slices.ContainsFunc(r.readBy[pk], func(s declSite) bool { return s != site }) {
 		return "another build configuration's declaration of the function reads the parameter"

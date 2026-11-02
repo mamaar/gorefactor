@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"cmp"
+	"fmt"
 	"maps"
 	"slices"
 
@@ -28,10 +29,46 @@ type detectRun struct {
 	// paths or directories; empty keeps every package.
 	packages   []string
 	typeErrors map[string]analysis.ProductionError
+	// signatures holds the signatures each function is declared with.
+	signatures map[declKey]map[string]bool
 }
 
 func newDetectRun(packages []string) detectRun {
-	return detectRun{packages: packages, typeErrors: make(map[string]analysis.ProductionError)}
+	return detectRun{
+		packages:   packages,
+		typeErrors: make(map[string]analysis.ProductionError),
+		signatures: make(map[declKey]map[string]bool),
+	}
+}
+
+// recordSignature notes a signature the function key is declared with.
+func (r *detectRun) recordSignature(key declKey, sig string) {
+	if r.signatures[key] == nil {
+		r.signatures[key] = make(map[string]bool)
+	}
+	r.signatures[key][sig] = true
+}
+
+// declShape is the signature a declaration is compared by under change_signature:
+// its parameter names and types and its result types.
+func declShape(decl *funcDecl) string {
+	return signatureOf(decl.Decl.Type).String()
+}
+
+// signatureRefusal returns why the declaration of function in file, with shape
+// sig, is refused: another configuration declares it with a different shape.
+func (r *detectRun) signatureRefusal(key declKey, function, file, sig string) string {
+	var others []string
+	for other := range r.signatures[key] {
+		if other != sig {
+			others = append(others, other)
+		}
+	}
+	if len(others) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s in %s has signature %s, which differs from %s, the signature it is changed from under another build configuration; make the declarations agree first",
+		function, file, sig, slices.Min(others))
 }
 
 func (r *detectRun) wanted(pkg *types.Package) bool {
