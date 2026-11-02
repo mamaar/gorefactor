@@ -811,6 +811,50 @@ func TestApplyChanges_ApplyFailureWritesNothing(t *testing.T) {
 	requireContent(t, z, "package p\n")
 }
 
+func TestApplyChanges_RefusesResultThatDoesNotParse(t *testing.T) {
+	dir := t.TempDir()
+	a := writeFixture(t, dir, "a.go", "package p\n")
+	z := writeFixture(t, dir, "z.go", "package p\n")
+
+	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+		{File: a, Start: 9, End: 9, NewText: "\nfunc {", Description: "Replace text"},
+		replaceXChange(z),
+	})
+	if err == nil || !strings.Contains(err.Error(), a) {
+		t.Fatalf("expected an error naming %s, got: %v", a, err)
+	}
+	requireContent(t, a, "package p\n")
+	requireContent(t, z, "package p\n")
+}
+
+func TestApplyChanges_RefusesNewFileThatDoesNotParse(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.go")
+
+	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+		{File: path, NewText: "package p\n\nfunc {\n", Description: "Create file"},
+	})
+	if err == nil {
+		t.Fatal("expected the plan to fail")
+	}
+	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+		t.Errorf("%s was written", path)
+	}
+}
+
+func TestApplyChanges_WritesEditToFileThatAlreadyDidNotParse(t *testing.T) {
+	broken := "package p\n\nimport \"old/path\"\n\nfunc {\n"
+	path := writeFixture(t, t.TempDir(), "broken.go", broken)
+	start := strings.Index(broken, "old/path")
+
+	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+		{File: path, Start: start, End: start + len("old/path"), OldText: "old/path", NewText: "new/path", Description: "Update import path"},
+	})
+	if err != nil {
+		t.Fatalf("ApplyChanges: %v", err)
+	}
+	requireContent(t, path, strings.Replace(broken, "old/path", "new/path", 1))
+}
+
 func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores directory permissions")
