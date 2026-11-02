@@ -102,9 +102,6 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate inline function plan: %w", err)
 	}
-	if plan.Impact, err = v.Analyzer.AnalyzeImpact(op); err != nil {
-		return configResult{}, fmt.Errorf("failed to analyze impact: %w", err)
-	}
 
 	p.record(v, sym.File, impl)
 	op.dropAnalysis()
@@ -176,9 +173,6 @@ func (p *inlineMethodPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (co
 	plan, err := op.Execute(ws)
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate inline method plan: %w", err)
-	}
-	if plan.Impact, err = v.Analyzer.AnalyzeImpact(op); err != nil {
-		return configResult{}, fmt.Errorf("failed to analyze impact: %w", err)
 	}
 
 	sym, _ := op.methodSymbol(ws)

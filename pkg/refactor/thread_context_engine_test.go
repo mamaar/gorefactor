@@ -154,9 +154,6 @@ func main() { target() }
 	if len(plan.Changes) == 0 {
 		t.Fatalf("expected changes")
 	}
-	if plan.Impact == nil {
-		t.Fatalf("expected plan.Impact to be set from AnalyzeImpact")
-	}
 	if len(plan.Operations) != 1 {
 		t.Fatalf("expected exactly one operation on the plan, got %d", len(plan.Operations))
 	}
