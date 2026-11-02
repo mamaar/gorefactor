@@ -336,6 +336,25 @@ type UnusedParamItem struct {
 	Reason    string   `json:"reason,omitempty"`
 }
 
+// --- detect_always_nil_errors ---
+
+type DetectAlwaysNilErrorsInput struct {
+	Package string `json:"package,omitempty" jsonschema:"list only the declarations of this package; calls are still counted across the workspace"`
+}
+
+type AlwaysNilErrorItem struct {
+	Function  string   `json:"function"`
+	Signature string   `json:"signature"`
+	File      string   `json:"file"`
+	Line      int      `json:"line"`
+	Column    int      `json:"column"`
+	Configs   []string `json:"configs,omitempty"`
+	CallSites int      `json:"call_sites"`
+	Fixable   bool     `json:"fixable"`
+	Propagate bool     `json:"propagate,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+}
+
 // --- detect_nil_receiver_checks ---
 
 type DetectNilReceiverChecksInput struct {
@@ -879,6 +898,50 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		out := map[string]any{
 			"unused_params": items,
 			"total_count":   len(items),
+		}
+		addDetectHeader(out, ws, report.DetectHeader)
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "detect_always_nil_errors",
+		Description: "Detect functions and methods whose last result is error and whose every return returns nil, to find error results that are never set, left by refactors. Each finding names the function, its file and line, and its call_sites. " +
+			"fixable says whether change_signature remove_return would accept removing the error result, using the same checks, including the type check and the generated-file check on the finished plan: it is false, with a reason, when the function is used as a func value, when a call uses its results in an expression (a return value, argument or operand) or reads the error variable other than in a nil check that remove_return can fold, when a method satisfies an interface declared outside the workspace, when a method it satisfies in the workspace has an implementation that does not always return nil, or when it is a go test entry point or generic. A method that satisfies workspace interfaces whose implementations all return nil is fixable with propagate set: pass propagate to change_signature. " +
+			"A return with no results, a bare return and a return forwarding another call's results do not count, so such a function is not listed, and a func literal's returns do not count toward its enclosing function. A function with no return statement is not listed. " +
+			"A function with a named error result that its body mentions, closures included, is not listed. A function declared in several build configurations is listed only when every configuration declaring it always returns nil. Calls come from the whole workspace including test files, merged across build configurations; package limits only which declarations are listed. Calls from outside the workspace are not visible, so an exported function can return nil here and still be called by external code that reads its error. " +
+			"Interface methods, functions without a body and declarations in generated files are not listed. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error under some configuration in type_error_files: calls in them may be missing. configs names the configurations declaring a finding, omitted when all do.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectAlwaysNilErrorsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+		request := refactor.AlwaysNilErrorsRequest{Packages: packageFilter(ws, in.Package)}
+		report, err := state.GetEngine().AlwaysNilErrorsAcrossConfigs(request)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := make([]AlwaysNilErrorItem, len(report.Findings))
+		for i, f := range report.Findings {
+			items[i] = AlwaysNilErrorItem{
+				Function:  f.Function,
+				Signature: f.Signature,
+				File:      relativeTo(ws.RootPath, f.File),
+				Line:      f.Line,
+				Column:    f.Column,
+				Configs:   f.Configs,
+				CallSites: f.CallSites,
+				Fixable:   f.Fixable,
+				Propagate: f.Propagate,
+				Reason:    strings.ReplaceAll(f.Reason, ws.RootPath+string(filepath.Separator), ""),
+			}
+		}
+		out := map[string]any{
+			"always_nil_errors": items,
+			"total_count":       len(items),
 		}
 		addDetectHeader(out, ws, report.DetectHeader)
 		return textResult(out), nil, nil

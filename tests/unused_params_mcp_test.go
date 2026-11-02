@@ -503,3 +503,35 @@ func TestUnusedParams_FunctionWithoutABodyIsNotListed(t *testing.T) {
 	}
 	wantFixable(t, findParam(t, out, "Real", "x"))
 }
+
+func TestUnusedParams_ResultNamesDoNotSplitConfigurations(t *testing.T) {
+	out := callUnusedParams(t, nil, map[string]string{
+		"a/sys_linux.go":  "package a\n\nfunc Sys(x int) (n int) { return 0 }\n",
+		"a/sys_darwin.go": "package a\n\nfunc Sys(x int) int { return 0 }\n",
+	})
+
+	if len(out.Params) != 2 {
+		t.Fatalf("got %+v, want x under both configurations", out.Params)
+	}
+	for _, p := range out.Params {
+		wantFixable(t, p)
+	}
+}
+
+func TestUnusedParams_MismatchNamesTheCurrentFileSignatureFirst(t *testing.T) {
+	out := callUnusedParams(t, nil, map[string]string{
+		"a/sys_linux.go":  "package a\n\nfunc Sys(x int) {}\n",
+		"a/sys_darwin.go": "package a\n\nfunc Sys(y int) {}\n",
+	})
+
+	if len(out.Params) != 2 {
+		t.Fatalf("got %+v, want x and y", out.Params)
+	}
+	for _, p := range out.Params {
+		want := "in a/sys_linux.go has signature (x int), which differs from (y int)"
+		if p.File == "a/sys_darwin.go" {
+			want = "in a/sys_darwin.go has signature (y int), which differs from (x int)"
+		}
+		wantRefused(t, p, want)
+	}
+}
