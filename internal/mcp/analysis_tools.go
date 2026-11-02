@@ -260,6 +260,34 @@ type MissingContextViolationItem struct {
 	ContextCalls []string `json:"context_calls"`
 }
 
+// packageFilter returns the names a declaration's package may go by when the
+// caller limits a detector to pkg, or nil for no limit. The joined path covers
+// a directory only another configuration holds a package in.
+func packageFilter(ws *types.Workspace, pkg string) []string {
+	if pkg == "" {
+		return nil
+	}
+	return []string{pkg, types.ResolvePackagePath(ws, pkg), filepath.Join(ws.RootPath, pkg)}
+}
+
+// addDetectHeader adds what a declaration detector reports about the build
+// configurations it ran under to out.
+func addDetectHeader(out map[string]any, ws *types.Workspace, h refactor.DetectHeader) {
+	if len(h.Configs) > 1 {
+		out["build_configs"] = h.Configs
+	}
+	if len(h.Unchecked) > 0 {
+		out["uncovered_files"] = uncheckedFileInfos(h.Unchecked, ws.RootPath)
+	}
+	if len(h.TypeErrors) > 0 {
+		typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
+		for i, e := range h.TypeErrors {
+			typeErrors[i] = TypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
+		}
+		out["type_error_files"] = typeErrors
+	}
+}
+
 // --- detect_variadics ---
 
 type DetectVariadicsInput struct {
@@ -281,9 +309,31 @@ type VariadicItem struct {
 	ValueUses int      `json:"value_uses"`
 }
 
-type VariadicTypeErrorItem struct {
+type TypeErrorItem struct {
 	File  string `json:"file"`
 	Error string `json:"error"`
+}
+
+// --- detect_unused_params ---
+
+type DetectUnusedParamsInput struct {
+	Package string `json:"package,omitempty" jsonschema:"list only the declarations of this package; calls are still counted across the workspace"`
+}
+
+type UnusedParamItem struct {
+	Function  string   `json:"function"`
+	Signature string   `json:"signature"`
+	Param     string   `json:"param"`
+	Index     int      `json:"index"`
+	Blank     bool     `json:"blank,omitempty"`
+	File      string   `json:"file"`
+	Line      int      `json:"line"`
+	Column    int      `json:"column"`
+	Configs   []string `json:"configs,omitempty"`
+	CallSites int      `json:"call_sites"`
+	Fixable   bool     `json:"fixable"`
+	Propagate bool     `json:"propagate,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 // --- detect_nil_receiver_checks ---
@@ -757,11 +807,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
-		request := refactor.VariadicsRequest{}
-		if in.Package != "" {
-			// The joined path covers a directory only another configuration holds a package in.
-			request.Packages = []string{in.Package, types.ResolvePackagePath(ws, in.Package), filepath.Join(ws.RootPath, in.Package)}
-		}
+		request := refactor.VariadicsRequest{Packages: packageFilter(ws, in.Package)}
 		report, err := state.GetEngine().VariadicsAcrossConfigs(request)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -788,19 +834,53 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"variadics":   items,
 			"total_count": len(items),
 		}
-		if len(report.Configs) > 1 {
-			out["build_configs"] = report.Configs
+		addDetectHeader(out, ws, report.DetectHeader)
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "detect_unused_params",
+		Description: "Detect function and method parameters that no body reads, to find dead parameters left by refactors. Each finding names the function, the parameter and its index, and its call_sites. Unnamed parameters and parameters named _ are listed with blank. " +
+			"fixable says whether change_signature remove_param would accept removing it, using the same checks: it is false, with a reason, when the function is used as a func value, when a call passes an argument that contains a call or a channel receive, a multi-value call or a method expression, when removal is ambiguous (identical unnamed parameters), when the method satisfies an interface declared outside the workspace, or when it satisfies a workspace interface and an implementation reads the parameter. A method that satisfies workspace interfaces whose implementations all leave the parameter unused is fixable with propagate set: pass propagate to change_signature. " +
+			"A parameter counts as unused when no body reads it under any build configuration; a variant of the function in another configuration that reads it makes the finding not fixable. Calls come from the whole workspace including test files, merged across build configurations; package limits only which declarations are listed. Calls from outside the workspace are not visible, so a parameter of an exported function can be unused here and still be passed by external callers, and removing it breaks them. " +
+			"Interface methods, functions without a body, func literals and declarations in generated files are not listed. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error under some configuration in type_error_files: calls in them may be missing. configs names the configurations declaring a finding, omitted when all do.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DetectUnusedParamsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
 		}
-		if len(report.Unchecked) > 0 {
-			out["uncovered_files"] = uncheckedFileInfos(report.Unchecked, ws.RootPath)
+		request := refactor.UnusedParamsRequest{Packages: packageFilter(ws, in.Package)}
+		report, err := state.GetEngine().UnusedParamsAcrossConfigs(request)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
-		if len(report.TypeErrors) > 0 {
-			typeErrors := make([]VariadicTypeErrorItem, len(report.TypeErrors))
-			for i, e := range report.TypeErrors {
-				typeErrors[i] = VariadicTypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
+
+		items := make([]UnusedParamItem, len(report.Findings))
+		for i, f := range report.Findings {
+			items[i] = UnusedParamItem{
+				Function:  f.Function,
+				Signature: f.Signature,
+				Param:     f.Param,
+				Index:     f.Index,
+				Blank:     f.Blank,
+				File:      relativeTo(ws.RootPath, f.File),
+				Line:      f.Line,
+				Column:    f.Column,
+				Configs:   f.Configs,
+				CallSites: f.CallSites,
+				Fixable:   f.Fixable,
+				Propagate: f.Propagate,
+				Reason:    strings.ReplaceAll(f.Reason, ws.RootPath+string(filepath.Separator), ""),
 			}
-			out["type_error_files"] = typeErrors
 		}
+		out := map[string]any{
+			"unused_params": items,
+			"total_count":   len(items),
+		}
+		addDetectHeader(out, ws, report.DetectHeader)
 		return textResult(out), nil, nil
 	})
 

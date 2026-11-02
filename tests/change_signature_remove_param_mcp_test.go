@@ -34,6 +34,53 @@ func TestChangeSignature_RemoveParamDropsTheRemovedArgument(t *testing.T) {
 	goVets(t, dir, "")
 }
 
+func TestChangeSignature_RemoveParamRemovesTheOnlyParameter(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\ntype T struct{}\n\nfunc only(a int) {}\n\nfunc (T) M(a int) {}\n",
+		"p/use.go": "package p\n\nfunc Use() { only(1); T{}.M(2) }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("only", "p/f.go"))
+	changeSigOK(t, sess, removeParamArgs("T.M", "p/f.go"))
+
+	assertFileContains(t, dir, "p/f.go", "func only()")
+	assertFileContains(t, dir, "p/f.go", "func (T) M()")
+	assertFileContains(t, dir, "p/use.go", "only(); T{}.M()")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamOnFunctionDeclaredInATestFile(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/p.go":      "package p\n",
+		"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(a, b int) int { return b }\n\nfunc TestIt(t *testing.T) { helper(1, 2) }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("helper", "p/p_test.go", param("b", "int")))
+
+	assertFileContains(t, dir, "p/p_test.go", "func helper(b int) int")
+	assertFileContains(t, dir, "p/p_test.go", "helper(2)")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamKeepsFuncAndArrayTypedParameters(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\nfunc f(unused int, cb func(string) error, buf [4]byte) error { _ = buf; return cb(\"\") }\n",
+		"p/use.go": "package p\n\nfunc Use() error { return f(1, func(string) error { return nil }, [4]byte{}) }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go",
+		param("cb", "func(string) error"), param("buf", "[4]byte")))
+
+	assertFileContains(t, dir, "p/f.go", "func f(cb func(string) error, buf [4]byte) error")
+	goVets(t, dir, "")
+}
+
 func TestChangeSignature_RemoveParamRemovesUnusedTrailingVariadic(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go":        "package p\n\nfunc f(x int, opts ...string) int { return x }\n",
@@ -340,4 +387,119 @@ func TestChangeSignature_MethodOnGenericReceiverIsRefused(t *testing.T) {
 	}
 	assertFileUnchanged(t, dir, "p/f.go", f)
 	assertFileUnchanged(t, dir, "p/use.go", use)
+}
+
+func TestChangeSignature_RemoveParamDeletesTheSpanAndKeepsTheRestOfTheSignature(t *testing.T) {
+	tests := []struct {
+		name   string
+		target string
+		remain []map[string]any
+		want   string
+	}{
+		{"multi-line first", "func f(\n\tx int,\n\ty string,\n) string {\n\treturn y\n}", []map[string]any{param("y", "string")},
+			"func f(\n\ty string,\n) string"},
+		{"multi-line last", "func f(\n\tx int,\n\ty string,\n) int {\n\treturn x\n}", []map[string]any{param("x", "int")},
+			"func f(\n\tx int,\n) int"},
+		{"multi-line only", "func f(\n\tx int,\n) {\n}", nil, "func f() {"},
+		{"comment inside", "func f(x int /* why */, y string) string {\n\treturn y\n}", []map[string]any{param("y", "string")},
+			"func f(y string) string"},
+		{"comment on kept param", "func f(x int, y string /* kept */) int {\n\treturn x\n}", []map[string]any{param("x", "int")},
+			"func f(x int /* kept */) int"},
+		{"interface typed", "func f(x int, v interface{ M() }) {\n\t_ = v\n}", []map[string]any{param("v", "interface{ M() }")},
+			"func f(v interface{ M() })"},
+		{"shared type first", "func f(x, y int) int {\n\treturn y\n}", []map[string]any{param("y", "int")}, "func f(y int) int"},
+		{"shared type last", "func f(x, y int) int {\n\treturn x\n}", []map[string]any{param("x", "int")}, "func f(x int) int"},
+		{"shared type middle", "func f(a, x, b int) int {\n\treturn a + b\n}", []map[string]any{param("a", "int"), param("b", "int")}, "func f(a, b int) int"},
+		{"receive-only channel", "func f(x int, c <-chan int) {\n\t<-c\n}", []map[string]any{param("c", "<-chan int")}, "func f(c <-chan int)"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{
+				"p/f.go": "package p\n\n" + tc.target + "\n",
+			})
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+
+			changeSigOK(t, sess, removeParamArgs("f", "p/f.go", tc.remain...))
+
+			assertFileContains(t, dir, "p/f.go", tc.want)
+			goVets(t, dir, "")
+		})
+	}
+}
+
+func TestChangeSignature_RemoveParamKeepsMultiLineSignaturesOfImplementationsAndInterface(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/p.go": "package p\n\ntype Doer interface {\n\tDo(\n\t\tx int,\n\t\ty string, // note\n\t)\n}\n\n" +
+			"type One struct{}\n\nfunc (One) Do(\n\tx int, // first\n\ty string,\n) {\n\t_ = y\n}\n\n" +
+			"func use(d Doer) { d.Do(1, \"\") }\n\nvar _ Doer = One{}\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	args := removeParamArgs("Doer.Do", "p/p.go", param("y", "string"))
+	args["propagate"] = true
+	changeSigOK(t, sess, args)
+
+	assertFileContains(t, dir, "p/p.go", "func (One) Do(\n\t// first\n\ty string,\n)")
+	assertFileContains(t, dir, "p/p.go", "d.Do(\"\")")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamResolvesTheTargetByObjectWhenAnExternalTestPackageRedeclaresTheName(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"lib/lib.go":      "package lib\n\nfunc helper(y string) {}\n\nfunc Use() { helper(\"\") }\n",
+		"lib/ext_test.go": "package lib_test\n\nimport \"testing\"\n\nfunc helper(a int, b string) {}\n\nfunc TestX(t *testing.T) { helper(1, \"\") }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("helper", "lib/ext_test.go", param("a", "int")))
+
+	assertFileContains(t, dir, "lib/ext_test.go", "func helper(a int)")
+	assertFileContains(t, dir, "lib/ext_test.go", "helper(1)")
+	assertFileContains(t, dir, "lib/lib.go", "func helper(y string)")
+	assertFileContains(t, dir, "lib/lib.go", "helper(\"\")")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_TestEntryPointsAreRefusedForEverySubcommand(t *testing.T) {
+	files := map[string]string{
+		"p/p.go":      "package p\n",
+		"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc TestIt(t *testing.T) {}\n\nfunc BenchmarkIt(b *testing.B) {}\n\nfunc Testimony(t *testing.T, extra int) {}\n",
+	}
+	dir := writeInlineWorkspace(t, files)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	for _, args := range []map[string]any{
+		removeParamArgs("TestIt", "p/p_test.go"),
+		{"function_name": "BenchmarkIt", "source_file": "p/p_test.go", "subcommand": "add_param",
+			"params": []map[string]any{param("b", "*testing.B"), param("n", "int")}, "default_value": "0", "position": 1},
+		{"function_name": "TestIt", "source_file": "p/p_test.go", "subcommand": "add_return", "returns": []string{"error"}},
+	} {
+		res := changeSig(t, sess, args)
+		if !res.IsError || !strings.Contains(errText(res), "go test entry point") {
+			t.Errorf("%v %v: IsError=%v %q, want a go test entry point refusal", args["function_name"], args["subcommand"], res.IsError, errText(res))
+		}
+	}
+	changeSigOK(t, sess, removeParamArgs("Testimony", "p/p_test.go", param("t", "*testing.T")))
+}
+
+func TestChangeSignature_AddParamAppliesToAMultiLineSignature(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go": "package p\n\nfunc f(\n\tx int,\n\ty string,\n) string {\n\treturn y\n}\n\nfunc Use() string { return f(1, \"\") }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, map[string]any{
+		"function_name": "f", "source_file": "p/f.go", "subcommand": "add_param",
+		"params":        []map[string]any{param("x", "int"), param("y", "string"), param("z", "bool")},
+		"default_value": "false", "position": 2,
+	})
+
+	assertFileContains(t, dir, "p/f.go", "z bool")
+	assertFileContains(t, dir, "p/f.go", "f(1, \"\", false)")
+	goVets(t, dir, "")
 }

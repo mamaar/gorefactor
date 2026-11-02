@@ -28,10 +28,8 @@ import (
 //   - A signature change is inserted at fn.Type.Params.Opening + 1 (the byte
 //     immediately after "("), never synthesized from stringified types. See
 //     insertCtxParam for why: ChangeSignatureOperation.generateNewSignature
-//     round-trips types through extractTypeString, which defaults unusual
-//     types to func(...)/interface{} and drops Type.TypeParams entirely —
-//     it silently corrupts func-typed parameters and erases generics. A
-//     zero-width insertion cannot do either: every original byte, including
+//     round-trips types through strings and drops Type.TypeParams entirely —
+//     it erases generics. A zero-width insertion cannot do that: every original byte, including
 //     comments, generics, and variadics, survives untouched.
 //   - A call-site edit that ADDS an argument (the callee is gaining its own
 //     ctx parameter) is inserted at call.Lparen + 1, for the same reason.
