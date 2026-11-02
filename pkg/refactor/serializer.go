@@ -382,13 +382,16 @@ func (s *Serializer) computeContent(filePath string, content []byte, changes []r
 		modifiedContent = OrganizeImports(modifiedContent, s.modulePath, s.workspaceModules)
 	}
 	formatted, err := s.formatGoCode(modifiedContent)
-	if err != nil {
-		// If formatting fails, we still want to save the changes
-		// but log a warning
-		fmt.Fprintf(os.Stderr, "Warning: failed to format %s: %v\n", filePath, err)
-		return []byte(modifiedContent), nil
+	if err == nil {
+		return []byte(formatted), nil
 	}
-	return []byte(formatted), nil
+	// A file that already failed to parse can't be made worse by the plan.
+	if len(content) > 0 {
+		if _, parseErr := parser.ParseFile(token.NewFileSet(), "", content, parser.SkipObjectResolution); parseErr != nil {
+			return []byte(modifiedContent), nil
+		}
+	}
+	return nil, fmt.Errorf("%s: result is not valid Go: %w", filePath, err)
 }
 
 // applyChange applies a single change to the content
