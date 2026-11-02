@@ -60,26 +60,6 @@ func TestCompleteSymbolResolution(t *testing.T) {
 		}
 	})
 
-	// Test 3: Interface implementation checking
-	t.Run("InterfaceCompliance", func(t *testing.T) {
-		pkg := workspace.Packages["test/main"]
-
-		typeSymbol, err := resolver.ResolveSymbol(pkg, "TestStruct")
-		if err != nil {
-			t.Fatalf("Failed to resolve TestStruct: %v", err)
-		}
-
-		ifaceSymbol, err := resolver.ResolveSymbol(pkg, "TestInterface")
-		if err != nil {
-			t.Fatalf("Failed to resolve TestInterface: %v", err)
-		}
-
-		compliant, missing := resolver.CheckInterfaceCompliance(typeSymbol, ifaceSymbol)
-		if !compliant {
-			t.Errorf("TestStruct should implement TestInterface, missing: %v", missing)
-		}
-	})
-
 	// Test 4: Scope-aware resolution
 	t.Run("ScopeAwareResolution", func(t *testing.T) {
 		file := workspace.Packages["test/main"].Files["main.go"]

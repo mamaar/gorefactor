@@ -33,6 +33,23 @@ type AnalyzeSymbolInput struct {
 	Package string `json:"package,omitempty" jsonschema:"package path to search in (empty for workspace-wide search)"`
 }
 
+type FindImplementationsInput struct {
+	Package string `json:"package,omitempty" jsonschema:"package path of the type (empty to search the workspace)"`
+	Type    string `json:"type" jsonschema:"name of the interface or concrete type"`
+	Method  string `json:"method,omitempty" jsonschema:"report the matching methods instead of the types"`
+}
+
+type ImplementationInfo struct {
+	Name            string   `json:"name"`
+	Package         string   `json:"package"`
+	File            string   `json:"file,omitempty"`
+	Line            int      `json:"line,omitempty"`
+	Column          int      `json:"column,omitempty"`
+	PointerReceiver bool     `json:"pointer_receiver,omitempty"`
+	External        bool     `json:"external,omitempty"`
+	Configs         []string `json:"configs,omitempty"`
+}
+
 type SymbolInfo struct {
 	Name      string          `json:"name"`
 	Kind      string          `json:"kind"`
@@ -559,6 +576,47 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			info.UncoveredFiles = uncheckedFileInfos(report.Unchecked, ws.RootPath)
 		}
 		return textResult(info), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "find_implementations",
+		Description: "For an interface, list the workspace types that implement it (`implementations`); for any other type, list the interfaces it satisfies (`interfaces`), from the workspace and from packages the workspace imports directly or whose interfaces its code mentions (`external`). " +
+			"Matching is by go/types, so a same-named method with another signature does not count. `pointer_receiver` is set when only a pointer to the type satisfies the interface. " +
+			"With `method`, file, line and column locate the matching methods instead of the types. " +
+			"Runs under every build configuration; an entry reported by only some lists them in `configs`, and `build_configs` and `uncovered_files` appear as for the planning tools.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FindImplementationsInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		report, err := state.GetEngine().FindImplementationsAcrossConfigs(in.Package, in.Type, in.Method)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := make([]ImplementationInfo, len(report.Found))
+		for i, f := range report.Found {
+			items[i] = ImplementationInfo{
+				Name: f.Name, Package: f.Package, File: f.File, Line: f.Line, Column: f.Column,
+				PointerReceiver: f.PointerReceiver, External: f.External, Configs: f.Configs,
+			}
+		}
+		key := "interfaces"
+		if report.IsInterface {
+			key = "implementations"
+		}
+		out := map[string]any{key: items, "count": len(items)}
+		if len(report.Configs) > 1 {
+			out["build_configs"] = report.Configs
+		}
+		if len(report.Unchecked) > 0 {
+			out["uncovered_files"] = uncheckedFileInfos(report.Unchecked, ws.RootPath)
+		}
+		return textResult(out), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{

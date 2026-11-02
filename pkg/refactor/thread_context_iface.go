@@ -102,6 +102,7 @@ func checkedPackages(ws *pkgtypes.Workspace, inWorkspace func(*gotypes.Package) 
 			work = append(work, pkg.TypesPkg)
 		}
 		if pkg.ExternalTestTypesPkg != nil {
+			work = append(work, pkg.ExternalTestTypesPkg)
 			work = append(work, pkg.ExternalTestTypesPkg.Imports()...)
 		}
 	}
@@ -298,10 +299,9 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 // externalInterfaceAbort fails when f's receiver satisfies an interface declared
 // outside the workspace that declares a method of f's name.
 //
-// findInterfacesForMethod (change_signature.go) cannot serve here: it only ever
-// looks at workspace symbols, so it reports nothing for exactly the case that
-// matters most — http.Handler, io.Writer, sort.Interface — where the damage is
-// silent. Nothing warns; the type simply stops satisfying the interface.
+// Only the survey sees interfaces outside the workspace — http.Handler,
+// io.Writer, sort.Interface — where the damage is silent: nothing warns, the
+// type simply stops satisfying the interface.
 func (op *ThreadContextOperation) externalInterfaceAbort(ws *pkgtypes.Workspace, f *gotypes.Func) error {
 	if ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f); ok {
 		return op.externalIfaceError(f, ext)
@@ -310,18 +310,34 @@ func (op *ThreadContextOperation) externalInterfaceAbort(ws *pkgtypes.Workspace,
 }
 
 // externalInterfaceOf returns the first interface declared outside the
-// workspace that declares a method of f's name and that f's receiver satisfies.
+// workspace that declares a method of f's name and that a type holding f in its
+// method set satisfies.
 func (s *ifaceSurvey) externalInterfaceOf(f *gotypes.Func) (ifaceCandidate, bool) {
-	recv := methodRecvType(f)
-	if recv == nil {
-		return ifaceCandidate{}, false
-	}
-	for _, ext := range s.external {
-		if interfaceMethodNamed(ext.iface, f.Name()) != nil && typeImplements(recv, ext.iface) {
-			return ext, true
+	for _, recv := range s.receiversOf(f) {
+		for _, ext := range s.external {
+			if interfaceMethodNamed(ext.iface, f.Name()) != nil && typeImplements(recv, ext.iface) {
+				return ext, true
+			}
 		}
 	}
 	return ifaceCandidate{}, false
+}
+
+// receiversOf returns the types whose method set holds f: every checked copy of
+// its receiver, and the workspace types that get it by embedding.
+func (s *ifaceSurvey) receiversOf(f *gotypes.Func) []gotypes.Type {
+	recv := methodRecvType(f)
+	if recv == nil {
+		return nil
+	}
+	out := s.viewsOf(recv)
+	id := analysis.ObjectIDOf(f)
+	for _, named := range s.impls {
+		if m := lookupMethod(named, f.Name()); m != nil && analysis.ObjectIDOf(m) == id {
+			out = append(out, named)
+		}
+	}
+	return out
 }
 
 func (op *ThreadContextOperation) externalIfaceError(f *gotypes.Func, ext ifaceCandidate) error {
@@ -474,12 +490,8 @@ func asInterfaceType(t gotypes.Type) (*gotypes.Interface, bool) {
 // other direction in turn, so a worklist over it covers an interface, its
 // implementations and the interfaces those satisfy.
 func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
-	recv := methodRecvType(f)
-	if recv == nil {
-		return nil
-	}
 	var out []*gotypes.Func
-	for _, view := range s.viewsOf(recv) {
+	for _, view := range s.receiversOf(f) {
 		if iface, ok := asInterfaceType(view); ok {
 			out = append(out, s.implementationsOf(iface, f.Name())...)
 			continue
@@ -534,4 +546,30 @@ func (s *ifaceSurvey) declaredFuncs(funcs []*gotypes.Func) []*gotypes.Func {
 		}
 	}
 	return out
+}
+
+// methodClosure returns seed and every method that must change with it: the
+// workspace interface methods a method satisfies, the implementations of those,
+// and so on. refuse builds the error for a method that satisfies an interface
+// outside the workspace.
+func methodClosure(
+	survey *ifaceSurvey, seed *gotypes.Func, refuse func(*gotypes.Func, ifaceCandidate) error,
+) ([]*gotypes.Func, error) {
+	var members []*gotypes.Func
+	visited := make(map[gotypes.Object]bool)
+	for work := []*gotypes.Func{seed}; len(work) > 0; work = work[1:] {
+		f := work[0]
+		if visited[f] {
+			continue
+		}
+		visited[f] = true
+		if ext, ok := survey.externalInterfaceOf(f); ok {
+			return nil, refuse(f, ext)
+		}
+		members = append(members, f)
+		for _, next := range survey.expansionOf(f) {
+			work = append(work, canonicalFunc(next))
+		}
+	}
+	return members, nil
 }

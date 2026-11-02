@@ -1659,87 +1659,6 @@ func (sr *SymbolResolver) ResolveMethodSet(symbol *types.Symbol) ([]*types.Symbo
 	return methods, nil
 }
 
-// FindInterfaceImplementations finds all types that implement an interface
-func (sr *SymbolResolver) FindInterfaceImplementations(iface *types.Symbol) ([]*types.Symbol, error) {
-	if iface.Kind != types.InterfaceSymbol {
-		return nil, &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "can only find implementations for interfaces",
-			File:    iface.File,
-		}
-	}
-
-	var implementations []*types.Symbol
-
-	// Get interface methods
-	ifaceMethods, err := sr.getInterfaceMethods(iface)
-	if err != nil {
-		return nil, err
-	}
-
-	sr.logger.Debug("FindInterfaceImplementations: interface methods found",
-		"interface", iface.Name,
-		"method_count", len(ifaceMethods))
-
-	// Check all types in workspace
-	checkedTypes := 0
-	for _, pkg := range sr.workspace.Packages {
-		if pkg.Symbols == nil {
-			continue
-		}
-
-		for _, typeSymbol := range pkg.Symbols.Types {
-			checkedTypes++
-			if sr.implementsInterface(typeSymbol, ifaceMethods) {
-				sr.logger.Debug("FindInterfaceImplementations: found implementation",
-					"type", typeSymbol.Name,
-					"package", typeSymbol.Package)
-				implementations = append(implementations, typeSymbol)
-			}
-		}
-	}
-
-	sr.logger.Debug("FindInterfaceImplementations: complete",
-		"interface", iface.Name,
-		"checked_types", checkedTypes,
-		"implementations_found", len(implementations))
-
-	return implementations, nil
-}
-
-// CheckInterfaceCompliance checks if a type implements an interface
-func (sr *SymbolResolver) CheckInterfaceCompliance(typ, iface *types.Symbol) (bool, []string) {
-	if iface.Kind != types.InterfaceSymbol {
-		return false, []string{"target is not an interface"}
-	}
-
-	ifaceMethods, err := sr.getInterfaceMethods(iface)
-	if err != nil {
-		return false, []string{"could not get interface methods"}
-	}
-
-	typeMethods, err := sr.ResolveMethodSet(typ)
-	if err != nil {
-		return false, []string{"could not get type methods"}
-	}
-
-	var missing []string
-	for _, ifaceMethod := range ifaceMethods {
-		found := false
-		for _, typeMethod := range typeMethods {
-			if sr.methodsMatch(ifaceMethod, typeMethod) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			missing = append(missing, ifaceMethod.Name)
-		}
-	}
-
-	return len(missing) == 0, missing
-}
-
 // ResolveEmbeddedFields finds all embedded fields in a struct type
 func (sr *SymbolResolver) ResolveEmbeddedFields(symbol *types.Symbol) ([]*types.Symbol, error) {
 	if symbol.Kind != types.TypeSymbol {
@@ -1955,49 +1874,6 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 	})
 
 	return methods, nil
-}
-
-func (sr *SymbolResolver) implementsInterface(typ *types.Symbol, ifaceMethods []*types.Symbol) bool {
-	typeMethods, err := sr.ResolveMethodSet(typ)
-	if err != nil {
-		if strings.Contains(typ.Name, "felt") || strings.Contains(typ.Name, "tile") || strings.Contains(typ.Name, "Cloud") {
-			sr.logger.Debug("implementsInterface: ResolveMethodSet failed",
-				"type", typ.Name,
-				"package", typ.Package,
-				"error", err)
-		}
-		return false
-	}
-
-	// Debug logging for potential implementation candidates
-	if strings.Contains(typ.Name, "felt") || strings.Contains(typ.Name, "tile") || strings.Contains(typ.Name, "Cloud") {
-		sr.logger.Debug("implementsInterface: checking type",
-			"type", typ.Name,
-			"package", typ.Package,
-			"type_methods_count", len(typeMethods),
-			"iface_methods_count", len(ifaceMethods))
-	}
-
-	for _, ifaceMethod := range ifaceMethods {
-		found := false
-		for _, typeMethod := range typeMethods {
-			if sr.methodsMatch(ifaceMethod, typeMethod) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-
-	return true
-}
-
-func (sr *SymbolResolver) methodsMatch(method1, method2 *types.Symbol) bool {
-	// Simple name matching for now
-	// A complete implementation would compare full signatures
-	return method1.Name == method2.Name
 }
 
 func (sr *SymbolResolver) findPromotedMethods(symbol *types.Symbol) ([]*types.Symbol, error) {

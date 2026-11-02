@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"fmt"
+	"go/token"
 	gotypes "go/types"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -104,87 +105,98 @@ func (op *RenameMethodOperation) renamedMembers(ws *types.Workspace) ([]*types.S
 	if err != nil {
 		return nil, err
 	}
-	survey := surveyInterfaces(ws)
-	var members []*types.Symbol
-	visited := make(map[gotypes.Object]bool)
-	for work := []*gotypes.Func{seed}; len(work) > 0; work = work[1:] {
-		f := work[0]
-		if visited[f] {
-			continue
-		}
-		visited[f] = true
-		if ext, ok := survey.externalInterfaceOf(f); ok {
-			return nil, externalInterfaceRenameError(f, ext)
-		}
+	funcs, err := methodClosure(surveyInterfaces(ws), seed, func(f *gotypes.Func, ext ifaceCandidate) error {
+		return externalInterfaceError("rename", f, ext)
+	})
+	if err != nil {
+		return nil, err
+	}
+	members := make([]*types.Symbol, 0, len(funcs))
+	for _, f := range funcs {
 		member, err := memberSymbol(ws, f)
 		if err != nil {
 			return nil, err
 		}
 		members = append(members, member)
-		for _, next := range survey.expansionOf(f) {
-			work = append(work, canonicalFunc(next))
-		}
 	}
 	op.members = members
 	return members, nil
 }
 
-// targetFunc returns the go/types method the request names. It fails rather
-// than guessing when the owning package has no type information.
+// targetFunc returns the go/types method the request names.
 func (op *RenameMethodOperation) targetFunc(ws *types.Workspace) (*gotypes.Func, error) {
 	typeSymbol, methodSymbol, err := op.target(ws)
 	if err != nil {
 		return nil, err
 	}
-	pkg := resolveSymbolPackage(ws, typeSymbol)
+	return resolveMethod(resolveSymbolPackage(ws, typeSymbol), typeSymbol.Name, methodSymbol.Name, methodSymbol.Position)
+}
+
+// resolveMethod returns the go/types method typeName.name of pkg declared at
+// pos. It fails rather than guessing when pkg has no type information.
+func resolveMethod(pkg *types.Package, typeName, name string, pos token.Pos) (*gotypes.Func, error) {
 	if pkg == nil || pkg.TypesPkg == nil {
 		return nil, &types.RefactorError{
 			Type: types.InvalidOperation,
-			Message: fmt.Sprintf("cannot rename method %s.%s: type information for package %q is unavailable; "+
-				"method renames require a type-checked workspace", typeSymbol.Name, methodSymbol.Name, typeSymbol.Package),
+			Message: fmt.Sprintf("cannot resolve method %s.%s: type information for its package is unavailable; "+
+				"method operations require a type-checked workspace", typeName, name),
 		}
 	}
-	if tn, ok := pkg.TypesPkg.Scope().Lookup(typeSymbol.Name).(*gotypes.TypeName); ok {
-		obj, _, _ := gotypes.LookupFieldOrMethod(tn.Type(), true, pkg.TypesPkg, methodSymbol.Name)
-		if f, ok := obj.(*gotypes.Func); ok && f.Pos() == methodSymbol.Position {
+	if tn, ok := pkg.TypesPkg.Scope().Lookup(typeName).(*gotypes.TypeName); ok {
+		obj, _, _ := gotypes.LookupFieldOrMethod(tn.Type(), true, pkg.TypesPkg, name)
+		if f, ok := obj.(*gotypes.Func); ok && f.Pos() == pos {
 			return canonicalFunc(f), nil
 		}
 	}
 	return nil, &types.RefactorError{
 		Type:    types.SymbolNotFound,
-		Message: fmt.Sprintf("cannot resolve method %s.%s to a type-checked object", typeSymbol.Name, methodSymbol.Name),
+		Message: fmt.Sprintf("cannot resolve method %s.%s to a type-checked object", typeName, name),
 	}
+}
+
+// receiverNamed returns the named type f is a method of, or nil.
+func receiverNamed(f *gotypes.Func) *gotypes.Named {
+	recv := methodRecvType(f)
+	if recv == nil {
+		return nil
+	}
+	recv = gotypes.Unalias(recv)
+	if ptr, ok := recv.(*gotypes.Pointer); ok {
+		recv = gotypes.Unalias(ptr.Elem())
+	}
+	named, _ := recv.(*gotypes.Named)
+	return named
 }
 
 // memberSymbol returns the workspace symbol that declares f.
 func memberSymbol(ws *types.Workspace, f *gotypes.Func) (*types.Symbol, error) {
-	recv := methodRecvType(f)
-	if recv == nil || f.Pkg() == nil {
-		return nil, fmt.Errorf("%s is not a method of a workspace type", f.Name())
+	named := receiverNamed(f)
+	if named == nil || f.Pkg() == nil {
+		return nil, fmt.Errorf("%s is not a method of a named workspace type", funcLabel(f))
 	}
-	if ptr, ok := recv.(*gotypes.Pointer); ok {
-		recv = ptr.Elem()
-	}
-	named, ok := recv.(*gotypes.Named)
-	if !ok {
-		return nil, fmt.Errorf("cannot rename method %s: its receiver %s is not a named type", f.Name(), recv)
+	if named.TypeParams().Len() > 0 {
+		return nil, &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("cannot change %s: methods of generic types are not supported, and this one must change with the method requested", funcLabel(f)),
+		}
 	}
 	sym := symbolForKey(ws, types.SymbolKey{PkgPath: f.Pkg().Path(), Recv: named.Obj().Name(), Name: f.Name()})
 	if sym == nil || sym.Position != f.Pos() {
 		return nil, &types.RefactorError{
 			Type: types.InvalidOperation,
-			Message: fmt.Sprintf("cannot rename method %s.%s.%s: it is declared outside the workspace or in a file that is not part of it, "+
-				"but must be renamed with the method requested", f.Pkg().Path(), named.Obj().Name(), f.Name()),
+			Message: fmt.Sprintf("cannot change %s.%s.%s: it is declared outside the workspace or in a file that is not part of it, "+
+				"but must change with the method requested", f.Pkg().Path(), named.Obj().Name(), f.Name()),
 		}
 	}
 	return sym, nil
 }
 
-func externalInterfaceRenameError(f *gotypes.Func, ext ifaceCandidate) error {
+// externalInterfaceError refuses to rename or change f, which satisfies ext.
+func externalInterfaceError(verb string, f *gotypes.Func, ext ifaceCandidate) error {
 	return &types.RefactorError{
 		Type: types.InvalidOperation,
-		Message: fmt.Sprintf("cannot rename method %s: %s implements %s, which is declared outside the workspace and cannot be changed; "+
-			"renaming it would stop %s satisfying %s. No changes were made.",
-			f.Name(), funcLabel(f), ext.label(), gotypes.TypeString(methodRecvType(f), nil), ext.label()),
+		Message: fmt.Sprintf("cannot %s method %s: it implements %s, which is declared outside the workspace and cannot be changed; "+
+			"the %s would stop %s satisfying %s. No changes were made.",
+			verb, funcLabel(f), ext.label(), verb, gotypes.TypeString(methodRecvType(f), nil), ext.label()),
 	}
 }

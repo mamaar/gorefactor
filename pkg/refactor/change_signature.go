@@ -324,15 +324,24 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	var allRefSymbols []*pkgtypes.Symbol
 	var primaryFuncDecl *ast.FuncDecl // for impact analysis
 
+	var members []*gotypes.Func
+	if isDotted {
+		var err error
+		members, err = op.signatureMembers(ws, sourcePackage, typeName, methodName, isIface)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	if isIface {
 		var err error
-		allRefSymbols, err = op.collectInterfaceChanges(ws, sourceFile, sourcePackage, typeName, methodName, resolver, plan)
+		allRefSymbols, err = op.collectInterfaceChanges(ws, sourceFile, sourcePackage, typeName, methodName, members, resolver, plan)
 		if err != nil {
 			return nil, err
 		}
 	} else {
 		var err error
-		allRefSymbols, primaryFuncDecl, err = op.collectConcreteChanges(ws, sourceFile, sourcePackage, typeName, methodName, isDotted, resolver, plan)
+		allRefSymbols, primaryFuncDecl, err = op.collectConcreteChanges(ws, sourceFile, sourcePackage, members, resolver, plan)
 		if err != nil {
 			return nil, err
 		}
@@ -375,7 +384,7 @@ func (op *ChangeSignatureOperation) initResolver(ws *pkgtypes.Workspace) (*analy
 
 func (op *ChangeSignatureOperation) collectInterfaceChanges(
 	ws *pkgtypes.Workspace, sourceFile *pkgtypes.File, sourcePackage *pkgtypes.Package,
-	typeName string, methodName string,
+	typeName string, methodName string, members []*gotypes.Func,
 	resolver *analysis.SymbolResolver, plan *pkgtypes.RefactoringPlan,
 ) ([]*pkgtypes.Symbol, error) {
 	logger := op.logger()
@@ -390,50 +399,21 @@ func (op *ChangeSignatureOperation) collectInterfaceChanges(
 		plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
 	}
 
-	ifaceSym, err := resolver.ResolveSymbol(sourcePackage, typeName)
-	if err != nil {
-		return nil, err
-	}
-
-	logger.Info("finding interface implementations")
-	implChanges, implFiles, err := op.generateImplementationSignatureChanges(ws, resolver, ifaceSym, methodName, "")
-	if err != nil {
-		return nil, err
-	}
-	logger.Info("updated implementations", "count", len(implChanges))
-	plan.Changes = append(plan.Changes, implChanges...)
-	for _, f := range implFiles {
-		if !contains(plan.AffectedFiles, f) {
-			plan.AffectedFiles = append(plan.AffectedFiles, f)
-		}
-	}
-
 	var allRefSymbols []*pkgtypes.Symbol
-	ifaceMethodSym, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName)
-	if err == nil {
+	if ifaceMethodSym, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName); err == nil {
 		allRefSymbols = append(allRefSymbols, ifaceMethodSym)
 	}
-	impls, _ := resolver.FindInterfaceImplementations(ifaceSym)
-	for _, impl := range impls {
-		implPkg := packageOfSymbol(ws, impl)
-		if implPkg == nil {
-			continue
-		}
-		if methods, exists := implPkg.Symbols.Methods[impl.Name]; exists {
-			for _, m := range methods {
-				if m.Name == methodName {
-					allRefSymbols = append(allRefSymbols, m)
-				}
-			}
-		}
+	memberSymbols, err := op.applyMembers(ws, members, plan)
+	if err != nil {
+		return nil, err
 	}
-
-	return allRefSymbols, nil
+	logger.Info("updated implementations", "count", len(members))
+	return append(allRefSymbols, memberSymbols...), nil
 }
 
 func (op *ChangeSignatureOperation) collectConcreteChanges(
 	ws *pkgtypes.Workspace, sourceFile *pkgtypes.File, sourcePackage *pkgtypes.Package,
-	typeName string, methodName string, isDotted bool,
+	members []*gotypes.Func,
 	resolver *analysis.SymbolResolver, plan *pkgtypes.RefactoringPlan,
 ) ([]*pkgtypes.Symbol, *ast.FuncDecl, error) {
 	functionNode := op.findFunction(sourceFile, op.FunctionName)
@@ -462,49 +442,11 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 	if err != nil {
 		return nil, nil, err
 	}
-	allRefSymbols := []*pkgtypes.Symbol{symbol}
-
-	if op.PropagateToInterface && isDotted {
-		ifaceSymbols := findInterfacesForMethod(ws, resolver, typeName, methodName)
-		for _, ifaceSym := range ifaceSymbols {
-			ifaceChanges, ifaceFiles, err := op.applyInterfaceMethodChanges(ws, resolver, ifaceSym, methodName, typeName)
-			if err != nil {
-				continue
-			}
-			plan.Changes = append(plan.Changes, ifaceChanges...)
-			for _, f := range ifaceFiles {
-				if !contains(plan.AffectedFiles, f) {
-					plan.AffectedFiles = append(plan.AffectedFiles, f)
-				}
-			}
-
-			if ifacePkg := packageOfSymbol(ws, ifaceSym); ifacePkg != nil {
-				if m, err := resolver.ResolveSymbol(ifacePkg, ifaceSym.Name+"."+methodName); err == nil {
-					allRefSymbols = append(allRefSymbols, m)
-				}
-			}
-
-			impls, _ := resolver.FindInterfaceImplementations(ifaceSym)
-			for _, impl := range impls {
-				if impl.Name == typeName {
-					continue
-				}
-				implPkg := packageOfSymbol(ws, impl)
-				if implPkg == nil {
-					continue
-				}
-				if methods, exists := implPkg.Symbols.Methods[impl.Name]; exists {
-					for _, m := range methods {
-						if m.Name == methodName {
-							allRefSymbols = append(allRefSymbols, m)
-						}
-					}
-				}
-			}
-		}
+	memberSymbols, err := op.applyMembers(ws, members, plan)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	return allRefSymbols, functionNode, nil
+	return append([]*pkgtypes.Symbol{symbol}, memberSymbols...), functionNode, nil
 }
 
 func (op *ChangeSignatureOperation) updateCallSites(
@@ -1479,79 +1421,6 @@ func findFuncDeclForMethod(file *pkgtypes.File, typeName, methodName string) *as
 	return found
 }
 
-// findInterfacesForMethod returns interface symbols whose method set includes methodName
-// and that typeName satisfies (i.e. typeName has all the interface's methods).
-func findInterfacesForMethod(ws *pkgtypes.Workspace, resolver *analysis.SymbolResolver, typeName, methodName string) []*pkgtypes.Symbol {
-	var result []*pkgtypes.Symbol
-	for _, pkg := range ws.Packages {
-		if pkg.Symbols == nil {
-			continue
-		}
-		for _, sym := range pkg.Symbols.Types {
-			if sym.Kind != pkgtypes.InterfaceSymbol {
-				continue
-			}
-			// Check if this interface has the method
-			ifaceFile := findFileForSymbol(ws, sym)
-			if ifaceFile == nil {
-				continue
-			}
-			if !isInterfaceMethod(ifaceFile, sym.Name, methodName) {
-				continue
-			}
-			// Check that our concrete type actually implements this interface
-			// by finding the type symbol and checking compliance
-			for _, pkg2 := range ws.Packages {
-				if pkg2.Symbols == nil {
-					continue
-				}
-				if typeSym, exists := pkg2.Symbols.Types[typeName]; exists {
-					compliant, _ := resolver.CheckInterfaceCompliance(typeSym, sym)
-					if compliant {
-						result = append(result, sym)
-					}
-				}
-			}
-		}
-	}
-	return result
-}
-
-// packageOfSymbol returns the workspace package that declares sym. Symbol.Package
-// is an import path, whereas Workspace.Packages may be keyed by directory.
-func packageOfSymbol(ws *pkgtypes.Workspace, sym *pkgtypes.Symbol) *pkgtypes.Package {
-	if pkg := ws.Packages[sym.Package]; pkg != nil {
-		return pkg
-	}
-	for _, pkg := range ws.Packages {
-		if pkg.ImportPath == sym.Package {
-			return pkg
-		}
-	}
-	return nil
-}
-
-// findFileForSymbol locates the File object for a symbol.
-func findFileForSymbol(ws *pkgtypes.Workspace, sym *pkgtypes.Symbol) *pkgtypes.File {
-	pkg := packageOfSymbol(ws, sym)
-	if pkg == nil {
-		return nil
-	}
-	for filePath, file := range pkg.Files {
-		// Try exact match first
-		if file.Path == sym.File || filePath == sym.File {
-			return file
-		}
-	}
-	// If no exact match, try suffix matching (handles relative vs absolute paths)
-	for _, file := range pkg.Files {
-		if strings.HasSuffix(file.Path, sym.File) || strings.HasSuffix(sym.File, file.Path) {
-			return file
-		}
-	}
-	return nil
-}
-
 // generateInterfaceMethodSignatureChange creates a Change that rewrites an interface method field.
 func (op *ChangeSignatureOperation) generateInterfaceMethodSignatureChange(ws *pkgtypes.Workspace, file *pkgtypes.File, typeName, methodName string) (pkgtypes.Change, error) {
 	var change pkgtypes.Change
@@ -1697,106 +1566,6 @@ func generateInterfaceMethodSignature(op *ChangeSignatureOperation, methodName s
 	}
 
 	return sig.String()
-}
-
-// generateImplementationSignatureChanges finds all implementations of ifaceSym and generates
-// signature changes for the given method on each.
-func (op *ChangeSignatureOperation) generateImplementationSignatureChanges(
-	ws *pkgtypes.Workspace,
-	resolver *analysis.SymbolResolver,
-	ifaceSym *pkgtypes.Symbol,
-	methodName string,
-	skipType string,
-) ([]pkgtypes.Change, []string, error) {
-	var changes []pkgtypes.Change
-	var affectedFiles []string
-
-	impls, err := resolver.FindInterfaceImplementations(ifaceSym)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	for _, impl := range impls {
-		implPkg := packageOfSymbol(ws, impl)
-		if implPkg == nil || impl.Name == skipType {
-			continue
-		}
-		for _, file := range allFilesOf(implPkg) {
-			funcDecl := findFuncDeclForMethod(file, impl.Name, methodName)
-			if funcDecl == nil {
-				continue
-			}
-
-			if op.RemoveParam {
-				op.checkRemovedUnused(ws, implPkg, funcDecl)
-			}
-			oldSig := op.extractCurrentSignature(funcDecl)
-			newSig := op.generateNewSignature(funcDecl)
-
-			changes = append(changes, pkgtypes.Change{
-				File:        file.Path,
-				Start:       op.tokenPosToOffset(ws, funcDecl.Type.Pos()),
-				End:         op.tokenPosToOffset(ws, funcDecl.Type.End()),
-				OldText:     oldSig,
-				NewText:     newSig,
-				Description: fmt.Sprintf("Update implementation %s.%s", impl.Name, methodName),
-			})
-			op.recordAltered(implPkg, impl.Name, methodName, file.Path)
-
-			if !contains(affectedFiles, file.Path) {
-				affectedFiles = append(affectedFiles, file.Path)
-			}
-			break // found the method in this impl type
-		}
-	}
-
-	return changes, affectedFiles, nil
-}
-
-// applyInterfaceMethodChanges updates the interface declaration and all sibling implementations
-// (excluding the concrete type that was already changed by the caller).
-func (op *ChangeSignatureOperation) applyInterfaceMethodChanges(
-	ws *pkgtypes.Workspace,
-	resolver *analysis.SymbolResolver,
-	ifaceSym *pkgtypes.Symbol,
-	methodName string,
-	skipType string,
-) ([]pkgtypes.Change, []string, error) {
-	var changes []pkgtypes.Change
-	var affectedFiles []string
-
-	// Update the interface declaration itself
-	ifaceFile := findFileForSymbol(ws, ifaceSym)
-	if ifaceFile == nil {
-		// Skip interfaces where we can't find the file (e.g., test files processed separately)
-		return changes, affectedFiles, nil
-	}
-
-	ifaceChange, err := op.generateInterfaceMethodSignatureChange(ws, ifaceFile, ifaceSym.Name, methodName)
-	if err != nil {
-		return nil, nil, err
-	}
-	changes = append(changes, ifaceChange)
-	if ifacePkg := packageOfSymbol(ws, ifaceSym); ifacePkg != nil {
-		op.recordAltered(ifacePkg, ifaceSym.Name, methodName, ifaceFile.Path)
-	}
-	if !contains(affectedFiles, ifaceFile.Path) {
-		affectedFiles = append(affectedFiles, ifaceFile.Path)
-	}
-
-	// Update all implementations
-	implChanges, implFiles, err := op.generateImplementationSignatureChanges(ws, resolver, ifaceSym, methodName, skipType)
-	if err != nil {
-		return nil, nil, err
-	}
-	changes = append(changes, implChanges...)
-	for _, f := range implFiles {
-		if !contains(affectedFiles, f) {
-			affectedFiles = append(affectedFiles, f)
-		}
-	}
-
-	return changes, affectedFiles, nil
 }
 
 // extractRequiredImport determines if a default value requires an import and returns the import path
