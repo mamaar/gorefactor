@@ -175,7 +175,11 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 	if err != nil {
 		return nil, err
 	}
-	return planDirMoves(op, ws, op.Sources, op.Views, []dirMove{move},
+	carried, err := carriedByPackages([]dirMove{move})
+	if err != nil {
+		return nil, err
+	}
+	return planDirMoves(op, ws, op.Sources, op.Views, []dirMove{move}, carried,
 		fmt.Sprintf("Update references after moving %s to %s", op.Request.SourcePackage, op.Request.TargetPackage))
 }
 
@@ -242,16 +246,21 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	if len(moves) == 0 {
 		return nil, fmt.Errorf("no packages found in source directory %s", op.Request.SourceDir)
 	}
-	return planDirMoves(op, ws, op.Sources, op.Views, moves,
+	carried, err := carriedByDir(dirMove{source: sourceDirPath, target: targetDirPath}, moves)
+	if err != nil {
+		return nil, err
+	}
+	return planDirMoves(op, ws, op.Sources, op.Views, moves, carried,
 		fmt.Sprintf("Update references after moving %s to %s", op.Request.SourceDir, op.Request.TargetDir))
 }
 
 // planDirMoves plans every move together: each touched file becomes exactly one
 // whole-file change covering all moved packages' import paths and renamed
 // qualifiers, and moved files are excluded from the importer pass.
-// refsDescription labels the importer rewrites.
+// carried are the non-package files relocated alongside, which keep their bytes
+// and mode. refsDescription labels the importer rewrites.
 func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.SourceTree, views []*analysis.View,
-	moves []dirMove, refsDescription string) (*types.RefactoringPlan, error) {
+	moves []dirMove, carried []fileMove, refsDescription string) (*types.RefactoringPlan, error) {
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -292,6 +301,14 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 		}
 	}
 
+	rewriteImportPaths := func(content string) string {
+		for _, rw := range rewrites {
+			if rw.oldImportPath != "" && rw.newImportPath != "" && rw.oldImportPath != rw.newImportPath {
+				content = strings.ReplaceAll(content, `"`+rw.oldImportPath+`"`, `"`+rw.newImportPath+`"`)
+			}
+		}
+		return content
+	}
 	// rewriteContent applies every renamed package's qualifier rewrite, then
 	// every moved package's import-path rewrite, so each touched file becomes
 	// exactly one whole-file change and the serializer sees no overlap. at is
@@ -305,12 +322,7 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 			site.File = at
 			plan.SkippedSites = append(plan.SkippedSites, site)
 		}
-		for _, rw := range rewrites {
-			if rw.oldImportPath != "" && rw.newImportPath != "" && rw.oldImportPath != rw.newImportPath {
-				content = strings.ReplaceAll(content, `"`+rw.oldImportPath+`"`, `"`+rw.newImportPath+`"`)
-			}
-		}
-		return content, nil
+		return rewriteImportPaths(content), nil
 	}
 
 	// Move every file (source + test) of each moved package. Each file is
@@ -337,26 +349,33 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 				return nil, err
 			}
 
-			plan.Changes = append(plan.Changes, types.Change{
-				File:        targetFilePath,
-				Start:       0,
-				End:         0,
-				NewText:     content,
-				Description: fmt.Sprintf("Move file from %s to %s", file.Path, targetFilePath),
-			})
-			plan.Changes = append(plan.Changes, types.Change{
-				File:        file.Path,
-				Delete:      true,
-				Description: fmt.Sprintf("Remove file %s (moved to %s)", file.Path, targetFilePath),
-			})
-			plan.AffectedFiles = append(plan.AffectedFiles, file.Path, targetFilePath)
+			appendFileMove(plan, file.Path, targetFilePath, content, 0)
 		}
+	}
+
+	// A carried Go file (under testdata) is not part of any package, so only its
+	// import paths are re-pointed.
+	carriedSources := make(map[string]bool, len(carried))
+	for _, c := range carried {
+		carriedSources[c.source] = true
+		content, err := os.ReadFile(c.source)
+		if err != nil {
+			return nil, fmt.Errorf("cannot read %s: %w", c.source, err)
+		}
+		text := string(content)
+		if filepath.Ext(c.source) == ".go" {
+			text = rewriteImportPaths(text)
+		}
+		appendFileMove(plan, c.source, c.target, text, c.mode)
 	}
 
 	// Rewrite imports (and renamed-package references) in every other source
 	// file that is not itself being moved.
 	err := appendContentRewrites(plan, sources,
-		func(f *analysis.SourceFile) bool { _, moved := rewriteByDir[f.Dir]; return moved },
+		func(f *analysis.SourceFile) bool {
+			_, moved := rewriteByDir[f.Dir]
+			return moved || carriedSources[f.Path]
+		},
 		func(f *analysis.SourceFile) (string, error) { return rewriteContent(f, f.Path) },
 		refsDescription)
 	if err != nil {
@@ -364,6 +383,23 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 	}
 
 	return markRelocation(plan), nil
+}
+
+// appendFileMove adds the create and delete changes that move one file.
+func appendFileMove(plan *types.RefactoringPlan, from, to, content string, mode os.FileMode) {
+	plan.Changes = append(plan.Changes,
+		types.Change{
+			File:        to,
+			NewText:     content,
+			Mode:        mode,
+			Description: fmt.Sprintf("Move file from %s to %s", from, to),
+		},
+		types.Change{
+			File:        from,
+			Delete:      true,
+			Description: fmt.Sprintf("Remove file %s (moved to %s)", from, to),
+		})
+	plan.AffectedFiles = append(plan.AffectedFiles, from, to)
 }
 
 // sourcePackageName returns the package name of dir: the loaded package's, or
@@ -475,7 +511,11 @@ func (op *MovePackagesOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	if err != nil {
 		return nil, err
 	}
-	return planDirMoves(op, ws, op.Sources, op.Views, moves,
+	carried, err := carriedByPackages(moves)
+	if err != nil {
+		return nil, err
+	}
+	return planDirMoves(op, ws, op.Sources, op.Views, moves, carried,
 		fmt.Sprintf("Update references after moving %d packages", len(moves)))
 }
 

@@ -132,7 +132,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_package",
-		Description: "Move an entire package to a new location. Updates all import paths across the workspace. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
+		Description: "Move an entire package to a new location. Non-Go files (embed assets, testdata, scripts) move with it, keeping their file mode, as does every file below it that no other package owns (a directory holding .go files outside testdata, or a go.mod, keeps its files). A symlink, a .git directory among them, or an existing target file is refused. Dry runs show each carried file as one summary line. Updates all import paths across the workspace. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MovePackageInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -162,7 +162,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_dir",
-		Description: "Move a directory (and all packages inside it) to a new location. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
+		Description: "Move a directory (and all packages inside it) to a new location. Every other file under it moves too, hidden files included, keeping its file mode. A symlink, a .git directory or a go.mod below it outside testdata, or an existing target file is refused. Dry runs show each carried file as one summary line. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveDirInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -188,7 +188,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_packages",
-		Description: "Move multiple packages atomically. All mappings are planned as one move, so packages that import each other and files that import several of them see every new path and name. A mapping that shares a source or target with another is refused, and so is a target that already holds Go files. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
+		Description: "Move multiple packages atomically. All mappings are planned as one move, so packages that import each other and files that import several of them see every new path and name. A mapping that shares a source or target with another is refused, and so is a target that already holds Go files. Non-Go files (embed assets, testdata, scripts) move with each package, keeping their file mode, as does every file below it that no other package owns (a directory holding .go files outside testdata, or a go.mod, keeps its files). A symlink, a .git directory among them, or an existing target file is refused. Dry runs show each carried file as one summary line. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MovePackagesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 

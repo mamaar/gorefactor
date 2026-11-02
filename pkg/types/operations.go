@@ -1,6 +1,9 @@
 package types
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
 // Operation represents any refactoring operation
 type Operation interface {
@@ -301,7 +304,14 @@ type Change struct {
 	// Relocation marks a change that belongs to relocating a whole file or
 	// package (a move or a package rename).
 	Relocation bool
+	// Mode is the permission bits a newly created file gets; zero means 0644.
+	// A file that already exists keeps its own mode.
+	Mode os.FileMode
 }
+
+// Carried reports whether the change creates a file relocated verbatim, which
+// a preview summarises instead of showing its content.
+func (c Change) Carried() bool { return c.Relocation && !c.Delete && c.Mode != 0 }
 
 // SuggestedMove represents a symbol that would benefit from being moved
 type SuggestedMove struct {
