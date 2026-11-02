@@ -168,6 +168,12 @@ type signatureStrategy interface {
 	complete(r *signatureRun)
 }
 
+// planVerifier is a signatureStrategy that checks each view's plan before the
+// view's type information is released.
+type planVerifier interface {
+	verify(v *analysis.View, plan *types.RefactoringPlan)
+}
+
 // planSignatureView plans the requested function and the linked declarations
 // in v with s. A view that declares neither reports the not-found error.
 func planSignatureView(c *viewIndexes, s signatureStrategy, v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
@@ -209,6 +215,9 @@ func planSignatureView(c *viewIndexes, s signatureStrategy, v *analysis.View, li
 		names[i] = d.Key.Name
 	}
 	res := configResult{plan: run.plan(), changed: run.covered, reach: run.reach(names), declared: declared}
+	if pv, ok := s.(planVerifier); ok {
+		pv.verify(v, res.plan)
+	}
 	c.planned(v, res.plan)
 	return res, nil
 }

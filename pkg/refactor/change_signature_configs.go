@@ -24,6 +24,14 @@ type changeSignaturePlanner struct {
 	// before holds the signature of each altered declaration as first seen; a
 	// linked declaration must match it to receive the same change.
 	before map[types.SymbolKey]declSignature
+	// checks holds the latest type check of each view's plan, in planning order.
+	checks []viewTypeCheck
+}
+
+// viewTypeCheck is the type check of one view's plan.
+type viewTypeCheck struct {
+	view   *analysis.View
+	result *TypeCheckResult
 }
 
 // declSignature is a declaration's parameters and result types, as text.
@@ -96,6 +104,61 @@ func listOf(fl *ast.FieldList) []*ast.Field {
 
 func (p *changeSignaturePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) (configResult, error) {
 	return planSignatureView(&p.viewIndexes, p, v, linked)
+}
+
+// verify type-checks plan in v and keeps the result for reportTypeChecks. It
+// checks only the packages the plan touches, under v's build configuration.
+func (p *changeSignaturePlanner) verify(v *analysis.View, plan *types.RefactoringPlan) {
+	check := viewTypeCheck{view: v, result: VerifyPlanTypesWithImporter(v.Workspace, plan, v.Parser.Importer())}
+	for i, c := range p.checks {
+		if c.view == v {
+			p.checks[i] = check
+			return
+		}
+	}
+	p.checks = append(p.checks, check)
+}
+
+// reportTypeChecks marks plan blocked by the type errors it would introduce.
+// Errors in files the plan already reports as left unedited are not counted,
+// and a check that could not run is listed in skipped_sites: the plan is unverified.
+func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
+	var unedited []string
+	for _, u := range plan.Coverage.Uncovered {
+		unedited = append(unedited, u.Path+":")
+	}
+	for _, s := range plan.SkippedSites {
+		unedited = append(unedited, s.File+":")
+	}
+	var newErrors []string
+	for _, c := range p.checks {
+		for _, e := range c.result.NewErrors {
+			if slices.ContainsFunc(unedited, func(prefix string) bool { return strings.HasPrefix(e, prefix) }) {
+				continue
+			}
+			if len(p.checks) > 1 {
+				e = fmt.Sprintf("[%s] %s", c.view.Config, e)
+			}
+			newErrors = append(newErrors, e)
+		}
+		if c.result.Skipped != "" {
+			// PlanResult has no field for an unverified plan; a site without a file is the closest.
+			plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
+				Reason: "the plan could not be type-checked and is unverified: " + c.result.Skipped,
+			})
+		}
+	}
+	if len(newErrors) == 0 {
+		return
+	}
+	if plan.Impact == nil {
+		plan.Impact = &types.ImpactAnalysis{}
+	}
+	plan.Impact.PotentialIssues = append(plan.Impact.PotentialIssues, types.Issue{
+		Type:        types.IssueTypeMismatch,
+		Severity:    types.Error,
+		Description: "the change would introduce type errors:\n" + strings.Join(newErrors, "\n"),
+	})
 }
 
 // requestedIn validates the request in ws. A function ws does not declare is a

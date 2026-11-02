@@ -1,0 +1,331 @@
+package refactor
+
+import (
+	"fmt"
+	"go/ast"
+	"go/token"
+	gotypes "go/types"
+	"strings"
+
+	"golang.org/x/tools/go/ast/edge"
+	"golang.org/x/tools/go/ast/inspector"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
+	"github.com/mamaar/gorefactor/pkg/analyzers/stmtfacts"
+	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
+)
+
+// changesReturns reports whether op adds or removes a result.
+func (op *ChangeSignatureOperation) changesReturns() bool {
+	return op.NewReturnPosition >= 0 || op.RemovedReturnIndex >= 0
+}
+
+// returnTargets returns the functions whose results change: the target and,
+// with propagate, the interface methods and implementations that change with it.
+func (op *ChangeSignatureOperation) returnTargets(
+	ws *pkgtypes.Workspace, pkg *pkgtypes.Package, file *pkgtypes.File,
+	typeName, methodName string, isIface bool, members []*gotypes.Func,
+) ([]*gotypes.Func, error) {
+	var target *gotypes.Func
+	if isIface {
+		var err error
+		if target, err = methodObject(ws, pkg, typeName, methodName); err != nil {
+			return nil, err
+		}
+	} else if decl := op.findFunction(file, op.FunctionName); decl != nil && pkg.TypesInfo != nil {
+		target, _ = pkg.TypesInfo.Defs[decl.Name].(*gotypes.Func)
+	}
+	if target == nil {
+		return nil, fmt.Errorf("%s: no type information for %s; its results cannot be changed by object identity", op.subcommandName(), op.FunctionName)
+	}
+	return append([]*gotypes.Func{target}, members...), nil
+}
+
+// planReturns rewrites the return statements of each target and the calls to
+// it, and records every site it cannot rewrite as a refusal. It returns the
+// number of call sites it rewrote.
+func (op *ChangeSignatureOperation) planReturns(
+	ws *pkgtypes.Workspace, idx *analysis.ReferenceIndex, targets []*gotypes.Func, plan *pkgtypes.RefactoringPlan,
+) (int, error) {
+	if !idx.HasTypeInfo() {
+		return 0, fmt.Errorf("%s: no type information; the workspace must be type-checked first", op.subcommandName())
+	}
+	n := targets[0].Signature().Results().Len()
+	if want := n + 1; op.NewReturnPosition >= 0 && len(op.NewReturns) != want {
+		return 0, fmt.Errorf("add_return: returns must list the current %d results plus the added one, got %d", n, len(op.NewReturns))
+	}
+	if want := n - 1; op.RemovedReturnIndex >= 0 && len(op.NewReturns) != want {
+		return 0, fmt.Errorf("remove_return: returns must list the current %d results minus the last, got %d", n, len(op.NewReturns))
+	}
+
+	decls := buildFuncDeclIndex(ws)
+	sites := 0
+	for _, t := range targets {
+		if d := decls[canonicalFunc(t)]; d != nil && d.Decl != nil {
+			op.planReturnBody(ws, d, n, plan)
+		}
+		for _, u := range idx.NonCallUsesOf(t) {
+			op.refuse(ws, u.Pos, fmt.Sprintf("%s is used as a func value, so its results cannot be changed", t.Name()))
+		}
+		for _, site := range idx.CallSitesOf(t) {
+			if op.planReturnCall(ws, idx, site, t, plan) {
+				sites++
+			}
+		}
+	}
+	return sites, nil
+}
+
+// namedResultsAfterChange returns the named results of decl with the change
+// applied: the added result is blank, the removed one is the last.
+func (op *ChangeSignatureOperation) namedResultsAfterChange(decl *ast.FuncDecl) []Parameter {
+	results := op.extractNamedReturnParams(decl.Type)
+	if op.RemovedReturnIndex >= 0 {
+		return results[:len(results)-1]
+	}
+	return append(results, Parameter{Name: "_", Type: op.NewReturns[op.NewReturnPosition]})
+}
+
+// planReturnBody rewrites the return statements of d, a function with n results,
+// and refuses the ones it cannot.
+func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *funcDecl, n int, plan *pkgtypes.RefactoringPlan) {
+	if d.Decl.Body == nil {
+		return
+	}
+	content := d.File.OriginalContent
+	info := d.Pkg.TypesInfo
+	if list := d.Decl.Body.List; n == 0 && op.NewReturnPosition >= 0 && (len(list) == 0 || !stmtfacts.Terminates(info, list[len(list)-1])) {
+		op.refuse(ws, d.Decl.Name.Pos(), fmt.Sprintf("%s has no results and does not end in a return, so an added result has nothing to return", d.Decl.Name.Name))
+	}
+	walkBodyForReturnStmts(d.Decl.Body, func(ret *ast.ReturnStmt) {
+		if len(ret.Results) != n {
+			reason := "return forwards a multi-value call, so its results cannot be changed"
+			if len(ret.Results) == 0 {
+				reason = "bare return of named results would change meaning"
+			}
+			op.refuse(ws, ret.Pos(), reason)
+			return
+		}
+		values := splitReturnValueTexts(ret, content, ws)
+		if op.RemovedReturnIndex >= 0 {
+			if stmtfacts.HasCallOrReceive(info, []ast.Node{ret.Results[op.RemovedReturnIndex]}) {
+				op.refuse(ws, ret.Results[op.RemovedReturnIndex].Pos(), "the returned value being dropped has side effects (a call or a receive)")
+				return
+			}
+			values = append(values[:op.RemovedReturnIndex], values[op.RemovedReturnIndex+1:]...)
+		} else {
+			values = append(values, op.DefaultReturnValue)
+		}
+		start, end := ws.FileSet.Position(ret.Pos()).Offset, ws.FileSet.Position(ret.End()).Offset
+		newText := strings.TrimSpace("return " + strings.Join(values, ", "))
+		plan.Changes = append(plan.Changes, pkgtypes.Change{
+			File:        d.File.Path,
+			Start:       start,
+			End:         end,
+			OldText:     string(content[start:end]),
+			NewText:     newText,
+			Description: fmt.Sprintf("Update return statement in %s", d.Decl.Name.Name),
+		})
+		addAffected(plan, d.File.Path)
+	})
+}
+
+// planReturnCall rewrites the call site of target and reports whether it did.
+// A site it cannot rewrite is recorded as a refusal.
+func (op *ChangeSignatureOperation) planReturnCall(
+	ws *pkgtypes.Workspace, refs *analysis.ReferenceIndex, site analysis.CallSite, target *gotypes.Func, plan *pkgtypes.RefactoringPlan,
+) bool {
+	var refusals []returnRefusal
+	if op.RemovedReturnIndex >= 0 {
+		refusals = removedResultRefusals(site.Pkg.TypesInfo, refs, site, op.RemovedReturnIndex)
+	} else {
+		refusals = addedResultRefusals(site)
+	}
+	for _, r := range refusals {
+		op.refuse(ws, r.Pos, r.Reason)
+	}
+	if len(refusals) > 0 {
+		return false
+	}
+
+	content := site.File.OriginalContent
+	off := func(p token.Pos) int { return ws.FileSet.Position(p).Offset }
+	name := target.Name()
+	_, parent := callUseOf(site.Cursor)
+	var change pkgtypes.Change
+	switch p := parent.(type) {
+	case *ast.ExprStmt:
+		if op.RemovedReturnIndex >= 0 {
+			return false // an unused result needs no change
+		}
+		blanks := strings.TrimSuffix(strings.Repeat("_, ", len(op.NewReturns)), ", ")
+		change = pkgtypes.Change{
+			Start: off(p.Pos()), End: off(p.Pos()), NewText: blanks + " = ",
+			Description: fmt.Sprintf("Capture discarded return values for call to %s", name),
+		}
+	case *ast.AssignStmt:
+		change = op.assignChange(p, site.Call, content, off, name)
+	default:
+		return false // go and defer statements discard every result
+	}
+	change.File = site.File.Path
+	change.OldText = string(content[change.Start:change.End])
+	plan.Changes = append(plan.Changes, change)
+	addAffected(plan, site.File.Path)
+	return true
+}
+
+// assignChange returns the change that adds a blank to, or drops the last
+// variable from, the left side of assign, whose right side is call.
+func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *ast.CallExpr, content []byte, off func(token.Pos) int, name string) pkgtypes.Change {
+	last := assign.Lhs[len(assign.Lhs)-1]
+	if op.NewReturnPosition >= 0 {
+		return pkgtypes.Change{
+			Start: off(last.End()), End: off(last.End()), NewText: ", _",
+			Description: fmt.Sprintf("Update assignment LHS for call to %s", name),
+		}
+	}
+	if len(assign.Lhs) == 1 {
+		return pkgtypes.Change{
+			Start: off(assign.Pos()), End: off(assign.End()),
+			NewText:     string(content[off(call.Pos()):off(call.End())]),
+			Description: fmt.Sprintf("Remove assignment LHS for call to %s", name),
+		}
+	}
+	return pkgtypes.Change{
+		Start: off(assign.Lhs[len(assign.Lhs)-2].End()), End: off(last.End()),
+		Description: fmt.Sprintf("Update assignment LHS for call to %s", name),
+	}
+}
+
+func addAffected(plan *pkgtypes.RefactoringPlan, file string) {
+	if !contains(plan.AffectedFiles, file) {
+		plan.AffectedFiles = append(plan.AffectedFiles, file)
+	}
+}
+
+// returnRefusal is a site that stops a return change.
+type returnRefusal struct {
+	Pos    token.Pos
+	Reason string
+	// Read is the read of the removed result's variable that causes the refusal;
+	// nil for any other.
+	Read *analysis.ValueUse
+}
+
+// callUse is how the result of a call is used.
+type callUse int
+
+const (
+	useDiscarded callUse = iota // an expression, go or defer statement
+	useAssigned                 // the whole right side of = or :=
+	useEmbedded                 // anything else: an argument, operand, return value, declaration
+)
+
+// callUseOf classifies the call at call by its parent node and returns that parent.
+func callUseOf(call inspector.Cursor) (callUse, ast.Node) {
+	parent := call.Parent().Node()
+	switch p := parent.(type) {
+	case *ast.ExprStmt, *ast.GoStmt, *ast.DeferStmt:
+		return useDiscarded, parent
+	case *ast.AssignStmt:
+		if (p.Tok == token.ASSIGN || p.Tok == token.DEFINE) && len(p.Rhs) == 1 && p.Rhs[0] == call.Node() {
+			return useAssigned, parent
+		}
+	}
+	return useEmbedded, parent
+}
+
+// addedResultRefusals returns why the call at site cannot take an added
+// result: only statements and assignments can.
+func addedResultRefusals(site analysis.CallSite) []returnRefusal {
+	if use, _ := callUseOf(site.Cursor); use == useEmbedded {
+		return []returnRefusal{embeddedCallRefusal(site.Call, "extended")}
+	}
+	return nil
+}
+
+func embeddedCallRefusal(call *ast.CallExpr, verb string) returnRefusal {
+	return returnRefusal{Pos: call.Pos(), Reason: fmt.Sprintf("the call is used in an expression or declaration (a return value, argument or operand), so its results cannot be %s", verb)}
+}
+
+// removedResultRefusals returns why the call at site cannot lose its result
+// idx: it is used in an expression, or the variable it is assigned to is read
+// anywhere (the reads are in Read), or is a named result returned bare. An
+// empty result means the call can be rewritten.
+func removedResultRefusals(info *gotypes.Info, refs *analysis.ReferenceIndex, site analysis.CallSite, idx int) []returnRefusal {
+	use, parent := callUseOf(site.Cursor)
+	switch use {
+	case useEmbedded:
+		return []returnRefusal{embeddedCallRefusal(site.Call, "reduced")}
+	case useDiscarded:
+		return nil
+	}
+	assign := parent.(*ast.AssignStmt)
+	if idx >= len(assign.Lhs) {
+		return []returnRefusal{{Pos: site.Call.Pos(), Reason: "the assignment does not match the call's results"}}
+	}
+	id, ok := assign.Lhs[idx].(*ast.Ident)
+	if !ok {
+		return []returnRefusal{{Pos: assign.Lhs[idx].Pos(), Reason: "the removed result is stored in a field or element, which would stop being assigned"}}
+	}
+	if id.Name == "_" {
+		return nil
+	}
+	obj := info.ObjectOf(id)
+	if obj == nil {
+		return []returnRefusal{{Pos: id.Pos(), Reason: fmt.Sprintf("no type information to check whether %s is read", id.Name)}}
+	}
+	var refusals []returnRefusal
+	for _, u := range refs.NonCallUsesOf(obj) {
+		if !isAssignTarget(u.Cursor) {
+			refusals = append(refusals, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
+		}
+	}
+	if ret := bareReturnOfResult(info, site.Cursor, obj); ret != nil {
+		refusals = append(refusals, returnRefusal{Pos: ret.Pos(), Reason: fmt.Sprintf("%s is a named result and this bare return reads it", id.Name)})
+	}
+	return refusals
+}
+
+// bareReturnOfResult returns a bare return in a function enclosing at that
+// has obj as a named result, or nil.
+func bareReturnOfResult(info *gotypes.Info, at inspector.Cursor, obj gotypes.Object) *ast.ReturnStmt {
+	for fn := range at.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
+		var ft *ast.FuncType
+		var body *ast.BlockStmt
+		switch f := fn.Node().(type) {
+		case *ast.FuncDecl:
+			ft, body = f.Type, f.Body
+		case *ast.FuncLit:
+			ft, body = f.Type, f.Body
+		}
+		named := false
+		for _, field := range listOf(ft.Results) {
+			for _, n := range field.Names {
+				named = named || info.Defs[n] == obj
+			}
+		}
+		if !named || body == nil {
+			continue
+		}
+		var bare *ast.ReturnStmt
+		walkBodyForReturnStmts(body, func(r *ast.ReturnStmt) {
+			if len(r.Results) == 0 && bare == nil {
+				bare = r
+			}
+		})
+		return bare
+	}
+	return nil
+}
+
+// isAssignTarget reports whether the identifier at id is only written: a
+// variable on the left side of = or :=.
+func isAssignTarget(id inspector.Cursor) bool {
+	if id.ParentEdgeKind() != edge.AssignStmt_Lhs {
+		return false
+	}
+	tok := id.Parent().Node().(*ast.AssignStmt).Tok
+	return tok == token.ASSIGN || tok == token.DEFINE
+}

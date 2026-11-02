@@ -864,6 +864,7 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 // ChangeSignature implements changing function/method signatures
 func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
 	operation := req.operation(e.logger)
+	e.EnsureTypeChecked(ws)
 
 	if err := operation.Validate(ws); err != nil {
 		return nil, fmt.Errorf("change signature operation validation failed: %w", err)
@@ -884,7 +885,13 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 // plan. A declaration with the same key as a changed one is changed under every
 // configuration that declares it.
 func (e *DefaultEngine) ChangeSignatureAcrossConfigs(req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
-	return e.planAcrossConfigs(&changeSignaturePlanner{engine: e, req: req})
+	p := &changeSignaturePlanner{engine: e, req: req}
+	plan, err := e.planAcrossConfigs(p)
+	if err != nil {
+		return nil, err
+	}
+	p.reportTypeChecks(plan)
+	return plan, nil
 }
 
 // ValidateRefactoring validates a complete refactoring plan

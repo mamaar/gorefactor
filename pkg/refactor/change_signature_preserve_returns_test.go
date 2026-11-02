@@ -256,53 +256,6 @@ func TestGenerateInterfaceMethodSignature_MultipleReturns(t *testing.T) {
 
 // --- Tests for return-type change engine features ---
 
-func TestCountFieldListEntries(t *testing.T) {
-	src := `package main
-
-func foo() (string, error) { return "", nil }
-func bar() int { return 0 }
-func baz() {}
-`
-	fset := token.NewFileSet()
-	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-
-	tests := []struct {
-		funcName string
-		expected int
-	}{
-		{"foo", 2},
-		{"bar", 1},
-		{"baz", 0},
-	}
-
-	for _, tc := range tests {
-		var funcDecl *ast.FuncDecl
-		ast.Inspect(astFile, func(n ast.Node) bool {
-			if fd, ok := n.(*ast.FuncDecl); ok && fd.Name.Name == tc.funcName {
-				funcDecl = fd
-				return false
-			}
-			return true
-		})
-		if funcDecl == nil {
-			t.Fatalf("function %s not found", tc.funcName)
-		}
-		got := countFieldListEntries(funcDecl.Type.Results)
-		if got != tc.expected {
-			t.Errorf("countFieldListEntries(%s) = %d, want %d", tc.funcName, got, tc.expected)
-		}
-	}
-}
-
-func TestCountFieldListEntries_Nil(t *testing.T) {
-	if got := countFieldListEntries(nil); got != 0 {
-		t.Errorf("countFieldListEntries(nil) = %d, want 0", got)
-	}
-}
-
 func TestWalkBodyForReturnStmts_SkipsClosures(t *testing.T) {
 	src := `package main
 
@@ -517,8 +470,9 @@ func getSecret(project string, secretName string) (secret []byte, err error) {
 	}
 
 	op := &ChangeSignatureOperation{
-		FunctionName: "getSecret",
-		SourceFile:   "/test/secret.go",
+		FunctionName:      "getSecret",
+		NewReturnPosition: -1, RemovedReturnIndex: -1,
+		SourceFile: "/test/secret.go",
 		NewParams: []Parameter{
 			{Name: "ctx", Type: "context.Context"},
 			{Name: "project", Type: "string"},

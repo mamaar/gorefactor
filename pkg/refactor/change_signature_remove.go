@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -77,25 +78,51 @@ func (op *ChangeSignatureOperation) checkRemovedUnused(ws *pkgtypes.Workspace, p
 	}
 	info := pkg.TypesInfo
 	if info == nil || info.Defs[param] == nil {
-		op.refuseRemove(ws, param.Pos(), fmt.Sprintf("no type information to check whether parameter %s of %s is used", param.Name, decl.Name.Name))
+		op.refuse(ws, param.Pos(), fmt.Sprintf("no type information to check whether parameter %s of %s is used", param.Name, decl.Name.Name))
 		return
 	}
 	obj := info.Defs[param]
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && info.Uses[id] == obj {
-			op.refuseRemove(ws, id.Pos(), fmt.Sprintf("parameter %s of %s is used in its body", param.Name, decl.Name.Name))
+			op.refuse(ws, id.Pos(), fmt.Sprintf("parameter %s of %s is used in its body", param.Name, decl.Name.Name))
 		}
 		return true
 	})
 }
 
-// refuseRemove records a site that stops the remove_param.
-func (op *ChangeSignatureOperation) refuseRemove(ws *pkgtypes.Workspace, pos token.Pos, reason string) {
+// siteRefusal is a site that stops the change.
+type siteRefusal struct {
+	file   string
+	line   int
+	reason string
+}
+
+func (r siteRefusal) String() string { return fmt.Sprintf("%s:%d: %s", r.file, r.line, r.reason) }
+
+func compareRefusals(a, b siteRefusal) int {
+	return cmp.Or(strings.Compare(a.file, b.file), cmp.Compare(a.line, b.line), strings.Compare(a.reason, b.reason))
+}
+
+// refuse records a site that stops the change.
+func (op *ChangeSignatureOperation) refuse(ws *pkgtypes.Workspace, pos token.Pos, reason string) {
 	p := ws.FileSet.Position(pos)
-	msg := fmt.Sprintf("%s:%d: %s", p.Filename, p.Line, reason)
-	if !slices.Contains(op.removeRefusals, msg) {
-		op.removeRefusals = append(op.removeRefusals, msg)
+	r := siteRefusal{file: p.Filename, line: p.Line, reason: reason}
+	if !slices.Contains(op.refusals, r) {
+		op.refusals = append(op.refusals, r)
 	}
+}
+
+// subcommandName names the subcommand the operation performs, for messages.
+func (op *ChangeSignatureOperation) subcommandName() string {
+	switch {
+	case op.RemoveParam:
+		return "remove_param"
+	case op.NewReturnPosition >= 0:
+		return "add_return"
+	case op.RemovedReturnIndex >= 0:
+		return "remove_return"
+	}
+	return "change_signature"
 }
 
 // removeArg drops the argument for the removed parameter from args. It reports
