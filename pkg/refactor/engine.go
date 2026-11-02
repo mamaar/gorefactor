@@ -705,9 +705,7 @@ func (e *DefaultEngine) ExtractConstant(ws *types.Workspace, req types.ExtractCo
 	}
 
 	if pkg, _ := findWorkspaceFile(ws, req.SourceFile); pkg != nil {
-		if parser := e.parserFor(ws); parser != nil {
-			parser.EnsureTypeChecked(ws, pkg)
-		}
+		e.EnsureTypeCheckedPackage(ws, pkg.ImportPath)
 	}
 
 	plan, err := operation.Execute(ws)
