@@ -227,23 +227,13 @@ func (op *ExtractConstantOperation) literalAt(ws *pkgtypes.Workspace, src *pkgty
 	return lit, nil
 }
 
-// equalLiterals returns the literals of file that equal selected, leaving out
-// import paths and struct tags.
+// equalLiterals returns the literals of file that equal selected. Import paths
+// and struct tags never match: go/types records no type for them.
 func (op *ExtractConstantOperation) equalLiterals(pkg *pkgtypes.Package, file *pkgtypes.File, selected *ast.BasicLit) []*ast.BasicLit {
-	inert := map[*ast.BasicLit]bool{}
 	var lits []*ast.BasicLit
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.ImportSpec:
-			inert[n.Path] = true
-		case *ast.Field:
-			if n.Tag != nil {
-				inert[n.Tag] = true
-			}
-		case *ast.BasicLit:
-			if !inert[n] && sameLiteral(pkg.TypesInfo, selected, n) {
-				lits = append(lits, n)
-			}
+		if lit, ok := n.(*ast.BasicLit); ok && sameLiteral(pkg.TypesInfo, selected, lit) {
+			lits = append(lits, lit)
 		}
 		return true
 	})
