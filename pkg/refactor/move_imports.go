@@ -293,7 +293,7 @@ func importsUnder(file *types.File, n neededImport) bool {
 }
 
 // applyChangesInMemory applies changes to content and returns the result,
-// without touching disk. Mirrors serializer.applyChangesToFile's approach
+// without touching disk. Mirrors Serializer.ApplyChangesToContent's approach
 // (apply in descending Start order so earlier offsets stay valid) but is
 // used here purely to preview what a file will look like post-removal, so
 // unusedImportsAfterRemoval can tell which of its imports are still
