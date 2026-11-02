@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -68,18 +69,19 @@ func TestMovePackagesRefusesConflictingMappingsAndWritesNothing(t *testing.T) {
 	tests := []struct {
 		name     string
 		mappings []types.PackageMapping
+		reason   string
 	}{
 		{"duplicate source", []types.PackageMapping{
 			{SourcePackage: "a", TargetPackage: "lib/one"},
 			{SourcePackage: "a", TargetPackage: "lib/two"},
-		}},
+		}, "share the source directory"},
 		{"duplicate target", []types.PackageMapping{
 			{SourcePackage: "a", TargetPackage: "lib/one"},
 			{SourcePackage: "b", TargetPackage: "lib/one"},
-		}},
+		}, "share the target directory"},
 		{"target holding only a windows file", []types.PackageMapping{
 			{SourcePackage: "a", TargetPackage: "lib/win"},
-		}},
+		}, "already exists"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -88,8 +90,8 @@ func TestMovePackagesRefusesConflictingMappingsAndWritesNothing(t *testing.T) {
 				"b/b.go":                 pkgBSource,
 				"lib/win/win_windows.go": "package win\n",
 			})
-			if _, err := movePackages(t, dir, tc.mappings...); err == nil {
-				t.Fatal("expected the plan to be refused")
+			if _, err := movePackages(t, dir, tc.mappings...); err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("expected a refusal containing %q, got: %v", tc.reason, err)
 			}
 			for _, rel := range []string{"a/a.go", "b/b.go", "lib/win/win_windows.go"} {
 				if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
