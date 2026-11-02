@@ -413,3 +413,38 @@ func TestFindUnusedSymbols_MethodCalledThroughInlineTypeConstraintKeepsItsCallee
 func TestFindUnusedSymbols_MethodCalledThroughAnonymousInterfaceFieldKeepsItsCalleesAlive(t *testing.T) {
 	assertMethodThroughInterfaceLiteralIsLive(t, "type holder struct{ x interface{ foo(); bar() } }\n\nfunc main() {\n\th := holder{x: T{}}\n\th.x.foo()\n\th.x.bar()\n}\n")
 }
+
+func TestFindUnusedSymbols_MethodsNamedByStdInterfacesOfLiveTypesAreNotReported(t *testing.T) {
+	src := `package p
+
+import (
+	"go/ast"
+	"go/types"
+)
+
+type imp struct{}
+
+func (imp) Import(path string) (*types.Package, error) { return nil, nil }
+
+func (imp) Dead() {}
+
+type vis struct{}
+
+func (vis) Visit(n ast.Node) ast.Visitor { return nil }
+
+type wrapErr struct{}
+
+func (wrapErr) Error() string { return "" }
+
+func (wrapErr) Unwrap() error { return nil }
+
+func main() {
+	_ = types.Config{Importer: imp{}}
+	ast.Walk(vis{}, nil)
+	_ = error(wrapErr{})
+}
+`
+	facts := typedUnusedFacts(t, map[string]string{"p/a.go": src}, true)
+	assertNotReported(t, facts, "a.go:Import", "a.go:Visit", "a.go:Error", "a.go:Unwrap")
+	assertReported(t, facts, "a.go:Dead", "")
+}

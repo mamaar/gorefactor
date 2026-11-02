@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"go/ast"
+	gotypes "go/types"
 	"log/slog"
 	"slices"
 
@@ -132,8 +133,9 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }
 
 // collectInterfaceMethodNames returns the names of the methods declared by any
-// interface type in the workspace, named or not, plus well-known standard
-// library ones. A method with such a name may be called through an interface.
+// interface type in the workspace, named or not, plus those of the interfaces
+// the type-checked packages import and well-known standard library ones. A
+// method with such a name may be called through an interface.
 func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 	names := make(map[string]bool)
 
@@ -151,7 +153,39 @@ func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 			ast.Walk(c, file.AST)
 		}
 	}
+	for name := range externalMethodNames(ua.importedPackages()) {
+		names[name] = true
+	}
 	return names
+}
+
+// importedPackages returns the type-checked packages the workspace imports,
+// transitively, that are not themselves in the workspace.
+func (ua *UnusedAnalyzer) importedPackages() []*gotypes.Package {
+	inWorkspace := make(map[*gotypes.Package]bool)
+	for _, pkg := range ua.workspace.Packages {
+		inWorkspace[pkg.TypesPkg] = true
+		inWorkspace[pkg.ExternalTestTypesPkg] = true
+	}
+	var imported []*gotypes.Package
+	seen := make(map[*gotypes.Package]bool)
+	var walk func(p *gotypes.Package)
+	walk = func(p *gotypes.Package) {
+		if p == nil || seen[p] {
+			return
+		}
+		seen[p] = true
+		if !inWorkspace[p] {
+			imported = append(imported, p)
+		}
+		for _, imp := range p.Imports() {
+			walk(imp)
+		}
+	}
+	for p := range inWorkspace {
+		walk(p)
+	}
+	return imported
 }
 
 // interfaceMethodCollector adds the method names of every interface type it
