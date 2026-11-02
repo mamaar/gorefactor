@@ -51,6 +51,16 @@ type ExtractVariableInput struct {
 	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
+// --- extract_constant ---
+
+type ExtractConstantInput struct {
+	SourceFile   string `json:"source_file" jsonschema:"path to the source file containing the literal"`
+	Line         int    `json:"line" jsonschema:"1-based line of the literal"`
+	Column       int    `json:"column" jsonschema:"1-based column of any position inside the literal"`
+	ConstantName string `json:"constant_name" jsonschema:"name for the new package-level constant"`
+	DryRun       bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+}
+
 func resolveFile(ws *types.Workspace, path string) string {
 	if filepath.IsAbs(path) {
 		return path
@@ -172,6 +182,34 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 		result, err := executePlanWithUnlock(state, plan, "extract variable "+in.VariableName, in.DryRun)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+		return textResult(result), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name:        "extract_constant",
+		Description: "Extract a literal (int, float, imaginary, char or string) into an untyped package-level constant and replace every equal literal in the package with it, test files included. Import paths and struct tags are never touched; occurrences where the name is shadowed or that sit in generated files are left alone and reported in skipped_sites.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ExtractConstantInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+		plan, err := state.GetEngine().ExtractConstant(ws, types.ExtractConstantRequest{
+			SourceFile:   resolveFile(ws, in.SourceFile),
+			Line:         in.Line,
+			Column:       in.Column,
+			ConstantName: in.ConstantName,
+		})
+		if err != nil {
+			state.RUnlock()
+			return errResult(err), nil, nil
+		}
+		result, err := executePlanWithUnlock(state, plan, "extract constant "+in.ConstantName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}

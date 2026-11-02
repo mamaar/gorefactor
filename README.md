@@ -56,6 +56,7 @@ The server communicates over stdio using the MCP protocol.
 | `extract_method` | Extract a code block into a new method |
 | `extract_interface` | Extract an interface from a struct's methods |
 | `extract_variable` | Extract an expression into a variable |
+| `extract_constant` | Extract a literal into an untyped package-level constant and replace every equal literal in the files of the package that the default build configuration includes, test files too. The constant goes in the selected file when that is an unconstrained, non-test, non-generated file, else in the first such file. Literals match by kind and value as written (`0x10` matches `16`, `1` does not match `1.0`); import paths and struct tags are never touched, and occurrences where the name is shadowed or that sit in generated files are reported in `skipped_sites`. Refused when the name is predeclared, is declared or aliased as an import in any file of the package directory (whatever its build constraints), or is an import or dot-import name of a file of the default configuration |
 | `inline_function` | Inline a function at its call sites |
 | `inline_method` | Inline a method at its call sites |
 | `inline_variable` | Inline a variable at its usage sites |
