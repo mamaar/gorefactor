@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -114,7 +115,7 @@ type fileStep struct {
 // prepareFile reads filePath's pre-image and computes its new content,
 // without writing anything. A file marked for deletion gets no new content.
 func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change) (fileStep, error) {
-	step := fileStep{path: filePath, delete: fileHasDeletion(changes), mode: 0644}
+	step := fileStep{path: filePath, delete: fileHasDeletion(changes), mode: newFileMode(changes)}
 	info, err := os.Stat(filePath)
 	switch {
 	case err == nil:
@@ -147,7 +148,7 @@ func (f *fileStep) commit() error {
 	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
 		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %v", f.path, err)
 	}
-	if err := os.WriteFile(f.path, f.content, 0644); err != nil {
+	if err := os.WriteFile(f.path, f.content, f.mode); err != nil {
 		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %v", f.path, err)
 	}
 	return nil
@@ -240,6 +241,17 @@ func validateChangePathsAbsolute(changes []refactorTypes.Change) error {
 	return nil
 }
 
+// newFileMode returns the mode a file created by changes gets: the first one
+// any change asks for, else 0644.
+func newFileMode(changes []refactorTypes.Change) os.FileMode {
+	for _, c := range changes {
+		if c.Mode != 0 {
+			return c.Mode
+		}
+	}
+	return 0644
+}
+
 // fileHasDeletion reports whether any change in the group marks the file for
 // deletion.
 func fileHasDeletion(changes []refactorTypes.Change) bool {
@@ -324,7 +336,9 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 			if change.OldText != "" {
 				fmt.Fprintf(&preview, "   - %s\n", s.truncateText(change.OldText))
 			}
-			if change.NewText != "" {
+			if change.Carried() {
+				fmt.Fprintf(&preview, "   + file moved (%d bytes)\n", len(change.NewText))
+			} else if change.NewText != "" {
 				fmt.Fprintf(&preview, "   + %s\n", s.truncateText(change.NewText))
 			}
 			preview.WriteString("\n")
@@ -374,7 +388,7 @@ func (s *Serializer) computeContent(filePath string, content []byte, changes []r
 	if err != nil {
 		return nil, err
 	}
-	if !strings.HasSuffix(filePath, ".go") {
+	if len(modifiedBytes) == 0 || !strings.HasSuffix(filePath, ".go") || slices.Contains(strings.Split(filepath.ToSlash(filePath), "/"), "testdata") {
 		return modifiedBytes, nil
 	}
 	modifiedContent := string(modifiedBytes)

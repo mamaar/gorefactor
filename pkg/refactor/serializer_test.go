@@ -867,6 +867,11 @@ func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
 	}
 	x := writeFixture(t, dir, "a/x.go", "package a\n")
 	y := writeFixture(t, dir, "b/y.go", "package b\n")
+	bin := writeFixture(t, dir, "b/run.bin", "\x00\xff#!")
+	if err := os.Chmod(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	movedBin := filepath.Join(dir, "c", "new", "run.bin")
 	z := filepath.Join(dir, "c", "new", "z.go")
 	w := filepath.Join(dir, "d", "w.go")
 	if err := os.Chmod(filepath.Join(dir, "d"), 0o555); err != nil {
@@ -877,6 +882,8 @@ func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
 	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
 		replaceXChange(x),
 		{File: y, Delete: true, Description: "Remove file"},
+		{File: movedBin, NewText: "\x00\xff#!", Mode: 0o755, Description: "Move file"},
+		{File: bin, Delete: true, Description: "Remove file"},
 		{File: z, NewText: "package new\n", Description: "Create file"},
 		{File: w, NewText: "package d\n", Description: "Create file"},
 	})
@@ -888,7 +895,43 @@ func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
 	}
 	requireContent(t, x, "package a\n")
 	requireContent(t, y, "package b\n")
+	requireContent(t, bin, "\x00\xff#!")
+	if info, statErr := os.Stat(bin); statErr != nil || info.Mode().Perm() != 0o755 {
+		t.Errorf("deleted binary file not restored with its mode: %v %v", info, statErr)
+	}
 	if _, statErr := os.Stat(filepath.Join(dir, "c")); !os.IsNotExist(statErr) {
 		t.Errorf("directory created for the rolled-back file was left behind: %v", statErr)
 	}
+}
+
+func TestApplyChanges_NewFileGetsRequestedMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.sh")
+	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{{File: path, NewText: "#!/bin/sh\n", Mode: 0o755}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o755 {
+		t.Errorf("mode = %v, err %v, want 0755", info, err)
+	}
+}
+
+func TestSerializer_PreviewChanges_CarriedFileIsSummarised(t *testing.T) {
+	got, err := NewSerializer().PreviewChanges(nil, []refactorTypes.Change{
+		{File: "/x/blob.bin", NewText: "\x00\xff\xfe", Mode: 0o644, Relocation: true, Description: "Move file"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "file moved (3 bytes)") || strings.ContainsRune(got, 0) {
+		t.Errorf("preview should summarise the binary file:\n%q", got)
+	}
+}
+
+func TestApplyChanges_LeavesTestdataGoFileUnformatted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "testdata", "a.go")
+	src := "package a\nfunc  f( ) {\n"
+	if err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{{File: path, NewText: src}}); err != nil {
+		t.Fatal(err)
+	}
+	requireContent(t, path, src)
 }

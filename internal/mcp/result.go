@@ -107,6 +107,10 @@ func buildDiffs(changes []types.Change) []FileDiff {
 				fd.Hunks = nil
 				break
 			}
+			if c.Carried() {
+				fd.Hunks = append(fd.Hunks, DiffHunk{Description: c.Description, New: fmt.Sprintf("[file moved, %d bytes]", len(c.NewText))})
+				continue
+			}
 			fd.Hunks = append(fd.Hunks, DiffHunk{
 				Description: c.Description,
 				Start:       c.Start,
