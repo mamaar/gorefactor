@@ -521,3 +521,11 @@ type AnalyzeDependenciesRequest struct {
 type BatchOperationRequest struct {
 	Operations []string // Command strings to execute
 }
+
+// ExtractConstantRequest represents extracting a literal into a package-level constant
+type ExtractConstantRequest struct {
+	SourceFile   string
+	Line         int // 1-based, any position inside the literal
+	Column       int // 1-based byte column
+	ConstantName string
+}

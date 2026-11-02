@@ -34,6 +34,7 @@ type RefactorEngine interface {
 	ExtractFunction(ws *types.Workspace, req types.ExtractFunctionRequest) (*types.RefactoringPlan, error)
 	ExtractInterface(ws *types.Workspace, req types.ExtractInterfaceRequest) (*types.RefactoringPlan, error)
 	ExtractVariable(ws *types.Workspace, req types.ExtractVariableRequest) (*types.RefactoringPlan, error)
+	ExtractConstant(ws *types.Workspace, req types.ExtractConstantRequest) (*types.RefactoringPlan, error)
 	InlineMethod(ws *types.Workspace, req types.InlineMethodRequest) (*types.RefactoringPlan, error)
 	InlineVariable(ws *types.Workspace, req types.InlineVariableRequest) (*types.RefactoringPlan, error)
 	InlineFunction(ws *types.Workspace, req types.InlineFunctionRequest) (*types.RefactoringPlan, error)
@@ -687,6 +688,31 @@ func (e *DefaultEngine) ExtractVariable(ws *types.Workspace, req types.ExtractVa
 	plan, err := operation.Execute(ws)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate extract variable plan: %w", err)
+	}
+
+	plan.Operations = []types.Operation{operation}
+
+	return plan, nil
+}
+
+// ExtractConstant declares the selected literal as a package-level constant
+// and replaces every equal literal of its package with it.
+func (e *DefaultEngine) ExtractConstant(ws *types.Workspace, req types.ExtractConstantRequest) (*types.RefactoringPlan, error) {
+	operation := &ExtractConstantOperation{Request: req, Sources: e.set.Sources()}
+
+	if err := operation.Validate(ws); err != nil {
+		return nil, fmt.Errorf("extract constant operation validation failed: %w", err)
+	}
+
+	if pkg, _ := findWorkspaceFile(ws, req.SourceFile); pkg != nil {
+		if parser := e.parserFor(ws); parser != nil {
+			parser.EnsureTypeChecked(ws, pkg)
+		}
+	}
+
+	plan, err := operation.Execute(ws)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate extract constant plan: %w", err)
 	}
 
 	plan.Operations = []types.Operation{operation}
