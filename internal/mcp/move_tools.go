@@ -71,9 +71,8 @@ type PackageMappingInput struct {
 }
 
 type MovePackagesInput struct {
-	Packages  []PackageMappingInput `json:"packages" jsonschema:"list of source→target package mappings"`
-	TargetDir string                `json:"target_dir,omitempty" jsonschema:"common target directory (used when packages list uses relative targets)"`
-	DryRun    bool                  `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+	Packages []PackageMappingInput `json:"packages" jsonschema:"list of source→target package mappings"`
+	DryRun   bool                  `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
 // planMoveSymbol plans in and checks it under every build configuration. The
@@ -189,7 +188,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "move_packages",
-		Description: "Move multiple packages atomically. All import references are updated in a single operation. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
+		Description: "Move multiple packages atomically. All mappings are planned as one move, so packages that import each other and files that import several of them see every new path and name. A mapping that shares a source or target with another is refused, and so is a target that already holds Go files. Moves and rewrites every .go file regardless of build constraints. Uses of the old package name are renamed with type information; a file that cannot be renamed safely keeps the old name as an import alias and is listed in skipped_sites. Aliased and dot imports are only re-pathed.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MovePackagesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -207,8 +206,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			}
 		}
 		plan, err := state.GetEngine().MovePackages(ws, types.MovePackagesRequest{
-			Packages:  mappings,
-			TargetDir: in.TargetDir,
+			Packages: mappings,
 		})
 		if err != nil {
 			state.RUnlock()

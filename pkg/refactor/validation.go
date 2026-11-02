@@ -258,8 +258,9 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 	// and attempt compilation
 
 	for _, change := range plan.Changes {
-		// Basic syntax validation of new text
-		if change.NewText != "" {
+		// Basic syntax validation of new text. A relocation is a whole file,
+		// which the serializer refuses to write when it newly fails to parse.
+		if change.NewText != "" && !change.Relocation {
 			// Skip validation for code fragments that aren't valid standalone Go:
 			// - Interface method signatures (method name + signature)
 			// - Parameter list changes (just parameter declarations)

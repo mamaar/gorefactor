@@ -93,8 +93,7 @@ func TestMovePackagesMovesFilesOfEveryConfiguration(t *testing.T) {
 	ws := loadWorkspace(t, eng, dir)
 
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
-		Packages:  []types.PackageMapping{{SourcePackage: "p", TargetPackage: "q"}},
-		TargetDir: "q",
+		Packages: []types.PackageMapping{{SourcePackage: "p", TargetPackage: "q"}},
 	})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
@@ -171,8 +170,7 @@ func TestMovePackagesMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	ws := loadWorkspace(t, eng, dir)
 
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
-		Packages:  []types.PackageMapping{{SourcePackage: "p", TargetPackage: "q"}},
-		TargetDir: "q",
+		Packages: []types.PackageMapping{{SourcePackage: "p", TargetPackage: "q"}},
 	})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)

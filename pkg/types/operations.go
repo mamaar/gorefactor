@@ -418,7 +418,6 @@ type MoveDirRequest struct {
 // MovePackagesRequest represents moving multiple packages atomically
 type MovePackagesRequest struct {
 	Packages      []PackageMapping
-	TargetDir     string
 	CreateTargets bool
 	UpdateImports bool
 }

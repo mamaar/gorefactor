@@ -135,8 +135,7 @@ func TestMovePackagesRewritesImporterQualifiers(t *testing.T) {
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
-		Packages:  []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
-		TargetDir: "lib",
+		Packages: []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
 	})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
@@ -297,8 +296,7 @@ func TestMovePackagesReportsImportsKeptAsAlias(t *testing.T) {
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
-		Packages:  []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
-		TargetDir: "lib",
+		Packages: []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
 	})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
