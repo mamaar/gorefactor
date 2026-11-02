@@ -113,6 +113,12 @@ func (op *RenameMethodOperation) renamedMembers(ws *types.Workspace) ([]*types.S
 	}
 	members := make([]*types.Symbol, 0, len(funcs))
 	for _, f := range funcs {
+		if err := stdMethodError("rename", f); err != nil {
+			return nil, err
+		}
+		if err := stdRenameError(f, op.Request.NewMethodName); err != nil {
+			return nil, err
+		}
 		member, err := memberSymbol(ws, f)
 		if err != nil {
 			return nil, err

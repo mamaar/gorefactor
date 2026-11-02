@@ -48,7 +48,7 @@ type RenameFieldInput struct {
 func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "rename_symbol",
-		Description: "Rename a symbol (function, type, variable, constant) across the workspace. All references are updated, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations is renamed in all of them. Only package-level symbols are addressable; function-local constants, types and variables are not.",
+		Description: "Rename a symbol (function, type, variable, constant) across the workspace. All references are updated, under every build configuration (GOOS/GOARCH variants, custom build tags) that covers the workspace; a declaration with the same name in several configurations is renamed in all of them. Only package-level symbols are addressable; function-local constants, types and variables are not. A method, named Type.Method or bare, is renamed the way rename_method renames it.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameSymbolInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher
 		// batch takes the write lock and may drop a view being planned in.
@@ -99,7 +99,8 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			"calls, method values and method expressions of that method, including promoted calls through embedding; same-named " +
 			"package functions and methods of other types are left untouched. The workspace interface methods the method " +
 			"satisfies and their implementations are renamed with it; the rename is refused when the method satisfies an " +
-			"interface declared outside the workspace (e.g. fmt.Stringer). Planned under every build configuration " +
+			"interface declared outside the workspace (e.g. fmt.Stringer), or when it is a standard method (String() string, " +
+			"MarshalJSON() ([]byte, error) and the other signatures go vet checks), or when the new name with the method's signature would be one (Name() string renamed to String). Planned under every build configuration " +
 			"(GOOS/GOARCH variants, custom build tags) that covers the workspace.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RenameMethodInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher

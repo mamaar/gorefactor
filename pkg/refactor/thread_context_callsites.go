@@ -130,6 +130,9 @@ func (op *ThreadContextOperation) gainBlocker(ws *pkgtypes.Workspace, idx *analy
 	if ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f); ok {
 		return fmt.Sprintf("external interface: %s implements %s, declared outside the workspace, so its signature stays", funcLabel(f), ext.label())
 	}
+	if m := stdMethodOf(f.Name(), f); m != nil {
+		return fmt.Sprintf("standard method: %s: %s; its signature stays", funcLabel(f), stdMethodWhy(m))
+	}
 	return ""
 }
 
