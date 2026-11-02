@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
@@ -154,8 +155,6 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 			return &TypeCheckResult{Skipped: "could not obtain a workspace importer"}
 		}
 
-		ser := NewSerializer()
-
 		pkgs := make([]*types.Package, 0, len(touched))
 		for pkg := range touched {
 			pkgs = append(pkgs, pkg)
@@ -164,14 +163,7 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 		// runs over the same plan (touched is a map).
 		sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].ImportPath < pkgs[j].ImportPath })
 
-		for _, pkg := range pkgs {
-			res := verifyPackageTypes(pkg, changesByFile, ser, importer)
-			if res.skipped != "" {
-				skipped = append(skipped, res.skipped)
-				continue
-			}
-			result.NewErrors = append(result.NewErrors, res.newErrors...)
-		}
+		result.NewErrors, skipped = verifyTouched(ws, pkgs, changesByFile, importer)
 	}
 
 	if len(untracked) > 0 {
@@ -192,27 +184,168 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 type packageVerifyResult struct {
 	newErrors []string
 	skipped   string
+	// modified is the package as type-checked with the plan applied.
+	modified *gotypes.Package
 }
 
-// verifyPackageTypes type-checks pkg twice — once as-is (the baseline) and
-// once with changesByFile applied in memory — and returns the errors present
-// only in the second pass. Its external test files are checked as their own
-// package, like (*analysis.GoParser).typeCheckLocked does, when the plan
-// changes one of them.
-func verifyPackageTypes(pkg *types.Package, changesByFile map[string][]types.Change, ser *Serializer, importer gotypes.Importer) packageVerifyResult {
-	inPackage, external := packageFileGroups(pkg)
-	res := verifyFileGroup(pkg.ImportPath, inPackage, changesByFile, ser, importer)
-	if res.skipped != "" || !slices.ContainsFunc(external, func(f *types.File) bool { return changesByFile[f.Path] != nil }) {
-		return res
+// overlayImporter resolves the packages already verified with the plan
+// applied to their modified form and every other path through base, so a
+// package that imports a touched one is checked against its post-plan API.
+type overlayImporter struct {
+	base gotypes.Importer
+	over map[string]*gotypes.Package
+}
+
+func (o *overlayImporter) Import(path string) (*gotypes.Package, error) {
+	if p := o.over[path]; p != nil {
+		return p, nil
 	}
-	// The x_test files import pkg as already type-checked, so they are
-	// verified against its pre-plan API.
-	ext := verifyFileGroup(pkg.ImportPath+"_test", external, changesByFile, ser, importer)
-	if ext.skipped != "" {
-		return ext
+	return o.base.Import(path)
+}
+
+// changesProduction reports whether the plan edits a non-test file of pkg.
+func changesProduction(pkg *types.Package, changesByFile map[string][]types.Change) bool {
+	for _, f := range pkg.Files {
+		if changesByFile[f.Path] != nil {
+			return true
+		}
 	}
-	res.newErrors = append(res.newErrors, ext.newErrors...)
-	return res
+	return false
+}
+
+// verifyOrder says which packages are re-checked so importers see the plan's
+// API, and in what order.
+type verifyOrder struct {
+	// overlaid lists the packages whose non-test files change, and those that
+	// import one of them directly or through other workspace packages,
+	// dependencies first.
+	overlaid []*types.Package
+	// needed holds the packages some checked package imports.
+	needed map[*types.Package]bool
+	// changed holds the packages whose non-test files the plan edits.
+	changed map[*types.Package]bool
+}
+
+// orderVerification follows the imports of non-test files from the touched
+// packages, and those of every file for the touched packages themselves.
+func orderVerification(ws *types.Workspace, touched []*types.Package, changesByFile map[string][]types.Change) verifyOrder {
+	byImport := make(map[string]*types.Package, len(ws.Packages))
+	for _, p := range ws.Packages {
+		byImport[p.ImportPath] = p
+	}
+	importsOf := func(files []*types.File) []*types.Package {
+		var out []*types.Package
+		for _, f := range files {
+			if f.AST == nil {
+				continue
+			}
+			for _, imp := range f.AST.Imports {
+				if path, err := strconv.Unquote(imp.Path.Value); err == nil && byImport[path] != nil {
+					out = append(out, byImport[path])
+				}
+			}
+		}
+		return out
+	}
+	prodImports := func(p *types.Package) []*types.Package { return importsOf(slices.Collect(maps.Values(p.Files))) }
+
+	o := verifyOrder{needed: make(map[*types.Package]bool), changed: make(map[*types.Package]bool)}
+	for _, p := range touched {
+		o.changed[p] = changesProduction(p, changesByFile)
+	}
+	affected := make(map[*types.Package]bool)
+	started := make(map[*types.Package]bool)
+	var visit func(p *types.Package)
+	visit = func(p *types.Package) {
+		if started[p] {
+			return // done, or an import cycle through test files
+		}
+		started[p] = true
+		for _, d := range prodImports(p) {
+			visit(d)
+			if o.changed[d] || affected[d] {
+				affected[p] = !o.changed[p]
+			}
+		}
+		if o.changed[p] || affected[p] {
+			o.overlaid = append(o.overlaid, p)
+		}
+	}
+	for _, p := range touched {
+		for _, d := range importsOf(allFilesOf(p)) {
+			o.needed[d] = true
+			visit(d)
+		}
+		visit(p)
+	}
+	for _, p := range o.overlaid {
+		for _, d := range prodImports(p) {
+			o.needed[d] = true
+		}
+	}
+	return o
+}
+
+// verifyTouched checks the touched packages and returns the errors the plan
+// adds. Packages that change or import a changed package are checked first
+// against the plan's API, and the rest are checked against them. The own
+// errors of packages the plan does not edit are not counted.
+func verifyTouched(ws *types.Workspace, pkgs []*types.Package, changesByFile map[string][]types.Change, importer gotypes.Importer) (newErrors, skipped []string) {
+	ser := NewSerializer()
+	over := &overlayImporter{base: importer, over: make(map[string]*gotypes.Package)}
+	order := orderVerification(ws, pkgs, changesByFile)
+	isTouched := make(map[*types.Package]bool, len(pkgs))
+	for _, p := range pkgs {
+		isTouched[p] = true
+	}
+	record := func(res packageVerifyResult) {
+		if res.skipped != "" {
+			skipped = append(skipped, res.skipped)
+			return
+		}
+		newErrors = append(newErrors, res.newErrors...)
+	}
+
+	checked := make(map[*types.Package]bool)
+	for _, p := range order.overlaid {
+		inPackage, _ := packageFileGroups(p)
+		production := productionFiles(p, inPackage)
+		switch {
+		case len(production) == 0:
+		case isTouched[p] && len(production) == len(inPackage):
+			res := verifyFileGroup(p.ImportPath, inPackage, changesByFile, ser, importer, over)
+			record(res)
+			checked[p] = true
+			if res.modified != nil {
+				over.over[p.ImportPath] = res.modified
+			}
+		case order.needed[p]:
+			// Importers see the package without its test files.
+			res := verifyFileGroup(p.ImportPath, production, changesByFile, ser, importer, over)
+			if isTouched[p] && res.skipped != "" {
+				skipped = append(skipped, res.skipped)
+			}
+			if res.modified != nil {
+				over.over[p.ImportPath] = res.modified
+			}
+		}
+	}
+	for _, p := range pkgs {
+		inPackage, external := packageFileGroups(p)
+		if !checked[p] {
+			record(verifyFileGroup(p.ImportPath, inPackage, changesByFile, ser, importer, over))
+		}
+		if slices.ContainsFunc(external, func(f *types.File) bool { return changesByFile[f.Path] != nil }) {
+			record(verifyFileGroup(p.ImportPath+"_test", external, changesByFile, ser, importer, over))
+		}
+	}
+	return newErrors, skipped
+}
+
+// productionFiles returns the non-test files among files.
+func productionFiles(pkg *types.Package, files []*types.File) []*types.File {
+	production := slices.Collect(maps.Values(pkg.Files))
+	return slices.DeleteFunc(slices.Clone(files), func(f *types.File) bool { return !slices.Contains(production, f) })
 }
 
 // packageFileGroups splits pkg's files into those checked together — the
@@ -235,8 +368,9 @@ func packageFileGroups(pkg *types.Package) (inPackage, external []*types.File) {
 }
 
 // verifyFileGroup diffs the type errors of files checked as package
-// importPath before and after changesByFile is applied.
-func verifyFileGroup(importPath string, files []*types.File, changesByFile map[string][]types.Change, ser *Serializer, importer gotypes.Importer) packageVerifyResult {
+// importPath before and after changesByFile is applied. The baseline resolves
+// imports through importer and the modified files through modImporter.
+func verifyFileGroup(importPath string, files []*types.File, changesByFile map[string][]types.Change, ser *Serializer, importer, modImporter gotypes.Importer) packageVerifyResult {
 	baselineContents := fileContents(files)
 	if len(baselineContents) == 0 {
 		return packageVerifyResult{skipped: fmt.Sprintf("package %s: no parseable files", importPath)}
@@ -254,7 +388,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		// result" situation Skipped exists for.
 		return packageVerifyResult{skipped: fmt.Sprintf("package %s: baseline content unexpectedly failed to parse: %v", importPath, err)}
 	}
-	baseErrs := checkPackageErrors(baseFset, importer, importPath, baseFiles)
+	_, baseErrs := checkPackageErrors(baseFset, importer, importPath, baseFiles)
 	baseline := normalizeErrorSet(baseErrs)
 
 	modContents, err := applyPlanToFiles(files, changesByFile, ser)
@@ -278,7 +412,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		// the only finding for this package.
 		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan produces invalid Go source: %v", importPath, err)}}
 	}
-	modErrs := checkPackageErrors(modFset, importer, importPath, modFiles)
+	modPkg, modErrs := checkPackageErrors(modFset, modImporter, importPath, modFiles)
 
 	var newErrs []string
 	for _, e := range modErrs {
@@ -287,7 +421,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 			newErrs = append(newErrs, full)
 		}
 	}
-	return packageVerifyResult{newErrors: newErrs}
+	return packageVerifyResult{newErrors: newErrs, modified: modPkg}
 }
 
 // fileContents returns file-path -> original content for files.
@@ -360,7 +494,7 @@ func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, err
 // error Config.Check happens to return, whereas a baseline diff needs the
 // complete error set on both sides to avoid mistaking "baseline had error A,
 // modified has error A and B" for "everything's new".
-func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPath string, files []*ast.File) []error {
+func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPath string, files []*ast.File) (*gotypes.Package, []error) {
 	var errs []error
 	conf := analysis.NewTypesConfig(importer, func(err error) { errs = append(errs, err) })
 	info := &gotypes.Info{
@@ -371,8 +505,8 @@ func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPa
 	// The returned error is redundant with what Error already collected
 	// above (Config.Check returns the first error even when a custom Error
 	// callback is set), so it is intentionally discarded here.
-	_, _ = conf.Check(importPath, fset, files, info)
-	return errs
+	pkg, _ := conf.Check(importPath, fset, files, info)
+	return pkg, errs
 }
 
 // normalizeTypeError reduces a type-checking error to (key, full): full is

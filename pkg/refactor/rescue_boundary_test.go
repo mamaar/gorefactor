@@ -3,6 +3,7 @@ package refactor
 import (
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -12,8 +13,17 @@ import (
 // so that its importers hold the production-only copy.
 func loadRescuedInterface(t *testing.T) (*DefaultEngine, string) {
 	t.Helper()
+	return loadRescuedInterfaceWith(t, strings.NewReplacer())
+}
+
+// loadRescuedInterfaceWith is loadRescuedInterface with variant applied to every file.
+func loadRescuedInterfaceWith(t *testing.T, variant *strings.Replacer) (*DefaultEngine, string) {
+	t.Helper()
 	files := rescuedInterfaceFiles()
 	files["app/fresh.go"] = "package app\n\nimport \"example.com/threadtest/common\"\n\nfunc Fresh() common.Opts { return common.Opts{Refresh: true} }\n"
+	for rel, src := range files {
+		files[rel] = variant.Replace(src)
+	}
 	eng, dir := loadConfigsEngine(t, files)
 	v := eng.WorkspaceSet().Primary()
 	v.Parser.EnsureTypeChecked(v.Workspace, v.Workspace.Packages[dir+"/common"])
@@ -85,7 +95,31 @@ func TestSafeDelete_ReferencesInImportersOfProductionOnlyCopyBlock(t *testing.T)
 	}
 }
 
+// TestChangeSignature_CallInImporterOfProductionOnlyCopy uses a signature of
+// basic types; with the package's own type the next test applies.
 func TestChangeSignature_CallInImporterOfProductionOnlyCopy(t *testing.T) {
+	eng, dir := loadRescuedInterfaceWith(t, withoutOpts)
+
+	plan, err := eng.ChangeSignatureAcrossConfigs(ChangeSignatureRequest{
+		FunctionName:         "Manager.Token",
+		SourceFile:           filepath.Join(dir, "common/common.go"),
+		Subcommand:           "add_param",
+		NewParams:            []Parameter{{Name: "service", Type: "string"}, {Name: "n", Type: "int"}},
+		DefaultValue:         "0",
+		NewParamPosition:     1,
+		Scope:                types.WorkspaceScope,
+		PropagateToInterface: true,
+	})
+	applyPlan(t, eng, plan, err)
+
+	assertOnce(t, dir, "common/common.go", "\tToken(service string, n int) (string, error)\n")
+	assertOnce(t, dir, "common/common.go", "func (m *Manager) Token(service string, n int) (string, error)")
+	assertOnce(t, dir, "common/common.go", "return m.Token(\"d\", 0)")
+	assertOnce(t, dir, "app/app.go", "return m.Token(\"c\", 0)")
+	vetBuilds(t, dir, linuxBuild)
+}
+
+func TestChangeSignature_RefusesPackageLocalTypeWrittenUnqualifiedIntoImplementation(t *testing.T) {
 	eng, dir := loadRescuedInterface(t)
 
 	plan, err := eng.ChangeSignatureAcrossConfigs(ChangeSignatureRequest{
@@ -98,10 +132,10 @@ func TestChangeSignature_CallInImporterOfProductionOnlyCopy(t *testing.T) {
 		Scope:                types.WorkspaceScope,
 		PropagateToInterface: true,
 	})
-	applyPlan(t, eng, plan, err)
-
-	assertOnce(t, dir, "common/common.go", "\tToken(service string, opts Opts, n int) (string, error)\n")
-	assertOnce(t, dir, "common/common.go", "func (m *Manager) Token(service string, opts Opts, n int) (string, error)")
-	assertOnce(t, dir, "common/common.go", "return m.Token(\"d\", Opts{}, 0)")
-	assertOnce(t, dir, "app/app.go", "return m.Token(\"c\", common.Opts{}, 0)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.ExecutePlan(plan); err == nil || !strings.Contains(err.Error(), "undefined: Opts") {
+		t.Errorf("ExecutePlan error = %v, want the type check's undefined: Opts", err)
+	}
 }

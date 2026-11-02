@@ -11,11 +11,12 @@ import (
 )
 
 // CallSite is a single call site of some callee, resolved to plain ast/types
-// values so that callers outside this package never see an inspector.Cursor.
+// values; Cursor locates Call in its file for callers that need its parents.
 type CallSite struct {
-	File *types.File
-	Pkg  *types.Package
-	Call *ast.CallExpr
+	File   *types.File
+	Pkg    *types.Package
+	Call   *ast.CallExpr
+	Cursor inspector.Cursor
 
 	// Fn is the nearest enclosing named function declaration, even when Call
 	// sits inside a FuncLit nested in that FuncDecl (Lit != nil is how a caller
@@ -39,10 +40,11 @@ type CallSite struct {
 // value, a func value, or a symbol passed as an argument. These are exactly
 // the references a signature change cannot rewrite by editing call sites.
 type ValueUse struct {
-	File  *types.File
-	Pkg   *types.Package
-	Pos   token.Pos
-	Ident *ast.Ident
+	File   *types.File
+	Pkg    *types.Package
+	Pos    token.Pos
+	Ident  *ast.Ident
+	Cursor inspector.Cursor
 }
 
 // CallSitesOf returns every call site of obj across the workspace. obj is
@@ -68,9 +70,10 @@ func (idx *ReferenceIndex) CallSitesOf(obj gotypes.Object) []CallSite {
 			}
 
 			site := CallSite{
-				File: file,
-				Pkg:  pkg,
-				Call: call,
+				File:   file,
+				Pkg:    pkg,
+				Call:   call,
+				Cursor: cur,
 			}
 
 			// Innermost enclosing FuncLit, regardless of whether a FuncDecl
@@ -147,10 +150,11 @@ func (idx *ReferenceIndex) NonCallUsesOf(obj gotypes.Object) []ValueUse {
 				continue
 			}
 			uses = append(uses, ValueUse{
-				File:  file,
-				Pkg:   pkg,
-				Pos:   ident.Pos(),
-				Ident: ident,
+				File:   file,
+				Pkg:    pkg,
+				Pos:    ident.Pos(),
+				Ident:  ident,
+				Cursor: cur,
 			})
 		}
 	}

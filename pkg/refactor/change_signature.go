@@ -7,7 +7,6 @@ import (
 	gotypes "go/types"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -131,9 +130,9 @@ type ChangeSignatureOperation struct {
 	derefErr      error        // first call-site finding that aborts the whole change
 
 	removedIdx      int
-	removedCount    int      // parameters before the removal
-	removedVariadic bool     // the last of them is variadic
-	removeRefusals  []string // every site that stops a remove_param, reported together
+	removedCount    int           // parameters before the removal
+	removedVariadic bool          // the last of them is variadic
+	refusals        []siteRefusal // every site that stops a remove_param or return change, reported together
 }
 
 // AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
@@ -258,8 +257,11 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	}
 
 	// Preserve existing return types if not explicitly provided (fixes add_param/remove_param dropping returns)
-	if err := op.preserveExistingReturnsIfNeeded(sourceFile); err != nil {
-		return nil, err
+	// A return change gives the full list, which is empty when the only result is removed.
+	if !op.changesReturns() {
+		if err := op.preserveExistingReturnsIfNeeded(sourceFile); err != nil {
+			return nil, err
+		}
 	}
 
 	// Preserve existing params if not explicitly provided (fixes add_return/remove_return dropping params)
@@ -296,7 +298,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	}
 
 	op.derefSkips = nil
-	op.removeRefusals = nil
+	op.refusals = nil
 	if op.RemoveParam {
 		if err := op.planRemoveParam(ws, sourcePackage, sourceFile, typeName, methodName, isIface); err != nil {
 			return nil, err
@@ -347,14 +349,28 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		}
 	}
 
-	callSiteCount := op.updateCallSites(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
-	op.updateReturnStatements(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
-	op.updateAssignmentLHS(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
+	var callSiteCount int
+	if op.changesReturns() {
+		targets, err := op.returnTargets(ws, sourcePackage, sourceFile, typeName, methodName, isIface, members)
+		if err != nil {
+			return nil, err
+		}
+		if callSiteCount, err = op.planReturns(ws, idx, targets, plan); err != nil {
+			return nil, err
+		}
+	} else {
+		callSiteCount = op.updateCallSites(ws, sourcePackage, allRefSymbols, resolver, idx, plan)
+	}
 	if op.derefErr != nil {
 		return nil, op.derefErr
 	}
-	if len(op.removeRefusals) > 0 {
-		return nil, fmt.Errorf("remove_param: %s cannot be changed:\n%s", op.FunctionName, strings.Join(op.removeRefusals, "\n"))
+	if len(op.refusals) > 0 {
+		slices.SortFunc(op.refusals, compareRefusals)
+		lines := make([]string, len(op.refusals))
+		for i, r := range op.refusals {
+			lines[i] = r.String()
+		}
+		return nil, fmt.Errorf("%s: %s cannot be changed:\n%s", op.subcommandName(), op.FunctionName, strings.Join(lines, "\n"))
 	}
 	plan.SkippedSites = append(plan.SkippedSites, op.derefSkips...)
 	op.addDefaultValueImports(ws, plan)
@@ -582,18 +598,21 @@ func (op *ChangeSignatureOperation) findFunction(file *pkgtypes.File, funcName s
 		return findFuncDeclForMethod(file, typeName, methodName)
 	}
 
-	var found *ast.FuncDecl
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
-			if funcDecl.Name != nil && funcDecl.Name.Name == funcName {
-				found = funcDecl
-				return false
-			}
+	// A plain function wins over a method of the same name; a bare name still finds a lone method.
+	var method *ast.FuncDecl
+	for _, decl := range file.AST.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Name == nil || fd.Name.Name != funcName {
+			continue
 		}
-		return true
-	})
-
-	return found
+		if fd.Recv == nil {
+			return fd
+		}
+		if method == nil {
+			method = fd
+		}
+	}
+	return method
 }
 
 func (op *ChangeSignatureOperation) tokenPosToOffset(ws *pkgtypes.Workspace, pos token.Pos) int {
@@ -648,13 +667,17 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 	// Add return types.
 	// NamedReturns ([]Parameter) takes precedence over NewReturns ([]string) so that
 	// named result variables from the original signature are preserved verbatim.
-	if len(op.NamedReturns) > 0 {
+	namedReturns := op.NamedReturns
+	if op.changesReturns() && hasNamedResults(funcDecl.Type) {
+		namedReturns = op.namedResultsAfterChange(funcDecl)
+	}
+	if len(namedReturns) > 0 {
 		signature.WriteString(" ")
-		needsParens := len(op.NamedReturns) > 1 || op.NamedReturns[0].Name != ""
+		needsParens := len(namedReturns) > 1 || namedReturns[0].Name != ""
 		if needsParens {
 			signature.WriteString("(")
 		}
-		for i, ret := range op.NamedReturns {
+		for i, ret := range namedReturns {
 			if i > 0 {
 				signature.WriteString(", ")
 			}
@@ -899,10 +922,7 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 					start := op.tokenPosToOffset(ws, callExpr.Pos())
 					end := op.tokenPosToOffset(ws, callExpr.End())
 					oldText := string(refFile.OriginalContent[start:end])
-					// Skip no-op changes: when only returns changed (add_return / remove_return),
-					// the arguments are unchanged and the generated call equals the original text.
-					// Emitting a no-op change creates overlapping ranges with the assignment-LHS
-					// and expression-statement rewrites produced by updateAssignmentLHS.
+					// Skip no-op changes: a call whose arguments stay as they are.
 					if oldText == newCall {
 						if op.Logger != nil {
 							op.Logger.Debug("Skipping no-op call site change", "call", oldText)
@@ -931,7 +951,7 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 
 	if !foundCallExpr {
 		if op.RemoveParam {
-			op.refuseRemove(ws, ref.Position, "reference is not a call, so its argument cannot be removed")
+			op.refuse(ws, ref.Position, "reference is not a call, so its argument cannot be removed")
 		}
 		if op.DerefParam {
 			op.skipSite(ref, "reference is not a call, so its argument cannot be rewritten", ref.Context)
@@ -980,7 +1000,7 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 	if op.RemoveParam {
 		args, reason := op.removeArg(callExpr, existingArgs, info)
 		if reason != "" {
-			op.refuseRemove(ws, callExpr.Pos(), reason)
+			op.refuse(ws, callExpr.Pos(), reason)
 			return ""
 		}
 		return op.callText(callExpr, ws, fileContent, strings.Join(args, ", "))
@@ -1657,375 +1677,6 @@ func (op *ChangeSignatureOperation) resolveSourceFile(ws *pkgtypes.Workspace) er
 	}
 }
 
-// updateReturnStatements updates return statements inside implementation method bodies
-// when return types are added or removed.
-func (op *ChangeSignatureOperation) updateReturnStatements(
-	ws *pkgtypes.Workspace, sourcePackage *pkgtypes.Package,
-	allRefSymbols []*pkgtypes.Symbol, resolver *analysis.SymbolResolver,
-	idx *analysis.ReferenceIndex, plan *pkgtypes.RefactoringPlan,
-) {
-	if op.NewReturnPosition < 0 && op.RemovedReturnIndex < 0 {
-		return // Not a return-type change operation
-	}
-
-	logger := op.logger()
-
-	// Parse FunctionName to get method name
-	var methodName string
-	if strings.Contains(op.FunctionName, ".") {
-		parts := strings.SplitN(op.FunctionName, ".", 2)
-		methodName = parts[1]
-	} else {
-		methodName = op.FunctionName
-	}
-
-	// Find all implementation methods and update their return statements
-	allFiles := collectAllWorkspaceFiles(ws)
-	for _, file := range allFiles {
-		if file == nil || file.AST == nil {
-			continue
-		}
-
-		content, err := os.ReadFile(file.Path)
-		if err != nil {
-			continue
-		}
-
-		ast.Inspect(file.AST, func(n ast.Node) bool {
-			funcDecl, ok := n.(*ast.FuncDecl)
-			if !ok || funcDecl.Name == nil || funcDecl.Name.Name != methodName {
-				return true
-			}
-			if funcDecl.Body == nil {
-				return true
-			}
-
-			// Determine existing return count from the original signature
-			existingReturnCount := countFieldListEntries(funcDecl.Type.Results)
-
-			// For add-return: existing returns should match (NewReturns.length - 1)
-			// For remove-return: existing returns should match (NewReturns.length + 1)
-			var expectedExisting int
-			if op.NewReturnPosition >= 0 {
-				expectedExisting = len(op.NewReturns) - 1
-			} else {
-				expectedExisting = len(op.NewReturns) + 1
-			}
-			if existingReturnCount != expectedExisting {
-				return true
-			}
-
-			// Walk the body for return statements, skipping nested FuncLit
-			walkBodyForReturnStmts(funcDecl.Body, func(retStmt *ast.ReturnStmt) {
-				if len(retStmt.Results) != existingReturnCount {
-					return // bare return or mismatched count
-				}
-
-				retStart := ws.FileSet.Position(retStmt.Pos()).Offset
-				retEnd := ws.FileSet.Position(retStmt.End()).Offset
-				oldText := string(content[retStart:retEnd])
-
-				retValues := splitReturnValueTexts(retStmt, content, ws)
-
-				var newParts []string
-				if op.NewReturnPosition >= 0 {
-					// Add return value
-					pos := op.NewReturnPosition
-					if pos < 0 || pos >= len(retValues) {
-						newParts = append(newParts, retValues...)
-						newParts = append(newParts, op.DefaultReturnValue)
-					} else {
-						newParts = append(newParts, retValues[:pos]...)
-						newParts = append(newParts, op.DefaultReturnValue)
-						newParts = append(newParts, retValues[pos:]...)
-					}
-				} else {
-					// Remove return value
-					for i, v := range retValues {
-						if i == op.RemovedReturnIndex {
-							continue
-						}
-						newParts = append(newParts, v)
-					}
-				}
-
-				var newText string
-				if len(newParts) == 0 {
-					newText = "return"
-				} else {
-					newText = "return " + strings.Join(newParts, ", ")
-				}
-
-				plan.Changes = append(plan.Changes, pkgtypes.Change{
-					File:        file.Path,
-					Start:       retStart,
-					End:         retEnd,
-					OldText:     oldText,
-					NewText:     newText,
-					Description: fmt.Sprintf("Update return statement in %s", methodName),
-				})
-				if !contains(plan.AffectedFiles, file.Path) {
-					plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
-				}
-			})
-
-			logger.Debug("updated return statements", "method", funcDecl.Name.Name, "file", file.Path)
-			return true
-		})
-	}
-}
-
-// callExprMatchesTarget returns true when the CallExpr's function identifier matches
-// the target method/function name.  Handles both selector (pkg.Func / recv.Method)
-// and plain identifier (Func) forms.
-func callExprMatchesTarget(callExpr *ast.CallExpr, methodName string) bool {
-	switch fun := callExpr.Fun.(type) {
-	case *ast.SelectorExpr:
-		return fun.Sel.Name == methodName
-	case *ast.Ident:
-		return fun.Name == methodName
-	}
-	return false
-}
-
-// updateAssignmentLHS updates the LHS of assignment statements at call sites
-// when return types are added or removed (e.g., `a, b := obj.Method()`).
-//
-// For add_return it also handles two additional patterns:
-//   - Expression statement: `f(x)` — the result was discarded.  Rewritten to
-//     `_ = f(x)` (or `_, _ = f(x)` if already multi-return) so the new return is
-//     explicitly ignored.
-//   - Inline call nested inside another expression: these cannot be safely rewritten
-//     (Go does not allow multi-return inside another expression) so they are recorded
-//     in plan.SkippedSites for manual attention.
-func (op *ChangeSignatureOperation) updateAssignmentLHS(
-	ws *pkgtypes.Workspace, sourcePackage *pkgtypes.Package,
-	allRefSymbols []*pkgtypes.Symbol, resolver *analysis.SymbolResolver,
-	idx *analysis.ReferenceIndex, plan *pkgtypes.RefactoringPlan,
-) {
-	if op.NewReturnPosition < 0 && op.RemovedReturnIndex < 0 {
-		return // Not a return-type change operation
-	}
-
-	// Parse FunctionName to get method name
-	var methodName string
-	if strings.Contains(op.FunctionName, ".") {
-		parts := strings.SplitN(op.FunctionName, ".", 2)
-		methodName = parts[1]
-	} else {
-		methodName = op.FunctionName
-	}
-
-	// Number of returns before this operation.
-	var existingReturnCount int
-	if op.NewReturnPosition >= 0 {
-		existingReturnCount = len(op.NewReturns) - 1
-	} else {
-		existingReturnCount = len(op.NewReturns) + 1
-	}
-
-	allFiles := collectAllWorkspaceFiles(ws)
-	for _, file := range allFiles {
-		if file == nil || file.AST == nil {
-			continue
-		}
-
-		content, err := os.ReadFile(file.Path)
-		if err != nil {
-			continue
-		}
-
-		// Build a set of all call expression positions that appear inside other
-		// call expression argument lists.  Such sites cannot be automatically
-		// rewritten and must be reported as SkippedSites.
-		inlinedCallPositions := collectInlinedCallPositions(file.AST, methodName)
-
-		ast.Inspect(file.AST, func(n ast.Node) bool {
-			switch stmt := n.(type) {
-
-			// --- assignment / short-variable-declaration -----------------------
-			case *ast.AssignStmt:
-				if len(stmt.Rhs) != 1 {
-					return true
-				}
-				callExpr, ok := stmt.Rhs[0].(*ast.CallExpr)
-				if !ok || !callExprMatchesTarget(callExpr, methodName) {
-					return true
-				}
-				if len(stmt.Lhs) != existingReturnCount {
-					return true
-				}
-				// Inline? Should not happen here (call is the whole RHS), but guard anyway.
-				if inlinedCallPositions[callExpr.Pos()] {
-					op.recordSkippedSite(plan, ws, file, callExpr, content, "inlined call in assignment RHS")
-					return true
-				}
-
-				lhsExprs := make([]string, len(stmt.Lhs))
-				for i, expr := range stmt.Lhs {
-					start := ws.FileSet.Position(expr.Pos()).Offset
-					end := ws.FileSet.Position(expr.End()).Offset
-					lhsExprs[i] = strings.TrimSpace(string(content[start:end]))
-				}
-
-				newLHSParts := op.rebuildLHS(lhsExprs)
-
-				lhsStart := ws.FileSet.Position(stmt.Lhs[0].Pos()).Offset
-				lhsEnd := ws.FileSet.Position(stmt.Lhs[len(stmt.Lhs)-1].End()).Offset
-				oldLHS := string(content[lhsStart:lhsEnd])
-
-				if len(newLHSParts) == 0 {
-					// Remove entire assignment (the call itself is already an expression statement)
-					stmtStart := ws.FileSet.Position(stmt.Pos()).Offset
-					stmtEnd := ws.FileSet.Position(stmt.End()).Offset
-					callStart := ws.FileSet.Position(callExpr.Pos()).Offset
-					callEnd := ws.FileSet.Position(callExpr.End()).Offset
-					plan.Changes = append(plan.Changes, pkgtypes.Change{
-						File:        file.Path,
-						Start:       stmtStart,
-						End:         stmtEnd,
-						OldText:     string(content[stmtStart:stmtEnd]),
-						NewText:     string(content[callStart:callEnd]),
-						Description: fmt.Sprintf("Remove assignment LHS for call to %s", methodName),
-					})
-				} else {
-					plan.Changes = append(plan.Changes, pkgtypes.Change{
-						File:        file.Path,
-						Start:       lhsStart,
-						End:         lhsEnd,
-						OldText:     oldLHS,
-						NewText:     strings.Join(newLHSParts, ", "),
-						Description: fmt.Sprintf("Update assignment LHS for call to %s", methodName),
-					})
-				}
-
-				if !contains(plan.AffectedFiles, file.Path) {
-					plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
-				}
-
-			// --- expression statement (result discarded) -----------------------
-			case *ast.ExprStmt:
-				callExpr, ok := stmt.X.(*ast.CallExpr)
-				if !ok || !callExprMatchesTarget(callExpr, methodName) {
-					return true
-				}
-				// Only handle the add-return case: previously the result was unused;
-				// now we must explicitly discard it.
-				if op.NewReturnPosition < 0 {
-					// remove-return: expression statement is fine — still no LHS needed
-					return true
-				}
-				if inlinedCallPositions[callExpr.Pos()] {
-					op.recordSkippedSite(plan, ws, file, callExpr, content, "inlined call in expression statement")
-					return true
-				}
-
-				// Rewrite `f(x)` → `_ = f(x)` (or `_, _ = f(x)` for multiple returns).
-				// Build new LHS blanks for all new returns.
-				newReturnCount := len(op.NewReturns)
-				blanks := make([]string, newReturnCount)
-				for i := range blanks {
-					blanks[i] = "_"
-				}
-
-				stmtStart := ws.FileSet.Position(stmt.Pos()).Offset
-				stmtEnd := ws.FileSet.Position(stmt.End()).Offset
-				oldStmt := string(content[stmtStart:stmtEnd])
-				callStart := ws.FileSet.Position(callExpr.Pos()).Offset
-				callEnd := ws.FileSet.Position(callExpr.End()).Offset
-				callText := string(content[callStart:callEnd])
-				newStmt := strings.Join(blanks, ", ") + " = " + callText
-
-				plan.Changes = append(plan.Changes, pkgtypes.Change{
-					File:        file.Path,
-					Start:       stmtStart,
-					End:         stmtEnd,
-					OldText:     oldStmt,
-					NewText:     newStmt,
-					Description: fmt.Sprintf("Capture discarded return values of %s", methodName),
-				})
-
-				if !contains(plan.AffectedFiles, file.Path) {
-					plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
-				}
-			}
-
-			return true
-		})
-	}
-}
-
-// rebuildLHS returns the new set of LHS variable names after adding or removing
-// a return position, following op.NewReturnPosition / op.RemovedReturnIndex.
-func (op *ChangeSignatureOperation) rebuildLHS(lhsExprs []string) []string {
-	var newParts []string
-	if op.NewReturnPosition >= 0 {
-		pos := op.NewReturnPosition
-		if pos < 0 || pos >= len(lhsExprs) {
-			newParts = append(newParts, lhsExprs...)
-			newParts = append(newParts, "_")
-		} else {
-			newParts = append(newParts, lhsExprs[:pos]...)
-			newParts = append(newParts, "_")
-			newParts = append(newParts, lhsExprs[pos:]...)
-		}
-	} else {
-		for i, v := range lhsExprs {
-			if i == op.RemovedReturnIndex {
-				continue
-			}
-			newParts = append(newParts, v)
-		}
-	}
-	return newParts
-}
-
-// collectInlinedCallPositions returns a set of token.Pos values for CallExpr
-// nodes whose function identifier matches methodName and that appear as an
-// argument inside another CallExpr.  Such sites cannot be expanded to a
-// multi-return form (Go does not allow multi-return inside an expression) and
-// must be reported as SkippedSites.
-func collectInlinedCallPositions(astFile *ast.File, methodName string) map[token.Pos]bool {
-	result := make(map[token.Pos]bool)
-	ast.Inspect(astFile, func(n ast.Node) bool {
-		outerCall, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		for _, arg := range outerCall.Args {
-			innerCall, ok := arg.(*ast.CallExpr)
-			if !ok {
-				continue
-			}
-			if callExprMatchesTarget(innerCall, methodName) {
-				result[innerCall.Pos()] = true
-			}
-		}
-		return true
-	})
-	return result
-}
-
-// recordSkippedSite appends a SkippedSite entry to plan.SkippedSites.
-func (op *ChangeSignatureOperation) recordSkippedSite(
-	plan *pkgtypes.RefactoringPlan, ws *pkgtypes.Workspace,
-	file *pkgtypes.File, callExpr *ast.CallExpr, content []byte, reason string,
-) {
-	pos := ws.FileSet.Position(callExpr.Pos())
-	start := pos.Offset
-	end := ws.FileSet.Position(callExpr.End()).Offset
-	snippet := ""
-	if start >= 0 && end <= len(content) && end > start {
-		snippet = string(content[start:end])
-	}
-	plan.SkippedSites = append(plan.SkippedSites, pkgtypes.SkippedSite{
-		File:    file.Path,
-		Line:    pos.Line,
-		Reason:  reason,
-		Snippet: snippet,
-	})
-}
-
 // walkBodyForReturnStmts walks a function body for ReturnStmt nodes, skipping FuncLit bodies.
 func walkBodyForReturnStmts(body *ast.BlockStmt, fn func(*ast.ReturnStmt)) {
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -2048,34 +1699,4 @@ func splitReturnValueTexts(retStmt *ast.ReturnStmt, content []byte, ws *pkgtypes
 		values[i] = strings.TrimSpace(string(content[start:end]))
 	}
 	return values
-}
-
-// countFieldListEntries counts the total number of entries in a FieldList.
-func countFieldListEntries(fl *ast.FieldList) int {
-	if fl == nil {
-		return 0
-	}
-	count := 0
-	for _, field := range fl.List {
-		if len(field.Names) == 0 {
-			count++
-		} else {
-			count += len(field.Names)
-		}
-	}
-	return count
-}
-
-// collectAllWorkspaceFiles returns all files in the workspace (both regular and test files).
-func collectAllWorkspaceFiles(ws *pkgtypes.Workspace) []*pkgtypes.File {
-	var files []*pkgtypes.File
-	for _, pkg := range ws.Packages {
-		for _, f := range pkg.Files {
-			files = append(files, f)
-		}
-		for _, f := range pkg.TestFiles {
-			files = append(files, f)
-		}
-	}
-	return files
 }
