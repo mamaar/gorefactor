@@ -486,3 +486,21 @@ func main() {
 		t.Fatalf("expected OK, got new errors: %v", res.NewErrors)
 	}
 }
+
+func TestVerifyPlanTypes_PlanThatCannotBeAppliedIsANewErrorNotSkipped(t *testing.T) {
+	ws := writeVerifyTypesWorkspace(t, map[string]string{
+		"foo/lib.go": "package foo\n\nfunc f(x int) {}\n",
+	})
+
+	f := findVerifyFile(t, ws, "foo/lib.go")
+	change := replaceChange(t, f, "f(x int)", "f()")
+	change.OldText = "f(x  int)" // text the file does not hold
+	res := VerifyPlanTypes(ws, &types.RefactoringPlan{Changes: []types.Change{change}})
+
+	if res.Skipped != "" || res.OK() {
+		t.Fatalf("Skipped=%q NewErrors=%v, want a new error and no skip", res.Skipped, res.NewErrors)
+	}
+	if !strings.Contains(res.NewErrors[0], "cannot be applied") {
+		t.Errorf("error = %q", res.NewErrors[0])
+	}
+}

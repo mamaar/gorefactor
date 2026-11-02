@@ -36,9 +36,16 @@ func (op *ChangeSignatureOperation) signatureMembers(
 		return nil, nil
 	}
 
-	members, err := methodClosure(survey, seed, func(f *gotypes.Func, ext ifaceCandidate) error {
+	return propagatedMembers(survey, seed, func(f *gotypes.Func, ext ifaceCandidate) error {
 		return externalInterfaceError("change", f, ext)
 	})
+}
+
+// propagatedMembers returns the methods that change with seed when the change
+// propagates through interfaces, the seed excluded. refuse builds the error for
+// a method that satisfies an interface outside the workspace.
+func propagatedMembers(survey *ifaceSurvey, seed *gotypes.Func, refuse func(*gotypes.Func, ifaceCandidate) error) ([]*gotypes.Func, error) {
+	members, err := methodClosure(survey, seed, refuse)
 	if err != nil {
 		return nil, err
 	}
@@ -110,12 +117,5 @@ func (op *ChangeSignatureOperation) memberChange(ws *pkgtypes.Workspace, d *func
 	if op.RemoveParam {
 		op.checkRemovedUnused(ws, d.Pkg, d.Decl)
 	}
-	return pkgtypes.Change{
-		File:        d.File.Path,
-		Start:       op.tokenPosToOffset(ws, d.Decl.Type.Pos()),
-		End:         op.tokenPosToOffset(ws, d.Decl.Type.End()),
-		OldText:     op.extractCurrentSignature(d.Decl),
-		NewText:     op.generateNewSignature(d.Decl),
-		Description: fmt.Sprintf("Update implementation %s.%s", recv, name),
-	}, nil
+	return op.signatureChange(ws, d.File, d.Decl, fmt.Sprintf("Update implementation %s.%s", recv, name)), nil
 }

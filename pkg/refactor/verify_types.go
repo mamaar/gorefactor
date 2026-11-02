@@ -393,7 +393,8 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 
 	modContents, err := applyPlanToFiles(files, changesByFile, ser)
 	if err != nil {
-		return packageVerifyResult{skipped: fmt.Sprintf("package %s: failed to apply plan changes in memory: %v", importPath, err)}
+		// A plan that does not apply in memory does not apply on disk either.
+		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan cannot be applied: %v", importPath, err)}}
 	}
 	if len(modContents) == 0 {
 		// The plan deletes every file in the package; there is nothing left

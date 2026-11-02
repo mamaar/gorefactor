@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
@@ -177,24 +179,7 @@ func (op *ChangeSignatureOperation) Validate(ws *pkgtypes.Workspace) error {
 		}
 	}
 
-	// Check if source file exists
-	var sourceFile *pkgtypes.File
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			break
-		}
-		// Also try to match by comparing file paths
-		for filePath, file := range pkg.Files {
-			if filePath == op.SourceFile || file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
+	sourceFile, _ := findSourceFile(ws, op.SourceFile)
 	if sourceFile == nil {
 		return &pkgtypes.RefactorError{
 			Type:    pkgtypes.SymbolNotFound,
@@ -220,6 +205,12 @@ func (op *ChangeSignatureOperation) Validate(ws *pkgtypes.Workspace) error {
 	}
 
 validateParams:
+	if functionNode != nil && isTestEntryPoint(sourceFile.Path, functionNode) {
+		return &pkgtypes.RefactorError{
+			Type:    pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("%s %s", op.FunctionName, testEntryPointRefusal),
+		}
+	}
 	// Validate parameter names are valid Go identifiers
 	for _, param := range op.NewParams {
 		if param.Name != "" && !isValidGoIdentifierExtract(param.Name) {
@@ -233,28 +224,89 @@ validateParams:
 	return nil
 }
 
-func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
-	// Find the source file and package
-	var sourceFile *pkgtypes.File
-	var sourcePackage *pkgtypes.Package
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			sourcePackage = pkg
-			break
-		}
-		// Also try to match by comparing file paths
-		for filePath, file := range pkg.Files {
-			if filePath == op.SourceFile || file.Path == op.SourceFile {
-				sourceFile = file
-				sourcePackage = pkg
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
+// targetSymbol returns the symbol of decl, the declaration found in file. The
+// symbol table is keyed by name, so a same-named declaration of another file of
+// the package, such as an external test package's, can answer for it; the
+// symbol is then built from decl itself.
+func (op *ChangeSignatureOperation) targetSymbol(resolver *analysis.SymbolResolver, pkg *pkgtypes.Package, file *pkgtypes.File, decl *ast.FuncDecl) *pkgtypes.Symbol {
+	if sym, err := resolver.ResolveSymbol(pkg, op.FunctionName); err == nil && sym.Position == decl.Name.Pos() {
+		return sym
+	}
+	kind := pkgtypes.FunctionSymbol
+	if decl.Recv != nil {
+		kind = pkgtypes.MethodSymbol
+	}
+	return &pkgtypes.Symbol{
+		Name:     decl.Name.Name,
+		Kind:     kind,
+		Package:  pkg.ImportPath,
+		File:     file.Path,
+		Position: decl.Name.Pos(),
+		End:      decl.Name.End(),
+		Exported: decl.Name.IsExported(),
+	}
+}
+
+// signatureChange returns the change that rewrites the signature of decl, a
+// declaration in file, or deletes the removed parameter from it.
+func (op *ChangeSignatureOperation) signatureChange(ws *pkgtypes.Workspace, file *pkgtypes.File, decl *ast.FuncDecl, description string) pkgtypes.Change {
+	if op.RemoveParam {
+		return op.removedParamChange(ws, file, decl.Type.Params, description)
+	}
+	start, end := op.tokenPosToOffset(ws, decl.Type.Pos()), op.tokenPosToOffset(ws, decl.Type.End())
+	return pkgtypes.Change{
+		File:        file.Path,
+		Start:       start,
+		End:         end,
+		OldText:     string(file.OriginalContent[start:end]),
+		NewText:     op.generateNewSignature(decl),
+		Description: description,
+	}
+}
+
+// changesParams reports whether op's subcommand gives the full new parameter
+// list, which is empty when the only parameter is removed.
+func (op *ChangeSignatureOperation) changesParams() bool {
+	return op.RemoveParam || op.DerefParam || op.NewParamPosition >= 0
+}
+
+// testEntryPointRefusal is why change_signature refuses a go test entry point.
+const testEntryPointRefusal = "is a go test entry point, whose signature go test and go vet require"
+
+// isTestEntryPoint reports whether decl, declared in the file at path, is a
+// TestXxx, BenchmarkXxx, FuzzXxx or ExampleXxx function of a _test.go file.
+func isTestEntryPoint(path string, decl *ast.FuncDecl) bool {
+	if decl.Recv != nil || !strings.HasSuffix(path, "_test.go") {
+		return false
+	}
+	for _, prefix := range []string{"Test", "Benchmark", "Fuzz", "Example"} {
+		if rest, ok := strings.CutPrefix(decl.Name.Name, prefix); ok {
+			r, _ := utf8.DecodeRuneInString(rest)
+			return rest == "" || !unicode.IsLower(r)
 		}
 	}
+	return false
+}
+
+// genericUnsupported is why change_signature refuses a generic declaration.
+const genericUnsupported = "declares type parameters or has a generic receiver, which change_signature does not support"
+
+// findSourceFile returns the file at path, test files included, and its package.
+func findSourceFile(ws *pkgtypes.Workspace, path string) (*pkgtypes.File, *pkgtypes.Package) {
+	for _, pkg := range ws.Packages {
+		for _, files := range []map[string]*pkgtypes.File{pkg.Files, pkg.TestFiles} {
+			for filePath, file := range files {
+				if filePath == path || file.Path == path {
+					return file, pkg
+				}
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
+	sourceFile, sourcePackage := findSourceFile(ws, op.SourceFile)
 
 	// Preserve existing return types if not explicitly provided (fixes add_param/remove_param dropping returns)
 	// A return change gives the full list, which is empty when the only result is removed.
@@ -294,7 +346,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	}
 
 	if decl := op.findFunction(sourceFile, op.FunctionName); !isIface && decl != nil && hasTypeParams(decl) {
-		return nil, fmt.Errorf("change_signature: %s declares type parameters or has a generic receiver, which change_signature does not support", op.FunctionName)
+		return nil, fmt.Errorf("change_signature: %s %s", op.FunctionName, genericUnsupported)
 	}
 
 	op.derefSkips = nil
@@ -440,24 +492,12 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 		}
 	}
 
-	newSignature := op.generateNewSignature(functionNode)
-	oldSignature := op.extractCurrentSignature(functionNode)
-
-	plan.Changes = append(plan.Changes, pkgtypes.Change{
-		File:        sourceFile.Path,
-		Start:       op.tokenPosToOffset(ws, functionNode.Type.Pos()),
-		End:         op.tokenPosToOffset(ws, functionNode.Type.End()),
-		OldText:     oldSignature,
-		NewText:     newSignature,
-		Description: fmt.Sprintf("Update signature of function %s", op.FunctionName),
-	})
+	plan.Changes = append(plan.Changes, op.signatureChange(ws, sourceFile, functionNode,
+		fmt.Sprintf("Update signature of function %s", op.FunctionName)))
 	plan.AffectedFiles = append(plan.AffectedFiles, sourceFile.Path)
 	op.recordAltered(sourcePackage, receiverTypeName(functionNode), functionNode.Name.Name, sourceFile.Path)
 
-	symbol, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName)
-	if err != nil {
-		return nil, nil, err
-	}
+	symbol := op.targetSymbol(resolver, sourcePackage, sourceFile, functionNode)
 	memberSymbols, err := op.applyMembers(ws, members, plan)
 	if err != nil {
 		return nil, nil, err
@@ -635,7 +675,7 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 				signature.WriteString(field.Names[0].Name)
 				signature.WriteString(" ")
 			}
-			signature.WriteString(op.extractTypeString(field.Type))
+			signature.WriteString(gotypes.ExprString(field.Type))
 		}
 		signature.WriteString(") ")
 	}
@@ -731,112 +771,6 @@ func sharesTypeWithNext(decl *ast.FuncDecl, params []Parameter, i int) bool {
 	f, k := keptGroup(decl, params[i])
 	g, l := keptGroup(decl, params[i+1])
 	return f != nil && f == g && l == k+1
-}
-
-func (op *ChangeSignatureOperation) extractCurrentSignature(funcDecl *ast.FuncDecl) string {
-	// This is a simplified extraction - in a full implementation,
-	// we would use go/format to properly format the signature
-	var signature strings.Builder
-	signature.WriteString("func ")
-
-	// Add receiver if this is a method
-	if funcDecl.Recv != nil {
-		signature.WriteString("(")
-		for i, field := range funcDecl.Recv.List {
-			if i > 0 {
-				signature.WriteString(", ")
-			}
-			if len(field.Names) > 0 {
-				signature.WriteString(field.Names[0].Name)
-				signature.WriteString(" ")
-			}
-			signature.WriteString(op.extractTypeString(field.Type))
-		}
-		signature.WriteString(") ")
-	}
-
-	// Add function name
-	signature.WriteString(funcDecl.Name.Name)
-
-	// Add current parameters
-	signature.WriteString("(")
-	if funcDecl.Type.Params != nil {
-		for i, field := range funcDecl.Type.Params.List {
-			if i > 0 {
-				signature.WriteString(", ")
-			}
-			if len(field.Names) > 0 {
-				for j, name := range field.Names {
-					if j > 0 {
-						signature.WriteString(", ")
-					}
-					signature.WriteString(name.Name)
-				}
-				signature.WriteString(" ")
-			}
-			signature.WriteString(op.extractTypeString(field.Type))
-		}
-	}
-	signature.WriteString(")")
-
-	// Add current return types
-	if funcDecl.Type.Results != nil && len(funcDecl.Type.Results.List) > 0 {
-		signature.WriteString(" ")
-		results := funcDecl.Type.Results.List
-		if len(results) == 1 && len(results[0].Names) == 0 {
-			signature.WriteString(op.extractTypeString(results[0].Type))
-		} else {
-			signature.WriteString("(")
-			for i, field := range results {
-				if i > 0 {
-					signature.WriteString(", ")
-				}
-				if len(field.Names) > 0 {
-					for j, name := range field.Names {
-						if j > 0 {
-							signature.WriteString(", ")
-						}
-						signature.WriteString(name.Name)
-					}
-					signature.WriteString(" ")
-				}
-				signature.WriteString(op.extractTypeString(field.Type))
-			}
-			signature.WriteString(")")
-		}
-	}
-
-	return signature.String()
-}
-
-func (op *ChangeSignatureOperation) extractTypeString(expr ast.Expr) string {
-	// Simplified type extraction - in a full implementation,
-	// we would use go/format for proper formatting
-	switch t := expr.(type) {
-	case *ast.Ident:
-		return t.Name
-	case *ast.StarExpr:
-		return "*" + op.extractTypeString(t.X)
-	case *ast.ArrayType:
-		if t.Len == nil {
-			return "[]" + op.extractTypeString(t.Elt)
-		}
-		return "[...]" + op.extractTypeString(t.Elt) // Simplified
-	case *ast.SelectorExpr:
-		return op.extractTypeString(t.X) + "." + t.Sel.Name
-	case *ast.Ellipsis:
-		return "..." + op.extractTypeString(t.Elt)
-	case *ast.MapType:
-		return "map[" + op.extractTypeString(t.Key) + "]" + op.extractTypeString(t.Value)
-	case *ast.InterfaceType:
-		return "interface{}"
-	case *ast.FuncType:
-		return "func(...)"
-	case *ast.ChanType:
-		return "chan " + op.extractTypeString(t.Value)
-	default:
-		return "interface{}" // Fallback
-	}
 }
 
 func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *pkgtypes.Workspace) []pkgtypes.Change {
@@ -1173,7 +1107,7 @@ func (op *ChangeSignatureOperation) extractReturnTypes(funcType *ast.FuncType) [
 
 	var returns []string
 	for _, field := range funcType.Results.List {
-		typeStr := op.extractTypeString(field.Type)
+		typeStr := gotypes.ExprString(field.Type)
 		if len(field.Names) > 0 {
 			for range field.Names {
 				returns = append(returns, typeStr)
@@ -1242,7 +1176,7 @@ func (op *ChangeSignatureOperation) extractNamedReturnParams(funcType *ast.FuncT
 	}
 	var result []Parameter
 	for _, field := range funcType.Results.List {
-		typeStr := op.extractTypeString(field.Type)
+		typeStr := gotypes.ExprString(field.Type)
 		if len(field.Names) == 0 {
 			result = append(result, Parameter{Type: typeStr})
 		} else {
@@ -1258,8 +1192,8 @@ func (op *ChangeSignatureOperation) extractNamedReturnParams(funcType *ast.FuncT
 // when the caller did not explicitly provide parameters. This prevents add_return
 // and remove_return from accidentally dropping the parameter list.
 func (op *ChangeSignatureOperation) preserveExistingParamsIfNeeded(sourceFile *pkgtypes.File) error {
-	if len(op.NewParams) > 0 {
-		return nil // Caller explicitly provided params
+	if len(op.NewParams) > 0 || op.changesParams() {
+		return nil // The caller gave the parameters
 	}
 
 	// For interface methods, extract params from the interface declaration.
@@ -1288,7 +1222,7 @@ func (op *ChangeSignatureOperation) extractParamList(params *ast.FieldList) []Pa
 	}
 	var result []Parameter
 	for _, field := range params.List {
-		typeStr := op.extractTypeString(field.Type)
+		typeStr := gotypes.ExprString(field.Type)
 		if len(field.Names) == 0 {
 			// Unnamed parameter
 			result = append(result, Parameter{Type: typeStr})
@@ -1459,23 +1393,20 @@ func (op *ChangeSignatureOperation) generateInterfaceMethodSignatureChange(ws *p
 			if len(field.Names) == 0 || field.Names[0].Name != methodName {
 				continue
 			}
-			oldText := extractInterfaceMethodSignature(op, field)
+			start, end := op.tokenPosToOffset(ws, field.Names[0].Pos()), op.tokenPosToOffset(ws, field.End())
 			newText := generateInterfaceMethodSignature(op, methodName)
-
-			if op.Logger != nil {
-				op.Logger.Debug("generateInterfaceMethodSignatureChange",
-					"oldText", oldText,
-					"newText", newText,
-					"file", file.Path)
-			}
-
-			change = pkgtypes.Change{
-				File:        file.Path,
-				Start:       op.tokenPosToOffset(ws, field.Names[0].Pos()),
-				End:         op.tokenPosToOffset(ws, field.End()),
-				OldText:     oldText,
-				NewText:     newText,
-				Description: fmt.Sprintf("Update interface method signature %s.%s", typeName, methodName),
+			description := fmt.Sprintf("Update interface method signature %s.%s", typeName, methodName)
+			if funcType, ok := field.Type.(*ast.FuncType); ok && op.RemoveParam {
+				change = op.removedParamChange(ws, file, funcType.Params, description)
+			} else {
+				change = pkgtypes.Change{
+					File:        file.Path,
+					Start:       start,
+					End:         end,
+					OldText:     string(file.OriginalContent[start:end]),
+					NewText:     newText,
+					Description: description,
+				}
 			}
 			found = true
 			return false
@@ -1490,66 +1421,6 @@ func (op *ChangeSignatureOperation) generateInterfaceMethodSignatureChange(ws *p
 		}
 	}
 	return change, nil
-}
-
-// extractInterfaceMethodSignature renders the current text of an interface method field,
-// e.g. "Save(ctx context.Context, id string) error".
-func extractInterfaceMethodSignature(op *ChangeSignatureOperation, field *ast.Field) string {
-	var sig strings.Builder
-	sig.WriteString(field.Names[0].Name)
-
-	funcType, ok := field.Type.(*ast.FuncType)
-	if !ok {
-		return sig.String()
-	}
-
-	sig.WriteString("(")
-	if funcType.Params != nil {
-		for i, param := range funcType.Params.List {
-			if i > 0 {
-				sig.WriteString(", ")
-			}
-			if len(param.Names) > 0 {
-				for j, name := range param.Names {
-					if j > 0 {
-						sig.WriteString(", ")
-					}
-					sig.WriteString(name.Name)
-				}
-				sig.WriteString(" ")
-			}
-			sig.WriteString(op.extractTypeString(param.Type))
-		}
-	}
-	sig.WriteString(")")
-
-	if funcType.Results != nil && len(funcType.Results.List) > 0 {
-		sig.WriteString(" ")
-		results := funcType.Results.List
-		if len(results) == 1 && len(results[0].Names) == 0 {
-			sig.WriteString(op.extractTypeString(results[0].Type))
-		} else {
-			sig.WriteString("(")
-			for i, r := range results {
-				if i > 0 {
-					sig.WriteString(", ")
-				}
-				if len(r.Names) > 0 {
-					for j, name := range r.Names {
-						if j > 0 {
-							sig.WriteString(", ")
-						}
-						sig.WriteString(name.Name)
-					}
-					sig.WriteString(" ")
-				}
-				sig.WriteString(op.extractTypeString(r.Type))
-			}
-			sig.WriteString(")")
-		}
-	}
-
-	return sig.String()
 }
 
 // generateInterfaceMethodSignature renders the new method signature for an interface field.
