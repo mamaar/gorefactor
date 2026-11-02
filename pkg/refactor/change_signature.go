@@ -132,9 +132,10 @@ type ChangeSignatureOperation struct {
 	derefErr      error        // first call-site finding that aborts the whole change
 
 	removedIdx      int
-	removedCount    int           // parameters before the removal
-	removedVariadic bool          // the last of them is variadic
-	refusals        []siteRefusal // every site that stops a remove_param or return change, reported together
+	removedCount    int               // parameters before the removal
+	removedVariadic bool              // the last of them is variadic
+	refusals        []siteRefusal     // every site that stops a remove_param or return change, reported together
+	removedSpans    []pkgtypes.Change // deleted parameters, arguments and folded checks, whose imports may become unused
 }
 
 // AlteredDecl is a declaration whose signature a ChangeSignatureOperation rewrites.
@@ -345,6 +346,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 
 	op.derefSkips = nil
 	op.refusals = nil
+	op.removedSpans = nil
 	if op.RemoveParam {
 		if err := op.planRemoveParam(ws, sourcePackage, sourceFile, typeName, methodName, isIface); err != nil {
 			return nil, err
@@ -417,6 +419,9 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 			lines[i] = r.String()
 		}
 		return nil, fmt.Errorf("%s: %s cannot be changed:\n%s", op.subcommandName(), op.FunctionName, strings.Join(lines, "\n"))
+	}
+	if op.RemoveParam || op.changesReturns() {
+		op.pruneRemovedImports(ws, plan)
 	}
 	plan.SkippedSites = append(plan.SkippedSites, op.derefSkips...)
 	op.addDefaultValueImports(ws, plan)
@@ -945,6 +950,14 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 		if reason != "" {
 			op.refuse(ws, callExpr.Pos(), reason)
 			return ""
+		}
+		if op.removedIdx < len(callExpr.Args) {
+			arg := callExpr.Args[op.removedIdx]
+			op.removedSpans = append(op.removedSpans, pkgtypes.Change{
+				File:  ref.File,
+				Start: op.tokenPosToOffset(ws, arg.Pos()),
+				End:   op.tokenPosToOffset(ws, arg.End()),
+			})
 		}
 		return op.callText(callExpr, ws, fileContent, strings.Join(args, ", "))
 	}
