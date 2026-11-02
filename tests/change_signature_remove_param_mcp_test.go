@@ -503,3 +503,105 @@ func TestChangeSignature_AddParamAppliesToAMultiLineSignature(t *testing.T) {
 	assertFileContains(t, dir, "p/f.go", "f(1, \"\", false)")
 	goVets(t, dir, "")
 }
+
+func TestChangeSignature_RemoveParamPrunesImportUsedOnlyByParamType(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\nimport \"io\"\n\nfunc f(w io.Writer, n int) int { return n }\n",
+		"p/use.go": "package p\n\nfunc Use() int { return f(nil, 1) }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("n", "int")))
+
+	assertFileOmits(t, dir, "p/f.go", "\"io\"")
+	assertFileContains(t, dir, "p/f.go", "func f(n int) int")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamPrunesImportUsedOnlyByDroppedArgumentInAnotherFile(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\nfunc f(n int, s string) int { return len(s) }\n",
+		"p/use.go": "package p\n\nimport \"strconv\"\n\nfunc Use() int { return f(strconv.IntSize, \"x\") }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("s", "string")))
+
+	assertFileContains(t, dir, "p/use.go", "f(\"x\")")
+	assertFileOmits(t, dir, "p/use.go", "\"strconv\"")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamKeepsImportStillUsedElsewhere(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go": "package p\n\nimport \"io\"\n\nfunc f(w io.Writer, n int) int { return n }\n\nfunc g() io.Writer { return nil }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("n", "int")))
+
+	assertFileContains(t, dir, "p/f.go", "\"io\"")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamPrunesAliasedImportUsedOnlyByParamType(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go": "package p\n\nimport stdio \"io\"\n\nfunc f(w stdio.Writer, n int) int { return n }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("n", "int")))
+
+	assertFileOmits(t, dir, "p/f.go", "stdio \"io\"")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamNeverPrunesDotOrBlankImports(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go": "package p\n\nimport (\n\t. \"strings\"\n\t_ \"embed\"\n\t\"io\"\n)\n\nfunc f(w io.Writer, b Builder, n int) int { _ = b; return n }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("b", "Builder"), param("n", "int")))
+
+	assertFileContains(t, dir, "p/f.go", ". \"strings\"")
+	assertFileContains(t, dir, "p/f.go", "_ \"embed\"")
+	assertFileOmits(t, dir, "p/f.go", "\"io\"")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamPrunesImportOfImplementationInAnotherPackage(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/iface.go": "package p\n\nimport \"io\"\n\ntype Runner interface{ Run(w io.Writer, n int) int }\n\nfunc Use(r Runner) int { return r.Run(nil, 1) }\n",
+		"q/impl.go":  "package q\n\nimport \"io\"\n\ntype A struct{}\n\nfunc (A) Run(w io.Writer, n int) int { return n }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("Runner.Run", "p/iface.go", param("n", "int")))
+
+	assertFileOmits(t, dir, "p/iface.go", "\"io\"")
+	assertFileOmits(t, dir, "q/impl.go", "\"io\"")
+	assertFileContains(t, dir, "q/impl.go", "Run(n int) int")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveParamPrunesImportSharedByTwoDroppedArgumentsInOneFile(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\nfunc f(n int, s string) int { return len(s) }\n",
+		"p/use.go": "package p\n\nimport \"strconv\"\n\nfunc Use() int { return f(strconv.IntSize, \"a\") + f(strconv.IntSize, \"b\") }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, removeParamArgs("f", "p/f.go", param("s", "string")))
+
+	assertFileContains(t, dir, "p/use.go", "f(\"a\") + f(\"b\")")
+	assertFileOmits(t, dir, "p/use.go", "\"strconv\"")
+	goVets(t, dir, "")
+}

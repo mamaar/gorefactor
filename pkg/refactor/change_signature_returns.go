@@ -79,15 +79,9 @@ func (op *ChangeSignatureOperation) planReturns(
 	live := op.liveCalls(ws, calls)
 
 	sites := 0
-	folded := map[*pkgtypes.File][]pkgtypes.Change{}
 	for _, c := range live {
-		if op.planReturnCall(ws, c, plan, folded) {
+		if op.planReturnCall(ws, c, plan) {
 			sites++
-		}
-	}
-	for file, changes := range folded {
-		for _, spec := range unusedImportsAfterRemoval(ws, file, changes) {
-			plan.Changes = append(plan.Changes, removeImportSpec(ws, file, spec))
 		}
 	}
 	return sites, nil
@@ -193,9 +187,9 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 
 // planReturnCall rewrites the call site of c and reports whether it did. A
 // call with refusals is left as it is. The edits that fold nil checks are also
-// added to folded, by file, to find the imports they free.
+// recorded in op.removedSpans, to find the imports they free.
 func (op *ChangeSignatureOperation) planReturnCall(
-	ws *pkgtypes.Workspace, c plannedCall, plan *pkgtypes.RefactoringPlan, folded map[*pkgtypes.File][]pkgtypes.Change,
+	ws *pkgtypes.Workspace, c plannedCall, plan *pkgtypes.RefactoringPlan,
 ) bool {
 	if len(c.fold.Refusals) > 0 {
 		return false
@@ -228,7 +222,7 @@ func (op *ChangeSignatureOperation) planReturnCall(
 	for _, e := range c.fold.Edits {
 		fc := foldChange(ws, site.File, e)
 		plan.Changes = append(plan.Changes, fc)
-		folded[site.File] = append(folded[site.File], fc)
+		op.removedSpans = append(op.removedSpans, fc)
 	}
 	addAffected(plan, site.File.Path)
 	return true

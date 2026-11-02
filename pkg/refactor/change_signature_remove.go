@@ -7,6 +7,7 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"maps"
 	"slices"
 	"strings"
 
@@ -192,12 +193,29 @@ func dropArgRefusal(call *ast.CallExpr, info *gotypes.Info, idx, n int, variadic
 func (op *ChangeSignatureOperation) removedParamChange(ws *pkgtypes.Workspace, file *pkgtypes.File, params *ast.FieldList, description string) pkgtypes.Change {
 	off := func(p token.Pos) int { return ws.FileSet.Position(p).Offset }
 	start, end := removedParamSpan(file.OriginalContent, off, params, op.removedIdx)
-	return pkgtypes.Change{
+	change := pkgtypes.Change{
 		File:        file.Path,
 		Start:       start,
 		End:         end,
 		OldText:     string(file.OriginalContent[start:end]),
 		Description: description,
+	}
+	op.removedSpans = append(op.removedSpans, change)
+	return change
+}
+
+// pruneRemovedImports adds the removal of each import that nothing in its file
+// uses once the removed parameters and dropped arguments are gone.
+func (op *ChangeSignatureOperation) pruneRemovedImports(ws *pkgtypes.Workspace, plan *pkgtypes.RefactoringPlan) {
+	paths := map[string]bool{}
+	for _, c := range op.removedSpans {
+		paths[c.File] = true
+	}
+	for _, path := range slices.Sorted(maps.Keys(paths)) {
+		file, _ := findSourceFile(ws, path)
+		for _, spec := range unusedImportsAfterRemoval(ws, file, op.removedSpans) {
+			plan.Changes = append(plan.Changes, removeImportSpec(ws, file, spec))
+		}
 	}
 }
 

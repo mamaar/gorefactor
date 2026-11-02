@@ -314,7 +314,7 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 }
 
 // unusedImportsAfterRemoval returns the imports of sourceFile that nothing
-// uses once removeChanges (the declarations being moved out) are applied. An
+// uses once removeChanges (the ranges being deleted) are applied. An
 // unused import is a compile error, so the source file must drop them.
 //
 // A type-checked file is judged by its package-name uses outside the removed
