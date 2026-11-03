@@ -13,7 +13,7 @@ func addContextImport(t *testing.T, src string) string {
 	for _, f := range pkg.Files {
 		path = f.Path
 	}
-	c := generateAddImportChange(ws, path, "", "context")
+	c := GenerateAddImportChange(ws, path, "", "context")
 	if c == nil {
 		t.Fatal("no import change")
 	}

@@ -103,7 +103,7 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 	if len(dropped) > 0 {
 		edit.importChanges = append([]types.Change{replaceImportSpec(ws, file, dropped[0], explicit, targetImportPath)}, removeDropped(dropped[1:])...)
 	} else {
-		change := generateAddImportChange(ws, filePath, explicit, targetImportPath)
+		change := GenerateAddImportChange(ws, filePath, explicit, targetImportPath)
 		if change != nil {
 			edit.importChanges = []types.Change{*change}
 		}

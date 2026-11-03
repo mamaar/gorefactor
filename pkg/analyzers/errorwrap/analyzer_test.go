@@ -158,3 +158,125 @@ func bar() error { return nil }
 		t.Errorf("Expected violation type %q, got %q", errorwrap.NoContext, results2[0].ViolationType)
 	}
 }
+
+func runResults(t *testing.T, src string, opts ...errorwrap.Option) ([]*errorwrap.Result, int) {
+	t.Helper()
+	rr, err := analyzers.Run(createTestWorkspace(t, src), errorwrap.NewAnalyzer(opts...), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixes := 0
+	for _, d := range rr.Diagnostics {
+		fixes += len(d.SuggestedFixes)
+	}
+	return rr.Result.([]*errorwrap.Result), fixes
+}
+
+func TestErrorWrap_BareReturnWithoutFmtImportNeedsIt(t *testing.T) {
+	results, _ := runResults(t, `package testpkg
+
+func foo() error {
+	err := bar()
+	return err
+}
+
+func bar() error { return nil }
+`)
+	if len(results) != 1 || !results[0].NeedsFmtImport || results[0].Skipped {
+		t.Fatalf("want one fixable result needing the fmt import, got %+v", results)
+	}
+}
+
+func TestErrorWrap_BareReturnWithFmtImportNeedsNothing(t *testing.T) {
+	results, _ := runResults(t, `package testpkg
+
+import "fmt"
+
+func foo() error {
+	err := bar()
+	fmt.Println(err)
+	return err
+}
+
+func bar() error { return nil }
+`)
+	if len(results) != 1 || results[0].NeedsFmtImport || results[0].Skipped {
+		t.Fatalf("want one fixable result with no import needed, got %+v", results)
+	}
+}
+
+func TestErrorWrap_NonStdlibPackageNamedFmtSkipsSite(t *testing.T) {
+	results, fixes := runResults(t, `package testpkg
+
+import "example.com/other/fmt"
+
+func foo() error {
+	err := bar()
+	fmt.Do()
+	return err
+}
+
+func bar() error { return nil }
+`)
+	if len(results) != 1 || !results[0].Skipped || results[0].SkipReason == "" || fixes != 0 {
+		t.Fatalf("want one skipped result with no fix, got %+v (fixes %d)", results, fixes)
+	}
+}
+
+func TestErrorWrap_ExcludedFunctionsAreSkippedWithReason(t *testing.T) {
+	src := `package testpkg
+
+import "fmt"
+
+type T struct{}
+
+func plain() error {
+	err := bar()
+	return err
+}
+
+func (t *T) method() error {
+	err := bar()
+	return err
+}
+
+func (t T) other() error {
+	err := bar()
+	return err
+}
+
+func withLiteral() error {
+	run := func() error {
+		err := bar()
+		return err
+	}
+	return run()
+}
+
+func kept() error {
+	err := bar()
+	return fmt.Errorf("x: %v", err)
+}
+
+func bar() error { return nil }
+`
+	results, fixes := runResults(t, src, errorwrap.WithExcludedFunctions("plain", "T.method", "withLiteral"))
+	skipped := map[string]string{}
+	for _, r := range results {
+		if r.Skipped {
+			skipped[r.Function] = r.SkipReason
+		}
+	}
+	for _, name := range []string{"plain", "method", "withLiteral"} {
+		if skipped[name] != "excluded" {
+			t.Errorf("%s: skip reason %q, want excluded (all: %v)", name, skipped[name], skipped)
+		}
+	}
+	if len(skipped) != 3 {
+		t.Errorf("only the three excluded functions should be skipped, got %v", skipped)
+	}
+	// other (bare return) and kept (%v) are the only fixable sites.
+	if fixes != 2 {
+		t.Errorf("fixes = %d, want 2", fixes)
+	}
+}

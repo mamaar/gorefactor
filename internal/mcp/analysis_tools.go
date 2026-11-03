@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -574,6 +575,17 @@ type FixErrorWrappingInput struct {
 	Package       string `json:"package,omitempty" jsonschema:"specific package to fix"`
 	SeverityLevel string `json:"severity_level,omitempty" jsonschema:"fix violations at this severity or higher: critical, warning, or info (default critical)"`
 	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+
+	ExcludeFunctions []string `json:"exclude_functions,omitempty" jsonschema:"functions (Func or Type.Method) whose sites, func literals inside them included, are left untouched and listed as skipped"`
+}
+
+// ErrorWrappingSkippedItem describes a violation the fixer left unmodified.
+type ErrorWrappingSkippedItem struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Function   string `json:"function"`
+	Snippet    string `json:"snippet"`
+	SkipReason string `json:"skip_reason"`
 }
 
 // --- detect_environment_booleans ---
@@ -2012,7 +2024,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_error_wrapping",
-		Description: "Automatically fix improper error wrapping. Wraps bare `return err` with `fmt.Errorf`, replaces `%v` with `%w`, and replaces generic error messages with descriptive context derived from the function name.",
+		Description: "Automatically fix improper error wrapping. Wraps bare `return err` with `fmt.Errorf` (adding the fmt import when the file lacks it), replaces `%v` with `%w`, and replaces generic error messages with descriptive context derived from the function name. Sites in `exclude_functions`, and sites in a file where another package is named fmt, are left unmodified and reported in `skipped`. The plan is type-checked before it is applied: new type errors refuse the apply and appear as `blocking_issue` in a dry run.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixErrorWrappingInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -2026,23 +2038,50 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if sev == "" {
 			sev = errorwrap.SeverityCritical
 		}
-		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev))
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
+
+		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev), errorwrap.WithExcludedFunctions(in.ExcludeFunctions...))
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		results, _ := rr.Result.([]*errorwrap.Result)
+		var skipped []ErrorWrappingSkippedItem
+		var needFmt []string
+		for _, r := range results {
+			if r.Skipped {
+				skipped = append(skipped, ErrorWrappingSkippedItem{
+					File: r.File, Line: r.Line, Function: r.Function, Snippet: r.CurrentCode, SkipReason: r.SkipReason,
+				})
+			}
+			if r.NeedsFmtImport && !slices.Contains(needFmt, r.File) {
+				needFmt = append(needFmt, r.File)
+			}
+		}
+
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		for _, file := range needFmt {
+			if c := refactor.GenerateAddImportChange(ws, file, "", "fmt"); c != nil {
+				changes = append(changes, *c)
+			}
+		}
 		if len(changes) == 0 {
 			state.RUnlock()
+			message := "No error wrapping violations found"
+			if len(skipped) > 0 {
+				message = "All error wrapping sites found were skipped; see skipped"
+			}
 			return textResult(map[string]any{
 				"files_modified":     []string{},
 				"changes_count":      0,
 				"errors_wrapped":     0,
 				"format_verbs_fixed": 0,
 				"contexts_added":     0,
-				"message":            "No error wrapping violations found",
+				"skipped":            skipped,
+				"skipped_count":      len(skipped),
+				"message":            message,
 			}), nil, nil
 		}
 
@@ -2050,24 +2089,34 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		errorsWrapped := 0
 		formatVerbsFixed := 0
 		contextsAdded := 0
-		results, ok := rr.Result.([]*errorwrap.Result)
-		if ok {
-			for _, r := range results {
-				switch r.ViolationType {
-				case errorwrap.BareReturn:
-					errorsWrapped++
-				case errorwrap.FormatVerbV:
-					formatVerbsFixed++
-				case errorwrap.NoContext:
-					contextsAdded++
-				}
+		for _, r := range results {
+			if r.Skipped {
+				continue
+			}
+			switch r.ViolationType {
+			case errorwrap.BareReturn:
+				errorsWrapped++
+			case errorwrap.FormatVerbV:
+				formatVerbsFixed++
+			case errorwrap.NoContext:
+				contextsAdded++
 			}
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, state.GetEngine().Importer(ws))
+		blocking := verificationBlocker(verification)
+		if blocking != "" && !in.DryRun {
+			state.RUnlock()
+			return errResult(errors.New(blocking)), nil, nil
+		}
 		result, err := executePlanWithUnlock(state, plan, "Fix error wrapping", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
+		}
+		if blocking != "" {
+			result.Success = false
+			result.BlockingIssue = blocking
 		}
 		out := map[string]any{
 			"files_modified":     result.ModifiedFiles,
@@ -2075,6 +2124,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"errors_wrapped":     errorsWrapped,
 			"format_verbs_fixed": formatVerbsFixed,
 			"contexts_added":     contextsAdded,
+			"skipped":            skipped,
+			"skipped_count":      len(skipped),
 		}
 		return textResult(withDryRun(out, result)), nil, nil
 	})

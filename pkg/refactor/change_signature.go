@@ -590,7 +590,7 @@ func (op *ChangeSignatureOperation) addDefaultValueImports(ws *pkgtypes.Workspac
 		if hasImport(ws, filePath, requiredImport) {
 			continue
 		}
-		importChange := generateAddImportChange(ws, filePath, "", requiredImport)
+		importChange := GenerateAddImportChange(ws, filePath, "", requiredImport)
 		if importChange != nil {
 			plan.Changes = append(plan.Changes, *importChange)
 		}

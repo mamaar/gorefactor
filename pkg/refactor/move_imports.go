@@ -233,7 +233,7 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 //
 // Single-line `import "x"` form (no parentheses) falls through to the
 // new-block path below instead of being converted in place; that mirrors
-// generateAddImportChange's single-line handling being a separate code path
+// GenerateAddImportChange's single-line handling being a separate code path
 // rather than something this helper duplicates.
 func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, needed []neededImport) *types.Change {
 	if len(needed) == 0 {

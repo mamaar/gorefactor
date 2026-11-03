@@ -1639,9 +1639,9 @@ func findParsedFile(ws *types.Workspace, filePath string) *types.File {
 	return nil
 }
 
-// generateAddImportChange generates a change to add a new import (under alias
+// GenerateAddImportChange generates a change to add a new import (under alias
 // when non-empty), handling both single-line and multi-line import formats
-func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath string) *types.Change {
+func GenerateAddImportChange(ws *types.Workspace, filePath, alias, importPath string) *types.Change {
 	file := findParsedFile(ws, filePath)
 	if file == nil {
 		return nil

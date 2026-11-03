@@ -28,7 +28,7 @@ import (
 //
 // The referencing file here also uses the single-line `import "testing"` form,
 // so this exercises the single-line-to-block conversion path in
-// generateAddImportChange at the same time.
+// GenerateAddImportChange at the same time.
 func TestMoveSymbolAddsDestinationImportWhenSiblingFileAlreadyHasIt(t *testing.T) {
 	tmpDir := t.TempDir()
 

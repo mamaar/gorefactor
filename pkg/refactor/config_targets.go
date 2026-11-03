@@ -235,7 +235,7 @@ func (r *signatureRun) addImports(paths []string) {
 			if hasImport(ws, d.File, path) {
 				continue
 			}
-			c := generateAddImportChange(ws, d.File, "", path)
+			c := GenerateAddImportChange(ws, d.File, "", path)
 			if c != nil {
 				r.merge([]types.Change{*c}, nil)
 			}
