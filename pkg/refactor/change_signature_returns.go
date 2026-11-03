@@ -402,6 +402,10 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	var writes []token.Pos
 
 	for _, u := range refs.NonCallUsesOf(obj) {
+		if u.Pos == id.Pos() || cannotReach(site.Cursor, u.Cursor) {
+			continue
+		}
+
 		if isAssignTarget(u.Cursor) {
 			writes = append(writes, u.Pos)
 			continue
@@ -418,6 +422,53 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	}
 
 	return plan
+}
+
+// cannotReach reports whether the statement at from cannot execute before the
+// identifier at use: it sits earlier in the same function, which has no goto,
+// and no loop holds both. Anything else, such as a closure, might run after it.
+func cannotReach(from, use inspector.Cursor) bool {
+	if use.Node().Pos() >= from.Node().Pos() {
+		return false
+	}
+
+	for c := range from.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil), (*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)) {
+		n := c.Node()
+		holdsUse := n.Pos() <= use.Node().Pos() && use.Node().End() <= n.End()
+
+		switch n.(type) {
+		case *ast.ForStmt, *ast.RangeStmt:
+			if holdsUse {
+				return false
+			}
+		default:
+			return holdsUse && enclosingFunc(use) == n && !hasGoto(n)
+		}
+	}
+
+	return false
+}
+
+// enclosingFunc returns the innermost function declaration or literal around c.
+func enclosingFunc(c inspector.Cursor) ast.Node {
+	for fn := range c.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
+		return fn.Node()
+	}
+
+	return nil
+}
+
+func hasGoto(fn ast.Node) bool {
+	found := false
+
+	ast.Inspect(fn, func(n ast.Node) bool {
+		b, ok := n.(*ast.BranchStmt)
+		found = found || ok && b.Tok == token.GOTO
+
+		return !found
+	})
+
+	return found
 }
 
 // bareReturnOfResult returns a bare return in a function enclosing at that

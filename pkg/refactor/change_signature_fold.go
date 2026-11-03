@@ -64,8 +64,7 @@ func (f *errFold) refusal(pos token.Pos, why string) {
 // assignment is the sole write that survives the fold, so any other write
 // refuses every read.
 func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.AssignStmt, idx int, obj gotypes.Object, reads []returnRefusal, writes []token.Pos) foldPlan {
-	id := assign.Lhs[idx].(*ast.Ident)
-	if info.Defs[id] != obj || !gotypes.Identical(obj.Type(), gotypes.Universe.Lookup("error").Type()) {
+	if !gotypes.Identical(obj.Type(), gotypes.Universe.Lookup("error").Type()) {
 		return foldPlan{Refusals: reads}
 	}
 
