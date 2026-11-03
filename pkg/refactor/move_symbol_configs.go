@@ -138,11 +138,7 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			}
 		}
 
-		refs, err := resolver.FindReferences(sym)
-		if err != nil {
-			p.object(v, "references to %s could not be found: %v", key.Name, err)
-			continue
-		}
+		refs := resolver.FindReferences(sym)
 
 		res = p.collectBlockers(refs, ws, v, key, res)
 	}

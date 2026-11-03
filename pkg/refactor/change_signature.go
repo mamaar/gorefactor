@@ -320,10 +320,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	// Preserve existing return types if not explicitly provided (fixes add_param/remove_param dropping returns)
 	// A return change gives the full list, which is empty when the only result is removed.
 	if !op.changesReturns() {
-		err := op.preserveExistingReturnsIfNeeded(sourceFile)
-		if err != nil {
-			return nil, err
-		}
+		op.preserveExistingReturnsIfNeeded(sourceFile)
 	}
 
 	// Preserve existing params if not explicitly provided (fixes add_return/remove_return dropping params)
@@ -467,7 +464,9 @@ func (op *ChangeSignatureOperation) planDerefParam(isIface bool, sourceFile *pkg
 		}
 
 		op.derefIdx = idx
-		if err := op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan); err != nil {
+
+		err = op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan)
+		if err != nil {
 			return err
 		}
 	}
@@ -518,7 +517,9 @@ func (op *ChangeSignatureOperation) collectInterfaceChanges(
 	}
 
 	var allRefSymbols []*pkgtypes.Symbol
-	if ifaceMethodSym, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName); err == nil {
+
+	ifaceMethodSym, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName)
+	if err == nil {
 		allRefSymbols = append(allRefSymbols, ifaceMethodSym)
 	}
 
@@ -1304,9 +1305,9 @@ func (op *ChangeSignatureOperation) extractReturnTypes(funcType *ast.FuncType) [
 // existing function uses named result variables) from the existing signature when
 // the caller did not explicitly provide return types.  This prevents add_param and
 // remove_param from accidentally dropping return types or stripping named results.
-func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *pkgtypes.File) error {
+func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *pkgtypes.File) {
 	if len(op.NewReturns) > 0 {
-		return nil // User explicitly provided returns
+		return // User explicitly provided returns
 	}
 
 	// Check if this is an interface method
@@ -1316,24 +1317,24 @@ func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *
 
 		if isInterfaceMethod(sourceFile, typeName, methodName) {
 			op.NewReturns = op.extractInterfaceMethodReturns(sourceFile, typeName, methodName)
-			return nil
+			return
 		}
 	}
 
 	// Extract from concrete function/method
 	funcDecl := op.findFunction(sourceFile, op.FunctionName)
-	if funcDecl != nil && funcDecl.Type != nil {
-		op.NewReturns = op.extractReturnTypes(funcDecl.Type)
-		// Also populate NamedReturns when the original signature uses named results.
-		// NamedReturns preserves both the name and the type so that generateNewSignature
-		// can emit e.g. "(secret []byte, err error)" instead of "([]byte, error)".
-		// A bare "return" inside the body would be invalid if names are stripped.
-		if hasNamedResults(funcDecl.Type) {
-			op.NamedReturns = op.extractNamedReturnParams(funcDecl.Type)
-		}
+	if funcDecl == nil || funcDecl.Type == nil {
+		return
 	}
 
-	return nil
+	op.NewReturns = op.extractReturnTypes(funcDecl.Type)
+	// Also populate NamedReturns when the original signature uses named results.
+	// NamedReturns preserves both the name and the type so that generateNewSignature
+	// can emit e.g. "(secret []byte, err error)" instead of "([]byte, error)".
+	// A bare "return" inside the body would be invalid if names are stripped.
+	if hasNamedResults(funcDecl.Type) {
+		op.NamedReturns = op.extractNamedReturnParams(funcDecl.Type)
+	}
 }
 
 // hasNamedResults reports whether any result field in funcType has an explicit name.

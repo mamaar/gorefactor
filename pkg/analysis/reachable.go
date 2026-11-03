@@ -82,11 +82,13 @@ func ResolveTargets(ws *types.Workspace, specs []string) ([]Target, error) {
 
 		for _, obj := range objs {
 			id := ObjectIDOf(obj)
-			if !seen[id] {
-				seen[id] = true
-
-				targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
+			if seen[id] {
+				continue
 			}
+
+			seen[id] = true
+
+			targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
 		}
 	}
 
@@ -123,7 +125,9 @@ func resolveSpec(pkgs map[string]*gotypes.Package, spec string) ([]gotypes.Objec
 		}
 
 		obj, _, _ := gotypes.LookupFieldOrMethod(tn.Type(), true, pkg, parts[1])
-		if fn, ok := obj.(*gotypes.Func); ok {
+
+		fn, ok := obj.(*gotypes.Func)
+		if ok {
 			return []gotypes.Object{fn}, true
 		}
 	}
@@ -155,7 +159,8 @@ func exportedCallables(pkg *gotypes.Package) []gotypes.Object {
 				}
 			}
 
-			if iface, ok := named.Underlying().(*gotypes.Interface); ok {
+			iface, ok := named.Underlying().(*gotypes.Interface)
+			if ok {
 				for m := range iface.ExplicitMethods() {
 					if m.Exported() {
 						objs = append(objs, m)
@@ -176,10 +181,7 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 		return nil, nil, fmt.Errorf("entry package %s is not package main", entry.Path)
 	}
 
-	g, idx, _, err := ua.prepare()
-	if err != nil {
-		return nil, nil, err
-	}
+	g, idx, _ := ua.prepare()
 
 	if !idx.HasTypeInfo() {
 		return nil, nil, fmt.Errorf("packages are not type-checked")
@@ -274,11 +276,13 @@ func (l *liveness) keys() types.SymbolKeySet {
 		}
 
 		fn, ok := topFunc(n.Func).Object().(*gotypes.Func)
+		if !ok {
+			continue
+		}
+
+		key, ok := types.SymbolKeyOf(fn)
 		if ok {
-			key, ok := types.SymbolKeyOf(fn)
-			if ok {
-				keys[key] = struct{}{}
-			}
+			keys[key] = struct{}{}
 		}
 	}
 

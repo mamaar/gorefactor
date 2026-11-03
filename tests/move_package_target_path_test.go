@@ -90,7 +90,8 @@ func TestMovePackageTargetPathForms(t *testing.T) {
 			}
 
 			// The sources must be gone, not merely emptied.
-			if _, err := os.Stat(filepath.Join(dir, "kartadm", "wms", "wms.go")); !os.IsNotExist(err) {
+			_, err = os.Stat(filepath.Join(dir, "kartadm", "wms", "wms.go"))
+			if !os.IsNotExist(err) {
 				t.Errorf("source kartadm/wms/wms.go should be deleted, stat err=%v", err)
 			}
 
@@ -110,7 +111,9 @@ func TestMovePackageTargetPathForms(t *testing.T) {
 			cmd := exec.Command("go", "build", "./...")
 
 			cmd.Dir = dir
-			if out, err := cmd.CombinedOutput(); err != nil {
+
+			out, err := cmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("workspace does not build after the move (this is the reported bug):\n%s", out)
 			}
 		})
@@ -150,7 +153,8 @@ func Existing() {}
 
 	// Refusing must mean nothing happened: the sources are still there and the
 	// existing target package is untouched.
-	if _, err := os.Stat(filepath.Join(dir, "kartadm", "wms", "wms.go")); err != nil {
+	_, err = os.Stat(filepath.Join(dir, "kartadm", "wms", "wms.go"))
+	if err != nil {
 		t.Errorf("source file should be untouched after a refusal: %v", err)
 	}
 

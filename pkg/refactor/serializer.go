@@ -331,7 +331,8 @@ func pruneEmptyDirs(dir string) {
 			return
 		}
 
-		if err := os.Remove(dir); err != nil {
+		err = os.Remove(dir)
+		if err != nil {
 			return
 		}
 

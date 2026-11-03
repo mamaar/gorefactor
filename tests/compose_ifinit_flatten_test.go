@@ -51,7 +51,9 @@ func TestComposeIfInitThenFlatten(t *testing.T) {
 			}
 
 			var decoded map[string]any
-			if err := json.Unmarshal([]byte(errText(res)), &decoded); err != nil {
+
+			err = json.Unmarshal([]byte(errText(res)), &decoded)
+			if err != nil {
 				t.Fatalf("decoding %s result: %v", tool, err)
 			}
 

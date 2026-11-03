@@ -128,10 +128,7 @@ func BenchmarkFindReferences(b *testing.B) {
 	b.ResetTimer()
 
 	for range b.N {
-		_, err := resolver.FindReferences(funcSymbol)
-		if err != nil {
-			b.Fatalf("Failed to find references: %v", err)
-		}
+		_ = resolver.FindReferences(funcSymbol)
 	}
 }
 
@@ -149,10 +146,7 @@ func BenchmarkBuildSymbolTable(b *testing.B) {
 	for range b.N {
 		resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-		_, err := resolver.BuildSymbolTable(testPkg)
-		if err != nil {
-			b.Fatalf("Failed to build symbol table: %v", err)
-		}
+		_ = resolver.BuildSymbolTable(testPkg)
 	}
 }
 
@@ -305,10 +299,7 @@ func ComplexFunction%d() {
 	// Build symbol tables for all packages
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range workspace.Packages {
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			b.Fatalf("Failed to build symbol table: %v", err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	return workspace
@@ -388,10 +379,7 @@ var Var%d = "var"
 
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range workspace.Packages {
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			tb.Fatalf("Failed to build symbol table: %v", err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	return workspace
@@ -590,9 +578,6 @@ func BenchmarkFindUnusedSymbols(b *testing.B) {
 	b.ReportAllocs()
 
 	for range b.N {
-		_, err := analyzer.FindUnusedSymbols()
-		if err != nil {
-			b.Fatal(err)
-		}
+		_ = analyzer.FindUnusedSymbols()
 	}
 }

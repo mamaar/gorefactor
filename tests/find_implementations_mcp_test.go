@@ -31,7 +31,9 @@ func findImplementations(t *testing.T, files map[string]string, args map[string]
 	}
 
 	var out map[string]any
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 

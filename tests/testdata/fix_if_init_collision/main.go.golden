@@ -12,6 +12,7 @@ func twoSiblings() error {
 	if err != nil {
 		return err
 	}
+
 	err = doB()
 	if err != nil {
 		return err
@@ -25,10 +26,12 @@ func threeSiblings() error {
 	if err != nil {
 		return err
 	}
+
 	err = doB()
 	if err != nil {
 		return err
 	}
+
 	err = doC()
 	if err != nil {
 		return err
@@ -43,6 +46,7 @@ func partialCollision() (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	x, err := doPair()
 	if err != nil {
 		return 0, err

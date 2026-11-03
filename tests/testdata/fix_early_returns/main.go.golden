@@ -9,6 +9,7 @@ func report(verbose bool, name string) {
 	if !verbose {
 		return
 	}
+
 	// keep this comment attached to the body
 	prefix := "report"
 	detail := fmt.Sprintf("%s: %s", prefix, name)
@@ -21,6 +22,7 @@ func summarize(values []int) {
 		if value <= 0 {
 			continue
 		}
+
 		doubled := value * 2
 		label := fmt.Sprintf("value %d", doubled)
 		fmt.Println(label)
@@ -32,6 +34,7 @@ func classify(x int) string {
 	if x < 0 {
 		return "negative"
 	}
+
 	kind := "non-negative"
 	return kind
 }

@@ -2,7 +2,6 @@ package analysis
 
 import (
 	"cmp"
-	"fmt"
 	"go/ast"
 	gotypes "go/types"
 	"log/slog"
@@ -83,11 +82,8 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 // FindUnusedSymbols finds all unused symbols in the workspace. A symbol is
 // unused unless live code outside test files references it; code that only
 // unused code or tests reference is unused too.
-func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
-	g, idx, m, err := ua.prepare()
-	if err != nil {
-		return nil, fmt.Errorf("find unused symbols: %w", err)
-	}
+func (ua *UnusedAnalyzer) FindUnusedSymbols() []*UnusedSymbol {
+	g, idx, m := ua.prepare()
 
 	m.markFrom(g, m.isRoot)
 
@@ -103,21 +99,18 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 
 	slices.SortFunc(unused, compareUnused)
 
-	return unused, nil
+	return unused
 }
 
 // prepare builds the symbol tables, the reference index (unless one was set),
 // the usage graph and a marker for it.
-func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, error) {
+func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker) {
 	for _, pkg := range ua.workspace.Packages {
 		if pkg.Symbols != nil {
 			continue
 		}
 
-		_, err := ua.resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
-		}
+		_ = ua.resolver.BuildSymbolTable(pkg)
 	}
 
 	idx := ua.index
@@ -135,7 +128,7 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		conversions:      CollectInterfaceConversions(ua.workspace),
 	}
 
-	return g, idx, m, nil
+	return g, idx, m
 }
 
 func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }

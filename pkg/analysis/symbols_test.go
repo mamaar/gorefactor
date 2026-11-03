@@ -90,10 +90,7 @@ var TestVar = "test"
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	symbolTable, err := resolver.BuildSymbolTable(pkg)
-	if err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	symbolTable := resolver.BuildSymbolTable(pkg)
 
 	if pkg.Symbols != symbolTable {
 		t.Error("Expected symbol table to be assigned to package")
@@ -291,7 +288,8 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	if refErr, ok := errors.AsType[*types.RefactorError](err); ok {
+	refErr, ok := errors.AsType[*types.RefactorError](err)
+	if ok {
 		if refErr.Type != types.SymbolNotFound {
 			t.Errorf("Expected SymbolNotFound error, got %v", refErr.Type)
 		}
@@ -356,10 +354,7 @@ func AnotherFunc() {
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	// Find references
-	references, err := resolver.FindReferences(testSymbol)
-	if err != nil {
-		t.Fatalf("Failed to find references: %v", err)
-	}
+	references := resolver.FindReferences(testSymbol)
 
 	// We expect to find at least 3 references (3 calls to TestFunc)
 	if len(references) < 3 {
@@ -539,9 +534,7 @@ var MyVar = "global"
 	}
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	return ws, resolver
 }
@@ -644,9 +637,7 @@ func Bar() { Foo() }
 	}
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	idx := resolver.BuildReferenceIndex()
 
@@ -775,10 +766,7 @@ func Caller() string { return pkga.SharedFunc() }
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range ws.Packages {
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			t.Fatalf("Failed to build symbol table for %s: %v", pkg.Name, err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	idx := resolver.BuildReferenceIndex()
@@ -873,10 +861,7 @@ type Greeter interface {
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	symbolTable, err := resolver.BuildSymbolTable(pkg)
-	if err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	symbolTable := resolver.BuildSymbolTable(pkg)
 
 	// User should have exactly Name and Age indexed (Embedded is skipped).
 	userFields, exists := symbolTable.Fields["User"]
@@ -1052,9 +1037,7 @@ func Bar() { Foo() }
 	}
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	idx := resolver.BuildReferenceIndex()
 
@@ -1179,10 +1162,7 @@ func Caller() string { return pkga.SharedFunc() }
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range ws.Packages {
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			t.Fatalf("Failed to build symbol table for %s: %v", pkg.Name, err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	idx := resolver.BuildReferenceIndex()
@@ -1285,9 +1265,7 @@ func Build() {
 	}
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	return ws, resolver, pkg
 }
@@ -1322,7 +1300,8 @@ func TestFindMemberReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 		t.Errorf("expected nil refs on error, got %d references", len(refs))
 	}
 
-	if _, ok := errors.AsType[*types.RefactorError](err); !ok {
+	_, ok := errors.AsType[*types.RefactorError](err)
+	if !ok {
 		t.Errorf("expected *types.RefactorError, got %T", err)
 	}
 }
@@ -1463,10 +1442,7 @@ func symbolTableOf(t *testing.T, files map[string]string) *types.SymbolTable {
 	ws := &types.Workspace{Packages: map[string]*types.Package{"x": pkg}, FileSet: fset}
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	st, err := resolver.BuildSymbolTable(pkg)
-	if err != nil {
-		t.Fatalf("BuildSymbolTable: %v", err)
-	}
+	st := resolver.BuildSymbolTable(pkg)
 
 	return st
 }

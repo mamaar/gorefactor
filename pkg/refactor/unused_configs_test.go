@@ -61,10 +61,7 @@ func TestUnusedAcrossConfigs_BoundsAndReleasesSecondaryViews(t *testing.T) {
 	for _, v := range views {
 		held = append(held, run.heldSecondaries())
 
-		err := run.visit(v)
-		if err != nil {
-			t.Fatal(err)
-		}
+		run.visit(v)
 	}
 
 	eng.endRun(run)

@@ -354,7 +354,8 @@ func blockersAcrossViews(views []*analysis.View, p gatedPlanner, maxRounds int) 
 		return nil, err
 	}
 
-	if err := run.absentEverywhere(); err != nil {
+	err = run.absentEverywhere()
+	if err != nil {
 		return nil, err
 	}
 

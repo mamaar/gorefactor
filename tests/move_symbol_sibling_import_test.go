@@ -123,7 +123,9 @@ func Something(t *testing.T) {
 	cmd := exec.Command("go", "vet", "./...")
 
 	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("fixture module does not vet clean after the move (this is the actual bug):\n%s", out)
 	}
 }

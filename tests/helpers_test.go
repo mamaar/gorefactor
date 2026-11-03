@@ -131,7 +131,9 @@ func compareGoldenFiles(t *testing.T, fixtureDir, tmpDir string) {
 			normalized := normalizeTempPaths(string(actual), tmpDir)
 
 			goldenPath := path + ".golden"
-			if err := os.WriteFile(goldenPath, []byte(normalized), 0o644); err != nil {
+
+			err = os.WriteFile(goldenPath, []byte(normalized), 0o644)
+			if err != nil {
 				t.Errorf("failed to update golden file %s: %v", goldenPath, err)
 			}
 
@@ -220,7 +222,9 @@ func checkDeleted(t *testing.T, fixtureDir, tmpDir string) {
 		actualRel := strings.TrimSuffix(rel, ".deleted")
 
 		actualPath := filepath.Join(tmpDir, actualRel)
-		if _, err := os.Stat(actualPath); err == nil {
+
+		_, err = os.Stat(actualPath)
+		if err == nil {
 			t.Errorf("expected %s to be deleted, but it still exists", actualRel)
 		}
 

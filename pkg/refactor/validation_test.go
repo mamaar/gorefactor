@@ -29,7 +29,8 @@ func TestValidator_ValidatePlan_NilPlan(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	if refErr, ok := errors.AsType[*refactorTypes.RefactorError](err); ok {
+	refErr, ok := errors.AsType[*refactorTypes.RefactorError](err)
+	if ok {
 		if refErr.Type != refactorTypes.InvalidOperation {
 			t.Errorf("Expected InvalidOperation error, got %v", refErr.Type)
 		}

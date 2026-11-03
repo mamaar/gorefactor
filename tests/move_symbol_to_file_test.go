@@ -336,7 +336,8 @@ func TestMoveSymbol_ToFile_MethodIntoTestFileFollowsItsCallers(t *testing.T) {
 
 	assertFileUnchanged(t, dir, "p/t.go", files["p/t.go"])
 
-	if res := moveToFile(t, sess, map[string]any{"symbol": "T.Dbg", "from_package": "p", "to_package": "p", "to_file": "p/p_test.go"}); res.IsError {
+	res = moveToFile(t, sess, map[string]any{"symbol": "T.Dbg", "from_package": "p", "to_package": "p", "to_file": "p/p_test.go"})
+	if res.IsError {
 		t.Fatalf("move Dbg: %s", errText(res))
 	}
 

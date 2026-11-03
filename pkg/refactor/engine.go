@@ -283,7 +283,8 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err = operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("rename package operation validation failed: %w", err)
 	}
 
@@ -1180,7 +1181,8 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err = operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("move package operation validation failed: %w", err)
 	}
 
@@ -1213,7 +1215,8 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err = operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("move directory operation validation failed: %w", err)
 	}
 
@@ -1247,7 +1250,8 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err = operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("move packages operation validation failed: %w", err)
 	}
 

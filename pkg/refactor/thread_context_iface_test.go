@@ -21,11 +21,14 @@ func methodLabel(f *gotypes.Func) string {
 	}
 
 	t := sig.Recv().Type()
-	if p, ok := t.(*gotypes.Pointer); ok {
+
+	p, ok := t.(*gotypes.Pointer)
+	if ok {
 		t = p.Elem()
 	}
 
-	if n, ok := t.(*gotypes.Named); ok {
+	n, ok := t.(*gotypes.Named)
+	if ok {
 		return n.Obj().Name() + "." + f.Name()
 	}
 

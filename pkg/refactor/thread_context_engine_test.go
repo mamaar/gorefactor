@@ -100,7 +100,8 @@ func main() {
 
 	// ExecutePlan itself checks compilation per affected directory because
 	// SkipCompilation is false; a failure here already proves the point.
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -109,7 +110,9 @@ func main() {
 	cmd := exec.Command("go", "build", "./...")
 
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("go build ./... failed after ThreadContext: %v\n%s", err, out)
 	}
 

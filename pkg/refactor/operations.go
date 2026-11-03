@@ -386,7 +386,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	if err := op.checkGeneratedDeclarations(ws, moving); err != nil {
+	err = op.checkGeneratedDeclarations(ws, moving)
+	if err != nil {
 		return nil, err
 	}
 	// Find all references to every symbol being moved together. A method is
@@ -394,10 +395,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	var allReferences []*types.Reference
 	var refSource map[*types.Reference]*types.Package
 
-	allReferences, refSource, err = op.findMovedReferences(moving, resolver)
-	if err != nil {
-		return nil, err
-	}
+	allReferences, refSource = op.findMovedReferences(moving, resolver)
 
 	// Remove each moved symbol from its source file.
 	var removals map[string][]types.Change
@@ -408,7 +406,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	if err := op.checkForStrandedReferences(ws, moving); err != nil {
+	err = op.checkForStrandedReferences(ws, moving)
+	if err != nil {
 		return nil, err
 	}
 
@@ -469,7 +468,9 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	op.target = targetPackage.Path
-	if err := op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path); err != nil {
+
+	err = op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path)
+	if err != nil {
 		return nil, err
 	}
 
@@ -489,7 +490,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		plan.Changes = append(plan.Changes, removeImportSpecs(ws, f, unusedImports[f.Path])...)
 	}
 
-	if err := op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes); err != nil {
+	err = op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes)
+	if err != nil {
 		return nil, err
 	}
 
@@ -518,11 +520,13 @@ func (op *MoveSymbolOperation) dropEmptiedFiles(sourceFiles []*types.File, targe
 		}
 
 		deletion, ok := emptiedFileDeletion(f, removals[f.Path])
-		if ok {
-			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
-
-			delete(unusedImports, f.Path)
+		if !ok {
+			continue
 		}
+
+		plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
+
+		delete(unusedImports, f.Path)
 	}
 }
 
@@ -566,7 +570,7 @@ func (op *MoveSymbolOperation) planReferenceRewrites(survivingReferences []*type
 	return nil
 }
 
-func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resolver *analysis.SymbolResolver) ([]*types.Reference, map[*types.Reference]*types.Package, error) {
+func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resolver *analysis.SymbolResolver) ([]*types.Reference, map[*types.Reference]*types.Package) {
 	var moveSet []*types.Symbol
 	var allReferences []*types.Reference
 	refSource := make(map[*types.Reference]*types.Package)
@@ -578,10 +582,7 @@ func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resol
 
 		moveSet = append(moveSet, m.sym)
 
-		refs, err := resolver.FindReferences(m.sym)
-		if err != nil {
-			return nil, nil, err
-		}
+		refs := resolver.FindReferences(m.sym)
 
 		for _, ref := range refs {
 			refSource[ref] = m.pkg
@@ -592,7 +593,7 @@ func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resol
 
 	op.moved, op.references = moveSet, allReferences
 
-	return allReferences, refSource, nil
+	return allReferences, refSource
 }
 
 func (op *MoveSymbolOperation) planSourceRemovals(moving []*movingSymbol) (map[string][]types.Change, []*types.File, error) {
@@ -1128,12 +1129,10 @@ func (op *RenameSymbolOperation) planSymbols(ws *types.Workspace, resolver *anal
 	// Process each symbol
 	for _, symbol := range targetSymbols {
 		// Find all references to this symbol
-		references, err := resolver.FindReferences(symbol)
-		if err != nil {
-			return nil, err
-		}
+		references := resolver.FindReferences(symbol)
 
-		if err := checkShadowedAtReferences(ws, symbol, references, op.Request.NewName); err != nil {
+		err := checkShadowedAtReferences(ws, symbol, references, op.Request.NewName)
+		if err != nil {
 			return nil, err
 		}
 

@@ -42,7 +42,8 @@ func renameOldToFresh(t *testing.T, dir, pkgDir string) *types.RefactoringPlan {
 		t.Fatalf("RenamePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -59,7 +60,8 @@ func moveOldToFresh(t *testing.T, dir string) *types.RefactoringPlan {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -155,7 +157,8 @@ func TestMovePackagesRewritesImporterQualifiers(t *testing.T) {
 		t.Fatalf("MovePackages: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -280,7 +283,8 @@ func TestMoveDirRenamesQualifiersOfTwoPackagesInOneFile(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -325,7 +329,8 @@ func TestMovePackagesReportsImportsKeptAsAlias(t *testing.T) {
 		t.Fatalf("MovePackages: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -359,7 +364,8 @@ func TestMoveDirKeepsAliasWhenTwoPackagesGetTheSameName(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 

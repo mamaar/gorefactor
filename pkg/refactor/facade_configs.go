@@ -449,7 +449,9 @@ func (op *GenerateFacadesOperation) Execute(ws *types.Workspace) (*types.Refacto
 		}
 
 		target := filepath.Join(ws.RootPath, op.Request.TargetDir, name)
-		if err := b.planFacadeDir(plan, op.Sources, target, name); err != nil {
+
+		err = b.planFacadeDir(plan, op.Sources, target, name)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -542,7 +544,8 @@ func (op *UpdateFacadesOperation) Execute(ws *types.Workspace) (*types.Refactori
 			}
 		}
 
-		if err := b.planFacadeDir(plan, op.Sources, facadeDir, pkgName); err != nil {
+		err = b.planFacadeDir(plan, op.Sources, facadeDir, pkgName)
+		if err != nil {
 			return nil, err
 		}
 	}

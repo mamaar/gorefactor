@@ -99,7 +99,8 @@ func threadAcrossAndApply(t *testing.T, eng *DefaultEngine, file, fn string) *ty
 		t.Fatalf("ThreadContextAcrossConfigs: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -199,7 +200,8 @@ func TestThreadContextAcrossConfigs_AlternatingSiblingChainNeedsSeveralRounds(t 
 		t.Errorf("want one reference index per view, reused across rounds; have %d for %d views", len(planner.indexes), len(views))
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatal(err)
 	}
 

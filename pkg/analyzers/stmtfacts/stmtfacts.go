@@ -466,3 +466,96 @@ func HasCallOrReceive(info *types.Info, nodes []ast.Node) bool {
 
 	return false
 }
+
+// HasGoto reports whether stmts contain a goto outside any func literal.
+func HasGoto(stmts []ast.Stmt) bool {
+	found := false
+
+	for _, s := range stmts {
+		ast.Inspect(s, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncLit:
+				return false
+			case *ast.BranchStmt:
+				found = found || n.Tok == token.GOTO
+			}
+
+			return !found
+		})
+	}
+
+	return found
+}
+
+// Captures reports whether node uses obj inside a func literal or can observe
+// it through a pointer, see addressTaken.
+func Captures(info *types.Info, node ast.Node, obj types.Object) bool {
+	found := false
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		lit, ok := n.(*ast.FuncLit)
+		found = found || ok && usesObject(info, lit, obj)
+
+		return !found
+	})
+
+	return found || addressTaken(info, node, obj)
+}
+
+// addressTaken reports whether node takes obj's address: under '&', by calling
+// a pointer method on it, or by slicing it when it is an array.
+func addressTaken(info *types.Info, node ast.Node, obj types.Object) bool {
+	found := false
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.UnaryExpr:
+			found = found || n.Op == token.AND && usesObject(info, n.X, obj)
+		case *ast.SelectorExpr:
+			found = found || pointerMethodOnValue(info, n) && usesObject(info, n.X, obj)
+		case *ast.SliceExpr:
+			t := info.TypeOf(n.X)
+			if t != nil {
+				_, array := t.Underlying().(*types.Array)
+				found = found || array && usesObject(info, n.X, obj)
+			}
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+func usesObject(info *types.Info, node ast.Node, obj types.Object) bool {
+	found := false
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		found = found || ok && info.Uses[id] == obj
+
+		return !found
+	})
+
+	return found
+}
+
+// pointerMethodOnValue reports whether sel selects a pointer-receiver method
+// on an operand that is not itself a pointer, which takes the operand's address.
+func pointerMethodOnValue(info *types.Info, sel *ast.SelectorExpr) bool {
+	fn, ok := info.Uses[sel.Sel].(*types.Func)
+	if !ok || fn.Signature().Recv() == nil {
+		return false
+	}
+
+	_, ptrRecv := fn.Signature().Recv().Type().(*types.Pointer)
+
+	operand := info.TypeOf(sel.X)
+	if operand == nil {
+		return false
+	}
+
+	_, ptrOperand := operand.Underlying().(*types.Pointer)
+
+	return ptrRecv && !ptrOperand
+}

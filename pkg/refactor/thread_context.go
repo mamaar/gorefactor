@@ -275,7 +275,8 @@ func (op *ThreadContextOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Ref
 	// surfaces immediately as a clear error naming the two conflicting
 	// changes, rather than as a much later and more opaque rejection from
 	// Validator/Serializer.validateChangePositions deep inside ExecutePlan.
-	if err := assertNoOverlappingChanges(changes); err != nil {
+	err = assertNoOverlappingChanges(changes)
+	if err != nil {
 		return nil, err
 	}
 
@@ -429,11 +430,13 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 		return nil, err
 	}
 
-	if err := op.resolve(idx, plan, visited); err != nil {
+	err = op.resolve(idx, plan, visited)
+	if err != nil {
 		return nil, err
 	}
 
-	if err := op.unattributedTestsAbort(plan); err != nil {
+	err = op.unattributedTestsAbort(plan)
+	if err != nil {
 		return nil, err
 	}
 

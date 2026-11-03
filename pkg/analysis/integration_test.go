@@ -250,8 +250,8 @@ func privateFunction() string {
 
 	// Build symbol tables
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	_, _ = resolver.BuildSymbolTable(mainPkg)
-	_, _ = resolver.BuildSymbolTable(utilsPkg)
+	_ = resolver.BuildSymbolTable(mainPkg)
+	_ = resolver.BuildSymbolTable(utilsPkg)
 
 	return workspace
 }
@@ -308,7 +308,7 @@ func (cs *CompositeStruct) OwnMethod() int {
 
 	// Build symbol tables
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	_, _ = resolver.BuildSymbolTable(pkg)
+	_ = resolver.BuildSymbolTable(pkg)
 
 	return workspace
 }

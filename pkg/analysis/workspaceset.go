@@ -121,7 +121,9 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 	logger.Info("parsing workspace", "path", absRoot)
 
 	tree := NewSourceTree(token.NewFileSet())
-	if err := loadSources(tree, absRoot); err != nil {
+
+	err = loadSources(tree, absRoot)
+	if err != nil {
 		logger.Error("workspace discovery failed", "path", root, "err", err)
 		return nil, err
 	}
@@ -134,10 +136,7 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 		views:  make(map[string]*View),
 	}
 
-	s.primary, err = s.buildView(primary)
-	if err != nil {
-		return nil, err
-	}
+	s.primary = s.buildView(primary)
 
 	s.views[primary.Key()] = s.primary
 
@@ -146,7 +145,7 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 
 // buildView projects the source tree under cfg and indexes the result. It
 // reads and parses nothing.
-func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
+func (s *WorkspaceSet) buildView(cfg BuildConfig) *View {
 	parser := newViewParser(s.logger, s.tree, cfg)
 
 	ws := parser.projectWorkspace(s.root, s.module)
@@ -158,17 +157,13 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 
 	resolver.inspectors = s.tree.inspectors
 	for _, pkg := range ws.Packages {
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			s.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
-			return nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	analyzer := NewDependencyAnalyzer(ws, s.logger)
 	_ = analyzer.BuildDependencyGraph()
 
-	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}, nil
+	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}
 }
 
 // Primary returns the view of the configuration the set was loaded under.
@@ -206,10 +201,7 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 
 	views := make([]*View, 0, len(configs))
 	for _, cfg := range configs {
-		v, err := s.viewLocked(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("build view %s: %w", cfg.Key(), err)
-		}
+		v := s.viewLocked(cfg)
 
 		views = append(views, v)
 	}
@@ -217,22 +209,19 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 	return views, nil
 }
 
-func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
+func (s *WorkspaceSet) viewLocked(cfg BuildConfig) *View {
 	key := cfg.Key()
 
 	v := s.views[key]
 	if v != nil {
-		return v, nil
+		return v
 	}
 
-	v, err := s.buildView(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("view locked: %w", err)
-	}
+	v = s.buildView(cfg)
 
 	s.views[key] = v
 
-	return v, nil
+	return v
 }
 
 // pruneLocked drops the built views whose configuration is not in configs.

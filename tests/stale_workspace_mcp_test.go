@@ -70,7 +70,9 @@ func callJSON(t *testing.T, sess *mcptest.Session, tool string, args map[string]
 	}
 
 	var out map[string]any
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode %s: %v", tool, err)
 	}
 

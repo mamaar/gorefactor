@@ -42,7 +42,9 @@ func detectAlwaysNil(t *testing.T, sess *mcptest.Session) alwaysNilReportJSON {
 	}
 
 	var out alwaysNilReportJSON
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
 

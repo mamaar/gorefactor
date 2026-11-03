@@ -6,11 +6,13 @@ import (
 	"go/token"
 	"go/types"
 	"maps"
+	"slices"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
+	"github.com/mamaar/gorefactor/pkg/analyzers/stmtfacts"
 )
 
 // Result is the typed result returned for MCP consumption.
@@ -62,8 +64,8 @@ type declaredName struct {
 	ident *ast.Ident
 	obj   types.Object
 	// hoisted marks a name this analyzer's own earlier hoist introduced into
-	// the scope; only such names may be reused with '='. Any other name in
-	// scope is original code that a '=' would overwrite.
+	// the scope. Any other name in scope is original code, which a '=' may
+	// reuse only when nothing can observe the overwrite (see overwriteHazard).
 	hoisted bool
 }
 
@@ -222,46 +224,13 @@ func (w *walker) unhoistCaptured(declared scope, assign *ast.AssignStmt, node as
 		dn, exists := declared[id.Name]
 
 		obj := w.pass.TypesInfo.Defs[id]
-		if !exists || !dn.hoisted || obj == nil || !w.captures(node, obj) {
+		if !exists || !dn.hoisted || obj == nil || !stmtfacts.Captures(w.pass.TypesInfo, node, obj) {
 			continue
 		}
 
 		dn.hoisted = false
 		declared[id.Name] = dn
 	}
-}
-
-// captures reports whether node uses obj inside a func literal or under '&'.
-func (w *walker) captures(node ast.Node, obj types.Object) bool {
-	uses := func(n ast.Node) bool {
-		found := false
-
-		ast.Inspect(n, func(n ast.Node) bool {
-			id, ok := n.(*ast.Ident)
-			if ok && w.pass.TypesInfo.Uses[id] == obj {
-				found = true
-			}
-
-			return !found
-		})
-
-		return found
-	}
-	found := false
-
-	ast.Inspect(node, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.FuncLit:
-			found = found || uses(n)
-			return false
-		case *ast.UnaryExpr:
-			found = found || n.Op == token.AND && uses(n.X)
-		}
-
-		return !found
-	})
-
-	return found
 }
 
 // walkLabeled handles the guard: an if/switch/type-switch that is the direct
@@ -459,13 +428,14 @@ type emission struct {
 	newNames []*ast.Ident // non-blank names newly declared in the landing block by this emission
 }
 
-// decideEmission decides how to hoist assign. When checkCollisions is false
-// (plain '=' assigns, or an else-if's brand-new wrapping block) the text is
-// always emitted unchanged. When true, it performs the collision analysis
-// described in the package design: unchanged ':=' unless every non-blank
-// LHS name already exists in declared, in which case it attempts a
-// type-checked downgrade to '=', or skips if that cannot be verified safe.
-func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCollisions bool) emission {
+// decideEmission decides how to hoist assign, the init of list[idx]. When
+// checkCollisions is false (plain '=' assigns, or an else-if's brand-new
+// wrapping block) the text is always emitted unchanged. When true, it performs
+// the collision analysis described in the package design: unchanged ':=' unless
+// every non-blank LHS name already exists in declared, in which case it
+// attempts a type-checked downgrade to '=', or skips if that cannot be
+// verified safe.
+func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCollisions bool, list []ast.Stmt, idx int) emission {
 	fullText := w.text(assign.Pos(), assign.End())
 
 	if assign.Tok != token.DEFINE || !checkCollisions {
@@ -500,7 +470,7 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 	}
 
 	if len(colliding) > 0 {
-		ok, reason := w.canReuse(assign, colliding, declared)
+		ok, reason := w.canReuse(assign, colliding, declared, list, idx)
 		if !ok {
 			return emission{skip: true, reason: reason}
 		}
@@ -515,20 +485,18 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 }
 
 // canReuse verifies, via pass.TypesInfo, that assigning to each colliding name
-// instead of declaring it is safe: the name must have been introduced by an
-// earlier hoist (anything else is original code the assignment would
-// overwrite) and the right-hand side must have exactly its type. If type
+// instead of declaring it is safe: the right-hand side must have exactly the
+// name's type, and a name not introduced by an earlier hoist must pass
+// overwriteHazard for the split of list[idx] (a nil list refuses it). If type
 // information is unavailable or any lookup fails, it refuses conservatively.
-func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declared scope) (bool, string) {
+func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declared scope, list []ast.Stmt, idx int) (bool, string) {
 	info := w.pass.TypesInfo
 	if info == nil || info.Types == nil {
 		return false, "type information unavailable"
 	}
 
 	for _, id := range colliding {
-		idx := lhsIndex(assign, id)
-
-		rhsType := w.rhsTypeAt(assign, idx)
+		rhsType := w.rhsTypeAt(assign, lhsIndex(assign, id))
 		if rhsType == nil {
 			return false, "type information unavailable"
 		}
@@ -536,10 +504,6 @@ func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declar
 		dn, ok := declared[id.Name]
 		if !ok {
 			return false, "type information unavailable"
-		}
-
-		if !dn.hoisted {
-			return false, "name " + id.Name + " is already declared in this scope; reusing it would overwrite it"
 		}
 
 		obj := dn.obj
@@ -554,12 +518,222 @@ func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declar
 			return false, "type information unavailable"
 		}
 
+		if !dn.hoisted {
+			hazard := w.overwriteHazard(obj, id, list, idx)
+			if hazard != "" {
+				return false, "name " + id.Name + " is already declared in this scope; reusing it would overwrite " + hazard
+			}
+		}
+
 		if !types.Identical(rhsType, obj.Type()) {
 			return false, "types differ from the hoisted " + id.Name
 		}
 	}
 
 	return true, ""
+}
+
+// overwriteHazard returns what assigning the original variable outer, instead
+// of declaring id in the split of list[idx], could change, or "" when nothing
+// can: outer is a same-typed variable of list's own scope, not a named result,
+// no closure or pointer observes it, and no path from the split reads it
+// before writing it again.
+func (w *walker) overwriteHazard(outer types.Object, id *ast.Ident, list []ast.Stmt, idx int) string {
+	info := w.pass.TypesInfo
+	inner := info.Defs[id]
+	v, isVar := outer.(*types.Var)
+
+	switch {
+	case list == nil || inner == nil || !isVar:
+		return "it"
+	case outer.Parent() != inner.Parent().Parent():
+		// An earlier hoist's variable, which later code may also reach
+		// through the objects of the statements its hoist rewrote.
+		return "it"
+	case v.Kind() == types.ResultVar:
+		return "a named result"
+	case !types.Identical(outer.Type(), inner.Type()):
+		return "a variable of another type"
+	case stmtfacts.HasGoto(list):
+		return "a variable a goto can revisit"
+	case stmtfacts.Captures(info, list[idx], inner) || slices.ContainsFunc(list, func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, outer) }):
+		return "a variable a closure or pointer can observe"
+	case liveness{info: info, v: outer}.readFirst(list[idx+1:]):
+		return "a value read later"
+	}
+
+	return ""
+}
+
+// liveness finds reads of v that no write of v precedes. It assumes goto-free
+// code and that v dies when control leaves the scanned statement list.
+type liveness struct {
+	info *types.Info
+	v    types.Object
+}
+
+// readFirst reports whether some path through stmts reads v before writing it.
+func (l liveness) readFirst(stmts []ast.Stmt) bool {
+	read, _ := l.seq(stmts)
+	return read
+}
+
+// seq reports whether some path through stmts reads v before writing it, and
+// whether every path either writes v or leaves stmts early (done), so that
+// whatever follows stmts cannot read the current value.
+func (l liveness) seq(stmts []ast.Stmt) (read, done bool) {
+	for _, s := range stmts {
+		read, done = l.stmt(s)
+		if read || done {
+			return read, done
+		}
+	}
+
+	return false, false
+}
+
+// stmt is seq for one statement. A loop, switch or select is never done,
+// since a break inside it continues after it.
+func (l liveness) stmt(s ast.Stmt) (read, done bool) {
+	switch s := s.(type) {
+	case nil:
+		return false, false
+	case *ast.AssignStmt:
+		return l.assign(s)
+	case *ast.ReturnStmt:
+		return l.mentions(s), true
+	case *ast.BranchStmt:
+		return false, true
+	case *ast.ExprStmt:
+		return l.mentions(s), l.isPanic(s.X)
+	case *ast.BlockStmt:
+		return l.seq(s.List)
+	case *ast.LabeledStmt:
+		return l.stmt(s.Stmt)
+	case *ast.IfStmt:
+		read, done = l.stmt(s.Init)
+		if read || done {
+			return read, done
+		}
+
+		if l.mentions(s.Cond) {
+			return true, false
+		}
+
+		bodyRead, bodyDone := l.seq(s.Body.List)
+		elseRead, elseDone := l.stmt(s.Else)
+
+		return bodyRead || elseRead, bodyDone && elseDone
+	case *ast.ForStmt:
+		read, done = l.stmt(s.Init)
+		if read || done {
+			return read, done
+		}
+
+		postRead, _ := l.stmt(s.Post)
+
+		return l.mentions(s.Cond) || l.readFirst(s.Body.List) || postRead, false
+	case *ast.RangeStmt:
+		return l.mentions(s.Key) || l.mentions(s.Value) || l.mentions(s.X) || l.readFirst(s.Body.List), false
+	case *ast.SwitchStmt:
+		read, done = l.stmt(s.Init)
+		if read || done {
+			return read, done
+		}
+
+		return l.mentions(s.Tag) || l.clausesRead(s.Body), false
+	case *ast.TypeSwitchStmt:
+		read, done = l.stmt(s.Init)
+		if read || done {
+			return read, done
+		}
+
+		return l.mentions(s.Assign) || l.clausesRead(s.Body), false
+	case *ast.SelectStmt:
+		return l.clausesRead(s.Body), false
+	}
+
+	return l.mentions(s), false
+}
+
+// assign treats a plain '=' or ':=' to v as a write after its operands are
+// evaluated; an op-assignment such as '+=' reads v.
+func (l liveness) assign(s *ast.AssignStmt) (read, done bool) {
+	writes := false
+
+	for _, lhs := range s.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if ok && l.info.ObjectOf(id) == l.v {
+			writes = true
+		} else if l.mentions(lhs) {
+			return true, false
+		}
+	}
+
+	for _, rhs := range s.Rhs {
+		if l.mentions(rhs) {
+			return true, false
+		}
+	}
+
+	if s.Tok != token.ASSIGN && s.Tok != token.DEFINE {
+		return writes, false
+	}
+
+	return false, writes
+}
+
+// clausesRead reports whether any case or comm clause of body may read v first.
+func (l liveness) clausesRead(body *ast.BlockStmt) bool {
+	for _, c := range body.List {
+		switch c := c.(type) {
+		case *ast.CaseClause:
+			if slices.ContainsFunc(c.List, func(e ast.Expr) bool { return l.mentions(e) }) || l.readFirst(c.Body) {
+				return true
+			}
+		case *ast.CommClause:
+			if l.mentions(c.Comm) || l.readFirst(c.Body) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func (l liveness) mentions(n ast.Node) bool {
+	if n == nil {
+		return false
+	}
+
+	found := false
+
+	ast.Inspect(n, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if ok && l.info.Uses[id] == l.v {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+func (l liveness) isPanic(e ast.Expr) bool {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+
+	id, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+
+	_, builtin := l.info.Uses[id].(*types.Builtin)
+
+	return builtin && id.Name == "panic"
 }
 
 // resolveCascade is the entry point emitIfFix/emitSwitchFix/emitTypeSwitchFix
@@ -751,7 +925,7 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, declared, augmented scop
 			continue
 		}
 
-		reuseOK, reuseReason := w.canReuse(assign, reused, augmented)
+		reuseOK, reuseReason := w.canReuse(assign, reused, augmented, nil, -1)
 		if !reuseOK {
 			return nil, nil, false, "hoisting would make a later := reuse the hoisted variable: " + reuseReason
 		}
@@ -861,7 +1035,7 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 	condText := w.text(node.Cond.Pos(), node.Cond.End())
 
 	checkCollisions := assign.Tok == token.DEFINE && !isElseIf
-	em := w.decideEmission(assign, declared, checkCollisions)
+	em := w.decideEmission(assign, declared, checkCollisions, list, idx)
 
 	var fixes []analysis.SuggestedFix
 
@@ -875,6 +1049,7 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 				em.reason = cascadeReason
 			} else {
 				fixes = w.buildHeadIfFix(node, em.text, condText, cascadeEdits)
+				w.separateFromAbove(fixes, list, idx)
 				// Only commit newly-declared names / claimed cascade targets
 				// once a fix was actually produced — buildHeadIfFix returns
 				// nil if its own offset bounds check fails, in which case
@@ -912,6 +1087,25 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 		Skipped:    em.skip,
 		SkipReason: em.reason,
 	})
+}
+
+// separateFromAbove starts the hoist edit of fixes on a new paragraph when
+// list[idx] directly follows the previous statement: wsl allows only one
+// statement cuddled above an if or switch, and the hoisted line is a second.
+func (w *walker) separateFromAbove(fixes []analysis.SuggestedFix, list []ast.Stmt, idx int) {
+	if len(fixes) == 0 || idx <= 0 {
+		return
+	}
+
+	fset := w.pass.Fset
+	if fset.Position(list[idx-1].End()).Line != fset.Position(list[idx].Pos()).Line-1 {
+		return
+	}
+
+	edit := &fixes[0].TextEdits[0]
+	indent := extractIndentation(w.content, fset.Position(edit.Pos).Offset)
+	edit.Pos -= token.Pos(len(indent))
+	edit.NewText = append([]byte("\n"+indent), edit.NewText...)
 }
 
 // buildHeadIfFix builds the hoist edit plus any cascade edits (see
@@ -997,7 +1191,7 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 	snippet := sourceLine(w.content, pos.Line)
 
 	checkCollisions := assign.Tok == token.DEFINE
-	em := w.decideEmission(assign, declared, checkCollisions)
+	em := w.decideEmission(assign, declared, checkCollisions, list, idx)
 
 	var fixes []analysis.SuggestedFix
 
@@ -1013,6 +1207,7 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 			}
 
 			fixes = w.buildSwitchFix(node, em.text, tagText, cascadeEdits)
+			w.separateFromAbove(fixes, list, idx)
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
 				declared.hoist(em.newNames)
@@ -1094,7 +1289,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 		vars = lhsNames(assign)
 		expr = w.rhsText(assign)
 		checkCollisions := assign.Tok == token.DEFINE
-		em = w.decideEmission(assign, declared, checkCollisions)
+		em = w.decideEmission(assign, declared, checkCollisions, list, idx)
 	} else {
 		expr = w.text(node.Init.Pos(), node.Init.End())
 		em = emission{text: expr}
@@ -1114,6 +1309,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 			// statement, so it is re-emitted verbatim as the new switch's guard.
 			assignText := w.text(node.Assign.Pos(), node.Assign.End())
 			fixes = w.buildTypeSwitchFix(node, em.text, assignText, cascadeEdits)
+			w.separateFromAbove(fixes, list, idx)
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
 				declared.hoist(em.newNames)

@@ -18,7 +18,8 @@ func threadScoped(t *testing.T, files map[string]string, fn string) (*types.Refa
 		t.Fatal(err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatal(err)
 	}
 

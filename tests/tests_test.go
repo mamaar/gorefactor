@@ -35,7 +35,8 @@ func TestRenameSymbol(t *testing.T) {
 		t.Fatalf("RenameSymbol: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -56,7 +57,8 @@ func TestRenameMethod(t *testing.T) {
 		t.Fatalf("RenameMethod: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -77,7 +79,8 @@ func TestRenameField(t *testing.T) {
 		t.Fatalf("RenameField: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -99,7 +102,8 @@ func TestRenamePackage(t *testing.T) {
 		t.Fatalf("RenamePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -120,7 +124,8 @@ func TestMoveSymbol(t *testing.T) {
 		t.Fatalf("MoveSymbol: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -144,7 +149,8 @@ func TestExtractFunction(t *testing.T) {
 		t.Fatalf("ExtractFunction: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -167,7 +173,8 @@ func TestExtractMethod(t *testing.T) {
 		t.Fatalf("ExtractMethod: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -188,7 +195,8 @@ func TestExtractInterface(t *testing.T) {
 		t.Fatalf("ExtractInterface: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -211,7 +219,8 @@ func TestExtractVariable(t *testing.T) {
 		t.Fatalf("ExtractVariable: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -234,7 +243,8 @@ func TestInlineFunction(t *testing.T) {
 		t.Fatalf("InlineFunction: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -255,7 +265,8 @@ func TestInlineMethod(t *testing.T) {
 		t.Fatalf("InlineMethod: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -275,7 +286,8 @@ func TestInlineVariable(t *testing.T) {
 		t.Fatalf("InlineVariable: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -348,7 +360,8 @@ func TestAddReturn(t *testing.T) {
 		t.Fatalf("ChangeSignature: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -412,7 +425,8 @@ func TestThreadContext_Chain(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -432,7 +446,8 @@ func TestThreadContext_Stops(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -453,7 +468,8 @@ func TestThreadContext_StopsAtWrapperKeepingGeneratedBridgeUntouched(t *testing.
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -489,7 +505,8 @@ func TestThreadContext_Interface(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -509,7 +526,8 @@ func TestThreadContext_TestRoots(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -529,7 +547,8 @@ func TestThreadContext_Roots(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -549,7 +568,8 @@ func TestThreadContext_FakeRoot(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -569,7 +589,8 @@ func TestThreadContext_Nested(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -589,7 +610,8 @@ func TestThreadContext_Generics(t *testing.T) {
 		t.Fatalf("ThreadContext: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -703,14 +725,17 @@ func TestThreadContext_Compiles(t *testing.T) {
 				t.Fatalf("ThreadContext: %v", err)
 			}
 
-			if err := eng.ExecutePlan(plan); err != nil {
+			err = eng.ExecutePlan(plan)
+			if err != nil {
 				t.Fatalf("ExecutePlan: %v", err)
 			}
 
 			buildCmd := exec.Command("go", "build", "./...")
 
 			buildCmd.Dir = tmpDir
-			if out, err := buildCmd.CombinedOutput(); err != nil {
+
+			out, err := buildCmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("go build ./... failed after ThreadContext:\n%s", out)
 			}
 
@@ -721,7 +746,7 @@ func TestThreadContext_Compiles(t *testing.T) {
 			vetCmd := exec.Command("go", "vet", "./...")
 			vetCmd.Dir = tmpDir
 
-			out, err := vetCmd.CombinedOutput()
+			out, err = vetCmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go vet ./... failed after ThreadContext:\n%s", out)
 			}
@@ -774,7 +799,9 @@ func TestFixIfInit(t *testing.T) {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -801,7 +828,9 @@ func runFixIfInit(t *testing.T, fixtureDir string) string {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -899,7 +928,9 @@ func TestFixBooleanBranching(t *testing.T) {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -921,7 +952,9 @@ func TestFixDeepIfElse(t *testing.T) {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -947,7 +980,9 @@ func TestFixDeepIfElseChain(t *testing.T) {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -972,7 +1007,9 @@ func TestFixSwitchableIfChains(t *testing.T) {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -994,7 +1031,9 @@ func TestFixErrorWrapping(t *testing.T) {
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 
 	plan := analyzers.ChangesToPlan(changes)
-	if err := eng.ExecutePlan(plan); err != nil {
+
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 

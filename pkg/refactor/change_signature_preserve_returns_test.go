@@ -136,10 +136,7 @@ type save interface {
 		NewReturns: nil, // Not provided by caller
 	}
 
-	err = op.preserveExistingReturnsIfNeeded(file)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	op.preserveExistingReturnsIfNeeded(file)
 
 	if len(op.NewReturns) != 1 {
 		t.Fatalf("expected 1 return type preserved, got %d", len(op.NewReturns))
@@ -182,10 +179,7 @@ func (s *Storage) SaveTile(key *string, data []byte) error {
 		NewReturns: nil, // Not provided by caller
 	}
 
-	err = op.preserveExistingReturnsIfNeeded(file)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	op.preserveExistingReturnsIfNeeded(file)
 
 	if len(op.NewReturns) != 1 {
 		t.Fatalf("expected 1 return type preserved, got %d", len(op.NewReturns))
@@ -221,10 +215,7 @@ type save interface {
 		NewReturns:   []string{"string", "error"}, // Explicitly provided
 	}
 
-	err = op.preserveExistingReturnsIfNeeded(file)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	op.preserveExistingReturnsIfNeeded(file)
 	// Should NOT overwrite explicitly provided returns
 	if len(op.NewReturns) != 2 {
 		t.Fatalf("expected 2 return types (unchanged), got %d", len(op.NewReturns))
@@ -517,9 +508,7 @@ func getSecret(project string, secretName string) (secret []byte, err error) {
 		// NewReturns intentionally NOT set — simulates add_context_parameter caller
 	}
 
-	if err := op.preserveExistingReturnsIfNeeded(file); err != nil {
-		t.Fatalf("preserveExistingReturnsIfNeeded: %v", err)
-	}
+	op.preserveExistingReturnsIfNeeded(file)
 
 	// NamedReturns must be populated because the original signature had named results.
 	if len(op.NamedReturns) != 2 {
@@ -596,9 +585,7 @@ func ListVersions(project string, secretName string) ([]string, error) {
 		},
 	}
 
-	if err := op.preserveExistingReturnsIfNeeded(file); err != nil {
-		t.Fatalf("preserveExistingReturnsIfNeeded: %v", err)
-	}
+	op.preserveExistingReturnsIfNeeded(file)
 
 	// NamedReturns must be nil for unnamed returns.
 	if len(op.NamedReturns) != 0 {

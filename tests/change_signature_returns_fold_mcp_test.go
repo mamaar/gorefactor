@@ -88,6 +88,26 @@ func TestChangeSignature_RemoveReturnFoldsDeadErrorChecks(t *testing.T) {
 			use:  "package p\n\nimport \"fmt\"\n\nfunc Use() int {\n\tif x, err := f(); err != nil {\n\t\tfmt.Println(\"bad\")\n\t\treturn 0\n\t} else {\n\t\ty := x\n\t\treturn y\n\t}\n}\n",
 			omit: []string{"fmt", "err"},
 		},
+		"reassigned after an earlier checked error": {
+			use:  "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() (int, error) {\n\tn, err := h()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tvar x int\n\tx, err = f()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\treturn x + n, nil\n}\n",
+			want: []string{"x = f()\n", "return x + n, nil"},
+			omit: []string{"x, err = f()"},
+		},
+		"define that reuses an err declared in the same scope": {
+			use:  "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() (int, error) {\n\tn, err := h()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tx, err := f()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\treturn x + n, nil\n}\n",
+			want: []string{"x := f()\n", "return x + n, nil"},
+			omit: []string{"x, err := f()"},
+		},
+		"later unconditional write with its own check": {
+			use:  "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() (int, error) {\n\tx, err := f()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\ty, err := h()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\treturn x + y, nil\n}\n",
+			want: []string{"x := f()\n", "y, err := h()"},
+			omit: []string{"x, err"},
+		},
+		"reassigned in the init of its check": {
+			use:  "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() (int, error) {\n\tn, err := h()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tvar x int\n\tif x, err = f(); err != nil {\n\t\treturn 0, err\n\t}\n\treturn x + n, nil\n}\n",
+			want: []string{"\tx = f()\n", "return x + n, nil"},
+			omit: []string{"x, err = f()"},
+		},
 		"no blank line before the closing brace of a wrapped init": {
 			use:  "package p\n\nfunc Use() int {\n\tx := 5\n\tif x, err := f(); err == nil {\n\t\tprintln(x)\n\t}\n\treturn x\n}\n",
 			want: []string{"println(x)\n\t}\n"},
@@ -117,7 +137,7 @@ func TestChangeSignature_RemoveReturnFoldsInitStatementWithNothingLeft(t *testin
 
 	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return"))
 
-	assertFileContains(t, dir, "p/f.go", "func f() { return }")
+	assertFileContains(t, dir, "p/f.go", "func f() {}")
 	assertFileContains(t, dir, "p/use.go", "\tf()\n\tprintln(1)")
 	assertFileOmits(t, dir, "p/use.go", "err")
 	goVets(t, dir, "")
@@ -125,26 +145,49 @@ func TestChangeSignature_RemoveReturnFoldsInitStatementWithNothingLeft(t *testin
 
 func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T) {
 	cases := map[string]string{
-		"errors.Is":                                    "package p\n\nimport \"errors\"\n\nfunc Use() bool {\n\t_, err := f()\n\tif errors.Is(err, errors.ErrUnsupported) {\n\t\treturn true\n\t}\n\treturn false\n}\n",
-		"reassigned then read":                         "package p\n\nfunc Use() error {\n\tx, err := f()\n\tif x > 0 {\n\t\terr = g()\n\t}\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n\nfunc g() error { return nil }\n",
-		"read in the kept branch":                      "package p\n\nfunc Use() error {\n\t_, err := f()\n\tif err == nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n",
-		"call before the decided operand":              "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif g() && err != nil {\n\t\treturn 0\n\t}\n\treturn x\n}\n",
-		"call before the dropped operand":              "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif g() || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
-		"dereference before the decided operand":       "package p\n\ntype T struct{ n int }\n\nfunc Use(p *T) int {\n\tx, err := f()\n\tif p.n > 0 || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
-		"type assertion before the decided operand":    "package p\n\nfunc Use(v any) int {\n\tx, err := f()\n\tif v.(int) > 0 || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
-		"else-if with an init statement":               "package p\n\nfunc Use(n int) int {\n\tx, err := f()\n\tif n > 0 {\n\t\treturn 1\n\t} else if y := n; err == nil {\n\t\treturn y + x\n\t}\n\treturn 0\n}\n",
-		"local read only in a dropped operand":         "package p\n\nfunc Use() int {\n\tn := 3\n\tx, err := f()\n\tif n > 0 || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
-		"init variable read only in a dropped operand": "package p\n\nfunc Use() int {\n\tif x, err := f(); x > 0 || err == nil {\n\t\tprintln(1)\n\t}\n\treturn 0\n}\n",
-		"local read only in a decided inner chain":     "package p\n\nfunc Use(m int) int {\n\tk := 2\n\tx, err := f()\n\tif m > 0 || (k > 0 && err != nil) {\n\t\tx++\n\t}\n\treturn x\n}\n",
-		"label used only by the dead branch":           "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err != nil {\n\t\tgoto fail\n\t}\n\treturn x\nfail:\n\treturn 0\n}\n",
-		"continue label used only by the dead branch":  "package p\n\nfunc Use(xs []int) int {\n\ts := 0\nouter:\n\tfor _, v := range xs {\n\t\tx, err := f()\n\t\tif err != nil {\n\t\t\tcontinue outer\n\t\t}\n\t\ts += x + v\n\t}\n\treturn s\n}\n",
-		"two removed errors in one condition":          "package p\n\nfunc Use() int {\n\tx, err1 := f()\n\ty, err2 := f()\n\tif err1 != nil || err2 != nil {\n\t\treturn 0\n\t}\n\treturn x + y\n}\n",
-		"unreachable code after an else-if chain":      "package p\n\nfunc Use(n int) int {\n\tx, err := f()\n\tif n > 0 {\n\t\treturn 1\n\t} else if err == nil {\n\t\treturn x\n\t}\n\tprintln(\"tail\")\n\treturn 0\n}\n",
-		"unreachable code after a bare block":          "package p\n\nfunc Use() int {\n\tx, err := f()\n\t{\n\t\tif err == nil {\n\t\t\treturn x\n\t\t}\n\t}\n\treturn 0\n}\n",
-		"only break of an endless loop":                "package p\n\nfunc Use() int {\n\tfor {\n\t\tx, err := f()\n\t\tif err != nil {\n\t\t\tbreak\n\t\t}\n\t\treturn x\n\t}\n\treturn 0\n}\n",
-		"stored in a bool":                             "package p\n\nfunc Use() bool {\n\t_, err := f()\n\tok := err == nil\n\treturn ok\n}\n",
-		"code after a terminating kept branch":         "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err == nil {\n\t\treturn x\n\t}\n\tprintln(\"tail\")\n\treturn 0\n}\n",
-		"variable used only by the dead branch":        "package p\n\nfunc Use() int {\n\tvar msg string\n\tx, err := f()\n\tif err != nil {\n\t\tmsg = err.Error()\n\t\tprintln(msg)\n\t\treturn 0\n\t}\n\treturn x\n}\n",
+		"errors.Is":                                     "package p\n\nimport \"errors\"\n\nfunc Use() bool {\n\t_, err := f()\n\tif errors.Is(err, errors.ErrUnsupported) {\n\t\treturn true\n\t}\n\treturn false\n}\n",
+		"reassigned then read":                          "package p\n\nfunc Use() error {\n\tx, err := f()\n\tif x > 0 {\n\t\terr = g()\n\t}\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n\nfunc g() error { return nil }\n",
+		"read in the kept branch":                       "package p\n\nfunc Use() error {\n\t_, err := f()\n\tif err == nil {\n\t\treturn err\n\t}\n\treturn nil\n}\n",
+		"call before the decided operand":               "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif g() && err != nil {\n\t\treturn 0\n\t}\n\treturn x\n}\n",
+		"call before the dropped operand":               "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif g() || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
+		"dereference before the decided operand":        "package p\n\ntype T struct{ n int }\n\nfunc Use(p *T) int {\n\tx, err := f()\n\tif p.n > 0 || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
+		"type assertion before the decided operand":     "package p\n\nfunc Use(v any) int {\n\tx, err := f()\n\tif v.(int) > 0 || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
+		"else-if with an init statement":                "package p\n\nfunc Use(n int) int {\n\tx, err := f()\n\tif n > 0 {\n\t\treturn 1\n\t} else if y := n; err == nil {\n\t\treturn y + x\n\t}\n\treturn 0\n}\n",
+		"local read only in a dropped operand":          "package p\n\nfunc Use() int {\n\tn := 3\n\tx, err := f()\n\tif n > 0 || err == nil {\n\t\tx++\n\t}\n\treturn x\n}\n",
+		"init variable read only in a dropped operand":  "package p\n\nfunc Use() int {\n\tif x, err := f(); x > 0 || err == nil {\n\t\tprintln(1)\n\t}\n\treturn 0\n}\n",
+		"local read only in a decided inner chain":      "package p\n\nfunc Use(m int) int {\n\tk := 2\n\tx, err := f()\n\tif m > 0 || (k > 0 && err != nil) {\n\t\tx++\n\t}\n\treturn x\n}\n",
+		"label used only by the dead branch":            "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err != nil {\n\t\tgoto fail\n\t}\n\treturn x\nfail:\n\treturn 0\n}\n",
+		"continue label used only by the dead branch":   "package p\n\nfunc Use(xs []int) int {\n\ts := 0\nouter:\n\tfor _, v := range xs {\n\t\tx, err := f()\n\t\tif err != nil {\n\t\t\tcontinue outer\n\t\t}\n\t\ts += x + v\n\t}\n\treturn s\n}\n",
+		"two removed errors in one condition":           "package p\n\nfunc Use() int {\n\tx, err1 := f()\n\ty, err2 := f()\n\tif err1 != nil || err2 != nil {\n\t\treturn 0\n\t}\n\treturn x + y\n}\n",
+		"unreachable code after an else-if chain":       "package p\n\nfunc Use(n int) int {\n\tx, err := f()\n\tif n > 0 {\n\t\treturn 1\n\t} else if err == nil {\n\t\treturn x\n\t}\n\tprintln(\"tail\")\n\treturn 0\n}\n",
+		"unreachable code after a bare block":           "package p\n\nfunc Use() int {\n\tx, err := f()\n\t{\n\t\tif err == nil {\n\t\t\treturn x\n\t\t}\n\t}\n\treturn 0\n}\n",
+		"only break of an endless loop":                 "package p\n\nfunc Use() int {\n\tfor {\n\t\tx, err := f()\n\t\tif err != nil {\n\t\t\tbreak\n\t\t}\n\t\treturn x\n\t}\n\treturn 0\n}\n",
+		"read before the call in a loop that holds it":  "package p\n\nfunc Use() int {\n\tvar err error\n\ts := 0\n\tfor i := 0; i < 2; i++ {\n\t\tif err != nil {\n\t\t\treturn -1\n\t\t}\n\t\tvar x int\n\t\tx, err = f()\n\t\ts += x\n\t}\n\treturn s\n}\n",
+		"read after the call that is not a nil check":   "package p\n\nfunc Use() error {\n\tvar x int\n\tvar err error\n\tx, err = f()\n\tprintln(x)\n\treturn err\n}\n",
+		"define that reuses an err read after the call": "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tn, err := h()\n\tprintln(n)\n\tx, err := f()\n\tprintln(x)\n\treturn err\n}\n",
+		"read between the call and a later write":       "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tx, err := f()\n\tprintln(x, err)\n\t_, err = h()\n\treturn err\n}\n",
+		"later write in a loop with the call":           "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tvar err error\n\tfor i := 0; i < 2; i++ {\n\t\tvar x int\n\t\tif i > 0 {\n\t\t\tx, err = f()\n\t\t}\n\t\tprintln(x)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\t_, err = h()\n\t}\n\treturn nil\n}\n",
+		"stored in a bool":                              "package p\n\nfunc Use() bool {\n\t_, err := f()\n\tok := err == nil\n\treturn ok\n}\n",
+		"code after a terminating kept branch":          "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err == nil {\n\t\treturn x\n\t}\n\tprintln(\"tail\")\n\treturn 0\n}\n",
+		"closure re-invoked":                            "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tvar err error\n\th := func() {\n\t\tfmt.Println(err)\n\t\t_, err = f()\n\t}\n\terr = errors.New(\"old\")\n\th()\n\th()\n}\n",
+		"package var read before the call":              "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nvar lastErr = errors.New(\"old\")\n\nfunc step() {\n\tfmt.Println(lastErr)\n\t_, lastErr = f()\n}\n",
+		"package var with a return before the kill":     "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nvar lastErr = errors.New(\"old\")\n\nfunc step(c bool) {\n\t_, lastErr = f()\n\tif c {\n\t\treturn\n\t}\n\tlastErr = errors.New(\"k\")\n}\n\nfunc Use() { fmt.Println(lastErr) }\n",
+		"closure with a return before the kill":         "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\terr := errors.New(\"old\")\n\th := func(c bool) {\n\t\t_, err = f()\n\t\tif c {\n\t\t\treturn\n\t\t}\n\t\terr = errors.New(\"k\")\n\t}\n\th(true)\n\tfmt.Println(err)\n}\n",
+		"switch break before the kill":                  "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tc := true\n\terr := errors.New(\"old\")\n\tswitch {\n\tdefault:\n\t\tif c {\n\t\t\t_, err = f()\n\t\t\tif c {\n\t\t\t\tbreak\n\t\t\t}\n\t\t\terr = errors.New(\"k\")\n\t\t}\n\t}\n\tfmt.Println(err)\n}\n",
+		"address taken before the call":                 "package p\n\nfunc Use() {\n\tvar err error\n\tp := &err\n\t_, err = f()\n\tif err != nil {\n\t\tprintln(\"bad\")\n\t}\n\tprintln(*p)\n}\n",
+		"earlier declaration left unused":               "package p\n\nimport \"fmt\"\n\nfunc h() (int, error) { return 2, nil }\n\nfunc Use() {\n\tx, err := h()\n\tfmt.Println(x)\n\t_, err = f()\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"variable used only by the dead branch":         "package p\n\nfunc Use() int {\n\tvar msg string\n\tx, err := f()\n\tif err != nil {\n\t\tmsg = err.Error()\n\t\tprintln(msg)\n\t\treturn 0\n\t}\n\treturn x\n}\n",
+		"parameter reassigned under an if":              "package p\n\nimport \"fmt\"\n\nfunc Use(err error, c bool) {\n\tif c {\n\t\t_, err = f()\n\t}\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"local read earlier then reassigned under if":   "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use(c bool) {\n\terr := errors.New(\"old\")\n\tfmt.Println(err)\n\tif c {\n\t\t_, err = f()\n\t}\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"closure invoked before the call":               "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\terr := errors.New(\"old\")\n\tfmt.Println(err)\n\th := func() {\n\t\tif err != nil {\n\t\t\tfmt.Println(\"bad\")\n\t\t}\n\t}\n\th()\n\t_, err = f()\n\th()\n}\n",
+		"closure run after the kill":                    "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tvar err error\n\th := func() {\n\t\tif err != nil {\n\t\t\tfmt.Println(\"h bad\")\n\t\t}\n\t}\n\t_, err = f()\n\terr = errors.New(\"k\")\n\th()\n\tfmt.Println(err)\n}\n",
+		"deferred closure run after the kill":           "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tvar err error\n\tdefer func() {\n\t\tif err != nil {\n\t\t\tfmt.Println(\"deferred bad\")\n\t\t}\n\t}()\n\t_, err = f()\n\terr = errors.New(\"k\")\n\tfmt.Println(err)\n}\n",
+		"outer variable reassigned in a closure":        "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use(c bool) {\n\terr := errors.New(\"old\")\n\th := func() { _, err = f() }\n\tif c {\n\t\th()\n\t}\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"outer variable checked only in a closure":      "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\terr := errors.New(\"x\")\n\th := func() {\n\t\t_, err = f()\n\t\tif err != nil {\n\t\t\tfmt.Println(\"bad\")\n\t\t}\n\t}\n\th()\n}\n",
+		"declared variable read by a later closure":     "package p\n\nimport \"errors\"\n\nfunc h() (int, error) { return 0, errors.New(\"h\") }\n\nfunc Use() {\n\tx, err := f()\n\tshow := func() {\n\t\tif err != nil {\n\t\t\tprintln(\"bad\")\n\t\t}\n\t}\n\ty, err := h()\n\tshow()\n\tprintln(x, y)\n}\n",
+		"named result returned by a recover":            "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() (err error) {\n\tdefer func() { recover() }()\n\terr = errors.New(\"old\")\n\t_, err = f()\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n\tpanic(\"boom\")\n}\n",
+		"later define of another error type":            "package p\n\nimport \"fmt\"\n\ntype myErr struct{}\n\nfunc (*myErr) Error() string { return \"m\" }\n\nfunc g() (int, *myErr) { return 2, nil }\n\nfunc Use() {\n\tv, err := f()\n\tif err != nil {\n\t\treturn\n\t}\n\tw, err := g()\n\tif err != nil {\n\t\tfmt.Println(\"non-nil interface\")\n\t}\n\tfmt.Println(v, w)\n}\n",
+		"declared variable overwritten with =":          "package p\n\nimport \"errors\"\n\nfunc Use() {\n\tx, err := f()\n\terr = errors.New(\"k\")\n\tif err != nil {\n\t\tprintln(x)\n\t}\n}\n",
 	}
 	for name, use := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -155,12 +198,41 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 
 			res := changeSig(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
 
-			if !res.IsError || !strings.Contains(errText(res), "use.go:") {
-				t.Errorf("want a refusal naming use.go, got IsError=%v %q", res.IsError, errText(res))
+			if !res.IsError || !strings.Contains(errText(res), "use.go:") || strings.Contains(errText(res), "type errors") {
+				t.Errorf("want a refusal naming use.go, not a type-check abort, got IsError=%v %q", res.IsError, errText(res))
 			}
 
 			assertFileUnchanged(t, dir, "p/f.go", foldF)
 			assertFileUnchanged(t, dir, "p/use.go", use)
 		})
 	}
+}
+
+func TestChangeSignature_RemoveReturnKeepsTrailingCommentOnTheFinalReturn(t *testing.T) {
+	f := "package p\n\nfunc f() error {\n\tprintln(1)\n\treturn nil // done\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": "package p\n\nfunc Use() { f() }\n"})
+
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return"))
+
+	assertFileContains(t, dir, "p/f.go", "\tprintln(1)\n\treturn // done\n")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveReturnRefusesToLeaveAnEarlierDeclarationUnused(t *testing.T) {
+	use := "package p\n\nimport \"fmt\"\n\nfunc h() (int, error) { return 2, nil }\n\nfunc Use() {\n\tx, err := h()\n\tfmt.Println(x)\n\t_, err = f()\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": foldF, "p/use.go": use})
+
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := changeSig(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
+
+	if !res.IsError || !strings.Contains(errText(res), "leaves err declared") {
+		t.Errorf("want a refusal that names the unused declaration, got IsError=%v %q", res.IsError, errText(res))
+	}
+
+	assertFileUnchanged(t, dir, "p/use.go", use)
 }

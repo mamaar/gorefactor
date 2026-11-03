@@ -49,12 +49,14 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 
 	for _, t := range all {
 		fn, ok := t.Obj.(*gotypes.Func)
+		if !ok {
+			continue
+		}
+
+		key, ok := pkgtypes.SymbolKeyOf(canonicalFunc(fn))
 		if ok {
-			key, ok := pkgtypes.SymbolKeyOf(canonicalFunc(fn))
-			if ok {
-				op.StopAt[key] = struct{}{}
-				op.targets[key] = struct{}{}
-			}
+			op.StopAt[key] = struct{}{}
+			op.targets[key] = struct{}{}
 		}
 	}
 	var seeds []*gotypes.Func

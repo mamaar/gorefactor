@@ -41,7 +41,8 @@ func applyPlan(t *testing.T, eng *DefaultEngine, plan *types.RefactoringPlan, er
 		t.Fatal(err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 }
@@ -148,7 +149,8 @@ func TestChangeSignature_RefusesPackageLocalTypeWrittenUnqualifiedIntoImplementa
 		t.Fatal(err)
 	}
 
-	if err := eng.ExecutePlan(plan); err == nil || !strings.Contains(err.Error(), "undefined: Opts") {
+	err = eng.ExecutePlan(plan)
+	if err == nil || !strings.Contains(err.Error(), "undefined: Opts") {
 		t.Errorf("ExecutePlan error = %v, want the type check's undefined: Opts", err)
 	}
 }

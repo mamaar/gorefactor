@@ -238,10 +238,13 @@ func externalMethodNames(external []*gotypes.Package) map[string]bool {
 				continue
 			}
 
-			if iface, ok := tn.Type().Underlying().(*gotypes.Interface); ok {
-				for m := range iface.Methods() {
-					names[m.Name()] = true
-				}
+			iface, ok := tn.Type().Underlying().(*gotypes.Interface)
+			if !ok {
+				continue
+			}
+
+			for m := range iface.Methods() {
+				names[m.Name()] = true
 			}
 		}
 	}
@@ -372,12 +375,14 @@ func (l *liveness) searchWithin(key types.SymbolKey, taken map[*ssa.Function]boo
 		}
 
 		fn, ok := n.Func.Object().(*gotypes.Func)
-		if ok {
-			k, ok := types.SymbolKeyOf(fn)
-			if ok && k == key {
-				w.pred[n] = nil
-				queue = append(queue, n)
-			}
+		if !ok {
+			continue
+		}
+
+		k, ok := types.SymbolKeyOf(fn)
+		if ok && k == key {
+			w.pred[n] = nil
+			queue = append(queue, n)
 		}
 	}
 

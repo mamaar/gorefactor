@@ -318,7 +318,8 @@ func DebugDump() {
 		t.Errorf("expected refused move to leave MemCache in place, got:\n%s", common)
 	}
 
-	if _, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(tmpDir, "pkg", "memcache"))
+	if !os.IsNotExist(err) {
 		t.Errorf("expected refused move to not create the target package, stat err=%v", err)
 	}
 }

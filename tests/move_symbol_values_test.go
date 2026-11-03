@@ -198,7 +198,8 @@ func TestMoveSymbol_MovesVariablesDeclaredTogetherOnlyTogether(t *testing.T) {
 	assertRefused(t, res, "cannot move a: it is declared together with b (var a, b = Pair()); move them together")
 	assertFileUnchanged(t, dir, "src/src.go", src)
 
-	if res := moveSymbolsCall(t, sess, "src", "dst", "a", "b"); res.IsError {
+	res = moveSymbolsCall(t, sess, "src", "dst", "a", "b")
+	if res.IsError {
 		t.Fatalf("move a, b: %s", errText(res))
 	}
 
@@ -323,11 +324,13 @@ func skippedReasons(out map[string]any) []string {
 	sites, _ := out["skipped_sites"].([]any)
 	for _, s := range sites {
 		m, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		r, ok := m["reason"].(string)
 		if ok {
-			r, ok := m["reason"].(string)
-			if ok {
-				reasons = append(reasons, r)
-			}
+			reasons = append(reasons, r)
 		}
 	}
 
