@@ -364,58 +364,6 @@ func AnotherFunc() {
 	}
 }
 
-func TestSymbolResolver_FindDefinition(t *testing.T) {
-	// This test is complex and requires precise position calculation
-	// For now, we'll test the basic error path and skip the complex position matching
-	// In a production system, this would need more sophisticated position tracking
-
-	ws := &types.Workspace{
-		Packages: make(map[string]*types.Package),
-		FileSet:  token.NewFileSet(),
-	}
-
-	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// Test basic error case
-	_, err := resolver.FindDefinition("test.go", token.Pos(100))
-	if err == nil {
-		t.Error("Expected error when finding definition without file in workspace")
-	}
-
-	// Check that it's a RefactorError
-	if refErr, ok := err.(*types.RefactorError); ok {
-		if refErr.Type != types.SymbolNotFound {
-			t.Errorf("Expected SymbolNotFound error, got %v", refErr.Type)
-		}
-	} else {
-		t.Error("Expected RefactorError")
-	}
-}
-
-func TestSymbolResolver_FindDefinition_NotFound(t *testing.T) {
-	ws := &types.Workspace{
-		Packages: make(map[string]*types.Package),
-		FileSet:  token.NewFileSet(),
-	}
-
-	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// Try to find definition in non-existent file
-	_, err := resolver.FindDefinition("nonexistent.go", token.Pos(100))
-	if err == nil {
-		t.Error("Expected error when finding definition in non-existent file")
-	}
-
-	// Check that it's a RefactorError
-	if refErr, ok := err.(*types.RefactorError); ok {
-		if refErr.Type != types.SymbolNotFound {
-			t.Errorf("Expected SymbolNotFound error, got %v", refErr.Type)
-		}
-	} else {
-		t.Error("Expected RefactorError")
-	}
-}
-
 func TestSymbolResolver_isExported(t *testing.T) {
 	ws := &types.Workspace{}
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))

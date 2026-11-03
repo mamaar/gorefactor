@@ -17,8 +17,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/packages"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // Parser handles Go code parsing and AST management
@@ -91,9 +92,6 @@ func NewParser(logger *slog.Logger) *GoParser {
 func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoParser {
 	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree, loadPackages: packages.Load}
 }
-
-// BuildConfig returns the configuration files are selected under.
-func (p *GoParser) BuildConfig() BuildConfig { return p.buildConfig }
 
 // ParseFile parses a single Go file
 func (p *GoParser) ParseFile(filename string) (*types.File, error) {
@@ -370,33 +368,6 @@ func (j *packageProjector) work() {
 	}
 }
 
-// UpdateFile updates AST after file modifications
-func (p *GoParser) UpdateFile(file *types.File) error {
-	if len(file.Modifications) == 0 {
-		return nil
-	}
-
-	// Apply modifications to original content
-	content := p.applyModifications(file.OriginalContent, file.Modifications)
-
-	// Re-parse the modified content
-	astFile, err := parser.ParseFile(p.fileSet, file.Path, content, parser.ParseComments)
-	if err != nil {
-		return &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to re-parse modified file: %v", err),
-			File:    file.Path,
-			Cause:   err,
-		}
-	}
-
-	// Update AST and clear modifications
-	file.AST = astFile
-	file.Modifications = make([]types.Modification, 0)
-
-	return nil
-}
-
 // Helper functions
 
 func parseGoMod(content []byte) *types.Module {
@@ -440,29 +411,6 @@ func computeImportPath(ws *types.Workspace, fsPath string) string {
 // hasGoFiles reports whether dir holds a file admitted by the build config.
 func (p *GoParser) hasGoFiles(dir string) bool {
 	return slices.ContainsFunc(p.sources.Dir(dir), p.admits)
-}
-
-func (p *GoParser) applyModifications(content []byte, modifications []types.Modification) []byte {
-	// Sort modifications by position in reverse order to maintain offsets
-	// This is a simplified implementation
-	result := make([]byte, len(content))
-	copy(result, content)
-
-	for _, mod := range modifications {
-		switch mod.Type {
-		case types.Insert:
-			// Insert new text at position
-			result = append(result[:mod.Start], append([]byte(mod.NewText), result[mod.Start:]...)...)
-		case types.Delete:
-			// Delete text from Start to End
-			result = append(result[:mod.Start], result[mod.End:]...)
-		case types.Replace:
-			// Replace text from Start to End with NewText
-			result = append(result[:mod.Start], append([]byte(mod.NewText), result[mod.End:]...)...)
-		}
-	}
-
-	return result
 }
 
 func contains(slice []string, item string) bool {

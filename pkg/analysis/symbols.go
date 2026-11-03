@@ -76,7 +76,6 @@ type SymbolResolver struct {
 	workspace     *types.Workspace
 	scopeAnalyzer *ScopeAnalyzer
 	cache         *SymbolCache
-	diagnostics   *DiagnosticEngine
 	logger        *slog.Logger
 
 	// inspectors is shared with the other views of the workspace set; nil for
@@ -91,7 +90,6 @@ func NewSymbolResolver(ws *types.Workspace, logger *slog.Logger) *SymbolResolver
 		logger:    logger,
 	}
 	sr.scopeAnalyzer = NewScopeAnalyzer(sr)
-	sr.diagnostics = NewDiagnosticEngine(sr)
 	return sr
 }
 
@@ -752,66 +750,6 @@ func (sr *SymbolResolver) extractContext2(file *types.File, line int) string {
 	return ""
 }
 
-// FindDefinition finds the definition of symbol at given position
-func (sr *SymbolResolver) FindDefinition(file string, pos token.Pos) (*types.Symbol, error) {
-	// Find the file and AST node at position
-	var targetFile *types.File
-	for _, pkg := range sr.workspace.Packages {
-		for _, f := range pkg.Files {
-			if f.Path == file {
-				targetFile = f
-				break
-			}
-		}
-		if targetFile == nil {
-			for _, f := range pkg.TestFiles {
-				if f.Path == file {
-					targetFile = f
-					break
-				}
-			}
-		}
-		if targetFile != nil {
-			break
-		}
-	}
-
-	if targetFile == nil {
-		return nil, &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: fmt.Sprintf("file not found: %s", file),
-			File:    file,
-		}
-	}
-
-	// Find identifier at position
-	var ident *ast.Ident
-	ast.Inspect(targetFile.AST, func(n ast.Node) bool {
-		if n == nil {
-			return false
-		}
-
-		if id, ok := n.(*ast.Ident); ok {
-			if id.Pos() <= pos && pos <= id.End() {
-				ident = id
-				return false
-			}
-		}
-		return true
-	})
-
-	if ident == nil {
-		return nil, &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: "no identifier found at position",
-			File:    file,
-		}
-	}
-
-	// Resolve the identifier
-	return sr.resolveIdentifier(ident, targetFile)
-}
-
 // ResolveSymbol resolves a symbol name within a package context
 func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types.Symbol, error) {
 	// Try cache first
@@ -1419,53 +1357,6 @@ func (sr *SymbolResolver) nameRefersToSymbol(ident *ast.Ident, file *types.File,
 	return sr.isSamePackage(file.Package, symbol.Package)
 }
 
-func (sr *SymbolResolver) resolveIdentifier(ident *ast.Ident, file *types.File) (*types.Symbol, error) {
-	// Use scope-aware resolution with caching
-	cacheKey := fmt.Sprintf("%s:%s:%d", file.Path, ident.Name, ident.Pos())
-	if cached := sr.cache.GetResolvedRef(cacheKey); cached != nil {
-		return cached, nil
-	}
-
-	// Try scope-based resolution first (most accurate)
-	if symbol, err := sr.scopeAnalyzer.ResolveInScope(ident, file, ident.Pos()); err == nil {
-		sr.cache.SetResolvedRef(cacheKey, symbol)
-		return symbol, nil
-	}
-
-	// Try qualified identifier resolution (pkg.Symbol)
-	if qualified := sr.resolveQualifiedIdentifier(ident, file); qualified != nil {
-		sr.cache.SetResolvedRef(cacheKey, qualified)
-		return qualified, nil
-	}
-
-	// Try to find in current package (package-level symbols)
-	if file.Package.Symbols != nil {
-		if symbol, err := sr.ResolveSymbol(file.Package, ident.Name); err == nil {
-			sr.cache.SetResolvedRef(cacheKey, symbol)
-			return symbol, nil
-		}
-	}
-
-	// Try other packages (for exported symbols)
-	for _, pkg := range sr.workspace.Packages {
-		if symbol, err := sr.ResolveSymbol(pkg, ident.Name); err == nil {
-			if symbol.Exported {
-				sr.cache.SetResolvedRef(cacheKey, symbol)
-				return symbol, nil
-			}
-		}
-	}
-
-	// Use diagnostic engine for enhanced error reporting
-	basicError := &types.RefactorError{
-		Type:    types.SymbolNotFound,
-		Message: fmt.Sprintf("could not resolve identifier: %s", ident.Name),
-		File:    file.Path,
-	}
-
-	return nil, sr.diagnostics.AnalyzeResolutionFailure(ident, file, basicError)
-}
-
 // importAliasRefersToPackage checks if import alias refers to target package
 func (sr *SymbolResolver) importAliasRefersToPackage(alias string, file *types.File, targetPkg string) bool {
 	for _, imp := range file.AST.Imports {
@@ -1717,16 +1608,9 @@ func (sr *SymbolResolver) InvalidateCacheForPackage(pkgPath string) {
 // InvalidateCacheForFile clears cache entries for a file
 func (sr *SymbolResolver) InvalidateCacheForFile(filePath string) {
 	sr.cache.InvalidateFile(filePath)
-	sr.scopeAnalyzer.InvalidateCache(filePath)
 }
 
 // Helper methods for advanced resolution
-
-func (sr *SymbolResolver) resolveQualifiedIdentifier(ident *ast.Ident, file *types.File) *types.Symbol {
-	// This would need to analyze the context to see if ident is part of a selector
-	// For now, return nil - this requires more sophisticated AST analysis
-	return nil
-}
 
 func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Symbol, error) {
 	// DEBUG: Early logging

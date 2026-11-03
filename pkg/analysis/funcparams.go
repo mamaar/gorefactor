@@ -14,16 +14,6 @@ type FuncParam struct {
 	Type string
 }
 
-// ExtractFuncParams finds a function declaration in the workspace and returns its current parameters.
-// A missing file or function is a SymbolNotFound RefactorError.
-func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]FuncParam, error) {
-	ft, err := FindFuncType(ws, sourceFile, functionName)
-	if err != nil {
-		return nil, err
-	}
-	return FuncTypeParams(ft), nil
-}
-
 // FindFuncType finds a function declaration in the workspace and returns its signature.
 // A missing file or function is a SymbolNotFound RefactorError.
 func FindFuncType(ws *types.Workspace, sourceFile, functionName string) (*ast.FuncType, error) {

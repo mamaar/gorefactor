@@ -1,7 +1,6 @@
 package analysis
 
 import (
-	"fmt"
 	"go/parser"
 	"go/token"
 	"io"
@@ -57,59 +56,6 @@ func TestCompleteSymbolResolution(t *testing.T) {
 		}
 		if !found {
 			t.Error("Expected to find TestMethod in method set")
-		}
-	})
-
-	// Test 4: Scope-aware resolution
-	t.Run("ScopeAwareResolution", func(t *testing.T) {
-		file := workspace.Packages["test/main"].Files["main.go"]
-
-		// Test resolution at different positions
-		// This would require knowing specific positions in the test file
-		scope, err := resolver.scopeAnalyzer.GetScopeAt(file, token.Pos(100))
-		if err == nil && scope != nil {
-			t.Logf("Found scope of kind: %v", scope.Kind)
-		}
-	})
-
-	// Test 5: Cache performance
-	t.Run("CachePerformance", func(t *testing.T) {
-		pkg := workspace.Packages["test/main"]
-
-		// Resolve the same symbol multiple times
-		for i := range 10 {
-			_, err := resolver.ResolveSymbol(pkg, "MainFunction")
-			if err != nil {
-				t.Fatalf("Failed to resolve MainFunction on iteration %d: %v", i, err)
-			}
-		}
-
-		// Check cache stats
-		stats := resolver.cache.GetStats()
-		t.Logf("Cache stats: hits=%d, misses=%d", stats.ResolvedRefHits, stats.ResolvedRefMisses)
-		// Note: ResolveSymbol doesn't use the resolved ref cache, it uses package symbols cache
-		// So we don't expect hits in ResolvedRefHits for this test
-
-		hitRate := resolver.cache.GetHitRate()
-		t.Logf("Cache hit rate: %.2f%%", hitRate)
-	})
-
-	// Test 6: Error diagnostics
-	t.Run("ErrorDiagnostics", func(t *testing.T) {
-		pkg := workspace.Packages["test/main"]
-
-		// Try to resolve a non-existent symbol
-		_, err := resolver.ResolveSymbol(pkg, "NonExistentSymbol")
-		if err == nil {
-			t.Error("Expected error for non-existent symbol")
-		}
-
-		// Check if it's an enhanced error with suggestions
-		if resErr, ok := err.(*ResolutionError); ok {
-			if len(resErr.Suggestions) == 0 {
-				t.Error("Expected suggestions in error")
-			}
-			t.Logf("Error with suggestions: %s", resErr.FormatError())
 		}
 	})
 
@@ -171,36 +117,6 @@ func TestEmbeddedFieldResolution(t *testing.T) {
 	}
 }
 
-func TestScopeAnalysis(t *testing.T) {
-	workspace := createScopedWorkspace(t)
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	file := workspace.Packages["test/scoped"].Files["scoped.go"]
-
-	// Build scope tree
-	scopeTree, err := resolver.scopeAnalyzer.BuildScopeTree(file)
-	if err != nil {
-		t.Fatalf("Failed to build scope tree: %v", err)
-	}
-
-	if scopeTree.Kind != PackageScope {
-		t.Errorf("Expected root scope to be PackageScope, got %v", scopeTree.Kind)
-	}
-
-	// Should have nested scopes
-	if len(scopeTree.Children) == 0 {
-		t.Error("Expected nested scopes in scope tree")
-	}
-
-	// Test scope-based symbol resolution
-	// Find a position inside a function and test local variable resolution
-	testPos := token.Pos(200) // Arbitrary position for testing
-	scope := resolver.scopeAnalyzer.findEnclosingScope(scopeTree, testPos)
-	if scope == nil {
-		t.Error("Expected to find enclosing scope")
-	}
-}
-
 func TestCacheInvalidation(t *testing.T) {
 	workspace := createTestWorkspace(t)
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -213,18 +129,12 @@ func TestCacheInvalidation(t *testing.T) {
 		t.Fatalf("Failed to resolve MainFunction: %v", err)
 	}
 
-	// Check cache has entries
-	initialSize := resolver.cache.GetCacheSize()
-	if initialSize.ResolvedRefs == 0 {
-		t.Error("Expected cache to have entries")
-	}
+	key := pkg.Path + ":MainFunction"
+	resolver.cache.SetResolvedRef(key, symbol1)
 
-	// Invalidate cache for the package
 	resolver.InvalidateCacheForPackage(pkg.Path)
 
-	// Cache should be smaller or empty
-	newSize := resolver.cache.GetCacheSize()
-	if newSize.ResolvedRefs >= initialSize.ResolvedRefs {
+	if resolver.cache.GetResolvedRef(key) != nil {
 		t.Error("Expected cache to be invalidated")
 	}
 
@@ -236,43 +146,6 @@ func TestCacheInvalidation(t *testing.T) {
 
 	if symbol1.Name != symbol2.Name {
 		t.Error("Symbol should be the same after cache invalidation")
-	}
-}
-
-func TestPerformanceWithLargeCodebase(t *testing.T) {
-	workspace := createLargeWorkspace(t)
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// Warm up the cache
-	resolver.cache.WarmCache(workspace)
-
-	// Perform many resolution operations
-	const numOperations = 1000
-
-	for range numOperations {
-		for _, pkg := range workspace.Packages {
-			if pkg.Symbols != nil && len(pkg.Symbols.Functions) > 0 {
-				// Resolve first function in package
-				for name := range pkg.Symbols.Functions {
-					_, _ = resolver.ResolveSymbol(pkg, name)
-					break
-				}
-			}
-		}
-	}
-
-	// Check cache performance
-	stats := resolver.cache.GetStats()
-	hitRate := resolver.cache.GetHitRate()
-
-	t.Logf("Performance test completed:")
-	t.Logf("  Total operations: %d", numOperations*len(workspace.Packages))
-	t.Logf("  Cache hit rate: %.2f%%", hitRate)
-	t.Logf("  Cache hits: %d", stats.ResolvedRefHits)
-	t.Logf("  Cache misses: %d", stats.ResolvedRefMisses)
-
-	if hitRate < 50.0 {
-		t.Errorf("Expected cache hit rate > 50%%, got %.2f%%", hitRate)
 	}
 }
 
@@ -424,135 +297,6 @@ func (cs *CompositeStruct) OwnMethod() int {
 	// Build symbol tables
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_, _ = resolver.BuildSymbolTable(pkg)
-
-	return workspace
-}
-
-func createScopedWorkspace(t *testing.T) *types.Workspace {
-	fileSet := token.NewFileSet()
-
-	src := `package scoped
-
-import "fmt"
-
-var globalVar = "global"
-
-func OuterFunction(param string) {
-	localVar := "local"
-	
-	if true {
-		blockVar := "block"
-		fmt.Println(globalVar, param, localVar, blockVar)
-	}
-	
-	for i := 0; i < 10; i++ {
-		loopVar := i * 2
-		fmt.Println(loopVar)
-	}
-}
-
-func (s *SomeType) MethodWithScopes(methodParam int) {
-	methodLocal := methodParam * 2
-	fmt.Println(methodLocal)
-}
-
-type SomeType struct {
-	field string
-}
-`
-
-	ast, err := parser.ParseFile(fileSet, "scoped.go", src, parser.ParseComments)
-	if err != nil {
-		t.Fatalf("Failed to parse scoped source: %v", err)
-	}
-
-	file := &types.File{
-		Path:            "scoped.go",
-		AST:             ast,
-		OriginalContent: []byte(src),
-	}
-
-	pkg := &types.Package{
-		Name:  "scoped",
-		Path:  "test/scoped",
-		Files: map[string]*types.File{"scoped.go": file},
-	}
-	file.Package = pkg
-
-	workspace := &types.Workspace{
-		Packages: map[string]*types.Package{
-			"test/scoped": pkg,
-		},
-		FileSet: fileSet,
-	}
-
-	// Build symbol tables
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	_, _ = resolver.BuildSymbolTable(pkg)
-
-	return workspace
-}
-
-func createLargeWorkspace(t *testing.T) *types.Workspace {
-	fileSet := token.NewFileSet()
-	workspace := &types.Workspace{
-		Packages: make(map[string]*types.Package),
-		FileSet:  fileSet,
-	}
-
-	// Create multiple packages with many symbols
-	for pkgNum := range 10 {
-		src := fmt.Sprintf(`package pkg%d
-
-import "fmt"
-
-type Type%d struct {
-	Field1 string
-	Field2 int
-}
-
-func (t *Type%d) Method1() string {
-	return t.Field1
-}
-
-func (t *Type%d) Method2() int {
-	return t.Field2
-}
-
-func Function%d() {
-	fmt.Println("Function %d")
-}
-
-const Const%d = %d
-var Var%d = "var%d"
-`, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum)
-
-		ast, err := parser.ParseFile(fileSet, fmt.Sprintf("pkg%d.go", pkgNum), src, parser.ParseComments)
-		if err != nil {
-			t.Fatalf("Failed to parse package %d source: %v", pkgNum, err)
-		}
-
-		file := &types.File{
-			Path:            fmt.Sprintf("pkg%d.go", pkgNum),
-			AST:             ast,
-			OriginalContent: []byte(src),
-		}
-
-		pkg := &types.Package{
-			Name:  fmt.Sprintf("pkg%d", pkgNum),
-			Path:  fmt.Sprintf("test/pkg%d", pkgNum),
-			Files: map[string]*types.File{fmt.Sprintf("pkg%d.go", pkgNum): file},
-		}
-		file.Package = pkg
-
-		workspace.Packages[pkg.Path] = pkg
-	}
-
-	// Build symbol tables for all packages
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	for _, pkg := range workspace.Packages {
-		_, _ = resolver.BuildSymbolTable(pkg)
-	}
 
 	return workspace
 }

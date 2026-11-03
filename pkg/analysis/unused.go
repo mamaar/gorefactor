@@ -227,18 +227,6 @@ func (ua *UnusedAnalyzer) isTestFunction(symbol *types.Symbol) bool {
 	return false
 }
 
-// FormatUnusedSymbol formats an unused symbol for display
-func (ua *UnusedAnalyzer) FormatUnusedSymbol(unused *UnusedSymbol) string {
-	symbol := unused.Symbol
-	return fmt.Sprintf("%s %s (%s:%d:%d) - %s",
-		symbol.Kind.String(),
-		symbol.Name,
-		symbol.File,
-		symbol.Line,
-		symbol.Column,
-		unused.Reason)
-}
-
 // marker finds the live declarations of a graph.
 type marker struct {
 	ua               *UnusedAnalyzer

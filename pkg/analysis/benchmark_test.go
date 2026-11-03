@@ -63,48 +63,6 @@ func BenchmarkSymbolResolution(b *testing.B) {
 	}
 }
 
-func BenchmarkSymbolResolutionWithCache(b *testing.B) {
-	workspace := createBenchmarkWorkspace(b, 50)
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// Warm up cache
-	resolver.cache.WarmCache(workspace)
-
-	var testPkg *types.Package
-	for _, pkg := range workspace.Packages {
-		testPkg = pkg
-		break
-	}
-
-	b.ResetTimer()
-
-	// Find available symbols
-	var availableSymbols []string
-	if testPkg.Symbols != nil {
-		for name := range testPkg.Symbols.Functions {
-			availableSymbols = append(availableSymbols, name)
-			if len(availableSymbols) >= 4 {
-				break
-			}
-		}
-	}
-
-	if len(availableSymbols) == 0 {
-		b.Fatal("No symbols available for benchmarking")
-	}
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		symbolName := availableSymbols[i%len(availableSymbols)]
-
-		_, err := resolver.ResolveSymbol(testPkg, symbolName)
-		if err != nil {
-			b.Fatalf("Failed to resolve symbol %s: %v", symbolName, err)
-		}
-	}
-}
-
 func BenchmarkMethodSetResolution(b *testing.B) {
 	workspace := createBenchmarkWorkspace(b, 20)
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -135,41 +93,6 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 		_, err := resolver.ResolveMethodSet(typeSymbol)
 		if err != nil {
 			b.Fatalf("Failed to resolve method set: %v", err)
-		}
-	}
-}
-
-func BenchmarkScopeAnalysis(b *testing.B) {
-	workspace := createScopedWorkspaceForBenchmark(b)
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	file := workspace.Packages["test/scoped"].Files["scoped.go"]
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_, err := resolver.scopeAnalyzer.BuildScopeTree(file)
-		if err != nil {
-			b.Fatalf("Failed to build scope tree: %v", err)
-		}
-	}
-}
-
-func BenchmarkScopeAnalysisWithCache(b *testing.B) {
-	workspace := createScopedWorkspaceForBenchmark(b)
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	file := workspace.Packages["test/scoped"].Files["scoped.go"]
-
-	// First call to populate cache
-	_, _ = resolver.scopeAnalyzer.BuildScopeTree(file)
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		_, err := resolver.scopeAnalyzer.BuildScopeTree(file)
-		if err != nil {
-			b.Fatalf("Failed to build scope tree: %v", err)
 		}
 	}
 }
@@ -266,63 +189,6 @@ func BenchmarkCacheOperations(b *testing.B) {
 			cache.InvalidatePackage(fmt.Sprintf("test/pkg%d", i%1000))
 		}
 	})
-}
-
-func BenchmarkLargeCodebase(b *testing.B) {
-	sizes := []int{10, 50, 100, 200}
-
-	for _, size := range sizes {
-		b.Run(fmt.Sprintf("Packages_%d", size), func(b *testing.B) {
-			workspace := createBenchmarkWorkspace(b, size)
-			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-			// Warm up cache
-			resolver.cache.WarmCache(workspace)
-
-			b.ResetTimer()
-
-			for i := 0; i < b.N; i++ {
-				// Perform various operations across the workspace
-				for _, pkg := range workspace.Packages {
-					if pkg.Symbols != nil {
-						// Resolve a few symbols from each package
-						count := 0
-						for name := range pkg.Symbols.Functions {
-							if count >= 3 { // Limit to avoid excessive operations
-								break
-							}
-							_, _ = resolver.ResolveSymbol(pkg, name)
-							count++
-						}
-					}
-				}
-			}
-		})
-	}
-}
-
-func BenchmarkMemoryUsage(b *testing.B) {
-	workspace := createBenchmarkWorkspace(b, 100)
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		// Perform operations that populate cache
-		for _, pkg := range workspace.Packages {
-			if pkg.Symbols != nil {
-				for name := range pkg.Symbols.Functions {
-					_, _ = resolver.ResolveSymbol(pkg, name)
-					break // Just one per package
-				}
-			}
-		}
-
-		// Periodically clear cache to test memory cleanup
-		if i%100 == 0 {
-			resolver.cache.Clear()
-		}
-	}
 }
 
 // Helper functions for benchmark workspaces
@@ -431,121 +297,6 @@ func ComplexFunction%d() {
 		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
 			b.Fatalf("Failed to build symbol table: %v", err)
 		}
-	}
-
-	return workspace
-}
-
-func createScopedWorkspaceForBenchmark(b *testing.B) *types.Workspace {
-	fileSet := token.NewFileSet()
-
-	// Create a file with deep nesting for scope analysis benchmarking
-	src := `package scoped
-
-import "fmt"
-
-var globalVar = "global"
-
-func ComplexFunction(param1 string, param2 int) {
-	localVar1 := "local1"
-	localVar2 := param2 * 2
-	
-	if param2 > 0 {
-		ifVar := "in if block"
-		
-		for i := 0; i < param2; i++ {
-			loopVar := i * 2
-			
-			switch loopVar {
-			case 0:
-				caseVar := "case 0"
-				fmt.Println(caseVar)
-			case 2:
-				caseVar := "case 2"
-				fmt.Println(caseVar)
-			default:
-				defaultVar := "default"
-				fmt.Println(defaultVar)
-			}
-			
-			if loopVar > 5 {
-				nestedVar := "deeply nested"
-				
-				func() {
-					closureVar := "closure"
-					fmt.Println(globalVar, param1, localVar1, localVar2, ifVar, loopVar, nestedVar, closureVar)
-				}()
-			}
-		}
-	}
-	
-	switch param1 {
-	case "test":
-		switchVar1 := "test case"
-		fmt.Println(switchVar1)
-	case "benchmark":
-		switchVar2 := "benchmark case"
-		
-		select {
-		case <-make(chan bool):
-			selectVar := "select var"
-			fmt.Println(selectVar)
-		default:
-			defaultSelectVar := "default select"
-			fmt.Println(defaultSelectVar)
-		}
-	}
-}
-
-type ComplexType struct {
-	field1 string
-	field2 int
-}
-
-func (ct *ComplexType) ComplexMethod(methodParam bool) {
-	methodLocal := ct.field1 + "modified"
-	
-	if methodParam {
-		methodIf := "method if"
-		fmt.Println(methodIf)
-	}
-	
-	for j := 0; j < ct.field2; j++ {
-		methodLoop := j * ct.field2
-		fmt.Println(methodLocal, methodLoop)
-	}
-}
-`
-
-	ast, err := parser.ParseFile(fileSet, "scoped.go", src, parser.ParseComments)
-	if err != nil {
-		b.Fatalf("Failed to parse scoped source: %v", err)
-	}
-
-	file := &types.File{
-		Path:            "scoped.go",
-		AST:             ast,
-		OriginalContent: []byte(src),
-	}
-
-	pkg := &types.Package{
-		Name:  "scoped",
-		Path:  "test/scoped",
-		Files: map[string]*types.File{"scoped.go": file},
-	}
-	file.Package = pkg
-
-	workspace := &types.Workspace{
-		Packages: map[string]*types.Package{
-			"test/scoped": pkg,
-		},
-		FileSet: fileSet,
-	}
-
-	// Build symbol tables
-	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		b.Fatalf("Failed to build symbol table: %v", err)
 	}
 
 	return workspace

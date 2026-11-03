@@ -342,33 +342,3 @@ func TestFindUnusedSymbols_AllKinds(t *testing.T) {
 		}
 	}
 }
-
-func TestFormatUnusedSymbol(t *testing.T) {
-	ws := createUnusedTestWorkspace(t)
-	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	unused := &UnusedSymbol{
-		Symbol: &types.Symbol{
-			Name:   "testFunc",
-			Kind:   types.FunctionSymbol,
-			File:   "test.go",
-			Line:   10,
-			Column: 5,
-		},
-		Reason: "No references found",
-	}
-
-	formatted := analyzer.FormatUnusedSymbol(unused)
-	if !strings.Contains(formatted, "testFunc") {
-		t.Error("Formatted output should contain symbol name")
-	}
-	if !strings.Contains(formatted, "Function") {
-		t.Error("Formatted output should contain kind")
-	}
-	if !strings.Contains(formatted, "test.go") {
-		t.Error("Formatted output should contain file")
-	}
-	if !strings.Contains(formatted, "No references found") {
-		t.Error("Formatted output should contain reason")
-	}
-}
