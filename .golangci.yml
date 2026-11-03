@@ -13,6 +13,7 @@ linters:
     - ineffassign
     - gocritic
     - misspell
+    - nilnil
     - durationcheck
     - exptostd
     - usetesting
