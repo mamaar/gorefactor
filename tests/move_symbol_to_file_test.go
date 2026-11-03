@@ -343,3 +343,43 @@ func TestMoveSymbol_ToFile_MovesASymbolOutOfATestFile(t *testing.T) {
 	assertFileContains(t, dir, "p/use_test.go", "func (fake) Do()")
 	goVets(t, dir, "")
 }
+
+func TestMoveSymbol_ToFile_RefusesAMethodOfAnInterfaceIntoATestFile(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, iface string
+	}{
+		{"fmt.Stringer", "String", "func (t T) String() string { return \"t\" }\n\nfunc Show(t T) { fmt.Print(t) }\n"},
+		{"workspace interface", "Name", "func (t T) Name() string { return \"t\" }\n\ntype Namer interface{ Name() string }\n\nfunc Show(t T) { var _ Namer = t }\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{
+				"p/t.go":      "package p\n\nimport \"fmt\"\n\nvar _ = fmt.Sprint\n\ntype T struct{}\n\n" + tc.iface,
+				"p/t_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { Show(T{}) }\n",
+			})
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+
+			res := moveToFile(t, sess, map[string]any{"symbol": "T." + tc.method, "from_package": "p", "to_package": "p", "to_file": "p/t_test.go", "dry_run": true})
+
+			if !res.IsError || !strings.Contains(errText(res), "satisfies") {
+				t.Fatalf("want an interface refusal, got error=%v: %s", res.IsError, errText(res))
+			}
+		})
+	}
+}
+
+func TestMoveSymbol_ToFile_MovesAMethodNoInterfaceNeeds(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/t.go":      "package p\n\ntype T struct{}\n\nfunc (t T) Helper() int { return 1 }\n",
+		"p/t_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { _ = T{}.Helper() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := moveToFile(t, sess, map[string]any{"symbol": "T.Helper", "from_package": "p", "to_package": "p", "to_file": "p/t_test.go"})
+
+	if res.IsError {
+		t.Fatalf("move_symbol: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/t_test.go", "func (t T) Helper")
+}

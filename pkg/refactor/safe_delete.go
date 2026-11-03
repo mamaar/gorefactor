@@ -296,12 +296,18 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 		}
 	}
 
-	// Find the symbol to delete
+	// Dotted names (Type.Method, Type.Field) are not in declaredInFile.
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
 	if err != nil {
 		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.SymbolNotFound,
 			Message: fmt.Sprintf("symbol %s not found: %v", op.SymbolName, err),
+		}
+	}
+	if symbol.File != sourceFile.Path {
+		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
+			Type:    pkgtypes.SymbolNotFound,
+			Message: fmt.Sprintf("%s is not declared in %s", op.SymbolName, op.SourceFile),
 		}
 	}
 

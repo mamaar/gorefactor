@@ -47,3 +47,32 @@ func TestInlineMethod_DoesNotRewriteAFieldNamedLikeTheReceiver(t *testing.T) {
 	assertFileContains(t, dir, "p/use.go", "return r.t }")
 	goVets(t, dir, "")
 }
+
+func TestInlineMethod_StatementBodySubstitutesReceiverAndParamsTogether(t *testing.T) {
+	tdef := "package p\n\ntype T struct{ v, n int }\n\nfunc (s *T) Set(v int) { s.v = v; s.n++ }\n\ntype V struct{ n int }\n\nfunc (v V) Bump() { v.n++ }\n\nfunc next() *T { return &T{} }\n"
+	for _, tc := range []struct {
+		name, method, use string
+		want              []string
+	}{
+		{"param named like the caller's receiver", "Set", "func Use(a *T, s int) {\n\ta.Set(s)\n}", []string{"a.v = s", "a.n++"}},
+		{"effectful receiver evaluated once", "Set", "func Use(x int) {\n\tnext().Set(x)\n}", []string{"s_ := next()", "s_.v = x", "s_.n++"}},
+		{"value receiver written is copied", "Bump", "func Use(a V) {\n\ta.Bump()\n}", []string{"v_ := a", "v_.n++"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{"p/t.go": tdef, "p/use.go": "package p\n\n" + tc.use + "\n"})
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+
+			src := "T"
+			if tc.method == "Bump" {
+				src = "V"
+			}
+			callJSON(t, sess, "inline_method", map[string]any{"method_name": tc.method, "source_struct": src, "target_file": "p/use.go"})
+
+			for _, w := range tc.want {
+				assertFileContains(t, dir, "p/use.go", w)
+			}
+			goVets(t, dir, "")
+		})
+	}
+}

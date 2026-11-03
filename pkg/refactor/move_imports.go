@@ -3,7 +3,6 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
-	"go/build/constraint"
 	"go/parser"
 	"go/token"
 	gotypes "go/types"
@@ -319,12 +318,13 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 }
 
 // emptiedFileDeletion returns the change deleting file when applying removals
-// leaves it with nothing but a package clause and imports. A file with a build
-// constraint or a package doc comment stays: those say something on their own.
+// leaves it with nothing but a package clause and plain imports. A file with
+// any comment (package doc, build constraint, //go: directive), a blank or "C"
+// import stays: those say something on their own.
 func emptiedFileDeletion(file *types.File, removals []types.Change) (types.Change, bool) {
 	rest := applyChangesInMemory(file.OriginalContent, removals)
 	parsed, err := parser.ParseFile(token.NewFileSet(), file.Path, rest, parser.ParseComments)
-	if err != nil || parsed.Doc != nil {
+	if err != nil || len(parsed.Comments) > 0 {
 		return types.Change{}, false
 	}
 	for _, decl := range parsed.Decls {
@@ -333,14 +333,9 @@ func emptiedFileDeletion(file *types.File, removals []types.Change) (types.Chang
 			return types.Change{}, false
 		}
 	}
-	for _, group := range parsed.Comments {
-		if group.Pos() > parsed.Package {
-			break
-		}
-		for _, c := range group.List {
-			if constraint.IsGoBuild(c.Text) || constraint.IsPlusBuild(c.Text) {
-				return types.Change{}, false
-			}
+	for _, imp := range parsed.Imports {
+		if imp.Name != nil && imp.Name.Name == "_" || imp.Path.Value == `"C"` {
+			return types.Change{}, false
 		}
 	}
 	return types.Change{File: file.Path, Delete: true, Description: fmt.Sprintf("Remove file %s: no declarations left", file.Path)}, true

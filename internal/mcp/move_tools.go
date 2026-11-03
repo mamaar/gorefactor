@@ -18,7 +18,7 @@ type MoveSymbolInput struct {
 	Symbols     []string `json:"symbols,omitempty" jsonschema:"names of several symbols of from_package to move together; give exactly one of symbol and symbols"`
 	FromPackage string   `json:"from_package" jsonschema:"source package path (relative to workspace root)"`
 	ToPackage   string   `json:"to_package" jsonschema:"target package path (relative to workspace root)"`
-	ToFile      string   `json:"to_file,omitempty" jsonschema:"file of to_package to put the symbols in, relative to the workspace root; created when missing, may be a _test.go file, and allows to_package to equal from_package"`
+	ToFile      string   `json:"to_file,omitempty" jsonschema:"file of to_package to put the symbols in, relative to the workspace root; created when missing, may be a _test.go file (a method is refused there when its type satisfies an interface through it), and allows to_package to equal from_package"`
 	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 

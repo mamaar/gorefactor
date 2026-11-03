@@ -466,17 +466,83 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 		}
 	}
 
-	// Fallback: do textual param substitution on the whole body
-	result := body
-	for param, arg := range paramToArg {
-		result = replaceIdentToken(result, param, arg)
+	if err != nil {
+		return body
 	}
-	return result
+	return inlineStatements(impl, receiver, arguments, fset, wrapped, f.Decls[0].(*ast.FuncDecl).Body)
+}
+
+// inlineStatements substitutes the receiver and parameters in a statement body in one pass.
+// Operands that run code, and a value receiver whose fields the body writes, are bound once
+// to fresh names in a block.
+func inlineStatements(impl MethodImpl, receiver string, arguments []string, fset *token.FileSet, src string, block *ast.BlockStmt) string {
+	subst := make(map[string]string)
+	var binds []string
+	bind := func(name, expr string, force bool) {
+		if !force && !evaluatesCode(expr) {
+			subst[name] = receiverOperand(expr)
+			return
+		}
+		temp := name + "_"
+		for strings.Contains(src, temp) || strings.Contains(receiver, temp) || strings.Contains(strings.Join(arguments, "\x00"), temp) {
+			temp += "_"
+		}
+		binds = append(binds, temp+" := "+expr)
+		subst[name] = temp
+	}
+	if impl.Receiver != "" {
+		bind(impl.Receiver, receiver, !strings.HasPrefix(impl.ReceiverType, "*") && writesFieldsOf(block, impl.Receiver))
+	}
+	for i, name := range impl.ParamNames {
+		if i < len(arguments) {
+			bind(name, arguments[i], false)
+		}
+	}
+	text := replaceIdentsInExpr(block, subst, fset, src)
+	text = strings.TrimSpace(text[1 : len(text)-1])
+	if len(binds) == 0 {
+		return text
+	}
+	return "{\n" + strings.Join(binds, "\n") + "\n" + text + "\n}"
+}
+
+// writesFieldsOf reports whether block assigns to or increments a field reached through name.
+func writesFieldsOf(block *ast.BlockStmt, name string) bool {
+	rooted := func(e ast.Expr) bool {
+		for {
+			switch x := e.(type) {
+			case *ast.SelectorExpr:
+				e = x.X
+			case *ast.IndexExpr:
+				e = x.X
+			case *ast.ParenExpr:
+				e = x.X
+			case *ast.Ident:
+				return x.Name == name && x.Obj == nil
+			default:
+				return false
+			}
+		}
+	}
+	found := false
+	ast.Inspect(block, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				_, plain := lhs.(*ast.Ident)
+				found = found || !plain && rooted(lhs)
+			}
+		case *ast.IncDecStmt:
+			found = found || rooted(n.X)
+		}
+		return !found
+	})
+	return found
 }
 
 // inspectIdents calls visit for each identifier in expr other than the
 // selected name of a selector, which is not a use of any variable.
-func inspectIdents(expr ast.Expr, visit func(*ast.Ident)) {
+func inspectIdents(expr ast.Node, visit func(*ast.Ident)) {
 	ast.Inspect(expr, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.SelectorExpr:
@@ -501,7 +567,7 @@ func countIdents(expr ast.Expr, name string) int {
 
 // replaceIdentsInExpr rewrites identifier tokens in an AST expression using the
 // param→arg map and returns the resulting source text.
-func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *token.FileSet, src string) string {
+func replaceIdentsInExpr(expr ast.Node, paramToArg map[string]string, fset *token.FileSet, src string) string {
 	// Collect identifiers that need replacing, in reverse order so offsets stay valid.
 	type replacement struct {
 		start, end int
@@ -510,7 +576,7 @@ func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *toke
 	var replacements []replacement
 	inspectIdents(expr, func(ident *ast.Ident) {
 		arg, exists := paramToArg[ident.Name]
-		if !exists {
+		if !exists || ident.Obj != nil {
 			return
 		}
 		start := fset.Position(ident.Pos()).Offset
