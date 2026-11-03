@@ -143,7 +143,8 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 				}
 				// A redeclaring ':=' assigns the existing variable, so the
 				// first declaration (possibly a hoist) stays authoritative.
-				if _, exists := declared[id.Name]; !exists {
+				_, exists := declared[id.Name]
+				if !exists {
 					declared[id.Name] = declaredName{ident: id}
 				}
 			}

@@ -1417,7 +1417,8 @@ func h() int  { return 0 }
 // produced for that site.
 func assertSkipped(t *testing.T, src, wantReason string) {
 	t.Helper()
-	if errs := typeCheckErrors(t, src); len(errs) > 0 {
+	errs := typeCheckErrors(t, src)
+	if len(errs) > 0 {
 		t.Fatalf("test source does not type-check: %v", errs)
 	}
 	ws := createTypeCheckedWorkspace(t, src)
@@ -1562,7 +1563,8 @@ func m() *myErr              { return nil }
 func h() (int, string)       { return 0, "" }
 `
 			ws := createTypeCheckedWorkspace(t, src)
-			if errs := typeCheckErrors(t, src); len(errs) > 0 {
+			errs := typeCheckErrors(t, src)
+			if len(errs) > 0 {
 				t.Fatalf("test source does not type-check: %v", errs)
 			}
 			rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
