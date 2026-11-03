@@ -13,3 +13,4 @@ linters:
     - ineffassign
     - gocritic
     - misspell
+    - copyloopvar

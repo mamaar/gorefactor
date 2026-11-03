@@ -429,7 +429,6 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 // interface (io.WriteCloser's Write, from io.Writer) is found.
 func interfaceMethodNamed(iface *gotypes.Interface, name string) *gotypes.Func {
 	for m := range iface.Methods() {
-		m := m
 		if m.Name() == name {
 			return m
 		}

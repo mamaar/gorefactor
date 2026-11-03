@@ -386,7 +386,6 @@ func checkSplitInterfaceImplementers(ws *types.Workspace, pkg *types.Package, mo
 func firstUnexportedMethod(iface *gotypes.Interface, pkg *gotypes.Package) *gotypes.Func {
 	var first *gotypes.Func
 	for m := range iface.Methods() {
-		m := m
 		if !m.Exported() && m.Pkg() == pkg && (first == nil || m.Name() < first.Name()) {
 			first = m
 		}

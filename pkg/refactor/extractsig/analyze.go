@@ -1019,7 +1019,6 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 	res.TailReturns = true
 	results := a.innerSig.Results()
 	for v := range results.Variables() {
-		v := v
 		typeStr, err := a.renderType(v.Type(), "enclosing function result")
 		if err != nil {
 			return fmt.Errorf("analyze returns: %w", err)
