@@ -260,27 +260,7 @@ func findFileByPath(pkg *pkgtypes.Package, path string) *pkgtypes.File {
 // and resolves op.SymbolName within that package. It is the single place
 // Validate, Execute, and BlockingReferences share for this lookup.
 func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, *analysis.SymbolResolver, *pkgtypes.Symbol, error) {
-	// Check if source file exists
-	var sourceFile *pkgtypes.File
-	var sourcePackage *pkgtypes.Package
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			sourcePackage = pkg
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				sourcePackage = pkg
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
+	sourceFile, sourcePackage := findSourceFile(ws, op.SourceFile)
 
 	resolver := quietResolver(ws)
 
@@ -326,10 +306,23 @@ func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []del
 		AffectedFiles: make([]string, 0),
 		Reversible:    true,
 	}
+	removals := map[*pkgtypes.File][]pkgtypes.Change{}
 	for _, t := range targets {
-		plan.Changes = append(plan.Changes, op.generateRemovalChange(ws, t))
+		change := op.generateRemovalChange(ws, t)
+		plan.Changes = append(plan.Changes, change)
+		removals[t.file] = append(removals[t.file], change)
 		if !slices.Contains(plan.AffectedFiles, t.file.Path) {
 			plan.AffectedFiles = append(plan.AffectedFiles, t.file.Path)
+		}
+	}
+	for _, t := range targets {
+		changes, ok := removals[t.file]
+		if !ok {
+			continue
+		}
+		delete(removals, t.file)
+		for _, spec := range unusedImportsAfterRemoval(ws, t.file, changes) {
+			plan.Changes = append(plan.Changes, removeImportSpec(ws, t.file, spec))
 		}
 	}
 	if op.Force {
@@ -369,7 +362,7 @@ func (op *SafeDeleteOperation) filterReferencesByScope(references []*pkgtypes.Re
 		// Only include references from the same package
 		var filtered []*pkgtypes.Reference
 		for _, ref := range references {
-			if _, exists := sourcePackage.Files[ref.File]; exists {
+			if findFileByPath(sourcePackage, ref.File) != nil {
 				filtered = append(filtered, ref)
 			}
 		}
@@ -568,11 +561,8 @@ func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) 
 func (op *SafeDeleteOperation) getAffectedPackages(ws *pkgtypes.Workspace, affectedFiles []string) []string {
 	packageMap := make(map[string]bool)
 	for _, filePath := range affectedFiles {
-		for _, pkg := range ws.Packages {
-			if _, exists := pkg.Files[filePath]; exists {
-				packageMap[pkg.Path] = true
-				break
-			}
+		if pkg := findPackageForFile(ws, filePath); pkg != nil {
+			packageMap[pkg.Path] = true
 		}
 	}
 
