@@ -164,6 +164,12 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 		"later write in a loop with the call":           "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tvar err error\n\tfor i := 0; i < 2; i++ {\n\t\tvar x int\n\t\tif i > 0 {\n\t\t\tx, err = f()\n\t\t}\n\t\tprintln(x)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\t_, err = h()\n\t}\n\treturn nil\n}\n",
 		"stored in a bool":                              "package p\n\nfunc Use() bool {\n\t_, err := f()\n\tok := err == nil\n\treturn ok\n}\n",
 		"code after a terminating kept branch":          "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err == nil {\n\t\treturn x\n\t}\n\tprintln(\"tail\")\n\treturn 0\n}\n",
+		"closure re-invoked":                            "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tvar err error\n\th := func() {\n\t\tfmt.Println(err)\n\t\t_, err = f()\n\t}\n\terr = errors.New(\"old\")\n\th()\n\th()\n}\n",
+		"package var read before the call":              "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nvar lastErr = errors.New(\"old\")\n\nfunc step() {\n\tfmt.Println(lastErr)\n\t_, lastErr = f()\n}\n",
+		"package var with a return before the kill":     "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nvar lastErr = errors.New(\"old\")\n\nfunc step(c bool) {\n\t_, lastErr = f()\n\tif c {\n\t\treturn\n\t}\n\tlastErr = errors.New(\"k\")\n}\n\nfunc Use() { fmt.Println(lastErr) }\n",
+		"closure with a return before the kill":         "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\terr := errors.New(\"old\")\n\th := func(c bool) {\n\t\t_, err = f()\n\t\tif c {\n\t\t\treturn\n\t\t}\n\t\terr = errors.New(\"k\")\n\t}\n\th(true)\n\tfmt.Println(err)\n}\n",
+		"switch break before the kill":                  "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tc := true\n\terr := errors.New(\"old\")\n\tswitch {\n\tdefault:\n\t\tif c {\n\t\t\t_, err = f()\n\t\t\tif c {\n\t\t\t\tbreak\n\t\t\t}\n\t\t\terr = errors.New(\"k\")\n\t\t}\n\t}\n\tfmt.Println(err)\n}\n",
+		"earlier declaration left unused":               "package p\n\nimport \"fmt\"\n\nfunc h() (int, error) { return 2, nil }\n\nfunc Use() {\n\tx, err := h()\n\tfmt.Println(x)\n\t_, err = f()\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
 		"variable used only by the dead branch":         "package p\n\nfunc Use() int {\n\tvar msg string\n\tx, err := f()\n\tif err != nil {\n\t\tmsg = err.Error()\n\t\tprintln(msg)\n\t\treturn 0\n\t}\n\treturn x\n}\n",
 	}
 	for name, use := range cases {
@@ -183,4 +189,33 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 			assertFileUnchanged(t, dir, "p/use.go", use)
 		})
 	}
+}
+
+func TestChangeSignature_RemoveReturnKeepsTrailingCommentOnTheFinalReturn(t *testing.T) {
+	f := "package p\n\nfunc f() error {\n\tprintln(1)\n\treturn nil // done\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": "package p\n\nfunc Use() { f() }\n"})
+
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return"))
+
+	assertFileContains(t, dir, "p/f.go", "\tprintln(1)\n\treturn // done\n")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveReturnRefusesToLeaveAnEarlierDeclarationUnused(t *testing.T) {
+	use := "package p\n\nimport \"fmt\"\n\nfunc h() (int, error) { return 2, nil }\n\nfunc Use() {\n\tx, err := h()\n\tfmt.Println(x)\n\t_, err = f()\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": foldF, "p/use.go": use})
+
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := changeSig(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
+
+	if !res.IsError || !strings.Contains(errText(res), "leaves err declared") {
+		t.Errorf("want a refusal that names the unused declaration, got IsError=%v %q", res.IsError, errText(res))
+	}
+
+	assertFileUnchanged(t, dir, "p/use.go", use)
 }

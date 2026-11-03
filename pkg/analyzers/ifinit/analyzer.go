@@ -12,6 +12,7 @@ import (
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
+	"github.com/mamaar/gorefactor/pkg/analyzers/stmtfacts"
 )
 
 // Result is the typed result returned for MCP consumption.
@@ -614,7 +615,7 @@ func (w *walker) overwriteHazard(outer types.Object, id *ast.Ident, list []ast.S
 		return "a named result"
 	case !types.Identical(outer.Type(), inner.Type()):
 		return "a variable of another type"
-	case hasGoto(list):
+	case stmtfacts.HasGoto(list):
 		return "a variable a goto can revisit"
 	case w.captures(list[idx], inner) || slices.ContainsFunc(list, func(s ast.Stmt) bool { return w.captures(s, outer) }):
 		return "a variable a closure or pointer can observe"
@@ -623,26 +624,6 @@ func (w *walker) overwriteHazard(outer types.Object, id *ast.Ident, list []ast.S
 	}
 
 	return ""
-}
-
-// hasGoto reports whether stmts contain a goto outside any func literal.
-func hasGoto(stmts []ast.Stmt) bool {
-	found := false
-
-	for _, s := range stmts {
-		ast.Inspect(s, func(n ast.Node) bool {
-			switch n := n.(type) {
-			case *ast.FuncLit:
-				return false
-			case *ast.BranchStmt:
-				found = found || n.Tok == token.GOTO
-			}
-
-			return !found
-		})
-	}
-
-	return found
 }
 
 // liveness finds reads of v that no write of v precedes. It assumes goto-free

@@ -466,3 +466,23 @@ func HasCallOrReceive(info *types.Info, nodes []ast.Node) bool {
 
 	return false
 }
+
+// HasGoto reports whether stmts contain a goto outside any func literal.
+func HasGoto(stmts []ast.Stmt) bool {
+	found := false
+
+	for _, s := range stmts {
+		ast.Inspect(s, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncLit:
+				return false
+			case *ast.BranchStmt:
+				found = found || n.Tok == token.GOTO
+			}
+
+			return !found
+		})
+	}
+
+	return found
+}

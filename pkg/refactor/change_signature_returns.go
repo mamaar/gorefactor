@@ -231,7 +231,7 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 
 // finalReturnSpan returns where to start deleting ret when it is the last
 // statement of body, together with the separator before it, so no redundant
-// trailing return is left. It declines when a comment sits in that separator.
+// trailing return is left. It declines when a comment sits in that separator or follows the return.
 func finalReturnSpan(fset *token.FileSet, content []byte, body *ast.BlockStmt, ret *ast.ReturnStmt) (int, bool) {
 	list := body.List
 	if list[len(list)-1] != ret {
@@ -245,8 +245,10 @@ func finalReturnSpan(fset *token.FileSet, content []byte, body *ast.BlockStmt, r
 
 	from := fset.Position(prev).Offset
 	gap := string(content[from:fset.Position(ret.Pos()).Offset])
+	rest, _, _ := strings.Cut(string(content[fset.Position(ret.End()).Offset:]), "\n")
+	rest = strings.TrimLeft(rest, " \t;")
 
-	return from, strings.Trim(gap, " \t\r\n;") == ""
+	return from, strings.Trim(gap, " \t\r\n;") == "" && !strings.HasPrefix(rest, "/")
 }
 
 // planReturnCall rewrites the call site of c and reports whether it did. A
@@ -429,27 +431,42 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	var reads []returnRefusal
 	var writes []token.Pos
 
+	fn := enclosingFunc(site.Cursor)
+	local := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End()
 	uses := refs.NonCallUsesOf(obj)
-	kill := killingWrite(site.Cursor, uses)
+
+	var kill *ast.AssignStmt
+	if local {
+		kill = killingWrite(site.Cursor, uses)
+	}
+
+	kept := false // a read that stays after the fold
 
 	for _, u := range uses {
-		if u.Pos == id.Pos() || cannotReach(site.Cursor, u.Cursor) {
+		if u.Pos == id.Pos() {
 			continue
 		}
 
-		if kill != nil && (u.Pos >= kill.End() || isAssignTarget(u.Cursor) && u.Cursor.Parent().Node() == kill) {
-			continue
-		}
+		target := isAssignTarget(u.Cursor)
+		skipped := local && cannotReach(site.Cursor, u.Cursor) ||
+			kill != nil && (u.Pos >= kill.End() || target && u.Cursor.Parent().Node() == kill)
 
-		if isAssignTarget(u.Cursor) {
+		switch {
+		case skipped:
+			kept = kept || !target
+		case target:
 			writes = append(writes, u.Pos)
-			continue
+		default:
+			reads = append(reads, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
 		}
-
-		reads = append(reads, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
 	}
 
 	plan := foldErrorReads(info, site, assign, idx, obj, reads, writes)
+
+	declaredEarlier := obj.Pos() < id.Pos() && obj.Pos() >= funcBody(fn).Pos()
+	if declaredEarlier && !kept && len(plan.Refusals) == 0 {
+		plan.Refusals = append(plan.Refusals, returnRefusal{Pos: id.Pos(), Reason: fmt.Sprintf("removing the result leaves %s declared and not used", id.Name)})
+	}
 
 	ret := bareReturnOfResult(info, site.Cursor, obj)
 	if ret != nil {
@@ -477,7 +494,7 @@ func cannotReach(from, use inspector.Cursor) bool {
 				return false
 			}
 		default:
-			return holdsUse && enclosingFunc(use) == n && !hasGoto(n)
+			return holdsUse && enclosingFunc(use) == n && !stmtfacts.HasGoto(funcBody(n).List)
 		}
 	}
 
@@ -493,24 +510,24 @@ func enclosingFunc(c inspector.Cursor) ast.Node {
 	return nil
 }
 
-// killingWrite returns the first plain assignment to the variable in the same
-// block as the call's assignment and after it. Whenever a later read executes
-// after the call, this assignment has run in between, so the read never sees
-// the call's value. It is nil when a loop holds the call or the function has a
-// goto, where a read could be reached without passing it.
+// killingWrite returns the first plain assignment to a local variable in the
+// same block as the call's assignment and after it. Whenever a later read
+// executes after the call, this assignment has run in between, so the read
+// never sees the call's value. It is nil when a loop, switch or select holds the
+// call or the function has a goto, where a break, continue or jump could skip it.
 func killingWrite(call inspector.Cursor, uses []analysis.ValueUse) *ast.AssignStmt {
 	block := call.Parent().Parent().Node()
 	if _, ok := block.(*ast.BlockStmt); !ok {
 		return nil
 	}
 
-	for c := range call.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil), (*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)) {
+	for c := range call.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil), (*ast.ForStmt)(nil), (*ast.RangeStmt)(nil), (*ast.SwitchStmt)(nil), (*ast.TypeSwitchStmt)(nil), (*ast.SelectStmt)(nil)) {
 		switch c.Node().(type) {
-		case *ast.ForStmt, *ast.RangeStmt:
-			return nil
-		}
-
-		if hasGoto(c.Node()) {
+		case *ast.FuncDecl, *ast.FuncLit:
+			if stmtfacts.HasGoto(funcBody(c.Node()).List) {
+				return nil
+			}
+		default:
 			return nil
 		}
 
@@ -537,17 +554,13 @@ func killingWrite(call inspector.Cursor, uses []analysis.ValueUse) *ast.AssignSt
 	return best
 }
 
-func hasGoto(fn ast.Node) bool {
-	found := false
+// funcBody returns the body of a function declaration or literal.
+func funcBody(fn ast.Node) *ast.BlockStmt {
+	if decl, ok := fn.(*ast.FuncDecl); ok {
+		return decl.Body
+	}
 
-	ast.Inspect(fn, func(n ast.Node) bool {
-		b, ok := n.(*ast.BranchStmt)
-		found = found || ok && b.Tok == token.GOTO
-
-		return !found
-	})
-
-	return found
+	return fn.(*ast.FuncLit).Body
 }
 
 // bareReturnOfResult returns a bare return in a function enclosing at that
