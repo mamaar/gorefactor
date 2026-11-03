@@ -1038,7 +1038,7 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 	for _, file := range files {
 		start, end, replacement, ok, err := packageClauseEdit(ws.FileSet, file, oldName, op.Request.NewPackageName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate package declaration change for %s: %v", file.Path, err)
+			return nil, fmt.Errorf("failed to generate package declaration change for %s: %w", file.Path, err)
 		}
 		if !ok {
 			continue
@@ -1059,7 +1059,7 @@ func (op *RenamePackageOperation) Execute(ws *types.Workspace) (*types.Refactori
 	if op.Request.UpdateImports {
 		err := op.addQualifierUpdates(ws, plan, dir, oldName)
 		if err != nil {
-			return nil, fmt.Errorf("failed to generate import updates: %v", err)
+			return nil, fmt.Errorf("failed to generate import updates: %w", err)
 		}
 	}
 

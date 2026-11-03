@@ -124,11 +124,11 @@ func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change
 	case err == nil:
 		old, err := os.ReadFile(filePath)
 		if err != nil {
-			return step, fmt.Errorf("failed to read file: %v", err)
+			return step, fmt.Errorf("failed to read file: %w", err)
 		}
 		step.existed, step.old, step.mode = true, old, info.Mode().Perm()
 	case !os.IsNotExist(err):
-		return step, fmt.Errorf("failed to read file: %v", err)
+		return step, fmt.Errorf("failed to read file: %w", err)
 	}
 	if step.delete {
 		return step, nil
