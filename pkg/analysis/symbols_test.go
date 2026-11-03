@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -279,8 +280,8 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	refErr, ok := err.(*types.RefactorError)
-	if ok {
+	var refErr *types.RefactorError
+	if errors.As(err, &refErr) {
 		if refErr.Type != types.SymbolNotFound {
 			t.Errorf("Expected SymbolNotFound error, got %v", refErr.Type)
 		}
@@ -1259,8 +1260,8 @@ func TestFindMemberReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	if refs != nil {
 		t.Errorf("expected nil refs on error, got %d references", len(refs))
 	}
-	_, ok := err.(*types.RefactorError)
-	if !ok {
+	var refErr *types.RefactorError
+	if !errors.As(err, &refErr) {
 		t.Errorf("expected *types.RefactorError, got %T", err)
 	}
 }

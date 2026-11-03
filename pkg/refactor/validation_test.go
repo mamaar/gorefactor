@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -28,8 +29,8 @@ func TestValidator_ValidatePlan_NilPlan(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	refErr, ok := err.(*refactorTypes.RefactorError)
-	if ok {
+	var refErr *refactorTypes.RefactorError
+	if errors.As(err, &refErr) {
 		if refErr.Type != refactorTypes.InvalidOperation {
 			t.Errorf("Expected InvalidOperation error, got %v", refErr.Type)
 		}
