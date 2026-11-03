@@ -308,7 +308,7 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 			continue
 		}
 		impl := MethodImpl{
-			Body:         string(content[start:end]),
+			Body:         content[start:end],
 			ParamNames:   paramNames,
 			ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
 		}
