@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -33,10 +34,12 @@ func setupViews(t *testing.T, files map[string]string) (*WorkspaceUpdater, *anal
 
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	err = os.WriteFile(path, []byte(content), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -96,7 +99,8 @@ func TestUpdater_ModifyReachesEveryBuiltView(t *testing.T) {
 		if pkg.TypesChecked {
 			t.Errorf("view %s kept stale type information", v.Config.Key())
 		}
-		if got := string(pkg.Files["a.go"].OriginalContent); got != updated {
+		got := string(pkg.Files["a.go"].OriginalContent)
+		if got != updated {
 			t.Errorf("view %s content = %q", v.Config.Key(), got)
 		}
 		if typedPackage(t, v, dir).TypesPkg.Scope().Lookup("Added") == nil {
@@ -115,10 +119,12 @@ func TestUpdater_FileGainingATagMovesBetweenViews(t *testing.T) {
 	writeFile(t, path, updated)
 	u.HandleChanges([]ChangeEvent{{Path: path, Op: fsnotify.Write}})
 
-	if got := fileNames(views[0].Workspace.Packages[dir]); !slices.Equal(got, []string{"a.go"}) {
+	got := fileNames(views[0].Workspace.Packages[dir])
+	if !slices.Equal(got, []string{"a.go"}) {
 		t.Errorf("primary Files = %v", got)
 	}
-	if got := fileNames(views[1].Workspace.Packages[dir]); !slices.Equal(got, []string{"a.go", "b.go", "t.go"}) {
+	got = fileNames(views[1].Workspace.Packages[dir])
+	if !slices.Equal(got, []string{"a.go", "b.go", "t.go"}) {
 		t.Errorf("tagged Files = %v", got)
 	}
 	if got := string(views[1].Workspace.Packages[dir].Files["b.go"].OriginalContent); got != updated {
@@ -138,11 +144,13 @@ func TestUpdater_UnbuiltViewGetsCurrentContentWhenBuilt(t *testing.T) {
 	writeFile(t, path, updated)
 	u.HandleChanges([]ChangeEvent{{Path: path, Op: fsnotify.Write}})
 
-	if built := set.BuiltViews(); len(built) != 1 {
+	built := set.BuiltViews()
+	if len(built) != 1 {
 		t.Fatalf("BuiltViews = %d, want only the primary", len(built))
 	}
 	tagged := builtViews(t, set, 2)[1]
-	if got := string(tagged.Workspace.Packages[dir].Files["t.go"].OriginalContent); got != updated {
+	got := string(tagged.Workspace.Packages[dir].Files["t.go"].OriginalContent)
+	if got != updated {
 		t.Errorf("tagged content = %q", got)
 	}
 }
@@ -155,7 +163,8 @@ func TestUpdater_ViewLeavingTheCoveringIsDropped(t *testing.T) {
 	writeFile(t, path, "package p\n\nfunc T() {}\n")
 	u.HandleChanges([]ChangeEvent{{Path: path, Op: fsnotify.Write}})
 
-	if built := set.BuiltViews(); len(built) != 1 || built[0] != set.Primary() {
+	built := set.BuiltViews()
+	if len(built) != 1 || built[0] != set.Primary() {
 		t.Fatalf("BuiltViews = %d, want only the primary", len(built))
 	}
 	if set.ViewOf(tagged.Workspace) != nil {
@@ -173,7 +182,8 @@ func TestUpdater_ChangeInvalidatesEveryBuiltViewsReferenceIndex(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if again, _ := v.ReferenceIndex(); again != idx {
+		again, _ := v.ReferenceIndex()
+		if again != idx {
 			t.Fatal("reference index is not cached")
 		}
 		before[i] = idx
@@ -184,7 +194,8 @@ func TestUpdater_ChangeInvalidatesEveryBuiltViewsReferenceIndex(t *testing.T) {
 	u.HandleChanges([]ChangeEvent{{Path: path, Op: fsnotify.Write}})
 
 	for i, v := range views {
-		if idx, _ := v.ReferenceIndex(); idx == before[i] {
+		idx, _ := v.ReferenceIndex()
+		if idx == before[i] {
 			t.Errorf("view %s kept its reference index", v.Config.Key())
 		}
 	}

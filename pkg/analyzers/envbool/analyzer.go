@@ -170,7 +170,8 @@ func callName(call *ast.CallExpr) string {
 	case *ast.Ident:
 		return fn.Name
 	case *ast.SelectorExpr:
-		if x, ok := fn.X.(*ast.Ident); ok {
+		x, ok := fn.X.(*ast.Ident)
+		if ok {
 			return x.Name + "." + fn.Sel.Name
 		}
 		return fn.Sel.Name

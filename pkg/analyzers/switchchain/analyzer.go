@@ -240,7 +240,8 @@ func (w *walker) walkFile(file *ast.File) {
 // effect, so nothing this analyzer moves changes which names are visible where.
 func (w *walker) walkStmts(list []ast.Stmt, fnName string) {
 	for _, stmt := range list {
-		if ifStmt, ok := stmt.(*ast.IfStmt); ok && ifStmt.Else != nil {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if ok && ifStmt.Else != nil {
 			if w.tryChain(ifStmt, fnName) {
 				// The finding covers this whole chain, and so does its edit.
 				// Descending would report chains inside it a second time.
@@ -445,7 +446,8 @@ func (w *walker) hazards(root *ast.IfStmt, links []*ast.IfStmt, final *ast.Block
 		return "the chain contains a multi-line raw string literal, whose indentation is part of its value"
 	}
 
-	if why := w.strayComment(root, links, final); why != "" {
+	why := w.strayComment(root, links, final)
+	if why != "" {
 		return why
 	}
 
@@ -522,7 +524,8 @@ type plan struct {
 // Applying the init rule first would refuse every type switch in existence
 // before its own matcher ever ran.
 func (w *walker) classify(links []*ast.IfStmt, final *ast.BlockStmt) (string, plan, string) {
-	if ts, ok := w.matchTypeSwitch(links); ok {
+	ts, ok := w.matchTypeSwitch(links)
+	if ok {
 		p, reason := w.planTypeSwitch(ts, links, final)
 		return KindTypeSwitch, p, reason
 	}
@@ -771,7 +774,8 @@ func (w *walker) matchTagged(links []*ast.IfStmt) (taggedChain, bool) {
 		if text == "" {
 			continue
 		}
-		if chain, ok := w.matchTaggedWith(links, text, candidate); ok {
+		chain, ok := w.matchTaggedWith(links, text, candidate)
+		if ok {
 			return chain, true
 		}
 	}
@@ -911,7 +915,8 @@ func isPathExpr(e ast.Expr) bool {
 // which is the order a switch will try them in.
 func disjuncts(e ast.Expr) []ast.Expr {
 	inner := ast.Unparen(e)
-	if binary, ok := inner.(*ast.BinaryExpr); ok && binary.Op == token.LOR {
+	binary, ok := inner.(*ast.BinaryExpr)
+	if ok && binary.Op == token.LOR {
 		return append(disjuncts(binary.X), disjuncts(binary.Y)...)
 	}
 	return []ast.Expr{inner}
@@ -1040,7 +1045,8 @@ func (w *walker) branchText(block *ast.BlockStmt) (string, bool) {
 	// indentation it should have lost. Putting that first line where the body
 	// sits, one level in from the closing brace, is what the rest of the lines
 	// already say.
-	if tail := w.braceLineTail(block); strings.TrimSpace(tail) != "" {
+	tail := w.braceLineTail(block)
+	if strings.TrimSpace(tail) != "" {
 		lines := strings.SplitN(raw, "\n", 2)
 		indent := srctext.Indentation(w.content, w.offset(block.Rbrace)) + "\t"
 		lines[0] = indent + strings.TrimLeft(lines[0], " \t")
@@ -1062,7 +1068,8 @@ func (w *walker) braceLineTail(block *ast.BlockStmt) string {
 		return ""
 	}
 	rest := w.content[start:]
-	if i := bytes.IndexByte(rest, '\n'); i >= 0 {
+	i := bytes.IndexByte(rest, '\n')
+	if i >= 0 {
 		rest = rest[:i]
 	}
 	return string(rest)

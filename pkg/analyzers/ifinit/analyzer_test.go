@@ -159,7 +159,8 @@ func typeCheckErrors(t *testing.T, src string) []string {
 func mustCompile(t *testing.T, src string, changes []types.Change) string {
 	t.Helper()
 	formatted := mustFormat(t, src, changes)
-	if errs := typeCheckErrors(t, formatted); len(errs) > 0 {
+	errs := typeCheckErrors(t, formatted)
+	if len(errs) > 0 {
 		t.Fatalf("fixed source does not type-check: %v\n--- formatted ---\n%s", errs, formatted)
 	}
 	return formatted
@@ -1133,7 +1134,8 @@ func (pg *PackageGraph) AddPackage(path string) *PackageNode {
 	if len(rr.Diagnostics) != 1 || len(rr.Diagnostics[0].SuggestedFixes) != 1 {
 		t.Fatalf("Expected 1 diagnostic with 1 suggested fix, got %+v", rr.Diagnostics)
 	}
-	if got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits); got != 2 {
+	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
+	if got != 2 {
 		t.Fatalf("Expected 2 TextEdits in the one SuggestedFix (hoist + cascaded downgrade), got %d", got)
 	}
 
@@ -1199,12 +1201,14 @@ func h() (int, int)   { return 0, 0 }
 	}
 	// The first hoist ('a') sees 'a, b := h()' as only a partial collision
 	// (b is still new at that point) and must not touch it.
-	if got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits); got != 1 {
+	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
+	if got != 1 {
 		t.Errorf("Expected the first hoist to have 1 TextEdit (no cascade yet), got %d", got)
 	}
 	// The second hoist ('b') now sees 'a, b := h()' as a full collision and
 	// must cascade it.
-	if got := len(rr.Diagnostics[1].SuggestedFixes[0].TextEdits); got != 2 {
+	got = len(rr.Diagnostics[1].SuggestedFixes[0].TextEdits)
+	if got != 2 {
 		t.Errorf("Expected the second hoist to have 2 TextEdits (hoist + cascade), got %d", got)
 	}
 
@@ -1255,7 +1259,8 @@ func create() int         { return 0 }
 	if results[0].Skipped {
 		t.Fatalf("Expected the hoist not to be skipped: %+v", results[0])
 	}
-	if got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits); got != 1 {
+	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
+	if got != 1 {
 		t.Errorf("Expected 1 TextEdit — the nested block's own 'node' is a different "+
 			"scope and must not be cascaded, got %d", got)
 	}
@@ -1300,7 +1305,8 @@ func create() (int, int)   { return 0, 0 }
 	if results[0].Skipped {
 		t.Fatalf("Expected the hoist not to be skipped: %+v", results[0])
 	}
-	if got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits); got != 1 {
+	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
+	if got != 1 {
 		t.Errorf("Expected 1 TextEdit — 'node, other := create()' is only a partial "+
 			"collision ('other' is still new) and stays legal ':=', got %d", got)
 	}
@@ -1356,7 +1362,8 @@ func makeString() string  { return "" }
 	if len(changes) != 0 {
 		t.Fatalf("Expected no changes, got %d", len(changes))
 	}
-	if applied := applyChanges(t, src, changes); applied != src {
+	applied := applyChanges(t, src, changes)
+	if applied != src {
 		t.Errorf("Expected the file to be left byte-identical when the hoist is skipped,\n--- got ---\n%s\n--- want ---\n%s", applied, src)
 	}
 }
@@ -1399,12 +1406,14 @@ func h() int  { return 0 }
 		t.Fatalf("Expected 2 diagnostics, got %d", len(rr.Diagnostics))
 	}
 	// The first hoist ('a') claims the later 'a := h()' as its own cascade.
-	if got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits); got != 2 {
+	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
+	if got != 2 {
 		t.Errorf("Expected the first hoist to have 2 TextEdits (hoist + cascade), got %d", got)
 	}
 	// The second hoist ('a2') would independently also see 'a := h()' as a
 	// full collision, but it was already claimed — must not double-edit it.
-	if got := len(rr.Diagnostics[1].SuggestedFixes[0].TextEdits); got != 1 {
+	got = len(rr.Diagnostics[1].SuggestedFixes[0].TextEdits)
+	if got != 1 {
 		t.Errorf("Expected the second hoist to have 1 TextEdit (no duplicate cascade), got %d", got)
 	}
 

@@ -31,10 +31,12 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	maps.Copy(all, files)
 	for rel, content := range all {
 		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatalf("mkdir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}

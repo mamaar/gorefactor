@@ -349,7 +349,8 @@ func TestSuccessfulConversions(t *testing.T) {
 			}
 
 			edit := onlyEdit(t, rr.Diagnostics)
-			if got := string(edit.NewText); got != tc.wantText {
+			got := string(edit.NewText)
+			if got != tc.wantText {
 				t.Errorf("rendered text mismatch\ngot:\n%s\nwant:\n%s", got, tc.wantText)
 			}
 			assertGofmtStable(t, ws, edit)
@@ -431,7 +432,8 @@ func code() int { return 0 }
 
 	edit := onlyEdit(t, rr.Diagnostics)
 	want := "switch c := code(); c {\n\tcase 200:\n\t\treturn \"ok\"\n\tcase 404:\n\t\treturn \"not found\"\n\tdefault:\n\t\treturn \"error\"\n\t}"
-	if got := string(edit.NewText); got != want {
+	got := string(edit.NewText)
+	if got != want {
 		t.Errorf("rendered text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 	assertGofmtStable(t, ws, edit)
@@ -984,7 +986,8 @@ func classify(a, b int) string {
 
 	edit := edits[0]
 	want := "switch a {\n\tcase 1:\n\t\tif b == 1 {\n\t\t\tout = \"a1b1\"\n\t\t} else if b == 2 {\n\t\t\tout = \"a1b2\"\n\t\t} else {\n\t\t\tout = \"a1other\"\n\t\t}\n\tcase 2:\n\t\tout = \"a2\"\n\tdefault:\n\t\tout = \"aother\"\n\t}"
-	if got := string(edit.NewText); got != want {
+	got := string(edit.NewText)
+	if got != want {
 		t.Errorf("rendered text mismatch (inner chain should survive verbatim)\ngot:\n%s\nwant:\n%s", got, want)
 	}
 	assertGofmtStable(t, ws, edit)

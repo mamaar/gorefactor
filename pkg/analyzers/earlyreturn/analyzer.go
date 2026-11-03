@@ -202,7 +202,8 @@ func (w *walker) walkStmts(list []ast.Stmt, kind blockKind, fnName string, fnTyp
 	for i, stmt := range list {
 		isLast := i == len(list)-1
 
-		if ifStmt, ok := stmt.(*ast.IfStmt); ok {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if ok {
 			if w.tryMatch(ifStmt, kind, isLast, fnName, fnType, names) {
 				// A fix was attached covering this whole if statement. Do not
 				// descend: a nested fix would produce an overlapping text edit,
@@ -325,7 +326,8 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 		}
 	}
 
-	if clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(ifStmt.Body.List), scopeNames); clash != "" {
+	clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(ifStmt.Body.List), scopeNames)
+	if clash != "" {
 		w.record(ifStmt, pattern, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the body would redeclare %q in the enclosing scope", clash))
 		return false
@@ -369,7 +371,8 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 
 	bodyLines := w.blockLines(elseBlock)
 
-	if clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(elseBlock.List), scopeNames); clash != "" {
+	clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(elseBlock.List), scopeNames)
+	if clash != "" {
 		w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the else branch would redeclare %q in the enclosing scope", clash))
 		return false
@@ -452,7 +455,8 @@ func suggestion(pattern Pattern) string {
 func (w *walker) blockLines(block *ast.BlockStmt) int {
 	start := w.pass.Fset.Position(block.Lbrace).Line
 	end := w.pass.Fset.Position(block.Rbrace).Line
-	if lines := end - start - 1; lines > 0 {
+	lines := end - start - 1
+	if lines > 0 {
 		return lines
 	}
 	return 0

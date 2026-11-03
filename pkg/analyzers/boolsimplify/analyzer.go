@@ -124,7 +124,8 @@ type walker struct {
 func (w *walker) walkFile(file *ast.File) {
 	for _, decl := range file.Decls {
 		name := ""
-		if fn, ok := decl.(*ast.FuncDecl); ok {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok {
 			name = fn.Name.Name
 		}
 		w.walkNode(decl, name)

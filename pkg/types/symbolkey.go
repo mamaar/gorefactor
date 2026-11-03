@@ -28,8 +28,10 @@ func SymbolKeyOf(obj gotypes.Object) (SymbolKey, bool) {
 	if obj == nil || obj.Pkg() == nil || obj.Name() == "_" {
 		return SymbolKey{}, false
 	}
-	if fn, ok := obj.(*gotypes.Func); ok {
-		if sig, ok := fn.Type().(*gotypes.Signature); ok && sig.Recv() != nil {
+	fn, ok := obj.(*gotypes.Func)
+	if ok {
+		sig, ok := fn.Type().(*gotypes.Signature)
+		if ok && sig.Recv() != nil {
 			recv, ok := packageLevelTypeName(sig.Recv().Type())
 			if !ok {
 				return SymbolKey{}, false
@@ -50,7 +52,8 @@ func SymbolKeyOf(obj gotypes.Object) (SymbolKey, bool) {
 // or points to.
 func packageLevelTypeName(t gotypes.Type) (string, bool) {
 	t = gotypes.Unalias(t)
-	if ptr, ok := t.(*gotypes.Pointer); ok {
+	ptr, ok := t.(*gotypes.Pointer)
+	if ok {
 		t = gotypes.Unalias(ptr.Elem())
 	}
 	named, ok := t.(*gotypes.Named)

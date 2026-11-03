@@ -28,24 +28,24 @@ type RunGoFixOutput struct {
 }
 
 var knownFixers = map[string]bool{
-	"any":          true,
-	"bloop":        true,
-	"buildtag":     true,
-	"cgocheck":     true,
-	"contextcheck": true,
-	"deadcode":     true,
-	"efaceany":     true,
-	"errorf":       true,
-	"httpmethod":   true,
-	"loopvar":      true,
-	"minmax":       true,
-	"netip":        true,
-	"osglob":       true,
-	"rangeint":     true,
-	"sigchanyzer":  true,
-	"slicesclip":   true,
-	"slicesdelete": true,
-	"sortslice":    true,
+	"any":              true,
+	"bloop":            true,
+	"buildtag":         true,
+	"cgocheck":         true,
+	"contextcheck":     true,
+	"deadcode":         true,
+	"efaceany":         true,
+	"errorf":           true,
+	"httpmethod":       true,
+	"loopvar":          true,
+	"minmax":           true,
+	"netip":            true,
+	"osglob":           true,
+	"rangeint":         true,
+	"sigchanyzer":      true,
+	"slicesclip":       true,
+	"slicesdelete":     true,
+	"sortslice":        true,
 	"stringscutprefix": true,
 	"testingcleanup":   true,
 	"unmarshal":        true,
@@ -96,8 +96,10 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		cmd.Stderr = &stderr
 
 		exitCode := 0
-		if err := cmd.Run(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
+		err = cmd.Run()
+		if err != nil {
+			exitErr, ok := err.(*exec.ExitError)
+			if ok {
 				exitCode = exitErr.ExitCode()
 			} else {
 				return errResult(fmt.Errorf("exec go fix: %w", err)), nil, nil

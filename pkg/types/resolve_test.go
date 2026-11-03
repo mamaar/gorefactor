@@ -1,6 +1,8 @@
 package types
 
-import "testing"
+import (
+	"testing"
+)
 
 // TestResolvePackagePath_ImportPath covers the bug where a user (or an MCP
 // caller mirroring workspace_status output) supplies a Go import path such as
@@ -116,7 +118,8 @@ func TestResolveNewPackagePath_RejectsEscapes(t *testing.T) {
 		"/etc/passwd",
 		"",
 	} {
-		if got, err := ResolveNewPackagePath(ws, input); err == nil {
+		got, err := ResolveNewPackagePath(ws, input)
+		if err == nil {
 			t.Errorf("ResolveNewPackagePath(%q) = %q, want an error", input, got)
 		}
 	}

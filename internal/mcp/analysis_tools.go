@@ -200,7 +200,8 @@ func unusedItems(findings []refactor.UnusedFinding) []UnusedSymbolItem {
 		for _, ref := range f.Referrers {
 			items[i].ReferencedFrom = append(items[i].ReferencedFrom, ReferrerItem{Name: ref.Name, File: ref.File, Line: ref.Line})
 		}
-		if use := f.PossibleUse; use != nil {
+		use := f.PossibleUse
+		if use != nil {
 			items[i].PossibleUse = &PossibleUseItem{File: use.File, Line: use.Line, Configs: use.Configs, Reason: use.Unverified}
 		}
 	}
@@ -712,7 +713,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []ComplexityResultItem
-		if results, ok := rr.Result.([]*complexity.Result); ok {
+		results, ok := rr.Result.([]*complexity.Result)
+		if ok {
 			items = make([]ComplexityResultItem, len(results))
 			for i, r := range results {
 				items[i] = ComplexityResultItem{
@@ -967,7 +969,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []IfInitViolationItem
-		if results, ok := rr.Result.([]*ifinit.Result); ok {
+		results, ok := rr.Result.([]*ifinit.Result)
+		if ok {
 			items = make([]IfInitViolationItem, len(results))
 			for i, v := range results {
 				items[i] = IfInitViolationItem{
@@ -1012,7 +1015,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var skipped []IfInitSkippedItem
-		if results, ok := rr.Result.([]*ifinit.Result); ok {
+		results, ok := rr.Result.([]*ifinit.Result)
+		if ok {
 			for _, v := range results {
 				if v.Skipped {
 					skipped = append(skipped, IfInitSkippedItem{
@@ -1074,7 +1078,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []MissingContextViolationItem
-		if results, ok := rr.Result.([]*missingctx.Result); ok {
+		results, ok := rr.Result.([]*missingctx.Result)
+		if ok {
 			items = make([]MissingContextViolationItem, len(results))
 			for i, v := range results {
 				items[i] = MissingContextViolationItem{
@@ -1166,7 +1171,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []BooleanBranchingViolationItem
-		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
+		results, ok := rr.Result.([]*booleanbranch.Result)
+		if ok {
 			items = make([]BooleanBranchingViolationItem, len(results))
 			for i, v := range results {
 				items[i] = BooleanBranchingViolationItem{
@@ -1225,7 +1231,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// Collect fix metadata from results.
 		var allBooleansRemoved []string
 		totalCases := 0
-		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
+		results, ok := rr.Result.([]*booleanbranch.Result)
+		if ok {
 			for _, fix := range booleanbranch.CollectFixResults(results) {
 				allBooleansRemoved = append(allBooleansRemoved, fix.BooleansRemoved...)
 				totalCases += fix.SwitchCases
@@ -1280,7 +1287,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []DeepIfElseViolationItem
-		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+		results, ok := rr.Result.([]*deepifelse.Result)
+		if ok {
 			items = make([]DeepIfElseViolationItem, len(results))
 			for i, v := range results {
 				items[i] = DeepIfElseViolationItem{
@@ -1352,7 +1360,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// changes[i].
 		var unfixable []DeepIfElseUnfixableItem
 		var fixableResults []*deepifelse.Result
-		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+		results, ok := rr.Result.([]*deepifelse.Result)
+		if ok {
 			for _, r := range results {
 				if !r.Fixable {
 					unfixable = append(unfixable, DeepIfElseUnfixableItem{
@@ -1538,7 +1547,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []SwitchableIfChainViolationItem
-		if results, ok := rr.Result.([]*switchchain.Result); ok {
+		results, ok := rr.Result.([]*switchchain.Result)
+		if ok {
 			items = make([]SwitchableIfChainViolationItem, len(results))
 			for i, v := range results {
 				items[i] = SwitchableIfChainViolationItem{
@@ -1610,7 +1620,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// fixableResults[i] below be paired with changes[i].
 		var unfixable []SwitchableIfChainUnfixableItem
 		var fixableResults []*switchchain.Result
-		if results, ok := rr.Result.([]*switchchain.Result); ok {
+		results, ok := rr.Result.([]*switchchain.Result)
+		if ok {
 			for _, r := range results {
 				if !r.Fixable {
 					unfixable = append(unfixable, SwitchableIfChainUnfixableItem{
@@ -1961,7 +1972,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []ErrorWrappingViolationItem
-		if results, ok := rr.Result.([]*errorwrap.Result); ok {
+		results, ok := rr.Result.([]*errorwrap.Result)
+		if ok {
 			items = make([]ErrorWrappingViolationItem, len(results))
 			for i, v := range results {
 				items[i] = ErrorWrappingViolationItem{
@@ -2022,7 +2034,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		errorsWrapped := 0
 		formatVerbsFixed := 0
 		contextsAdded := 0
-		if results, ok := rr.Result.([]*errorwrap.Result); ok {
+		results, ok := rr.Result.([]*errorwrap.Result)
+		if ok {
 			for _, r := range results {
 				switch r.ViolationType {
 				case errorwrap.BareReturn:
@@ -2073,7 +2086,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []EnvBooleanViolationItem
-		if results, ok := rr.Result.([]*envbool.Result); ok {
+		results, ok := rr.Result.([]*envbool.Result)
+		if ok {
 			items = make([]EnvBooleanViolationItem, len(results))
 			for i, v := range results {
 				items[i] = EnvBooleanViolationItem{

@@ -186,7 +186,8 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
-	if _, err := v.Resolver.BuildSymbolTable(pkg); err != nil {
+	_, err = v.Resolver.BuildSymbolTable(pkg)
+	if err != nil {
 		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)
 	}
 	_ = v.Analyzer.BuildDependencyGraph()

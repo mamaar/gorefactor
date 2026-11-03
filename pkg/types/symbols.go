@@ -99,16 +99,20 @@ func (st *SymbolTable) FindSymbol(name string) *Symbol {
 		}
 		return nil
 	}
-	if s, ok := st.Functions[name]; ok {
+	s, ok := st.Functions[name]
+	if ok {
 		return s
 	}
-	if s, ok := st.Types[name]; ok {
+	s, ok = st.Types[name]
+	if ok {
 		return s
 	}
-	if s, ok := st.Variables[name]; ok {
+	s, ok = st.Variables[name]
+	if ok {
 		return s
 	}
-	if s, ok := st.Constants[name]; ok {
+	s, ok = st.Constants[name]
+	if ok {
 		return s
 	}
 	for _, methods := range st.Methods {

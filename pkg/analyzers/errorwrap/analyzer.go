@@ -127,7 +127,8 @@ func returnsError(fn *ast.FuncDecl) bool {
 		return false
 	}
 	for _, field := range fn.Type.Results.List {
-		if ident, ok := field.Type.(*ast.Ident); ok && ident.Name == "error" {
+		ident, ok := field.Type.(*ast.Ident)
+		if ok && ident.Name == "error" {
 			return true
 		}
 	}
@@ -138,10 +139,12 @@ func checkReturnStmt(pass *analysis.Pass, cfg *config, content []byte, ret *ast.
 	var results []*Result
 
 	for _, expr := range ret.Results {
-		if r := checkBareReturn(pass, cfg, content, ret, expr, funcName); r != nil {
+		r := checkBareReturn(pass, cfg, content, ret, expr, funcName)
+		if r != nil {
 			results = append(results, r)
 		}
-		if r := checkFmtErrorf(pass, cfg, content, ret, expr, funcName); r != nil {
+		r = checkFmtErrorf(pass, cfg, content, ret, expr, funcName)
+		if r != nil {
 			results = append(results, r)
 		}
 	}

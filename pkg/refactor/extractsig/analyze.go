@@ -145,10 +145,12 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 		newImports:  make(map[string]string),
 	}
 
-	if err := a.locate(startLine, endLine); err != nil {
+	err := a.locate(startLine, endLine)
+	if err != nil {
 		return nil, err
 	}
-	if err := a.checkControlFlow(); err != nil {
+	err = a.checkControlFlow()
+	if err != nil {
 		return nil, err
 	}
 
@@ -168,7 +170,8 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 		EnclosingFunc: a.fn,
 	}
 
-	if err := a.analyzeReturns(res); err != nil {
+	err = a.analyzeReturns(res)
+	if err != nil {
 		return nil, err
 	}
 
@@ -228,7 +231,8 @@ func (a *analyzer) locate(startLine, endLine int) error {
 				// Prefer the tightest match, which is the innermost block:
 				// an enclosing block can only match by covering strictly
 				// more source.
-				if span := list[j].End() - list[i].Pos(); bestSpan < 0 || span < bestSpan {
+				span := list[j].End() - list[i].Pos()
+				if bestSpan < 0 || span < bestSpan {
 					best, bestSpan = list[i:j+1], span
 				}
 			}
@@ -279,7 +283,8 @@ func (a *analyzer) locateInnerFunc() error {
 			return true
 		}
 		if lit.Body.Pos() <= a.blockStart && a.blockEnd <= lit.Body.End() {
-			if litSig, ok := a.info.TypeOf(lit).(*gotypes.Signature); ok {
+			litSig, ok := a.info.TypeOf(lit).(*gotypes.Signature)
+			if ok {
 				a.innerBody = lit.Body
 				a.innerSig = litSig
 			}
@@ -301,7 +306,8 @@ func (a *analyzer) checkControlFlow() error {
 	labels := map[string]bool{}
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
-			if ls, ok := n.(*ast.LabeledStmt); ok {
+			ls, ok := n.(*ast.LabeledStmt)
+			if ok {
 				labels[ls.Label.Name] = true
 			}
 			return true
@@ -324,7 +330,8 @@ func (a *analyzer) checkControlFlow() error {
 			// branch out into the selection's context.
 			return
 		case *ast.DeclStmt:
-			if gd, ok := x.Decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+			gd, ok := x.Decl.(*ast.GenDecl)
+			if ok && gd.Tok == token.TYPE {
 				walkErr = refuse("block declares a named type; extracting it would move the type out of scope of the remaining code")
 				return
 			}
@@ -428,7 +435,8 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 			// Keys of a struct literal are field names; keys of a map or
 			// array literal are ordinary expressions and must be visited.
 			structLit := false
-			if t := a.info.TypeOf(x); t != nil {
+			t := a.info.TypeOf(x)
+			if t != nil {
 				_, structLit = deref(t).Underlying().(*gotypes.Struct)
 			}
 			if x.Type != nil {
@@ -482,7 +490,8 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 // definition. Info.Scopes is not populated by this project's type-checker, so
 // Uses/Defs are the only resolution mechanism available.
 func (a *analyzer) objectOf(id *ast.Ident) gotypes.Object {
-	if obj := a.info.Uses[id]; obj != nil {
+	obj := a.info.Uses[id]
+	if obj != nil {
 		return obj
 	}
 	return a.info.Defs[id]
@@ -636,8 +645,10 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 			if x.Op == token.AND {
 				// The address escapes into something we cannot see; assume
 				// whatever receives it writes through the pointer.
-				if base := baseIdent(x.X); base != nil {
-					if obj := a.objectOf(base); obj != nil && !a.mutationVisibleToCaller(x.X) {
+				base := baseIdent(x.X)
+				if base != nil {
+					obj := a.objectOf(base)
+					if obj != nil && !a.mutationVisibleToCaller(x.X) {
 						out[obj] = true
 					}
 				}
@@ -674,7 +685,8 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if !ok || sig.Recv() == nil {
 		return
 	}
-	if _, ok := sig.Recv().Type().(*gotypes.Pointer); !ok {
+	_, ok = sig.Recv().Type().(*gotypes.Pointer)
+	if !ok {
 		// Value receiver (or an interface method): the callee gets a copy.
 		return
 	}
@@ -682,7 +694,8 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if recvType == nil {
 		return
 	}
-	if _, ok := recvType.Underlying().(*gotypes.Pointer); ok {
+	_, ok = recvType.Underlying().(*gotypes.Pointer)
+	if ok {
 		// Already a pointer, so no address is taken and the mutation is
 		// visible to the caller regardless.
 		return
@@ -691,7 +704,8 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if base == nil {
 		return
 	}
-	if obj := a.objectOf(base); obj != nil && !a.mutationVisibleToCaller(sel.X) {
+	obj := a.objectOf(base)
+	if obj != nil && !a.mutationVisibleToCaller(sel.X) {
 		out[obj] = true
 	}
 }
@@ -718,8 +732,10 @@ func (a *analyzer) mutationVisibleToCaller(lhs ast.Expr) bool {
 		// itself is reached through something shared.
 		return a.mutationVisibleToCaller(e.X)
 	case *ast.SelectorExpr:
-		if t := a.info.TypeOf(e.X); t != nil {
-			if _, ok := t.Underlying().(*gotypes.Pointer); ok {
+		t := a.info.TypeOf(e.X)
+		if t != nil {
+			_, ok := t.Underlying().(*gotypes.Pointer)
+			if ok {
 				return true
 			}
 		}
@@ -758,7 +774,8 @@ func (a *analyzer) blockDeclaredVars() []gotypes.Object {
 	var ids []*ast.Ident
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
+			id, ok := n.(*ast.Ident)
+			if ok {
 				ids = append(ids, id)
 			}
 			return true
@@ -1064,7 +1081,8 @@ func (a *analyzer) qualifier(p *gotypes.Package) string {
 	if p == nil || p == a.pkg.TypesPkg {
 		return ""
 	}
-	if alias, ok := a.fileImports[p.Path()]; ok {
+	alias, ok := a.fileImports[p.Path()]
+	if ok {
 		if alias != "" {
 			return alias
 		}
@@ -1082,7 +1100,8 @@ func (a *analyzer) renderType(t gotypes.Type, what string) (string, error) {
 	if t == nil {
 		return "", refuse("the type of %s could not be determined", what)
 	}
-	if b, ok := t.(*gotypes.Basic); ok && b.Kind() == gotypes.Invalid {
+	b, ok := t.(*gotypes.Basic)
+	if ok && b.Kind() == gotypes.Invalid {
 		return "", refuse("the type of %s is invalid; the package does not type-check cleanly", what)
 	}
 	s := gotypes.TypeString(t, a.qualifier)
@@ -1096,7 +1115,8 @@ func deref(t gotypes.Type) gotypes.Type {
 	if t == nil {
 		return gotypes.Typ[gotypes.Invalid]
 	}
-	if p, ok := t.Underlying().(*gotypes.Pointer); ok {
+	p, ok := t.Underlying().(*gotypes.Pointer)
+	if ok {
 		return p.Elem()
 	}
 	return t

@@ -162,7 +162,8 @@ func helper(t *testing.T)     { _ = context.Background() }
 	for _, r := range rr.Result.([]*missingctx.Result) {
 		got = append(got, r.FunctionName)
 	}
-	if want := []string{"Testify", "helper"}; !slices.Equal(got, want) {
+	want := []string{"Testify", "helper"}
+	if !slices.Equal(got, want) {
 		t.Fatalf("reported %v, want %v", got, want)
 	}
 }

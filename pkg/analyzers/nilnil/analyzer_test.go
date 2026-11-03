@@ -184,7 +184,8 @@ type T struct{}
 func Find() (*T, error) { return nil, nil }
 `)
 	pkg.TypesInfo = nil
-	if results := analyze(t, ws); len(results) != 1 {
+	results := analyze(t, ws)
+	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
 }

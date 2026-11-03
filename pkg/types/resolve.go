@@ -19,13 +19,15 @@ import (
 // a filesystem path. Use ResolveNewPackagePath instead.
 func ResolvePackagePath(workspace *Workspace, userPath string) string {
 	// Strategy 1: Try exact match (for absolute paths)
-	if _, exists := workspace.Packages[userPath]; exists {
+	_, exists := workspace.Packages[userPath]
+	if exists {
 		return userPath
 	}
 
 	// Strategy 2: Try relative to workspace root
 	absPath := filepath.Join(workspace.RootPath, userPath)
-	if _, exists := workspace.Packages[absPath]; exists {
+	_, exists = workspace.Packages[absPath]
+	if exists {
 		return absPath
 	}
 
@@ -34,14 +36,16 @@ func ResolvePackagePath(workspace *Workspace, userPath string) string {
 	// is the form users actually have in hand; ImportToPath maps it back to the
 	// filesystem path that Packages is keyed by.
 	if workspace.ImportToPath != nil {
-		if fsPath, exists := workspace.ImportToPath[userPath]; exists {
+		fsPath, exists := workspace.ImportToPath[userPath]
+		if exists {
 			return fsPath
 		}
 	}
 
 	// Strategy 3: Try as "." for current directory
 	if userPath == "." {
-		if _, exists := workspace.Packages[workspace.RootPath]; exists {
+		_, exists := workspace.Packages[workspace.RootPath]
+		if exists {
 			return workspace.RootPath
 		}
 	}

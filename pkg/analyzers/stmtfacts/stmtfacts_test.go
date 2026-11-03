@@ -380,7 +380,8 @@ func f(a int) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt, info := parseBody(t, tt.src)
-			if got := stmtfacts.Terminates(info, stmt); got != tt.want {
+			got := stmtfacts.Terminates(info, stmt)
+			if got != tt.want {
 				t.Errorf("Terminates() = %v, want %v", got, tt.want)
 			}
 		})
@@ -508,7 +509,8 @@ func (r *T) f(a, b int) (res error) {
 
 	var fn *ast.FuncDecl
 	for _, decl := range file.Decls {
-		if d, ok := decl.(*ast.FuncDecl); ok && d.Name.Name == "f" {
+		d, ok := decl.(*ast.FuncDecl)
+		if ok && d.Name.Name == "f" {
 			fn = d
 		}
 	}
@@ -526,10 +528,12 @@ func TestFirstClash(t *testing.T) {
 	dest := map[string]bool{"q": true, "z": true}
 
 	// Sorted, so the reported name does not depend on map iteration order.
-	if got := stmtfacts.FirstClash(moved, dest); got != "q" {
+	got := stmtfacts.FirstClash(moved, dest)
+	if got != "q" {
 		t.Errorf("FirstClash() = %q, want %q", got, "q")
 	}
-	if got := stmtfacts.FirstClash(map[string]bool{"a": true}, dest); got != "" {
+	got = stmtfacts.FirstClash(map[string]bool{"a": true}, dest)
+	if got != "" {
 		t.Errorf("FirstClash() = %q, want %q for disjoint sets", got, "")
 	}
 }

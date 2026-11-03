@@ -225,7 +225,8 @@ func TestErrorChaining(t *testing.T) {
 	}
 
 	// Test unwrapping
-	if unwrapped := errors.Unwrap(refactorErr); unwrapped != originalErr {
+	unwrapped := errors.Unwrap(refactorErr)
+	if unwrapped != originalErr {
 		t.Errorf("Expected unwrapped error to be original error, got %v", unwrapped)
 	}
 

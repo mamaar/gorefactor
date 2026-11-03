@@ -145,7 +145,8 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	// and deliberately leaves pure insertions alone: it requires Start < End,
 	// so a hunk that inserts at a point keeps an empty "old" because there
 	// genuinely is no prior text there.
-	if ws, err := state.GetWorkspace(); err == nil {
+	ws, err := state.GetWorkspace()
+	if err == nil {
 		plan.Changes = analyzers.FillOldText(ws, plan.Changes)
 	}
 
@@ -162,12 +163,14 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	res.UncoveredFiles = planUncoveredFiles(state, plan)
 	res.TypeErrors = planTypeErrors(plan)
 
-	if err := refactor.GeneratedFileEdits(plan.Changes); err != nil {
+	err = refactor.GeneratedFileEdits(plan.Changes)
+	if err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
 		return res
 	}
-	if err := state.GetEngine().ValidateRefactoring(plan); err != nil {
+	err = state.GetEngine().ValidateRefactoring(plan)
+	if err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
 		return res
@@ -192,7 +195,8 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dry
 		return previewPlan(state, plan, desc), nil
 	}
 
-	if err := state.GetEngine().ExecutePlan(plan); err != nil {
+	err := state.GetEngine().ExecutePlan(plan)
+	if err != nil {
 		return nil, fmt.Errorf("execute plan: %w", err)
 	}
 
@@ -235,7 +239,8 @@ func planUncoveredFiles(state *MCPServer, plan *types.RefactoringPlan) []Uncover
 		return nil
 	}
 	root := ""
-	if ws, err := state.GetWorkspace(); err == nil {
+	ws, err := state.GetWorkspace()
+	if err == nil {
 		root = ws.RootPath
 	}
 	out := make([]UncoveredFileInfo, len(plan.Coverage.Uncovered))

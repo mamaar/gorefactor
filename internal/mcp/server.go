@@ -62,7 +62,8 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	}
 
 	s.logger.Info("loading workspace", "path", path)
-	if _, err := s.engine.LoadWorkspace(path); err != nil {
+	_, err := s.engine.LoadWorkspace(path)
+	if err != nil {
 		return false, fmt.Errorf("load workspace: %w", err)
 	}
 	s.set = s.engine.WorkspaceSet()
@@ -105,7 +106,8 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 // so applyWatchedChanges exits.
 func (s *MCPServer) runWatcher(ctx context.Context, w *watch.Watcher, ch chan<- []watch.ChangeEvent) {
 	defer close(ch)
-	if err := w.Run(ctx, ch); err != nil && ctx.Err() == nil {
+	err := w.Run(ctx, ch)
+	if err != nil && ctx.Err() == nil {
 		s.logger.Error("watcher error", "err", err)
 	}
 }
@@ -147,7 +149,8 @@ func (s *MCPServer) InvalidateReferenceIndex() {
 // called with s.mu held). Returns true if successful, false otherwise.
 func (s *MCPServer) buildReferenceIndexLocked() bool {
 	s.logger.Debug("building reference index...")
-	if _, err := s.set.Primary().ReferenceIndex(); err != nil {
+	_, err := s.set.Primary().ReferenceIndex()
+	if err != nil {
 		s.logger.Warn("failed to build reference index")
 		return false
 	}

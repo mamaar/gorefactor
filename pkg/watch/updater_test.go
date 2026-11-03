@@ -117,7 +117,8 @@ func TestUpdater_CreateAddsToPackage(t *testing.T) {
 	if len(pkg.Files) != initialFiles+1 {
 		t.Fatalf("expected %d files, got %d", initialFiles+1, len(pkg.Files))
 	}
-	if _, ok := pkg.Files["b.go"]; !ok {
+	_, ok := pkg.Files["b.go"]
+	if !ok {
 		t.Fatal("b.go not found in package files")
 	}
 }
@@ -148,7 +149,8 @@ func TestUpdater_DeleteRemovesFromPackage(t *testing.T) {
 	if len(pkg.Files) != 1 {
 		t.Fatalf("expected 1 file after delete, got %d", len(pkg.Files))
 	}
-	if _, ok := pkg.Files["a.go"]; ok {
+	_, ok := pkg.Files["a.go"]
+	if ok {
 		t.Fatal("a.go should have been removed")
 	}
 }
@@ -242,7 +244,8 @@ func TestUpdater_CreateOfNonMatchingFileLeavesPackageUnchanged(t *testing.T) {
 	_ = os.WriteFile(newPath, []byte(neverBuilt+"package a\n\nfunc Hidden() {}\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: newPath, Op: fsnotify.Create}})
 
-	if _, ok := pkg.Files["b.go"]; ok || len(pkg.Files) != 1 {
+	_, ok := pkg.Files["b.go"]
+	if ok || len(pkg.Files) != 1 {
 		t.Fatalf("package files = %v, want only a.go", pkg.Files)
 	}
 	if pkg.Symbols.FindSymbol("Hidden") != nil {
@@ -284,7 +287,8 @@ func TestUpdater_ModifyAddingConstraintRemovesFileFromPackage(t *testing.T) {
 	_ = os.WriteFile(extra, []byte(neverBuilt+"package a\n\nfunc Extra() {}\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
 
-	if _, ok := pkg.Files["b.go"]; ok {
+	_, ok := pkg.Files["b.go"]
+	if ok {
 		t.Fatal("b.go should have left the package")
 	}
 	if pkg.Symbols.FindSymbol("Extra") != nil {
@@ -321,10 +325,12 @@ func TestUpdater_ModifyToUnparsableFileRemovesItFromPackage(t *testing.T) {
 	_ = os.WriteFile(extra, []byte("package a\n\nfunc {"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
 
-	if _, ok := pkg.Files["b.go"]; ok {
+	_, ok := pkg.Files["b.go"]
+	if ok {
 		t.Fatal("unparsable file should not be in the package")
 	}
-	if src := u.set.Sources().File(extra); src == nil || src.Err == nil {
+	src := u.set.Sources().File(extra)
+	if src == nil || src.Err == nil {
 		t.Fatal("parse error should be recorded in the source tree")
 	}
 }
@@ -355,10 +361,12 @@ func TestUpdater_RemovingPackageDropsItFromDependencyGraph(t *testing.T) {
 	u.HandleChanges([]ChangeEvent{{Path: aFile, Op: fsnotify.Remove}})
 
 	g = u.Workspace().Dependencies
-	if _, ok := g.PackageImports[aDir]; ok {
+	_, ok := g.PackageImports[aDir]
+	if ok {
 		t.Errorf("PackageImports still has %s", aDir)
 	}
-	if _, ok := g.PackageDeps[aDir]; ok {
+	_, ok = g.PackageDeps[aDir]
+	if ok {
 		t.Errorf("PackageDeps still has key %s", aDir)
 	}
 	if slices.Contains(g.PackageDeps[bDir], aDir) {

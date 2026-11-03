@@ -203,18 +203,22 @@ func TestFindSymbolDottedTypeMember(t *testing.T) {
 		Fields:    map[string][]*Symbol{"User": {nameField}},
 	}
 
-	if got := st.FindSymbol("User.Name"); got != nameField {
+	got := st.FindSymbol("User.Name")
+	if got != nameField {
 		t.Errorf("FindSymbol(\"User.Name\") = %v, want the struct field", got)
 	}
-	if got := st.FindSymbol("User.Greet"); got != greet {
+	got = st.FindSymbol("User.Greet")
+	if got != greet {
 		t.Errorf("FindSymbol(\"User.Greet\") = %v, want the method", got)
 	}
 	// Fields must be unreachable by bare name: a bare lookup could otherwise
 	// shadow a top-level symbol for analyze_symbol's callers.
-	if got := st.FindSymbol("Name"); got != nil {
+	got = st.FindSymbol("Name")
+	if got != nil {
 		t.Errorf("FindSymbol(\"Name\") = %v, want nil (fields are dotted-form only)", got)
 	}
-	if got := st.FindSymbol("User.Missing"); got != nil {
+	got = st.FindSymbol("User.Missing")
+	if got != nil {
 		t.Errorf("FindSymbol(\"User.Missing\") = %v, want nil", got)
 	}
 }

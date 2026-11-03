@@ -42,7 +42,8 @@ func NewWatcher(rootPath string, debounce time.Duration, logger *slog.Logger) (*
 		fsw:      fsw,
 	}
 
-	if err := w.addDirs(); err != nil {
+	err = w.addDirs()
+	if err != nil {
 		_ = fsw.Close()
 		return nil, err
 	}
@@ -137,7 +138,8 @@ func (w *Watcher) maybeAddDir(path string) {
 		return
 	}
 	// Best effort — ignore errors for non-dirs, symlinks, etc.
-	if err := w.fsw.Add(path); err != nil {
+	err := w.fsw.Add(path)
+	if err != nil {
 		w.logger.Debug("could not add to watch", "path", path, "err", err)
 	}
 }

@@ -23,7 +23,8 @@ func TestConfirmAccepted(t *testing.T) {
 		"response of another type": {&mcpsdk.ListRootsResult{}, false}, //nolint:staticcheck // every non-elicit InputResponse type is deprecated
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := confirmAccepted(tt.answer); got != tt.want {
+			got := confirmAccepted(tt.answer)
+			if got != tt.want {
 				t.Errorf("confirmAccepted = %v, want %v", got, tt.want)
 			}
 		})
@@ -62,7 +63,8 @@ func TestCanConfirm(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = clientSession.Close() })
 
-			if got := canConfirm(serverSession); got != tt.want {
+			got := canConfirm(serverSession)
+			if got != tt.want {
 				t.Errorf("canConfirm = %v, want %v", got, tt.want)
 			}
 		})

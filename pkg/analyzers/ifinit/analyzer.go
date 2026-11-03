@@ -126,7 +126,8 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 	case *ast.AssignStmt:
 		if s.Tok == token.DEFINE {
 			for _, lhs := range s.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
+				id, ok := lhs.(*ast.Ident)
+				if ok && id.Name != "_" {
 					declared[id.Name] = declaredName{ident: id}
 				}
 			}
@@ -157,7 +158,8 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 	case *ast.SelectStmt:
 		if s.Body != nil {
 			for _, c := range s.Body.List {
-				if cc, ok := c.(*ast.CommClause); ok {
+				cc, ok := c.(*ast.CommClause)
+				if ok {
 					w.processFuncLitsIn(cc.Comm)
 					w.walkList(cc.Body, commClauseScope(cc))
 				}
@@ -198,7 +200,8 @@ func (w *walker) handleIfChain(node *ast.IfStmt, declared scope, isElseIf, guard
 	w.processFuncLitsIn(node.Cond)
 
 	if !guarded {
-		if assign, ok := matchInitAssign(node.Init); ok {
+		assign, ok := matchInitAssign(node.Init)
+		if ok {
 			w.emitIfFix(node, assign, declared, isElseIf, list, idx, cascaded)
 		}
 	}
@@ -222,14 +225,16 @@ func (w *walker) handleSwitch(node *ast.SwitchStmt, declared scope, guarded bool
 	w.processFuncLitsIn(node.Tag)
 
 	if !guarded {
-		if assign, ok := matchInitAssign(node.Init); ok {
+		assign, ok := matchInitAssign(node.Init)
+		if ok {
 			w.emitSwitchFix(node, assign, declared, list, idx, cascaded)
 		}
 	}
 
 	if node.Body != nil {
 		for _, c := range node.Body.List {
-			if cc, ok := c.(*ast.CaseClause); ok {
+			cc, ok := c.(*ast.CaseClause)
+			if ok {
 				for _, e := range cc.List {
 					w.processFuncLitsIn(e)
 				}
@@ -249,7 +254,8 @@ func (w *walker) handleTypeSwitch(node *ast.TypeSwitchStmt, declared scope, guar
 
 	if node.Body != nil {
 		for _, c := range node.Body.List {
-			if cc, ok := c.(*ast.CaseClause); ok {
+			cc, ok := c.(*ast.CaseClause)
+			if ok {
 				w.walkList(cc.Body, w.typeSwitchClauseScope(node, cc))
 			}
 		}
@@ -281,8 +287,10 @@ func (w *walker) typeSwitchClauseScope(node *ast.TypeSwitchStmt, cc *ast.CaseCla
 			continue
 		}
 		dn := declaredName{ident: id}
-		if info := w.pass.TypesInfo; info != nil && info.Implicits != nil {
-			if obj := info.Implicits[cc]; obj != nil {
+		info := w.pass.TypesInfo
+		if info != nil && info.Implicits != nil {
+			obj := info.Implicits[cc]
+			if obj != nil {
 				dn.obj = obj
 			}
 		}
@@ -352,7 +360,8 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 		var newNames []*ast.Ident
 		if assign.Tok == token.DEFINE {
 			for _, lhs := range assign.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
+				id, ok := lhs.(*ast.Ident)
+				if ok && id.Name != "_" {
 					newNames = append(newNames, id)
 				}
 			}
@@ -366,7 +375,8 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 		if !ok || id.Name == "_" {
 			continue
 		}
-		if _, exists := declared[id.Name]; exists {
+		_, exists := declared[id.Name]
+		if exists {
 			colliding = append(colliding, id)
 		} else {
 			newOnes = append(newOnes, id)
@@ -491,7 +501,8 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, augmented scope, cascade
 				continue
 			}
 			names = append(names, id)
-			if _, exists := augmented[id.Name]; !exists {
+			_, exists := augmented[id.Name]
+			if !exists {
 				allDeclared = false
 			}
 		}
@@ -507,7 +518,8 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, augmented scope, cascade
 			return nil, nil, false, "hoisting would invalidate a later := that cannot be downgraded: unable to compute a safe edit"
 		}
 
-		if downOK, downReason := w.canDowngrade(assign, names, augmented); !downOK {
+		downOK, downReason := w.canDowngrade(assign, names, augmented)
+		if !downOK {
 			return nil, nil, false, "hoisting would invalidate a later := that cannot be downgraded: " + downReason
 		}
 
@@ -552,13 +564,15 @@ func (w *walker) rhsTypeAt(assign *ast.AssignStmt, idx int) types.Type {
 		if t == nil {
 			return nil
 		}
-		if tuple, ok := t.Underlying().(*types.Tuple); ok {
+		tuple, ok := t.Underlying().(*types.Tuple)
+		if ok {
 			if idx >= tuple.Len() {
 				return nil
 			}
 			return tuple.At(idx).Type()
 		}
-		if tuple, ok := t.(*types.Tuple); ok {
+		tuple, ok = t.(*types.Tuple)
+		if ok {
 			if idx >= tuple.Len() {
 				return nil
 			}
@@ -909,7 +923,8 @@ func (w *walker) processFuncLitsIn(node ast.Node) {
 		if n == nil {
 			return false
 		}
-		if fl, ok := n.(*ast.FuncLit); ok {
+		fl, ok := n.(*ast.FuncLit)
+		if ok {
 			w.walkFuncLit(fl)
 			return false
 		}
@@ -979,7 +994,8 @@ func (w *walker) recordDeclStmt(s *ast.DeclStmt, declared scope) {
 func lhsNames(assign *ast.AssignStmt) []string {
 	var vars []string
 	for _, lhs := range assign.Lhs {
-		if ident, ok := lhs.(*ast.Ident); ok {
+		ident, ok := lhs.(*ast.Ident)
+		if ok {
 			vars = append(vars, ident.Name)
 		}
 	}

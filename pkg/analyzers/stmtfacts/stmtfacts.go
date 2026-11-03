@@ -274,7 +274,8 @@ func IsPanicCall(info *types.Info, expr ast.Expr) bool {
 	}
 
 	if info != nil && info.Uses != nil {
-		if obj, found := info.Uses[ident]; found {
+		obj, found := info.Uses[ident]
+		if found {
 			_, isBuiltin := obj.(*types.Builtin)
 			return isBuiltin
 		}
@@ -345,7 +346,8 @@ func SignatureNames(recv *ast.FieldList, fnType *ast.FuncType) map[string]bool {
 // AddName records expr's identifier, ignoring the blank identifier, which
 // declares nothing and can never collide.
 func AddName(names map[string]bool, expr ast.Expr) {
-	if ident, ok := expr.(*ast.Ident); ok && ident.Name != "_" {
+	ident, ok := expr.(*ast.Ident)
+	if ok && ident.Name != "_" {
 		names[ident.Name] = true
 	}
 }

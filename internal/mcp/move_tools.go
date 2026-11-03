@@ -110,7 +110,8 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			"it is refused when a file outside the default configuration references or declares the symbol.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
 		defer func() {
-			if r := recover(); r != nil {
+			r := recover()
+			if r != nil {
 				stack := debug.Stack()
 				state.logger.Error("panic in move_symbol handler",
 					"symbol", in.label(),

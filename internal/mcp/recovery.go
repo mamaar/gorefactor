@@ -30,7 +30,8 @@ func recoveryMiddleware(logger *slog.Logger) mcpsdk.Middleware {
 	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (result mcpsdk.Result, err error) {
 			defer func() {
-				if r := recover(); r != nil {
+				r := recover()
+				if r != nil {
 					stack := debug.Stack()
 					logger.Error("panic in MCP method handler",
 						"method", method,

@@ -24,7 +24,8 @@ func parseFuncBody(t *testing.T, src string) (*token.FileSet, []byte, *ast.Block
 	}
 
 	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Body != nil {
 			return fset, []byte(src), fn.Body
 		}
 	}
@@ -42,7 +43,8 @@ func firstIfStmt(t *testing.T, body *ast.BlockStmt) *ast.IfStmt {
 		if found != nil {
 			return false
 		}
-		if ifStmt, ok := n.(*ast.IfStmt); ok {
+		ifStmt, ok := n.(*ast.IfStmt)
+		if ok {
 			found = ifStmt
 			return false
 		}
@@ -125,7 +127,8 @@ func f(x bool) {
 	fset, content, body := parseFuncBody(t, src)
 	ifStmt := firstIfStmt(t, body)
 
-	if got := srctext.BlockText(fset, content, ifStmt.Body); got != "" {
+	got := srctext.BlockText(fset, content, ifStmt.Body)
+	if got != "" {
 		t.Errorf("expected empty string for empty block, got %q", got)
 	}
 }
@@ -185,7 +188,8 @@ func TestInvertCondition(t *testing.T) {
 			fset, content, body := parseFuncBody(t, src)
 			ifStmt := firstIfStmt(t, body)
 
-			if got := srctext.InvertCondition(fset, content, nil, ifStmt.Cond); got != tt.want {
+			got := srctext.InvertCondition(fset, content, nil, ifStmt.Cond)
+			if got != tt.want {
 				t.Errorf("InvertCondition(%q) = %q, want %q", tt.cond, got, tt.want)
 			}
 		})
@@ -207,12 +211,14 @@ func typeCheck(t *testing.T, src string) (*token.FileSet, []byte, *ast.BlockStmt
 		Types: make(map[ast.Expr]types.TypeAndValue),
 	}
 	conf := types.Config{Importer: importer.Default()}
-	if _, err := conf.Check("p", fset, []*ast.File{file}, info); err != nil {
+	_, err = conf.Check("p", fset, []*ast.File{file}, info)
+	if err != nil {
 		t.Fatalf("type check: %v", err)
 	}
 
 	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Body != nil {
 			return fset, []byte(src), fn.Body, info
 		}
 	}
@@ -277,7 +283,8 @@ func f(x, y float64) bool {
 			fset, content, body, info := typeCheck(t, tt.src)
 			ifStmt := firstIfStmt(t, body)
 
-			if got := srctext.InvertCondition(fset, content, info, ifStmt.Cond); got != tt.want {
+			got := srctext.InvertCondition(fset, content, info, ifStmt.Cond)
+			if got != tt.want {
 				t.Errorf("InvertCondition = %q, want %q", got, tt.want)
 			}
 		})
@@ -355,7 +362,8 @@ func firstBinaryExpr(t *testing.T, body *ast.BlockStmt) *ast.BinaryExpr {
 		if found != nil {
 			return false
 		}
-		if binExpr, ok := n.(*ast.BinaryExpr); ok {
+		binExpr, ok := n.(*ast.BinaryExpr)
+		if ok {
 			found = binExpr
 			return false
 		}
@@ -372,7 +380,8 @@ func TestIndentation(t *testing.T) {
 	content := []byte("package p\n\nfunc f() {\n\t\tif x {\n")
 	offset := strings.Index(string(content), "if x")
 
-	if got := srctext.Indentation(content, offset); got != "\t\t" {
+	got := srctext.Indentation(content, offset)
+	if got != "\t\t" {
 		t.Errorf("Indentation = %q, want two tabs", got)
 	}
 }
@@ -380,10 +389,12 @@ func TestIndentation(t *testing.T) {
 func TestIndentation_OutOfRange(t *testing.T) {
 	content := []byte("package p\n")
 
-	if got := srctext.Indentation(content, -1); got != "" {
+	got := srctext.Indentation(content, -1)
+	if got != "" {
 		t.Errorf("expected empty string for negative offset, got %q", got)
 	}
-	if got := srctext.Indentation(content, len(content)+10); got != "" {
+	got = srctext.Indentation(content, len(content)+10)
+	if got != "" {
 		t.Errorf("expected empty string for out-of-range offset, got %q", got)
 	}
 }

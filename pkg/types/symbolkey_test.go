@@ -83,7 +83,8 @@ func TestSymbolKeyOf_InstantiatedMethodSharesTheGenericKey(t *testing.T) {
 	pkg := checkSymbolKeySrc(t)
 	alias := gotypes.Unalias(pkg.Scope().Lookup("Alias").Type()).(*gotypes.Named)
 	got, ok := SymbolKeyOf(alias.Method(0))
-	if want := (SymbolKey{"example.com/p", "Mem", "Save"}); !ok || got != want {
+	want := (SymbolKey{"example.com/p", "Mem", "Save"})
+	if !ok || got != want {
 		t.Errorf("SymbolKeyOf = %v, %v; want %v", got, ok, want)
 	}
 }
@@ -96,13 +97,15 @@ func TestSymbolKeyOf_UnstableNamesHaveNoKey(t *testing.T) {
 	}
 	info := &gotypes.Info{Defs: make(map[*ast.Ident]gotypes.Object)}
 	conf := gotypes.Config{Importer: importer.Default()}
-	if _, err := conf.Check("example.com/p", fset, []*ast.File{f}, info); err != nil {
+	_, err = conf.Check("example.com/p", fset, []*ast.File{f}, info)
+	if err != nil {
 		t.Fatal(err)
 	}
 	for ident, obj := range info.Defs {
 		switch ident.Name {
 		case "init", "_", "local":
-			if key, ok := SymbolKeyOf(obj); ok {
+			key, ok := SymbolKeyOf(obj)
+			if ok {
 				t.Errorf("%s has key %v, want none", ident.Name, key)
 			}
 		}
@@ -129,7 +132,8 @@ func TestSymbolKeySet(t *testing.T) {
 	if set.Has(b) {
 		t.Error("Clone shares storage")
 	}
-	if got := b.String(); got != "p.T.b" {
+	got := b.String()
+	if got != "p.T.b" {
 		t.Errorf("String = %q", got)
 	}
 }

@@ -179,7 +179,8 @@ func TestWatcher_ContextCancellationStops(t *testing.T) {
 
 func writeGoFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -222,7 +223,8 @@ func TestWatcher_CreatedTestdataDirNotWatched(t *testing.T) {
 	go func() { _ = w.Run(ctx, out) }()
 
 	td := filepath.Join(dir, "testdata")
-	if err := os.Mkdir(td, 0o755); err != nil {
+	err = os.Mkdir(td, 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(200 * time.Millisecond)

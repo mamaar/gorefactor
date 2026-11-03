@@ -214,7 +214,8 @@ func negWrapNot(fset *token.FileSet, content []byte, e ast.Expr) (string, int, i
 	if !ok {
 		return "", 0, 0, false
 	}
-	if _, isBinary := e.(*ast.BinaryExpr); isBinary {
+	_, isBinary := e.(*ast.BinaryExpr)
+	if isBinary {
 		// `!` binds tighter than every binary operator.
 		text = "(" + text + ")"
 	}
@@ -235,7 +236,8 @@ func negVerbatim(fset *token.FileSet, content []byte, e ast.Expr) (string, int, 
 // is not a binary expression - an identifier, a call, an index, a
 // parenthesised group - binds at least as tightly as a unary operator.
 func exprPrec(e ast.Expr) int {
-	if binary, ok := e.(*ast.BinaryExpr); ok {
+	binary, ok := e.(*ast.BinaryExpr)
+	if ok {
 		return binary.Op.Precedence()
 	}
 	return token.UnaryPrec
@@ -247,7 +249,8 @@ func exprPrec(e ast.Expr) int {
 func CountNegations(e ast.Expr) int {
 	count := 0
 	ast.Inspect(e, func(n ast.Node) bool {
-		if unary, ok := n.(*ast.UnaryExpr); ok && unary.Op == token.NOT {
+		unary, ok := n.(*ast.UnaryExpr)
+		if ok && unary.Op == token.NOT {
 			count++
 		}
 		return true

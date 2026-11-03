@@ -326,7 +326,8 @@ func TestMockOperation(t *testing.T) {
 	}
 
 	// Test interface methods
-	if err := op.Validate(nil); err != nil {
+	err := op.Validate(nil)
+	if err != nil {
 		t.Errorf("Expected Validate to return nil, got %v", err)
 	}
 
