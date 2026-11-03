@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/token"
 	"log/slog"
@@ -269,17 +270,26 @@ func (s *WorkspaceSet) ViewOf(ws *types.Workspace) *View {
 	return nil
 }
 
+// ErrSkippedSource reports that SyncSource does not track the path: it is not a
+// .go file or lies in a skipped directory.
+var ErrSkippedSource = errors.New("source file is not tracked")
+
+// ErrSourceRemoved reports that SyncSource found the path missing on disk and
+// forgot it.
+var ErrSourceRemoved = errors.New("source file was removed")
+
 // SyncSource brings the shared source tree in line with path on disk: a missing
-// file is forgotten (nil result), a recorded one is re-read, a new one is
-// recorded. Views are not touched; ProjectFile applies the result to each.
+// file is forgotten (ErrSourceRemoved), a recorded one is re-read, a new one is
+// recorded. Untracked paths yield ErrSkippedSource. Views are not touched;
+// ProjectFile applies the result to each.
 func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 	if !strings.HasSuffix(path, ".go") {
-		return nil, nil
+		return nil, ErrSkippedSource
 	}
 	defer s.invalidateCovering()
 	path = absDir(path)
 	if InSkippedDir(s.root, filepath.Dir(path)) {
-		return nil, nil
+		return nil, ErrSkippedSource
 	}
 	_, err := os.Stat(path)
 	if err != nil {
@@ -287,7 +297,7 @@ func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 			return nil, err
 		}
 		s.tree.Remove(path)
-		return nil, nil
+		return nil, ErrSourceRemoved
 	}
 
 	dir := filepath.Dir(path)

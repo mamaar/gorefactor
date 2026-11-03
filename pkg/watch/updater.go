@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -41,7 +42,8 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 	for _, ev := range events {
 		action := actionName(ev.Op)
 		src, err := u.set.SyncSource(ev.Path)
-		if err != nil {
+		absent := errors.Is(err, analysis.ErrSkippedSource) || errors.Is(err, analysis.ErrSourceRemoved)
+		if err != nil && !absent {
 			u.logger.Error(action+": source sync failed", "file", ev.Path, "err", err)
 			continue
 		}
@@ -170,11 +172,11 @@ func (u *WorkspaceUpdater) rebuildPackage(v *analysis.View, pkg *types.Package, 
 // it in v. A directory with no usable files yields no package.
 func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start time.Time) {
 	pkg, err := v.Parser.ParsePackage(dir)
-	if err != nil {
-		u.logger.Error("create: package parse failed", "dir", dir, "err", err)
+	if errors.Is(err, analysis.ErrNoPackage) {
 		return
 	}
-	if pkg == nil {
+	if err != nil {
+		u.logger.Error("create: package parse failed", "dir", dir, "err", err)
 		return
 	}
 

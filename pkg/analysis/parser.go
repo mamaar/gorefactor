@@ -93,8 +93,12 @@ func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoPa
 	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree, loadPackages: packages.Load}
 }
 
+// ErrNoPackage reports that a directory has .go files but none usable under the
+// parser's build config.
+var ErrNoPackage = errors.New("no usable package")
+
 // ParsePackage builds the package in dir from the files that match the parser's
-// build config. It returns (nil, nil) when dir has .go files but none usable
+// build config. It returns ErrNoPackage when dir has .go files but none usable
 // under that config.
 func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 	err := p.sources.AddDir(dir)
@@ -134,7 +138,7 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 		p.nameFromTests(pkg)
 	}
 	if pkg.Name == "" {
-		return nil, nil
+		return nil, ErrNoPackage
 	}
 
 	return pkg, nil
@@ -289,11 +293,11 @@ func (p *GoParser) projectWorkspace(absRoot string, module *types.Module) *types
 	wg.Wait()
 
 	for i, res := range proj.results {
-		if res.err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
+		if errors.Is(res.err, ErrNoPackage) {
 			continue
 		}
-		if res.pkg == nil {
+		if res.err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
 			continue
 		}
 		workspace.Packages[res.pkg.Path] = res.pkg

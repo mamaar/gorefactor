@@ -1317,8 +1317,8 @@ func TestParsePackage_AllUnparsableYieldsNoPackage(t *testing.T) {
 	root := writeWorkspace(t, map[string]string{"p/bad.go": "package p\n\nfunc (\n"})
 	p := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	pkg, err := p.ParsePackage(filepath.Join(root, "p"))
-	if pkg != nil || err != nil {
-		t.Errorf("ParsePackage = %v, %v; want nil, nil", pkg, err)
+	if pkg != nil || !errors.Is(err, ErrNoPackage) {
+		t.Errorf("ParsePackage = %v, %v; want nil, ErrNoPackage", pkg, err)
 	}
 }
 
@@ -1798,5 +1798,31 @@ func TestInSkippedDir_RootIsExempt(t *testing.T) {
 	}
 	if InSkippedDir(root, filepath.Join(root, "a", "b")) {
 		t.Error("plain dir must not be skipped")
+	}
+}
+
+func TestSyncSource_UntrackedAndRemovedPathsYieldSentinels(t *testing.T) {
+	root := writeWorkspace(t, map[string]string{
+		"p/p.go":        "package p\n",
+		"testdata/t.go": "package t\n",
+		"p/notes.txt":   "x",
+		"p/gone.go":     "package p\n",
+	})
+	set, err := LoadWorkspaceSet(root, DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "p", "gone.go")); err != nil {
+		t.Fatal(err)
+	}
+	for path, want := range map[string]error{
+		filepath.Join(root, "p", "notes.txt"):   ErrSkippedSource,
+		filepath.Join(root, "testdata", "t.go"): ErrSkippedSource,
+		filepath.Join(root, "p", "gone.go"):     ErrSourceRemoved,
+	} {
+		src, err := set.SyncSource(path)
+		if src != nil || !errors.Is(err, want) {
+			t.Errorf("SyncSource(%s) = %v, %v; want nil, %v", filepath.Base(path), src, err, want)
+		}
 	}
 }
