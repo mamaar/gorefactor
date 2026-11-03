@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	gotypes "go/types"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -207,11 +208,9 @@ func (w *walker) walkStmts(list []ast.Stmt, kind blockKind, fnName string, fnTyp
 	}
 
 	for i, stmt := range list {
-		isLast := i == len(list)-1
-
 		ifStmt, ok := stmt.(*ast.IfStmt)
 		if ok {
-			if w.tryMatch(ifStmt, kind, isLast, fnName, fnType, names) {
+			if w.tryMatch(ifStmt, kind, fnName, fnType, enclosing{list: list, idx: i, names: names}) {
 				// A fix was attached covering this whole if statement. Do not
 				// descend: a nested fix would produce an overlapping text edit,
 				// which Serializer.validateChangePositions rejects outright.
@@ -298,16 +297,18 @@ func assignedNames(stmt ast.Stmt) map[string]bool {
 // tryMatch reports whether ifStmt matched a pattern *and* a fix was attached.
 // A finding recorded without a fix returns false so the walk still descends
 // into it — an unfixable finding emits no text edit, so nothing can overlap.
-func (w *walker) tryMatch(ifStmt *ast.IfStmt, kind blockKind, isLast bool, fnName string, fnType *ast.FuncType, scopeNames map[string]bool) bool {
+func (w *walker) tryMatch(ifStmt *ast.IfStmt, kind blockKind, fnName string, fnType *ast.FuncType, enc enclosing) bool {
 	if ifStmt.Else != nil {
-		return w.tryElseAfterReturn(ifStmt, fnName, scopeNames)
+		return w.tryElseAfterReturn(ifStmt, fnName, enc)
 	}
+
+	isLast := enc.idx == len(enc.list)-1
 
 	switch {
 	case kind == blockFuncBody && isLast:
-		return w.tryGuard(ifStmt, PatternGuardClause, fnName, fnType, scopeNames)
+		return w.tryGuard(ifStmt, PatternGuardClause, fnName, fnType, enc)
 	case kind == blockLoopBody && isLast:
-		return w.tryGuard(ifStmt, PatternLoopContinue, fnName, fnType, scopeNames)
+		return w.tryGuard(ifStmt, PatternLoopContinue, fnName, fnType, enc)
 	}
 
 	return false
@@ -315,7 +316,7 @@ func (w *walker) tryMatch(ifStmt *ast.IfStmt, kind blockKind, isLast bool, fnNam
 
 // tryGuard handles the two no-else shapes, which differ only in the early exit
 // they emit.
-func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fnType *ast.FuncType, scopeNames map[string]bool) bool {
+func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fnType *ast.FuncType, enc enclosing) bool {
 	if !w.cfg.patterns[pattern] || ifStmt.Init != nil || len(ifStmt.Body.List) == 0 {
 		return false
 	}
@@ -339,7 +340,7 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 		}
 	}
 
-	clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(ifStmt.Body.List), scopeNames)
+	clash := w.firstClash(ifStmt.Body.List, enc)
 	if clash != "" {
 		w.record(ifStmt, pattern, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the body would redeclare %q in the enclosing scope", clash))
@@ -356,7 +357,7 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 	}
 
 	indent := srctext.Indentation(w.content, w.pass.Fset.Position(ifStmt.Pos()).Offset)
-	newText := "if " + inverted + " {\n\t" + exit + "\n}\n" + srctext.Normalize(bodyText)
+	newText := "if " + inverted + " {\n\t" + exit + "\n}\n\n" + srctext.Normalize(bodyText)
 	newText = srctext.ApplyIndent(newText, indent)
 
 	w.record(ifStmt, pattern, fnName, bodyLines, true, "")
@@ -365,7 +366,7 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 	return true
 }
 
-func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeNames map[string]bool) bool {
+func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, enc enclosing) bool {
 	if !w.cfg.patterns[PatternElseAfterReturn] {
 		return false
 	}
@@ -388,7 +389,7 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 
 	bodyLines := w.blockLines(elseBlock)
 
-	clash := stmtfacts.FirstClash(stmtfacts.DeclaredNames(elseBlock.List), scopeNames)
+	clash := w.firstClash(elseBlock.List, enc)
 	if clash != "" {
 		w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the else branch would redeclare %q in the enclosing scope", clash))
@@ -407,7 +408,7 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 
 	indent := srctext.Indentation(w.content, w.pass.Fset.Position(ifStmt.Pos()).Offset)
 	newText := "if " + condText + " {\n" +
-		srctext.IndentLines(srctext.Normalize(ifBodyText), "\t") + "\n}\n" +
+		srctext.IndentLines(srctext.Normalize(ifBodyText), "\t") + "\n}\n\n" +
 		srctext.Normalize(elseBodyText)
 	newText = srctext.ApplyIndent(newText, indent)
 
@@ -415,6 +416,146 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 	w.report(ifStmt, PatternElseAfterReturn, newText)
 
 	return true
+}
+
+// enclosing locates an if statement in its statement list. names holds every
+// identifier the list's scope already declares.
+type enclosing struct {
+	list  []ast.Stmt
+	idx   int
+	names map[string]bool
+}
+
+// firstClash returns a name that dedenting moved into enc's scope would
+// redeclare, or "" when none does. A name is not a clash when the moved `:=`
+// can reuse the outer variable instead, see reusable.
+func (w *walker) firstClash(moved []ast.Stmt, enc enclosing) string {
+	declared := stmtfacts.DeclaredNames(moved)
+
+	for name := range declared {
+		if enc.names[name] && w.reusable(name, moved, enc) {
+			delete(declared, name)
+		}
+	}
+
+	return stmtfacts.FirstClash(declared, enc.names)
+}
+
+// reusable reports whether, once moved is dedented into enc's scope, its
+// `:=` that declares name still compiles and keeps its meaning by assigning
+// the outer variable of the same name instead of declaring a new one. That
+// holds when the statement declares another new name, both variables have the
+// same type, nothing after the if reads the outer variable, and no closure or
+// address can observe the overwrite.
+func (w *walker) reusable(name string, moved []ast.Stmt, enc enclosing) bool {
+	outer := w.outerVar(name, enc.list[:enc.idx])
+	inner := w.firstDefinition(name, moved, enc.names)
+
+	if outer == nil || inner == nil || !gotypes.Identical(outer.Type(), inner.Type()) {
+		return false
+	}
+
+	if refersTo(enc.list[enc.idx+1:], map[string]bool{name: true}) {
+		return false
+	}
+
+	return !captured(name, enc.list[:enc.idx]) && !captured(name, moved)
+}
+
+// outerVar returns the variable name that a `:=` in prior declares or assigns.
+func (w *walker) outerVar(name string, prior []ast.Stmt) gotypes.Object {
+	for _, stmt := range prior {
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok || assign.Tok != token.DEFINE {
+			continue
+		}
+
+		for _, lhs := range assign.Lhs {
+			ident, ok := lhs.(*ast.Ident)
+			if ok && ident.Name == name {
+				return w.pass.TypesInfo.ObjectOf(ident)
+			}
+		}
+	}
+
+	return nil
+}
+
+// firstDefinition returns the variable that the first statement in moved
+// declaring name creates, or nil when that statement is not a `:=` that would
+// still declare a new name after dedenting.
+func (w *walker) firstDefinition(name string, moved []ast.Stmt, destination map[string]bool) gotypes.Object {
+	for i, stmt := range moved {
+		if !stmtfacts.DeclaredNames([]ast.Stmt{stmt})[name] {
+			continue
+		}
+
+		assign, ok := stmt.(*ast.AssignStmt)
+		if !ok {
+			return nil
+		}
+
+		earlier := stmtfacts.DeclaredNames(moved[:i])
+
+		var obj gotypes.Object
+
+		hasNew := false
+
+		for _, lhs := range assign.Lhs {
+			ident, ok := lhs.(*ast.Ident)
+			if !ok || ident.Name == "_" {
+				continue
+			}
+
+			if ident.Name == name {
+				obj = w.pass.TypesInfo.Defs[ident]
+			} else if !destination[ident.Name] && !earlier[ident.Name] {
+				hasNew = true
+			}
+		}
+
+		if !hasNew {
+			return nil
+		}
+
+		return obj
+	}
+
+	return nil
+}
+
+// refersTo reports whether any of stmts mentions one of names.
+func refersTo(stmts []ast.Stmt, names map[string]bool) bool {
+	for _, stmt := range stmts {
+		if stmtfacts.ReferencesAny(stmt, names) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// captured reports whether name is mentioned inside a function literal or has
+// its address taken in stmts, so an assignment to it could be seen later.
+func captured(name string, stmts []ast.Stmt) bool {
+	names := map[string]bool{name: true}
+	found := false
+
+	for _, stmt := range stmts {
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.FuncLit:
+				found = found || stmtfacts.ReferencesAny(x, names)
+			case *ast.UnaryExpr:
+				ident, ok := x.X.(*ast.Ident)
+				found = found || (x.Op == token.AND && ok && ident.Name == name)
+			}
+
+			return !found
+		})
+	}
+
+	return found
 }
 
 func (w *walker) record(ifStmt *ast.IfStmt, pattern Pattern, fnName string, bodyLines int, fixable bool, reason string) {

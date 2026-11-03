@@ -73,7 +73,7 @@ func TestFixEarlyReturns_DryRunPreservesNestedIndentation(t *testing.T) {
 		t.Fatalf("expected one else-after-return hunk, got %d", len(hunks))
 	}
 
-	want := "if x < 0 {\n\t\treturn \"negative\"\n\t}\n\tkind := \"non-negative\"\n\treturn kind"
+	want := "if x < 0 {\n\t\treturn \"negative\"\n\t}\n\n\tkind := \"non-negative\"\n\treturn kind"
 
 	got, _ := hunks[0]["new"].(string)
 	if got != want {

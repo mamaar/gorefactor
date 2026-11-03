@@ -1,8 +1,10 @@
 package earlyreturn_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"strings"
 	"testing"
 
@@ -23,6 +25,14 @@ func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 		t.Fatalf("Failed to parse test source: %v", err)
 	}
 
+	info := &gotypes.Info{
+		Types: map[ast.Expr]gotypes.TypeAndValue{},
+		Defs:  map[*ast.Ident]gotypes.Object{},
+		Uses:  map[*ast.Ident]gotypes.Object{},
+	}
+	conf := gotypes.Config{Error: func(error) {}}
+	typesPkg, _ := conf.Check("test/testpkg", fileSet, []*ast.File{astFile}, info)
+
 	file := &types.File{
 		Path:            "testpkg.go",
 		AST:             astFile,
@@ -30,9 +40,11 @@ func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	}
 
 	pkg := &types.Package{
-		Name:  "testpkg",
-		Path:  "test/testpkg",
-		Files: map[string]*types.File{"testpkg.go": file},
+		Name:      "testpkg",
+		Path:      "test/testpkg",
+		Files:     map[string]*types.File{"testpkg.go": file},
+		TypesPkg:  typesPkg,
+		TypesInfo: info,
 	}
 	file.Package = pkg
 
@@ -489,7 +501,7 @@ func handle(enabled bool) {
 
 	text := fixedText(t, diags)
 
-	want := "if !enabled {\n\t\t\treturn\n\t\t}\n\t\tprintln(\"ok\")"
+	want := "if !enabled {\n\t\t\treturn\n\t\t}\n\n\t\tprintln(\"ok\")"
 	if text != want {
 		t.Errorf("replacement indentation mismatch\ngot:\n%s\nwant:\n%s", text, want)
 	}
@@ -769,4 +781,174 @@ func compute() int { return 1 }
 	if !got.Fixable {
 		t.Errorf("expected fixable: a clause body may shadow the switch init variable; reason: %s", got.Reason)
 	}
+}
+
+func TestGuard_BlankLineSeparatesGuardFromBody(t *testing.T) {
+	src := `package testpkg
+
+func handle(enabled bool, xs []int) int {
+	for _, x := range xs {
+		if enabled {
+			a := x
+			b := 2
+			println(a + b)
+		}
+	}
+
+	return 0
+}
+
+func elseBranch(enabled bool) int {
+	if !enabled {
+		return 0
+	} else {
+		x := 1
+		return x
+	}
+}
+`
+	_, diags := run(t, src)
+
+	var texts []string
+
+	for _, d := range diags {
+		for _, fix := range d.SuggestedFixes {
+			for _, edit := range fix.TextEdits {
+				texts = append(texts, string(edit.NewText))
+			}
+		}
+	}
+
+	if len(texts) != 2 {
+		t.Fatalf("expected 2 fixes (loop_continue, else_after_return), got %d", len(texts))
+	}
+
+	for _, text := range texts {
+		if !strings.Contains(text, "}\n\n") {
+			t.Errorf("no blank line after the guard:\n%s", text)
+		}
+	}
+}
+
+// A dedented `v, ok := ...` may assign the outer ok instead of declaring a new
+// one, but only when the types match and nothing afterwards reads the outer ok.
+func TestDedentReusesOuterName(t *testing.T) {
+	const prelude = `package testpkg
+
+func f(m map[string]any, xs []string) {
+`
+
+	tests := []struct {
+		name    string
+		body    string
+		fixable bool
+	}{
+		{
+			name: "same type, last statement",
+			body: `	for _, k := range xs {
+		v, ok := m[k]
+		if ok {
+			w, ok := v.(string)
+			if ok {
+				println(w)
+			}
+		}
+	}`,
+			fixable: true,
+		},
+		{
+			name: "different type",
+			body: `	for _, k := range xs {
+		v, ok := m[k]
+		if ok {
+			w, ok := v.(string), 1
+			if ok != 0 {
+				println(w)
+			}
+		}
+	}`,
+		},
+		{
+			name: "no new name left to declare",
+			body: `	for _, k := range xs {
+		v, ok := m[k]
+		if ok {
+			ok := v != nil
+			println(ok)
+			println(ok)
+		}
+	}`,
+		},
+		{
+			name: "closure captures outer",
+			body: `	for _, k := range xs {
+		v, ok := m[k]
+		defer func() { println(ok) }()
+		if ok {
+			w, ok := v.(string)
+			println(w)
+			println(ok)
+		}
+	}`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results, _ := run(t, prelude+tc.body+"\n}\n")
+
+			var outer *earlyreturn.Result
+
+			for _, r := range results {
+				if r.Line == lineOfFirstIf(prelude+tc.body, "if ok {") {
+					outer = r
+				}
+			}
+
+			if outer == nil {
+				t.Fatalf("no finding on the outer if: %+v", results)
+			}
+
+			if outer.Fixable != tc.fixable {
+				t.Errorf("fixable = %v (%s), want %v", outer.Fixable, outer.Reason, tc.fixable)
+			}
+		})
+	}
+}
+
+// The else is dedented before statements that follow the if, so they would see
+// the overwritten outer variable.
+func TestElseAfterReturn_OuterNameReadAfterIsNotReusable(t *testing.T) {
+	src := `package testpkg
+
+func f(m map[string]any, k string) bool {
+	v, ok := m[k]
+	if !ok {
+		return false
+	} else {
+		w, ok := v.(string)
+		println(w, ok)
+	}
+
+	return ok
+}
+`
+
+	got := onlyResult(t, func() []*earlyreturn.Result { r, _ := run(t, src); return r }())
+	if got.Fixable {
+		t.Error("expected unfixable: the outer ok is read after the if")
+	}
+
+	src = strings.Replace(src, "return ok", "return true", 1)
+	got = onlyResult(t, func() []*earlyreturn.Result { r, _ := run(t, src); return r }())
+
+	if !got.Fixable {
+		t.Errorf("expected fixable once nothing reads the outer ok: %s", got.Reason)
+	}
+}
+
+func lineOfFirstIf(src, needle string) int {
+	idx := strings.Index(src, needle)
+
+	return strings.Count(src[:idx], "\n") + 1
 }
