@@ -181,8 +181,6 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) {
 
 	// Invalidate cached reference index since files changed
 	s.InvalidateReferenceIndex()
-
-	return
 }
 
 // RefreshStaleFiles re-syncs every .go file whose on-disk content differs from

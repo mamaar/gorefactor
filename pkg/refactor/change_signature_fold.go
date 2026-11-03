@@ -232,7 +232,7 @@ func (f *errFold) foldIf(c inspector.Cursor) {
 		f.refusal(ifs.Pos(), "the nil check is in an else-if with an init statement, which cannot be folded")
 		return
 	}
-	var keep ast.Stmt = ifs.Else
+	keep := ifs.Else
 	gone := ast.Node(ifs.Body)
 	if v == isTrue {
 		keep, gone = ifs.Body, ifs.Else

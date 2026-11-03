@@ -981,7 +981,7 @@ func (a *analyzer) dropRedundantDecls(res *Analysis) {
 		}
 		existing[obj.Name()] = true
 	}
-	allFresh := !res.TailReturns && !(res.ErrGuard && res.ErrExists)
+	allFresh := !res.TailReturns && (!res.ErrGuard || !res.ErrExists)
 	for _, r := range res.Results {
 		allFresh = allFresh && !existing[r.Name]
 	}

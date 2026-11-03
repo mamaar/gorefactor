@@ -990,8 +990,6 @@ func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *
 			sr.extractGenDeclSymbols(node, file, symbolTable)
 		}
 	}
-
-	return
 }
 
 // shadowsProduction reports whether symbol, from a test file, would replace

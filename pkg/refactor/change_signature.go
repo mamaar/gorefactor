@@ -1279,8 +1279,6 @@ func (op *ChangeSignatureOperation) preserveExistingParamsIfNeeded(sourceFile *p
 	if funcDecl != nil && funcDecl.Type != nil && funcDecl.Type.Params != nil {
 		op.NewParams = op.extractParamList(funcDecl.Type.Params)
 	}
-
-	return
 }
 
 // extractParamList extracts Parameter values from an ast.FieldList.
