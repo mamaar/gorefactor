@@ -804,7 +804,7 @@ func getLineOffset(content string, line int) int {
 	}
 
 	offset := 0
-	for i := 0; i < line-1; i++ {
+	for i := range line - 1 {
 		offset += len(lines[i]) + 1 // +1 for newline
 	}
 	return offset

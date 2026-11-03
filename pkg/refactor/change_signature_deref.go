@@ -324,7 +324,7 @@ func chainDeletions(ops []ast.Expr, remove []bool) [][2]token.Pos {
 		end--
 	}
 	var dels [][2]token.Pos
-	for i := 0; i < end; i++ {
+	for i := range end {
 		if remove[i] {
 			dels = append(dels, [2]token.Pos{ops[i].Pos(), ops[i+1].Pos()})
 		}

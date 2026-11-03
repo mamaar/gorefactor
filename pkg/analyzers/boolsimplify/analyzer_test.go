@@ -342,7 +342,7 @@ func TestSemanticEquivalence(t *testing.T) {
 				t.Fatalf("too many free variables to enumerate: %v", vars)
 			}
 
-			for mask := 0; mask < 1<<len(vars); mask++ {
+			for mask := range 1 << len(vars) {
 				env := make(map[string]bool, len(vars))
 				for i, v := range vars {
 					env[v] = mask&(1<<i) != 0

@@ -53,7 +53,7 @@ func BenchmarkSymbolResolution(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for i := range b.N {
 		symbolName := availableSymbols[i%len(availableSymbols)]
 
 		_, err := resolver.ResolveSymbol(testPkg, symbolName)
@@ -89,7 +89,7 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := resolver.ResolveMethodSet(typeSymbol)
 		if err != nil {
 			b.Fatalf("Failed to resolve method set: %v", err)
@@ -121,7 +121,7 @@ func BenchmarkFindReferences(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := resolver.FindReferences(funcSymbol)
 		if err != nil {
 			b.Fatalf("Failed to find references: %v", err)
@@ -140,7 +140,7 @@ func BenchmarkBuildSymbolTable(b *testing.B) {
 
 	b.ResetTimer()
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 		_, err := resolver.BuildSymbolTable(testPkg)
 		if err != nil {
@@ -161,7 +161,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 	b.ResetTimer()
 
 	b.Run("Set", func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			cache.SetResolvedRef(fmt.Sprintf("key%d", i), testSymbol)
 		}
 	})
@@ -173,7 +173,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			cache.GetResolvedRef(fmt.Sprintf("key%d", i%1000))
 		}
 	})
@@ -185,7 +185,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 		}
 
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for i := range b.N {
 			cache.InvalidatePackage(fmt.Sprintf("test/pkg%d", i%1000))
 		}
 	})
@@ -391,7 +391,7 @@ func BenchmarkBuildReferenceIndex(b *testing.B) {
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			b.ResetTimer()
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_ = resolver.BuildReferenceIndex()
 			}
 		})
@@ -400,7 +400,7 @@ func BenchmarkBuildReferenceIndex(b *testing.B) {
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			b.ResetTimer()
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_ = resolver.BuildReferenceIndex()
 			}
 		})
@@ -431,7 +431,7 @@ func BenchmarkFindReferencesIndexed_ObjectPath(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = resolver.FindReferencesIndexed(symbol, idx)
 	}
 }
@@ -459,7 +459,7 @@ func BenchmarkFindReferencesIndexed_NamePath(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = resolver.FindReferencesIndexed(symbol, idx)
 	}
 }
@@ -471,7 +471,7 @@ func BenchmarkBuildUsageGraph(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = buildUsageGraph(workspace, resolver, idx)
 	}
 }
@@ -484,7 +484,7 @@ func BenchmarkBuildReferenceIndex_TypeIndex(b *testing.B) {
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 			b.ResetTimer()
 			b.ReportAllocs()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_ = resolver.BuildReferenceIndex()
 			}
 		})
@@ -514,7 +514,7 @@ func BenchmarkFindReferencesIndexed_TypeIndexPath(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, _ = resolver.FindReferencesIndexed(symbol, idx)
 	}
 }
@@ -530,7 +530,7 @@ func BenchmarkMemoryUsage_TypeIndex(b *testing.B) {
 			b.ResetTimer()
 			b.ReportAllocs()
 
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				runtime.GC()
 				runtime.ReadMemStats(&memBefore)
 
@@ -553,7 +553,7 @@ func BenchmarkFindUnusedSymbols(b *testing.B) {
 	analyzer.SetIncludeExported(true)
 	b.ResetTimer()
 	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_, err := analyzer.FindUnusedSymbols()
 		if err != nil {
 			b.Fatal(err)

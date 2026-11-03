@@ -2042,7 +2042,7 @@ func calculateByteOffset(filePath string, line, column int) int {
 
 	// Calculate offset by summing up previous lines plus current column
 	offset := 0
-	for i := 0; i < line-1; i++ {
+	for i := range line - 1 {
 		offset += len(lines[i]) + 1 // +1 for the newline character
 	}
 

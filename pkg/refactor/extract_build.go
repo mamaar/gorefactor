@@ -281,7 +281,7 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 		return 0, 0, false
 	}
 	start := 0
-	for i := 0; i < startLine-1; i++ {
+	for i := range startLine - 1 {
 		start += len(lines[i]) + 1
 	}
 	end := start

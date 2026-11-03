@@ -533,7 +533,7 @@ func ctxParamIndex(f *gotypes.Func) (int, bool) {
 		return 0, false
 	}
 	params := sig.Params()
-	for i := 0; i < params.Len(); i++ {
+	for i := range params.Len() {
 		if analysis.IsContextType(params.At(i).Type()) {
 			return i, true
 		}

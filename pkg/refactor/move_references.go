@@ -199,7 +199,7 @@ func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 
 func sanitizeIdent(s string) string {
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
+	for i := range len(s) {
 		if isIdentChar(s[i]) {
 			b.WriteByte(s[i])
 		}
