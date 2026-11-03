@@ -105,26 +105,10 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 
 	// 2. Call sites: for every recorded call-site decision, either insert a
 	// new argument or replace an existing fabricated-root one.
-	for _, edit := range plan.ArgFor {
-		if plan.WithoutCancel && strings.Contains(edit.Expr, "context.") && contextShadowed(edit.Site.Pkg, edit.Site.Call.Pos()) {
-			plan.Notes = append(plan.Notes, pkgtypes.SkippedSite{
-				File:    edit.Site.File.Path,
-				Line:    offsetLine(edit.Site.File, edit.Site.Call.Pos()),
-				Reason:  fmt.Sprintf("shadowed context: %s cannot be written here, so the call to %s needs a ctx argument by hand", edit.Expr, funcLabel(edit.Callee)),
-				Snippet: funcLabel(edit.Callee),
-			})
-			continue
-		}
-		change, importFile, err := renderCallEdit(ws, plan, edit)
-		if err != nil {
-			return nil, fmt.Errorf("render thread plan: %w", err)
-		}
-		if change != nil {
-			changes = append(changes, *change)
-		}
-		if importFile != "" {
-			needsContext[importFile] = true
-		}
+	var err2 error
+	changes, err2 = renderCallSites(plan, ws, changes, needsContext)
+	if err2 != nil {
+		return nil, err2
 	}
 
 	// 3. Fake-root deletions: `ctx := context.Background()`/`context.TODO()`
@@ -165,6 +149,31 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		}
 	}
 
+	return changes, nil
+}
+
+func renderCallSites(plan *threadPlan, ws *pkgtypes.Workspace, changes []pkgtypes.Change, needsContext map[string]bool) ([]pkgtypes.Change, error) {
+	for _, edit := range plan.ArgFor {
+		if plan.WithoutCancel && strings.Contains(edit.Expr, "context.") && contextShadowed(edit.Site.Pkg, edit.Site.Call.Pos()) {
+			plan.Notes = append(plan.Notes, pkgtypes.SkippedSite{
+				File:    edit.Site.File.Path,
+				Line:    offsetLine(edit.Site.File, edit.Site.Call.Pos()),
+				Reason:  fmt.Sprintf("shadowed context: %s cannot be written here, so the call to %s needs a ctx argument by hand", edit.Expr, funcLabel(edit.Callee)),
+				Snippet: funcLabel(edit.Callee),
+			})
+			continue
+		}
+		change, importFile, err := renderCallEdit(ws, plan, edit)
+		if err != nil {
+			return changes, fmt.Errorf("render thread plan: %w", err)
+		}
+		if change != nil {
+			changes = append(changes, *change)
+		}
+		if importFile != "" {
+			needsContext[importFile] = true
+		}
+	}
 	return changes, nil
 }
 

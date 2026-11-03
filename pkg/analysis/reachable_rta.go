@@ -84,38 +84,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	for {
 		res := rta.Analyze(roots, true)
 		live = newLiveness(res.CallGraph, roots, takenOnly, scans)
-		var added, addedTaken []*ssa.Function
-		addRoot := func(fn *ssa.Function, list *[]*ssa.Function) {
-			if fn != nil && !rootSet[fn] && (len(fn.Blocks) > 0 || fn.Synthetic != "") {
-				rootSet[fn] = true
-				*list = append(*list, fn)
-			}
-		}
-		var converted typeutil.Map
-		for n := range live.pred {
-			if n.Func == nil {
-				continue
-			}
-			for _, T := range scans.of(n.Func).converted {
-				addReflected(&converted, T)
-			}
-		}
-		for _, T := range converted.Keys() {
-			mset := prog.MethodSets.MethodSet(T)
-			for method := range mset.Methods() {
-				if names[method.Obj().Name()] {
-					addRoot(prog.MethodValue(method), &added)
-				}
-			}
-		}
-		for n := range live.pred {
-			if n.Func == nil {
-				continue
-			}
-			for _, fn := range scans.of(n.Func).taken {
-				addRoot(fn, &addedTaken)
-			}
-		}
+		added, addedTaken := discoverRoots(rootSet, live, scans, prog, names)
 		if len(added)+len(addedTaken) == 0 {
 			live.bodiless = sc.bodiless
 			return live, nil
@@ -127,6 +96,42 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		slices.SortFunc(added, func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
 		roots = append(roots, added...)
 	}
+}
+
+func discoverRoots(rootSet map[*ssa.Function]bool, live *liveness, scans scanCache, prog *ssa.Program, names map[string]bool) ([]*ssa.Function, []*ssa.Function) {
+	var added, addedTaken []*ssa.Function
+	addRoot := func(fn *ssa.Function, list *[]*ssa.Function) {
+		if fn != nil && !rootSet[fn] && (len(fn.Blocks) > 0 || fn.Synthetic != "") {
+			rootSet[fn] = true
+			*list = append(*list, fn)
+		}
+	}
+	var converted typeutil.Map
+	for n := range live.pred {
+		if n.Func == nil {
+			continue
+		}
+		for _, T := range scans.of(n.Func).converted {
+			addReflected(&converted, T)
+		}
+	}
+	for _, T := range converted.Keys() {
+		mset := prog.MethodSets.MethodSet(T)
+		for method := range mset.Methods() {
+			if names[method.Obj().Name()] {
+				addRoot(prog.MethodValue(method), &added)
+			}
+		}
+	}
+	for n := range live.pred {
+		if n.Func == nil {
+			continue
+		}
+		for _, fn := range scans.of(n.Func).taken {
+			addRoot(fn, &addedTaken)
+		}
+	}
+	return added, addedTaken
 }
 
 func (ua *UnusedAnalyzer) createSSAPackages(entry *types.Package, includeTests bool, sc *sourceChecker, ssaPkgs map[*types.Package]*ssa.Package, create func(c *checkedPkg, importable bool) *ssa.Package, testPkgs []*ssa.Package) ([]*ssa.Package, error) {

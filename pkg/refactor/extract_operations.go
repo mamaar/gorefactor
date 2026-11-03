@@ -403,29 +403,8 @@ func (op *ExtractInterfaceOperation) Type() types.OperationType {
 }
 
 func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
-	if op.SourceStruct == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "source struct cannot be empty",
-		}
-	}
-	if op.InterfaceName == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "interface name cannot be empty",
-		}
-	}
-	if len(op.Methods) == 0 {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "methods list cannot be empty",
-		}
-	}
-	if !isValidGoIdentifierExtract(op.InterfaceName) {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("invalid Go identifier: %s", op.InterfaceName),
-		}
+	if err := op.checkRequestFields(); err != nil {
+		return err
 	}
 
 	// Find the source struct
@@ -455,6 +434,49 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 
 	// Validate that all specified methods exist on the struct
 	// Find the package containing the struct
+	sourcePackage, err2 := op.findStructPackage(ws, resolver)
+	if err2 != nil {
+		return err2
+	}
+
+	// Check methods in the package's symbol table
+	err := op.checkMethodsExist(sourcePackage)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (op *ExtractInterfaceOperation) checkRequestFields() error {
+	if op.SourceStruct == "" {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: "source struct cannot be empty",
+		}
+	}
+	if op.InterfaceName == "" {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: "interface name cannot be empty",
+		}
+	}
+	if len(op.Methods) == 0 {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: "methods list cannot be empty",
+		}
+	}
+	if !isValidGoIdentifierExtract(op.InterfaceName) {
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("invalid Go identifier: %s", op.InterfaceName),
+		}
+	}
+	return nil
+}
+
+func (op *ExtractInterfaceOperation) findStructPackage(ws *types.Workspace, resolver *analysis.SymbolResolver) (*types.Package, error) {
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols == nil {
@@ -471,19 +493,12 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	}
 
 	if sourcePackage == nil {
-		return &types.RefactorError{
+		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("package containing struct %s not found", op.SourceStruct),
 		}
 	}
-
-	// Check methods in the package's symbol table
-	err := op.checkMethodsExist(sourcePackage)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return sourcePackage, nil
 }
 
 func (op *ExtractInterfaceOperation) checkMethodsExist(sourcePackage *types.Package) error {
