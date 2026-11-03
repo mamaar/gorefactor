@@ -38,6 +38,7 @@ func NewMCPServer(logger *slog.Logger) *MCPServer {
 		SkipCompilation: true,
 		AllowBreaking:   true,
 	}, logger)
+
 	return &MCPServer{
 		engine: eng.(*refactor.DefaultEngine),
 		logger: logger,
@@ -56,20 +57,24 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 		s.cancel()
 		s.cancel = nil
 	}
+
 	if s.watcher != nil {
 		_ = s.watcher.Close()
 		s.watcher = nil
 	}
 
 	s.logger.Info("loading workspace", "path", path)
+
 	_, err := s.engine.LoadWorkspace(path)
 	if err != nil {
 		return false, fmt.Errorf("load workspace: %w", err)
 	}
+
 	s.set = s.engine.WorkspaceSet()
 
 	// Build reference index upfront (this may take a moment for large workspaces)
 	s.logger.Info("building reference index", "packages", len(s.set.Primary().Workspace.Packages))
+
 	indexBuilt := s.buildReferenceIndexLocked()
 	if indexBuilt {
 		s.logger.Info("reference index built successfully")
@@ -90,6 +95,7 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 		s.logger.Warn("watcher unavailable, workspace will not auto-update", "err", err)
 		return indexBuilt, nil
 	}
+
 	s.watcher = w
 
 	watchCtx, cancel := context.WithCancel(context.Background())
@@ -106,6 +112,7 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 // so applyWatchedChanges exits.
 func (s *MCPServer) runWatcher(ctx context.Context, w *watch.Watcher, ch chan<- []watch.ChangeEvent) {
 	defer close(ch)
+
 	err := w.Run(ctx, ch)
 	if err != nil && ctx.Err() == nil {
 		s.logger.Error("watcher error", "err", err)
@@ -126,6 +133,7 @@ func (s *MCPServer) GetWorkspace() (*types.Workspace, error) {
 	if s.set == nil {
 		return nil, fmt.Errorf("no workspace loaded — call load_workspace first")
 	}
+
 	return s.set.Primary().Workspace, nil
 }
 
@@ -149,11 +157,13 @@ func (s *MCPServer) InvalidateReferenceIndex() {
 // called with s.mu held). Returns true if successful, false otherwise.
 func (s *MCPServer) buildReferenceIndexLocked() bool {
 	s.logger.Debug("building reference index...")
+
 	_, err := s.set.Primary().ReferenceIndex()
 	if err != nil {
 		s.logger.Warn("failed to build reference index")
 		return false
 	}
+
 	return true
 }
 
@@ -181,8 +191,6 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) {
 
 	// Invalidate cached reference index since files changed
 	s.InvalidateReferenceIndex()
-
-	return
 }
 
 // RefreshStaleFiles re-syncs every .go file whose on-disk content differs from
@@ -193,18 +201,22 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) {
 func (s *MCPServer) RefreshStaleFiles() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if s.set == nil || s.updater == nil {
 		return
 	}
 
 	var events []watch.ChangeEvent
+
 	tree := s.set.Sources()
 	for _, dir := range tree.Dirs() {
 		events = append(events, staleEvents(tree, dir)...)
 	}
+
 	if len(events) == 0 {
 		return
 	}
+
 	s.logger.Info("refreshing files changed outside the workspace", "files", len(events))
 	s.updater.HandleChanges(events)
 	s.InvalidateReferenceIndex()
@@ -214,9 +226,11 @@ func (s *MCPServer) RefreshStaleFiles() {
 // change event for each one that was removed, edited or added.
 func staleEvents(tree *analysis.SourceTree, dir string) []watch.ChangeEvent {
 	var events []watch.ChangeEvent
+
 	known := make(map[string]bool)
 	for _, f := range tree.Dir(dir) {
 		known[f.Name] = true
+
 		disk, err := os.ReadFile(f.Path)
 		switch {
 		case os.IsNotExist(err):
@@ -225,16 +239,20 @@ func staleEvents(tree *analysis.SourceTree, dir string) []watch.ChangeEvent {
 			events = append(events, watch.ChangeEvent{Path: f.Path, Op: fsnotify.Write})
 		}
 	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return events
 	}
+
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || known[e.Name()] {
 			continue
 		}
+
 		events = append(events, watch.ChangeEvent{Path: filepath.Join(dir, e.Name()), Op: fsnotify.Create})
 	}
+
 	return events
 }
 
@@ -248,10 +266,12 @@ func (s *MCPServer) RUnlock() { s.mu.RUnlock() }
 func (s *MCPServer) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if s.cancel != nil {
 		s.cancel()
 		s.cancel = nil
 	}
+
 	if s.watcher != nil {
 		_ = s.watcher.Close()
 		s.watcher = nil

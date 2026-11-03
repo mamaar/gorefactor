@@ -44,6 +44,7 @@ func (u *uses) add(idx int32) {
 			copy(heap, u.initial[:u.size])
 			u.code = heap
 		}
+
 		u.code = append(u.code, buf[:n]...)
 		u.size = len(u.code)
 	}
@@ -54,12 +55,15 @@ func (u *uses) decode() iter.Seq[int32] {
 	return func(yield func(int32) bool) {
 		data := u.code
 		var val int32
+
 		for len(data) > 0 {
 			delta, n := binary.Varint(data)
 			if n <= 0 {
 				return
 			}
+
 			data = data[n:]
+
 			val += int32(delta)
 			if !yield(val) {
 				return
@@ -116,12 +120,15 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 		if !ok || obj == nil {
 			continue
 		}
+
 		id := ObjectIDOf(obj)
+
 		u := ix.uses[id]
 		if u == nil {
 			u = newUses()
 			ix.uses[id] = u
 		}
+
 		u.add(cur.Index())
 	}
 
@@ -135,6 +142,7 @@ func (ix *packageIndex) Uses(obj gotypes.Object) iter.Seq[inspector.Cursor] {
 		if u == nil {
 			return
 		}
+
 		for idx := range u.decode() {
 			cur := ix.inspect.At(idx)
 			if !yield(cur) {
@@ -157,11 +165,13 @@ func (ix *packageIndex) Calls(callee gotypes.Object) iter.Seq[inspector.Cursor] 
 		if u == nil {
 			return
 		}
+
 		for idx := range u.decode() {
 			call, ok := callSiteFor(ix.inspect.At(idx))
 			if !ok {
 				continue
 			}
+
 			if !yield(call) {
 				return
 			}
@@ -194,6 +204,7 @@ func callSiteFor(cur inspector.Cursor) (inspector.Cursor, bool) {
 		if !parent.Valid() {
 			return inspector.Cursor{}, false
 		}
+
 		switch cur.ParentEdgeKind() {
 		case edge.CallExpr_Fun:
 			return parent, true
@@ -203,6 +214,7 @@ func callSiteFor(cur inspector.Cursor) (inspector.Cursor, bool) {
 			return inspector.Cursor{}, false
 		}
 	}
+
 	return inspector.Cursor{}, false
 }
 
@@ -259,15 +271,19 @@ func (wi *workspaceIndex) cursorToEntry(cur inspector.Cursor, isDecl bool) (obje
 	if node == nil {
 		return objectEntry{}, false
 	}
+
 	pos := node.Pos()
+
 	tf := wi.fileSet.File(pos)
 	if tf == nil {
 		return objectEntry{}, false
 	}
+
 	file := wi.tokenToFile[tf]
 	if file == nil {
 		return objectEntry{}, false
 	}
+
 	return objectEntry{
 		File:          file,
 		Pos:           pos,
@@ -294,6 +310,7 @@ func canonicalObject(obj gotypes.Object) gotypes.Object {
 			}
 		}
 	}
+
 	return obj
 }
 
@@ -313,10 +330,12 @@ func ObjectIDOf(obj gotypes.Object) ObjectID {
 	if obj == nil || !obj.Pos().IsValid() {
 		return ObjectID{obj: obj}
 	}
+
 	id := ObjectID{pos: obj.Pos()}
 	if obj.Pkg() != nil {
 		id.pkg = obj.Pkg().Path()
 	}
+
 	return id
 }
 
@@ -325,5 +344,6 @@ func sameObject(a, b gotypes.Object) bool {
 	if a == nil || b == nil {
 		return false
 	}
+
 	return ObjectIDOf(a) == ObjectIDOf(b)
 }

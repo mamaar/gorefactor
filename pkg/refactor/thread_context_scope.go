@@ -86,15 +86,18 @@ func scopeCtxVar(s *gotypes.Scope, callPos token.Pos) (*gotypes.Var, bool) {
 			return v, true
 		}
 	}
+
 	for _, name := range s.Names() {
 		if name == "ctx" {
 			continue // already tried above
 		}
+
 		v, ok := acceptScopeVar(s.Lookup(name), callPos, analysis.IsContextType)
 		if ok {
 			return v, true
 		}
 	}
+
 	return nil, false
 }
 
@@ -106,12 +109,15 @@ func acceptScopeVar(obj gotypes.Object, callPos token.Pos, typeOK func(gotypes.T
 	if !ok {
 		return nil, false
 	}
+
 	if !typeOK(v.Type()) {
 		return nil, false
 	}
+
 	if v.Pos() >= callPos {
 		return nil, false
 	}
+
 	return v, true
 }
 
@@ -123,20 +129,24 @@ func requestParamCtx(pkg *pkgtypes.Package, fn *ast.FuncDecl) (ctxSource, bool) 
 	if fn == nil || fn.Type.Params == nil {
 		return ctxSource{}, false
 	}
+
 	for _, field := range fn.Type.Params.List {
 		for _, name := range field.Names {
 			if name.Name == "_" {
 				continue
 			}
+
 			obj := pkg.TypesInfo.Defs[name]
 			if obj == nil {
 				continue
 			}
+
 			if analysis.IsHTTPRequestPtr(obj.Type()) {
 				return ctxSource{Expr: name.Name + ".Context()", Kind: ctxFromRequest}, true
 			}
 		}
 	}
+
 	return ctxSource{}, false
 }
 
@@ -157,23 +167,29 @@ func isFakeRootCtxCreation(fn *ast.FuncDecl) (*ast.AssignStmt, bool) {
 	if fn == nil || fn.Body == nil {
 		return nil, false
 	}
+
 	for _, stmt := range fn.Body.List {
 		assign, ok := stmt.(*ast.AssignStmt)
 		if !ok || assign.Tok != token.DEFINE {
 			continue
 		}
+
 		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			continue
 		}
+
 		lhs, ok := assign.Lhs[0].(*ast.Ident)
 		if !ok || lhs.Name != "ctx" {
 			continue
 		}
+
 		if !isRootContextCall(assign.Rhs[0]) {
 			continue
 		}
+
 		return assign, true
 	}
+
 	return nil, false
 }
 
@@ -203,6 +219,7 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 				return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 			}
 		}
+
 		return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
 	}
 
@@ -233,6 +250,7 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 		if ok && !cleanupHelper {
 			return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 		}
+
 		if file != nil && isTestDecl(file, fn) && hasTestingTBParam(pkg, fn.Type) {
 			return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
 		}
@@ -249,21 +267,26 @@ func inCleanupClosure(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExp
 	}
 	var stack []ast.Node
 	found := false
+
 	ast.Inspect(fn, func(n ast.Node) bool {
 		if n == nil {
 			stack = stack[:len(stack)-1]
 			return false
 		}
+
 		if found || call.Pos() < n.Pos() || call.End() > n.End() {
 			return false
 		}
+
 		stack = append(stack, n)
 		if n == call {
 			found = anyCleanupArg(pkg, stack)
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -275,15 +298,18 @@ func anyCleanupArg(pkg *pkgtypes.Package, stack []ast.Node) bool {
 		if !ok {
 			continue
 		}
+
 		parent, ok := stack[i-1].(*ast.CallExpr)
 		if !ok || !slices.Contains(parent.Args, ast.Expr(lit)) {
 			continue
 		}
+
 		sel, ok := parent.Fun.(*ast.SelectorExpr)
 		if ok && sel.Sel.Name == "Cleanup" && analysis.IsTestingTB(pkg.TypesInfo.TypeOf(sel.X)) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -293,11 +319,13 @@ func isTestDecl(file *pkgtypes.File, fn *ast.FuncDecl) bool {
 	if fn.Recv != nil || !strings.HasSuffix(file.Path, "_test.go") {
 		return false
 	}
+
 	for _, prefix := range []string{"Test", "Benchmark", "Fuzz"} {
 		if strings.HasPrefix(fn.Name.Name, prefix) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -307,14 +335,17 @@ func firstParamIdent(ft *ast.FuncType) (*ast.Ident, bool) {
 	if ft == nil || ft.Params == nil || len(ft.Params.List) == 0 {
 		return nil, false
 	}
+
 	field := ft.Params.List[0]
 	if len(field.Names) == 0 {
 		return nil, false
 	}
+
 	name := field.Names[0]
 	if name.Name == "_" {
 		return nil, false
 	}
+
 	return name, true
 }
 
@@ -338,16 +369,19 @@ func testingTBParam(pkg *pkgtypes.Package, ft *ast.FuncType, accept func(*ast.Id
 	if ft == nil || ft.Params == nil {
 		return nil, false
 	}
+
 	for _, field := range ft.Params.List {
 		for _, name := range field.Names {
 			if name.Name == "_" {
 				continue
 			}
+
 			if analysis.IsTestingTB(paramType(pkg, name)) && accept(name) {
 				return name, true
 			}
 		}
 	}
+
 	return nil, false
 }
 
@@ -357,9 +391,11 @@ func paramVisibleAt(pkg *pkgtypes.Package, param *ast.Ident, pos token.Pos) bool
 	if pkg.TypesPkg == nil {
 		return false
 	}
+
 	want := pkg.TypesInfo.Defs[param]
 	_, inner := scopeAt(pkg, pos)
 	_, got := inner.LookupParent(param.Name, pos)
+
 	return want != nil && got == want
 }
 
@@ -371,12 +407,15 @@ func scopeAt(pkg *pkgtypes.Package, pos token.Pos) (pkgScope, inner *gotypes.Sco
 		if tp == nil {
 			continue
 		}
+
 		pkgScope = tp.Scope()
+
 		inner = pkgScope.Innermost(pos)
 		if inner != nil {
 			return pkgScope, inner
 		}
 	}
+
 	return pkgScope, nil
 }
 
@@ -387,6 +426,7 @@ func paramType(pkg *pkgtypes.Package, ident *ast.Ident) gotypes.Type {
 	if obj == nil {
 		return nil
 	}
+
 	return obj.Type()
 }
 
@@ -397,9 +437,11 @@ func uniqueCtxName(pkg *pkgtypes.Package, fn *ast.FuncDecl) string {
 	if pkg == nil || pkg.TypesInfo == nil || fn == nil {
 		return "ctx"
 	}
+
 	if !fnBindsNonCtxName(pkg, fn, "ctx") {
 		return "ctx"
 	}
+
 	for i := 0; ; i++ {
 		candidate := fmt.Sprintf("ctx%d", i)
 		if !fnBindsNonCtxName(pkg, fn, candidate) {
@@ -424,23 +466,29 @@ func uniqueCtxName(pkg *pkgtypes.Package, fn *ast.FuncDecl) string {
 // what callers mean by the injected `ctx` parameter, so any depth counts.
 func fnBindsNonCtxName(pkg *pkgtypes.Package, fn *ast.FuncDecl, name string) bool {
 	found := false
+
 	ast.Inspect(fn, func(n ast.Node) bool {
 		if found {
 			return false
 		}
+
 		ident, ok := n.(*ast.Ident)
 		if !ok || ident.Name != name {
 			return true
 		}
+
 		obj, ok := pkg.TypesInfo.Defs[ident]
 		if !ok || obj == nil {
 			return true
 		}
+
 		if !analysis.IsContextType(obj.Type()) {
 			found = true
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }

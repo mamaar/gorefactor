@@ -90,6 +90,7 @@ func NewSymbolResolver(ws *types.Workspace, logger *slog.Logger) *SymbolResolver
 		logger:    logger,
 	}
 	sr.scopeAnalyzer = NewScopeAnalyzer(sr)
+
 	return sr
 }
 
@@ -129,6 +130,7 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 	for _, file := range pkg.Files {
 		sr.extractStructFieldSymbols(file, symbolTable)
 	}
+
 	for _, file := range pkg.TestFiles {
 		sr.extractStructFieldSymbols(file, symbolTable)
 	}
@@ -149,6 +151,7 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 	}
 
 	pkg.Symbols = symbolTable
+
 	return symbolTable, nil
 }
 
@@ -180,6 +183,7 @@ func (sr *SymbolResolver) BuildReferenceIndex() *ReferenceIndex {
 	sr.logger.Info("reference index built successfully",
 		"name_entries", len(idx.names()),
 		"workspace_packages", len(idx.workspaceIdx.packages))
+
 	return idx
 }
 
@@ -198,6 +202,7 @@ func (sr *SymbolResolver) buildWorkspaceIndex() *workspaceIndex {
 		if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 			continue
 		}
+
 		files := indexedFiles(pkg)
 		if len(files) > 0 {
 			b.jobs = append(b.jobs, objectIndexJob{pkg: pkg, files: files})
@@ -209,6 +214,7 @@ func (sr *SymbolResolver) buildWorkspaceIndex() *workspaceIndex {
 		wg.Add(1)
 		go b.build(i, &wg)
 	}
+
 	wg.Wait()
 
 	wsIdx := newWorkspaceIndex(sr.workspace.FileSet)
@@ -221,6 +227,7 @@ func (sr *SymbolResolver) buildWorkspaceIndex() *workspaceIndex {
 			}
 		}
 	}
+
 	return wsIdx
 }
 
@@ -228,6 +235,7 @@ func (sr *SymbolResolver) buildWorkspaceIndex() *workspaceIndex {
 // in name order, so that every view lists the same files the same way.
 func indexedFiles(pkg *types.Package) []*types.File {
 	var files []*types.File
+
 	for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 		for _, name := range slices.Sorted(maps.Keys(group)) {
 			f := group[name]
@@ -236,6 +244,7 @@ func indexedFiles(pkg *types.Package) []*types.File {
 			}
 		}
 	}
+
 	return files
 }
 
@@ -254,11 +263,14 @@ type objectIndexBuilder struct {
 
 func (b *objectIndexBuilder) build(i int, wg *sync.WaitGroup) {
 	defer wg.Done()
+
 	job := &b.jobs[i]
+
 	asts := make([]*ast.File, len(job.files))
 	for j, f := range job.files {
 		asts[j] = f.AST
 	}
+
 	ins := b.resolver.inspectors.get(job.pkg.Dir, asts)
 	job.index = newPackageIndex(ins, job.pkg.TypesPkg, job.pkg.TypesInfo)
 }
@@ -306,6 +318,7 @@ func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string]
 					Pos:           node.Pos(),
 					IsDeclaration: declPositions[node.Pos()],
 				}
+
 				alias, found := selectorMap[node.Pos()]
 				if found {
 					entry.IsSelector = true
@@ -332,8 +345,10 @@ func (sr *SymbolResolver) indexFileLocal(file *types.File, nameIndex map[string]
 						}
 					}
 				}
+
 				nameIndex[node.Name] = append(nameIndex[node.Name], entry)
 			}
+
 			return true
 		},
 	)
@@ -360,6 +375,7 @@ func (sr *SymbolResolver) newNameIndexBuilder() *nameIndexBuilder {
 	for _, pkg := range sr.workspace.Packages {
 		b.jobs = append(b.jobs, nameIndexJob{info: pkg.TypesInfo, files: indexedFiles(pkg)})
 	}
+
 	return b
 }
 
@@ -368,28 +384,35 @@ func (b *nameIndexBuilder) run() map[string][]indexEntry {
 	for i := range b.jobs {
 		b.next <- i
 	}
+
 	close(b.next)
 
 	b.locals = make([]map[string][]indexEntry, workerCount(len(b.jobs)))
 	var wg sync.WaitGroup
+
 	for w := range b.locals {
 		b.locals[w] = make(map[string][]indexEntry)
+
 		wg.Add(1)
 		go b.work(w, &wg)
 	}
+
 	wg.Wait()
 
 	merged := make(map[string][]indexEntry)
+
 	for _, local := range b.locals {
 		for name, entries := range local {
 			merged[name] = append(merged[name], entries...)
 		}
 	}
+
 	return merged
 }
 
 func (b *nameIndexBuilder) work(w int, wg *sync.WaitGroup) {
 	defer wg.Done()
+
 	local := b.locals[w]
 	for i := range b.next {
 		job := b.jobs[i]
@@ -397,6 +420,7 @@ func (b *nameIndexBuilder) work(w int, wg *sync.WaitGroup) {
 			b.resolver.indexPackageTyped(job, local)
 			continue
 		}
+
 		for _, f := range job.files {
 			b.resolver.indexFileLocal(f, local)
 		}
@@ -419,6 +443,7 @@ func (f *typedFile) visit(n ast.Node) bool {
 			f.qualifiers[sel.Sel.Pos()] = x.Name
 		}
 	}
+
 	return true
 }
 
@@ -427,6 +452,7 @@ func (f *typedFile) visit(n ast.Node) bool {
 // pointer-equality matching.
 func (sr *SymbolResolver) indexPackageTyped(job nameIndexJob, nameIndex map[string][]indexEntry) {
 	fset := sr.workspace.FileSet
+
 	files := make(map[*token.File]*typedFile, len(job.files))
 	for _, f := range job.files {
 		tf := &typedFile{file: f, qualifiers: make(map[token.Pos]string)}
@@ -438,10 +464,12 @@ func (sr *SymbolResolver) indexPackageTyped(job nameIndexJob, nameIndex map[stri
 		if obj == nil {
 			continue
 		}
+
 		tf := files[fset.File(ident.Pos())]
 		if tf == nil {
 			continue
 		}
+
 		nameIndex[ident.Name] = append(nameIndex[ident.Name], indexEntry{
 			File:          tf.file,
 			Pos:           ident.Pos(),
@@ -454,16 +482,20 @@ func (sr *SymbolResolver) indexPackageTyped(job nameIndexJob, nameIndex map[stri
 		if obj == nil {
 			continue
 		}
+
 		tf := files[fset.File(ident.Pos())]
 		if tf == nil {
 			continue
 		}
+
 		entry := indexEntry{File: tf.file, Pos: ident.Pos(), TypesObject: obj}
+
 		alias, ok := tf.qualifiers[ident.Pos()]
 		if ok {
 			entry.IsSelector = true
 			entry.PkgAlias = alias
 		}
+
 		nameIndex[ident.Name] = append(nameIndex[ident.Name], entry)
 	}
 }
@@ -474,6 +506,7 @@ func (idx *ReferenceIndex) ObjectEntries(obj gotypes.Object) []objectEntry {
 	if idx.workspaceIdx == nil {
 		return nil
 	}
+
 	return idx.workspaceIdx.findReferences(obj)
 }
 
@@ -598,6 +631,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 
 func fileInAnyPackage(allowedPackages map[string]*types.Package, entry *indexEntry) bool {
 	inAllowedPackage := false
+
 	for _, pkg := range allowedPackages {
 		// Check both absolute and relative paths
 		_, exists := pkg.Files[entry.File.Path]
@@ -611,6 +645,7 @@ func fileInAnyPackage(allowedPackages map[string]*types.Package, entry *indexEnt
 			break
 		}
 	}
+
 	return inAllowedPackage
 }
 
@@ -622,31 +657,38 @@ func fileInAnyPackage(allowedPackages map[string]*types.Package, entry *indexEnt
 // Offset/File/Line/Column identically.
 func (sr *SymbolResolver) objectEntriesToReferences(symbol *types.Symbol, objEntries []objectEntry, allowedPackages map[string]*types.Package) []*types.Reference {
 	var references []*types.Reference
+
 	for i := range objEntries {
 		oe := &objEntries[i]
 		if oe.Pos == symbol.Position {
 			continue
 		}
+
 		if oe.IsDeclaration {
 			continue
 		}
+
 		if allowedPackages != nil && oe.File != nil {
 			inAllowed := false
+
 			for _, pkg := range allowedPackages {
 				_, exists := pkg.Files[oe.File.Path]
 				if exists {
 					inAllowed = true
 					break
 				}
+
 				if oe.File.Package == pkg {
 					inAllowed = true
 					break
 				}
 			}
+
 			if !inAllowed {
 				continue
 			}
 		}
+
 		pos := sr.workspace.FileSet.Position(oe.Pos)
 		references = append(references, &types.Reference{
 			Symbol:   symbol,
@@ -658,6 +700,7 @@ func (sr *SymbolResolver) objectEntriesToReferences(symbol *types.Symbol, objEnt
 			Context:  sr.extractContext2(oe.File, pos.Line),
 		})
 	}
+
 	return references
 }
 
@@ -674,6 +717,7 @@ func (sr *SymbolResolver) FindMemberReferences(symbol *types.Symbol, idx *Refere
 	if symbol.Kind == types.MethodSymbol {
 		noun = "method"
 	}
+
 	if idx == nil || idx.workspaceIdx == nil || len(idx.workspaceIdx.packages) == 0 {
 		return nil, &types.RefactorError{
 			Type: types.InvalidOperation,
@@ -713,6 +757,7 @@ func (sr *SymbolResolver) FindMemberReferences(symbol *types.Symbol, idx *Refere
 	}
 
 	objEntries := idx.workspaceIdx.findReferences(obj)
+
 	return sr.objectEntriesToReferences(symbol, objEntries, nil), nil
 }
 
@@ -727,6 +772,7 @@ func (sr *SymbolResolver) findPackageForSymbol(symbol *types.Symbol) *types.Pack
 			pkg = sr.workspace.Packages[fsPath]
 		}
 	}
+
 	return pkg
 }
 
@@ -736,6 +782,7 @@ func (sr *SymbolResolver) isNonDeclarationReference(entry *indexEntry, symbol *t
 	if entry.Pos == symbol.Position {
 		return false
 	}
+
 	if entry.IsDeclaration {
 		return false
 	}
@@ -749,8 +796,10 @@ func (sr *SymbolResolver) isNonDeclarationReference(entry *indexEntry, symbol *t
 		if entry.IsMethodCall && symbol.Kind == types.MethodSymbol {
 			return sr.isMethodCallMatch(entry, symbol)
 		}
+
 		return sr.importAliasRefersToPackage(entry.PkgAlias, entry.File, symbol.Package)
 	}
+
 	return sr.isSamePackage(entry.File.Package, symbol.Package)
 }
 
@@ -760,6 +809,7 @@ func (sr *SymbolResolver) extractContext2(file *types.File, line int) string {
 	if line > 0 && line <= len(lines) {
 		return strings.TrimSpace(lines[line-1])
 	}
+
 	return ""
 }
 
@@ -767,6 +817,7 @@ func (sr *SymbolResolver) extractContext2(file *types.File, line int) string {
 func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types.Symbol, error) {
 	// Try cache first
 	cacheKey := fmt.Sprintf("%s:%s", pkg.Path, name)
+
 	cached := sr.cache.GetResolvedRef(cacheKey)
 	if cached != nil {
 		return cached, nil
@@ -791,6 +842,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 		parts := strings.Split(name, ".")
 		if len(parts) == 2 {
 			typeName, member := parts[0], parts[1]
+
 			methods, exists := pkg.Symbols.Methods[typeName]
 			if exists {
 				for _, method := range methods {
@@ -800,6 +852,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 					}
 				}
 			}
+
 			fields, exists := pkg.Symbols.Fields[typeName]
 			if exists {
 				for _, field := range fields {
@@ -820,6 +873,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 
 	// Check different symbol types
 	var err error
+
 	symbol, err = sr.lookupBareName(pkg, name)
 	if err != nil {
 		return nil, err
@@ -857,21 +911,25 @@ func bareFieldNameError(pkg *types.Package, name string) error {
 			File: pkg.Dir,
 		}
 	}
+
 	return nil
 }
 
 func (sr *SymbolResolver) unknownMemberError(pkg *types.Package, typeName string, member string, name string) (*types.Symbol, error) {
 	_, typeIsKnown := pkg.Symbols.Types[typeName]
 	methodsForType := pkg.Symbols.Methods[typeName]
+
 	fieldsForType := pkg.Symbols.Fields[typeName]
 	if typeIsKnown || len(methodsForType) > 0 || len(fieldsForType) > 0 {
 		var availFields, availMethods []string
 		for _, f := range fieldsForType {
 			availFields = append(availFields, f.Name)
 		}
+
 		for _, m := range methodsForType {
 			availMethods = append(availMethods, m.Name)
 		}
+
 		return nil, &types.RefactorError{
 			Type: types.SymbolNotFound,
 			Message: fmt.Sprintf(
@@ -882,6 +940,7 @@ func (sr *SymbolResolver) unknownMemberError(pkg *types.Package, typeName string
 			File: pkg.Dir,
 		}
 	}
+
 	return nil, &types.RefactorError{
 		Type: types.SymbolNotFound,
 		Message: fmt.Sprintf(
@@ -893,6 +952,7 @@ func (sr *SymbolResolver) unknownMemberError(pkg *types.Package, typeName string
 
 func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string) (*types.Symbol, error) {
 	var found *types.Symbol
+
 	sym, exists := pkg.Symbols.Functions[name]
 	if exists {
 		found = sym
@@ -912,22 +972,28 @@ func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string) (*type
 					// Check for method symbols by searching through all receivers.
 					// Detect ambiguity when multiple receiver types define the same method.
 					var matchingReceivers []string
+
 					for recvType, methods := range pkg.Symbols.Methods {
 						for _, method := range methods {
 							if method.Name != name {
 								continue
 							}
+
 							found = method
+
 							matchingReceivers = append(matchingReceivers, recvType)
+
 							break
 						}
 					}
+
 					if len(matchingReceivers) > 1 {
 						// Ambiguous: multiple receiver types have this method
 						var suggestions []string
 						for _, recv := range matchingReceivers {
 							suggestions = append(suggestions, recv+"."+name)
 						}
+
 						return found, &types.RefactorError{
 							Type: types.SymbolNotFound,
 							Message: fmt.Sprintf(
@@ -940,11 +1006,13 @@ func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string) (*type
 			}
 		}
 	}
+
 	return found, nil
 }
 
 func qualifiedFieldsNamed(pkg *types.Package, name string) []string {
 	var fieldSuggestions []string
+
 	for typeName, fields := range pkg.Symbols.Fields {
 		for _, field := range fields {
 			if field.Name == name {
@@ -953,6 +1021,7 @@ func qualifiedFieldsNamed(pkg *types.Package, name string) []string {
 			}
 		}
 	}
+
 	return fieldSuggestions
 }
 
@@ -962,6 +1031,7 @@ func formatMemberList(names []string) string {
 	if len(names) == 0 {
 		return "(none)"
 	}
+
 	return strings.Join(names, ", ")
 }
 
@@ -975,6 +1045,7 @@ func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *
 		// must not crash symbol-table rebuilds for the whole package.
 		return
 	}
+
 	for _, decl := range file.AST.Decls {
 		switch node := decl.(type) {
 		case *ast.FuncDecl:
@@ -990,8 +1061,6 @@ func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *
 			sr.extractGenDeclSymbols(node, file, symbolTable)
 		}
 	}
-
-	return
 }
 
 // shadowsProduction reports whether symbol, from a test file, would replace
@@ -1062,6 +1131,7 @@ func (sr *SymbolResolver) extractGenDeclSymbols(genDecl *ast.GenDecl, file *type
 				if genDecl.Tok == token.CONST {
 					table, kind = symbolTable.Constants, types.ConstantSymbol
 				}
+
 				symbol.Kind = kind
 				if !shadowsProduction(table[symbol.Name], symbol) {
 					table[symbol.Name] = symbol
@@ -1121,11 +1191,13 @@ func (sr *SymbolResolver) extractStructFieldSymbols(file *types.File, symbolTabl
 		if !ok || genDecl.Tok != token.TYPE {
 			continue
 		}
+
 		for _, spec := range genDecl.Specs {
 			typeSpec, ok := spec.(*ast.TypeSpec)
 			if !ok {
 				continue
 			}
+
 			structType, ok := typeSpec.Type.(*ast.StructType)
 			if !ok || structType.Fields == nil {
 				continue
@@ -1150,8 +1222,10 @@ func (sr *SymbolResolver) extractStructFieldSymbols(file *types.File, symbolTabl
 				if len(field.Names) == 0 {
 					continue
 				}
+
 				for _, name := range field.Names {
 					pos := sr.workspace.FileSet.Position(name.Pos())
+
 					fieldSymbol := &types.Symbol{
 						Name:     name.Name,
 						Kind:     types.StructFieldSymbol,
@@ -1167,6 +1241,7 @@ func (sr *SymbolResolver) extractStructFieldSymbols(file *types.File, symbolTabl
 					if field.Doc != nil {
 						fieldSymbol.DocComment = field.Doc.Text()
 					}
+
 					symbolTable.Fields[typeName] = append(symbolTable.Fields[typeName], fieldSymbol)
 				}
 			}
@@ -1196,6 +1271,7 @@ func (sr *SymbolResolver) extractInterfaceMethodSymbols(typeSpec *ast.TypeSpec, 
 		if len(field.Names) == 0 {
 			continue // embedded interface, skip
 		}
+
 		for _, name := range field.Names {
 			pos := sr.workspace.FileSet.Position(name.Pos())
 			methodSymbol := &types.Symbol{
@@ -1210,9 +1286,11 @@ func (sr *SymbolResolver) extractInterfaceMethodSymbols(typeSpec *ast.TypeSpec, 
 				Exported: sr.isExported(name.Name),
 				Parent:   ifaceSym,
 			}
+
 			if symbolTable.Methods[ifaceName] == nil {
 				symbolTable.Methods[ifaceName] = make([]*types.Symbol, 0)
 			}
+
 			symbolTable.Methods[ifaceName] = append(symbolTable.Methods[ifaceName], methodSymbol)
 		}
 	}
@@ -1227,12 +1305,14 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 
 	info := checkedInfo(pkg, file)
 	var roles *identRoles
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		ident, ok := n.(*ast.Ident)
 		if !ok || ident.Name != symbol.Name || ident.Pos() == symbol.Position {
 			return true
 		}
 		var refers bool
+
 		obj, resolved := identObject(info, ident)
 		if target != nil && resolved {
 			refers = sameObject(obj, target)
@@ -1240,11 +1320,14 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 			if roles == nil {
 				roles = newIdentRoles(file.AST)
 			}
+
 			refers = sr.nameRefersToSymbol(ident, file, roles, symbol)
 		}
+
 		if refers {
 			references = append(references, sr.referenceAt(file, ident, symbol))
 		}
+
 		return true
 	})
 
@@ -1253,6 +1336,7 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 
 func (sr *SymbolResolver) referenceAt(file *types.File, ident *ast.Ident, symbol *types.Symbol) *types.Reference {
 	pos := sr.workspace.FileSet.Position(ident.Pos())
+
 	return &types.Reference{
 		Symbol:   symbol,
 		Position: ident.Pos(),
@@ -1274,6 +1358,7 @@ func (sr *SymbolResolver) FindEmbeddedFieldReferences(symbol *types.Symbol) []*t
 		return nil
 	}
 	var references []*types.Reference
+
 	for _, pkg := range sr.workspace.Packages {
 		for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 			for _, file := range files {
@@ -1281,35 +1366,42 @@ func (sr *SymbolResolver) FindEmbeddedFieldReferences(symbol *types.Symbol) []*t
 				if info == nil || file.AST == nil {
 					continue
 				}
+
 				ast.Inspect(file.AST, func(n ast.Node) bool {
 					ident, ok := n.(*ast.Ident)
 					if !ok || ident.Name != symbol.Name {
 						return true
 					}
+
 					if field, ok := info.Uses[ident].(*gotypes.Var); ok && field.IsField() && field.Embedded() && sameObject(embeddedTypeName(field), target) {
 						references = append(references, sr.referenceAt(file, ident, symbol))
 					}
+
 					return true
 				})
 			}
 		}
 	}
+
 	return references
 }
 
 // embeddedTypeName returns the declared name of the type an embedded field embeds.
 func embeddedTypeName(field *gotypes.Var) gotypes.Object {
 	t := field.Type()
+
 	p, ok := t.(*gotypes.Pointer)
 	if ok {
 		t = p.Elem()
 	}
+
 	switch t := t.(type) {
 	case *gotypes.Named:
 		return t.Origin().Obj()
 	case *gotypes.Alias:
 		return t.Obj()
 	}
+
 	return nil
 }
 
@@ -1321,16 +1413,20 @@ func checkedInfo(pkg *types.Package, file *types.File) *gotypes.Info {
 	if pkg == nil || pkg.TypesInfo == nil || pkg.TypesInfo.Uses == nil || pkg.TypesPkg == nil {
 		return nil
 	}
+
 	for name, f := range pkg.TestFiles {
 		if f != file {
 			continue
 		}
+
 		pkgName := file.AST.Name.Name
+
 		_, excluded := pkg.ExcludedTestFiles[name]
 		if excluded || (pkgName != pkg.TypesPkg.Name() && pkgName != pkg.TypesPkg.Name()+"_test") {
 			return nil
 		}
 	}
+
 	return pkg.TypesInfo
 }
 
@@ -1340,13 +1436,16 @@ func identObject(info *gotypes.Info, ident *ast.Ident) (obj gotypes.Object, reso
 	if info == nil {
 		return nil, false
 	}
+
 	if obj, ok := info.Uses[ident]; ok {
 		return obj, true
 	}
+
 	_, ok := info.Defs[ident]
 	if ok {
 		return nil, true
 	}
+
 	return nil, false
 }
 
@@ -1400,8 +1499,10 @@ func newIdentRoles(f *ast.File) *identRoles {
 				}
 			}
 		}
+
 		return true
 	})
+
 	return r
 }
 
@@ -1412,11 +1513,13 @@ func (sr *SymbolResolver) nameRefersToSymbol(ident *ast.Ident, file *types.File,
 	if roles.nonReference[ident] {
 		return false
 	}
+
 	sel, ok := roles.selector[ident]
 	if ok {
 		x, ok := sel.X.(*ast.Ident)
 		return ok && sr.importAliasRefersToPackage(x.Name, file, symbol.Package)
 	}
+
 	return sr.isSamePackage(file.Package, symbol.Package)
 }
 
@@ -1457,6 +1560,7 @@ func (sr *SymbolResolver) importAliasRefersToPackage(alias string, file *types.F
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1476,6 +1580,7 @@ func (sr *SymbolResolver) isSamePackage(filePkg *types.Package, targetPkg string
 	// Try converting module-relative import path to absolute path for comparison
 	if sr.workspace.Module != nil && strings.HasPrefix(targetPkg, sr.workspace.Module.Path+"/") {
 		relativePath := strings.TrimPrefix(targetPkg, sr.workspace.Module.Path+"/")
+
 		absPath := sr.workspace.RootPath + "/" + relativePath
 		if filePkg.Path == absPath {
 			return true
@@ -1484,11 +1589,13 @@ func (sr *SymbolResolver) isSamePackage(filePkg *types.Package, targetPkg string
 	// Try converting absolute path to module-relative for comparison
 	if sr.workspace.Module != nil && strings.HasPrefix(filePkg.Path, sr.workspace.RootPath+"/") {
 		relativePath := strings.TrimPrefix(filePkg.Path, sr.workspace.RootPath+"/")
+
 		moduleRelative := sr.workspace.Module.Path + "/" + relativePath
 		if moduleRelative == targetPkg {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1509,6 +1616,7 @@ func (sr *SymbolResolver) extractReceiverTypeName(recv *ast.FieldList) string {
 	if recv == nil || len(recv.List) == 0 {
 		return ""
 	}
+
 	field := recv.List[0]
 	switch typ := field.Type.(type) {
 	case *ast.Ident:
@@ -1519,6 +1627,7 @@ func (sr *SymbolResolver) extractReceiverTypeName(recv *ast.FieldList) string {
 			return ident.Name
 		}
 	}
+
 	return ""
 }
 
@@ -1579,6 +1688,7 @@ func (sr *SymbolResolver) ResolveMethodSet(symbol *types.Symbol) ([]*types.Symbo
 	}
 
 	cacheKey := fmt.Sprintf("methodset:%s:%s", symbol.Package, symbol.Name)
+
 	cached := sr.cache.GetMethodSet(cacheKey)
 	if cached != nil {
 		return cached, nil
@@ -1595,6 +1705,7 @@ func (sr *SymbolResolver) ResolveMethodSet(symbol *types.Symbol) ([]*types.Symbo
 			relativePath := strings.TrimPrefix(symbol.Package, sr.workspace.Module.Path+"/")
 			// Construct absolute path
 			absPath := sr.workspace.RootPath + "/" + relativePath
+
 			p, exists := sr.workspace.Packages[absPath]
 			if exists {
 				pkg = p
@@ -1619,6 +1730,7 @@ func (sr *SymbolResolver) ResolveMethodSet(symbol *types.Symbol) ([]*types.Symbo
 	}
 
 	sr.cache.SetMethodSet(cacheKey, methods)
+
 	return methods, nil
 }
 
@@ -1655,14 +1767,17 @@ func (sr *SymbolResolver) ResolveEmbeddedFields(symbol *types.Symbol) ([]*types.
 					if len(field.Names) != 0 {
 						continue
 					}
+
 					embeddedSymbol := sr.resolveFieldType(field.Type, file)
 					if embeddedSymbol != nil {
 						embeddedFields = append(embeddedFields, embeddedSymbol)
 					}
 				}
 			}
+
 			return false
 		}
+
 		return true
 	})
 
@@ -1700,6 +1815,7 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 		if strings.HasSuffix(iface.File, "_test.go") {
 			return []*types.Symbol{}, nil
 		}
+
 		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: "could not find file containing interface",
@@ -1718,17 +1834,21 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 		typeSpec, ok := n.(*ast.TypeSpec)
 		if ok && typeSpec.Name.Name == iface.Name {
 			sr.logger.Debug("Found TypeSpec", "name", iface.Name)
+
 			interfaceType, ok := typeSpec.Type.(*ast.InterfaceType)
 			if ok {
 				sr.logger.Debug("Found InterfaceType", "method_count", len(interfaceType.Methods.List))
+
 				for i, method := range interfaceType.Methods.List {
 					sr.logger.Debug("Processing method/field",
 						"index", i,
 						"names", method.Names,
 						"type", fmt.Sprintf("%T", method.Type))
+
 					if len(method.Names) > 0 {
 						// Named method
 						sr.logger.Debug("Named method", "name_count", len(method.Names))
+
 						for _, name := range method.Names {
 							pos := sr.workspace.FileSet.Position(name.Pos())
 							methodSymbol := &types.Symbol{
@@ -1744,11 +1864,13 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 								Parent:   iface,
 							}
 							methods = append(methods, methodSymbol)
+
 							sr.logger.Debug("Added method", "name", name.Name)
 						}
 					} else {
 						// Embedded interface - recursively get its methods
 						sr.logger.Debug("Embedded field (no names)")
+
 						ident, ok := method.Type.(*ast.Ident)
 						if ok {
 							sr.logger.Debug("Type is *ast.Ident", "name", ident.Name)
@@ -1759,20 +1881,24 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 								if sr.workspace.Module != nil && strings.HasPrefix(iface.Package, sr.workspace.Module.Path+"/") {
 									relativePath := strings.TrimPrefix(iface.Package, sr.workspace.Module.Path+"/")
 									absPath := sr.workspace.RootPath + "/" + relativePath
+
 									p, exists := sr.workspace.Packages[absPath]
 									if exists {
 										pkg = p
+
 										sr.logger.Debug("Found package by converting module path to absolute",
 											"iface.Package", iface.Package,
 											"absPath", absPath)
 									}
 								}
 							}
+
 							if pkg == nil {
 								sr.logger.Debug("Package not found for embedded interface",
 									"iface.Package", iface.Package,
 									"embedded", ident.Name)
 							}
+
 							if pkg != nil && pkg.Symbols != nil {
 								sr.logger.Debug("Looking up in package symbols",
 									"name", ident.Name,
@@ -1784,15 +1910,18 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 								for typeName := range pkg.Symbols.Types {
 									typeNames = append(typeNames, typeName)
 								}
+
 								sr.logger.Debug("Available types in package", "types", typeNames)
 
 								// Check if it's a type (interface)
 								embeddedIface, exists := pkg.Symbols.Types[ident.Name]
 								if exists {
 									sr.logger.Debug("Found type", "name", ident.Name, "kind", embeddedIface.Kind)
+
 									if embeddedIface.Kind == types.InterfaceSymbol {
 										// Recursively get methods from embedded interface
 										sr.logger.Debug("Recursively getting methods", "interface", ident.Name)
+
 										embeddedMethods, err := sr.getInterfaceMethods(embeddedIface)
 										if err == nil {
 											sr.logger.Debug("Got methods from interface",
@@ -1815,8 +1944,10 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 					}
 				}
 			}
+
 			return false
 		}
+
 		return true
 	})
 
@@ -1857,6 +1988,7 @@ func (sr *SymbolResolver) findFileContainingSymbol(symbol *types.Symbol) *types.
 		if ok {
 			pkg = sr.workspace.Packages[fsPath]
 		}
+
 		if pkg == nil {
 			return nil
 		}
@@ -1864,10 +1996,12 @@ func (sr *SymbolResolver) findFileContainingSymbol(symbol *types.Symbol) *types.
 
 	// Try direct lookup first (files are keyed by basename)
 	baseName := filepath.Base(symbol.File)
+
 	file := pkg.Files[baseName]
 	if file != nil {
 		return file
 	}
+
 	file = pkg.TestFiles[baseName]
 	if file != nil {
 		return file
@@ -1879,6 +2013,7 @@ func (sr *SymbolResolver) findFileContainingSymbol(symbol *types.Symbol) *types.
 			return file
 		}
 	}
+
 	for _, file := range pkg.TestFiles {
 		if file.Path == symbol.File {
 			return file
@@ -1906,6 +2041,7 @@ func (sr *SymbolResolver) resolveFieldType(expr ast.Expr, file *types.File) *typ
 				if !strings.HasSuffix(pkg.Path, pkgIdent.Name) {
 					continue
 				}
+
 				symbol, err := sr.ResolveSymbol(pkg, t.Sel.Name)
 				if err == nil {
 					return symbol
@@ -1954,6 +2090,7 @@ func (sr *SymbolResolver) resolveReceiverType(entry *indexEntry) *types.Symbol {
 
 	// Use scope analyzer to get the type of the receiver identifier
 	receiverType := sr.scopeAnalyzer.GetIdentifierType(entry.ReceiverName, entry.File, entry.ReceiverPos)
+
 	return receiverType
 }
 
@@ -1970,6 +2107,7 @@ func (sr *SymbolResolver) methodBelongsToType(methodSym *types.Symbol, typeSym *
 		// DEBUG: Log when Parent is nil
 		sr.logger.Debug("methodBelongsToType: method has nil Parent",
 			"method", methodSym.Package+"."+methodSym.Name)
+
 		return false
 	}
 
@@ -2001,24 +2139,27 @@ func (sr *SymbolResolver) methodBelongsToType(methodSym *types.Symbol, typeSym *
 	// Interface match: check if typeSym implements the interface that methodSym is part of
 	if methodReceiverType.Kind == types.InterfaceSymbol {
 		methods, err := sr.typeMethods(methodReceiverType, typeSym)
-
 		if err == nil {
 			sr.logger.Debug("Checking if method is in the list",
 				"method", methodSym.Name,
 				"package", methodSym.Package)
+
 			for _, m := range methods {
 				sr.logger.Debug("Comparing methods",
 					"m_name", m.Name,
 					"method_name", methodSym.Name,
 					"m_package", m.Package,
 					"method_package", methodSym.Package)
+
 				if m.Name != methodSym.Name || m.Package != methodSym.Package {
 					continue
 				}
 				// Also check signature match (rough check: same name)
 				sr.logger.Debug("MATCH FOUND")
+
 				return true
 			}
+
 			sr.logger.Debug("No match found in method list")
 		} else {
 			sr.logger.Debug("Error getting methods", "error", err)
@@ -2054,6 +2195,7 @@ func (sr *SymbolResolver) typeMethods(methodReceiverType *types.Symbol, typeSym 
 		sr.logger.Debug("getInterfaceMethods returned",
 			"method_count", len(methods),
 			"error", err)
+
 		for i, m := range methods {
 			sr.logger.Debug("Method",
 				"index", i,
@@ -2064,6 +2206,7 @@ func (sr *SymbolResolver) typeMethods(methodReceiverType *types.Symbol, typeSym 
 		// typeSym is a concrete type - get its method set
 		methods, err = sr.ResolveMethodSet(typeSym)
 	}
+
 	return methods, err
 }
 
@@ -2079,6 +2222,7 @@ func (sr *SymbolResolver) resolveTypesObject(symbol *types.Symbol) gotypes.Objec
 			pkg = sr.workspace.Packages[fsPath]
 		}
 	}
+
 	if pkg == nil || pkg.TypesInfo == nil {
 		return nil
 	}

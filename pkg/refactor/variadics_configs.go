@@ -54,17 +54,20 @@ func (e *DefaultEngine) VariadicsAcrossConfigs(req VariadicsRequest) (*Variadics
 		calls:     make(map[declKey]map[token.Pos]variadicCall),
 		values:    make(map[declKey]map[token.Pos]bool),
 	}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("variadics across configs: %w", err)
 	}
 	defer e.endRun(run)
+
 	for _, v := range views {
 		err := run.visit(v)
 		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
+
 	return run.report(views), nil
 }
 
@@ -107,15 +110,18 @@ func (r *variadicsRun) visit(v *analysis.View) error {
 	if !idx.HasTypeInfo() {
 		return fmt.Errorf("no package has type information")
 	}
+
 	for fn, decl := range buildFuncDeclIndex(v.Workspace) {
 		sig := fn.Signature()
 		if !sig.Variadic() || !r.wanted(decl.Pkg) {
 			continue
 		}
+
 		symbol, ok := types.SymbolKeyOf(fn)
 		if !ok {
 			continue // a blank function has no callers
 		}
+
 		key := declKey{symbol, fn.Pkg().Name()}
 		if !decl.File.Generated {
 			r.addDecl(v, fn, decl, key)
@@ -127,20 +133,25 @@ func (r *variadicsRun) visit(v *analysis.View) error {
 			r.calls[key] = make(map[token.Pos]variadicCall)
 			r.values[key] = make(map[token.Pos]bool)
 		}
+
 		for _, site := range idx.CallSitesOf(fn) {
 			r.calls[key][site.Call.Lparen] = classifyVariadicCall(site, sig)
 		}
+
 		for _, use := range idx.NonCallUsesOf(fn) {
 			r.values[key][use.Pos] = true
 		}
 	}
+
 	r.collectTypeErrors(v)
 	r.planned(v, nil)
+
 	return nil
 }
 
 func (r *variadicsRun) addDecl(v *analysis.View, fn *gotypes.Func, decl *funcDecl, key declKey) {
 	site := declSite{decl.File.Path, fn.Pos()}
+
 	d := r.decls[site]
 	if d == nil {
 		pos := v.Workspace.FileSet.Position(fn.Pos())
@@ -152,6 +163,7 @@ func (r *variadicsRun) addDecl(v *analysis.View, fn *gotypes.Func, decl *funcDec
 			Column:    pos.Column}
 		r.decls[site] = d
 	}
+
 	d.Configs = append(d.Configs, v.Config.String())
 }
 
@@ -160,6 +172,7 @@ func (k declKey) displayName() string {
 	if k.Recv == "" {
 		return k.Name
 	}
+
 	return k.Recv + "." + k.Name
 }
 
@@ -169,6 +182,7 @@ func funcSignature(fn *gotypes.Func) string {
 		if p == fn.Pkg() {
 			return ""
 		}
+
 		return p.Name()
 	})
 }
@@ -181,11 +195,14 @@ func classifyVariadicCall(site analysis.CallSite, declared *gotypes.Signature) v
 	if call.Ellipsis.IsValid() {
 		return variadicSpread
 	}
+
 	info := site.Pkg.TypesInfo
+
 	sig, ok := info.TypeOf(call.Fun).(*gotypes.Signature)
 	if !ok {
 		sig = declared
 	}
+
 	args := len(call.Args)
 	if args == 1 {
 		// f(g()) with g returning several values.
@@ -194,6 +211,7 @@ func classifyVariadicCall(site analysis.CallSite, declared *gotypes.Signature) v
 			args = tuple.Len()
 		}
 	}
+
 	passed := args - (sig.Params().Len() - 1)
 	switch {
 	case passed <= 0:
@@ -212,12 +230,15 @@ func (r *variadicsRun) report(views []*analysis.View) *VariadicsReport {
 	slices.SortFunc(decls, func(a, b *variadicDecl) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Column, b.Column))
 	})
+
 	for _, d := range decls {
 		f := d.VariadicFinding
 		if len(f.Configs) == len(views) {
 			f.Configs = nil
 		}
+
 		f.CallSites = len(r.calls[d.key])
+
 		f.ValueUses = len(r.values[d.key])
 		for _, call := range r.calls[d.key] {
 			switch call {
@@ -231,7 +252,9 @@ func (r *variadicsRun) report(views []*analysis.View) *VariadicsReport {
 				f.Spread++
 			}
 		}
+
 		out.Findings = append(out.Findings, f)
 	}
+
 	return out
 }

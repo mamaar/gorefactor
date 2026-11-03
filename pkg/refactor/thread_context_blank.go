@@ -16,19 +16,23 @@ func blankCtxField(pkg *pkgtypes.Package, fd *ast.FuncDecl) (*ast.Field, *ast.Id
 	if fd == nil || fd.Type.Params == nil || pkg.TypesInfo == nil {
 		return nil, nil
 	}
+
 	for _, field := range fd.Type.Params.List {
 		if !analysis.IsContextType(pkg.TypesInfo.TypeOf(field.Type)) {
 			continue
 		}
+
 		if len(field.Names) == 0 {
 			return field, nil
 		}
+
 		for _, name := range field.Names {
 			if name.Name == "_" {
 				return field, name
 			}
 		}
 	}
+
 	return nil, nil
 }
 
@@ -37,18 +41,23 @@ func blankCtxField(pkg *pkgtypes.Package, fd *ast.FuncDecl) (*ast.Field, *ast.Id
 // not conflict: they are reached through a selector or a literal key.
 func ctxNameConflict(pkg *pkgtypes.Package, fd *ast.FuncDecl) *ast.Ident {
 	var found *ast.Ident
+
 	ast.Inspect(fd, func(n ast.Node) bool {
 		id, ok := n.(*ast.Ident)
 		if !ok || id.Name != ctxParamName || found != nil {
 			return found == nil
 		}
+
 		obj := pkg.TypesInfo.ObjectOf(id)
+
 		v, isVar := obj.(*gotypes.Var)
 		if !isVar || !v.IsField() {
 			found = id
 		}
+
 		return found == nil
 	})
+
 	return found
 }
 
@@ -59,10 +68,12 @@ func (op *ThreadContextOperation) renameBlankCtx(plan *threadPlan, caller *gotyp
 	if fd == nil || fd.Decl == nil {
 		return false, nil
 	}
+
 	field, _ := blankCtxField(fd.Pkg, fd.Decl)
 	if field == nil {
 		return false, nil
 	}
+
 	id := ctxNameConflict(fd.Pkg, fd.Decl)
 	if id != nil {
 		return false, &pkgtypes.RefactorError{
@@ -74,8 +85,10 @@ func (op *ThreadContextOperation) renameBlankCtx(plan *threadPlan, caller *gotyp
 			Line: op.siteLine(site),
 		}
 	}
+
 	plan.Renamed[caller] = true
 	plan.Decls[caller] = fd
+
 	return true, nil
 }
 
@@ -87,11 +100,13 @@ func renderBlankCtx(ws *pkgtypes.Workspace, fd *funcDecl) []pkgtypes.Change {
 		start := ws.FileSet.Position(blank.Pos()).Offset
 		return []pkgtypes.Change{{File: fd.File.Path, Start: start, End: start + len(blank.Name), NewText: ctxParamName, Description: "Name blank context.Context parameter ctx"}}
 	}
+
 	changes := []pkgtypes.Change{ctxInsertion(ws, fd.File, field.Type.Pos(), ctxParamName+" ", "Name unnamed context.Context parameter ctx")}
 	for _, other := range fd.Decl.Type.Params.List {
 		if other != field {
 			changes = append(changes, ctxInsertion(ws, fd.File, other.Type.Pos(), "_ ", "Name unused parameter"))
 		}
 	}
+
 	return changes
 }

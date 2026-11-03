@@ -34,6 +34,7 @@ func Get(p *a.P, d a.D) int {
 
 func TestRenameSymbol_RenamesTheFieldNameOfAnEmbeddedType(t *testing.T) {
 	dir := writeInlineWorkspace(t, embeddedTypeWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -48,6 +49,7 @@ func TestRenameSymbol_RenamesTheFieldNameOfAnEmbeddedType(t *testing.T) {
 
 func TestMoveSymbol_KeepsTheFieldNameOfAnEmbeddedType(t *testing.T) {
 	dir := writeInlineWorkspace(t, embeddedTypeWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

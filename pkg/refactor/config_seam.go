@@ -34,12 +34,14 @@ type configResult struct {
 // declares, which are the declarations a linked key can name.
 func declaredFuncKeys(ws *types.Workspace) types.SymbolKeySet {
 	keys := make(types.SymbolKeySet)
+
 	for fn := range buildFuncDeclIndex(ws) {
 		key, ok := types.SymbolKeyOf(fn)
 		if ok {
 			keys[key] = struct{}{}
 		}
 	}
+
 	return keys
 }
 
@@ -84,6 +86,7 @@ type viewPrep struct {
 
 func (p *viewPrep) run(v *analysis.View) {
 	defer close(p.done)
+
 	p.index = checkedIndex(v)
 }
 
@@ -102,6 +105,7 @@ func (c *viewIndexes) prepare(views []*analysis.View) {
 	c.dropped = make(map[*analysis.View]bool)
 	c.start(views[0])
 	c.fill()
+
 	for _, v := range views[1:] {
 		if c.preps[v] == nil {
 			c.warming.Add(1)
@@ -112,13 +116,16 @@ func (c *viewIndexes) prepare(views []*analysis.View) {
 
 func (c *viewIndexes) warm(v *analysis.View) {
 	defer c.warming.Done()
+
 	v.WarmExternals()
 }
 
 func (c *viewIndexes) start(v *analysis.View) *viewPrep {
 	p := &viewPrep{done: make(chan struct{})}
+
 	c.preps[v] = p
 	go p.run(v)
+
 	return p
 }
 
@@ -128,6 +135,7 @@ func (c *viewIndexes) fill() {
 		if c.heldSecondaries() >= maxPreparedSecondaries {
 			return
 		}
+
 		if c.preps[v] == nil && c.indexes[v] == nil && !c.dropped[v] {
 			c.start(v)
 		}
@@ -138,11 +146,13 @@ func (c *viewIndexes) fill() {
 // are being type-checked.
 func (c *viewIndexes) heldSecondaries() int {
 	n := 0
+
 	for _, v := range c.views[1:] {
 		if c.preps[v] != nil || c.indexes[v] != nil {
 			n++
 		}
 	}
+
 	return n
 }
 
@@ -152,22 +162,28 @@ func (c *viewIndexes) indexOf(v *analysis.View) *analysis.ReferenceIndex {
 	if idx != nil {
 		return idx
 	}
+
 	if c.indexes == nil {
 		c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
 	}
+
 	p := c.preps[v]
 	if p != nil {
 		<-p.done
 		delete(c.preps, v)
 		c.indexes[v] = p.index
+
 		return p.index
 	}
+
 	if c.dropped[v] {
 		// A dropped view still counts as checked.
 		v.ReleaseTypeInfo()
 		delete(c.dropped, v)
 	}
+
 	c.indexes[v] = checkedIndex(v)
+
 	return c.indexes[v]
 }
 
@@ -178,6 +194,7 @@ func (c *viewIndexes) planned(v *analysis.View, plan *types.RefactoringPlan) {
 	if len(c.views) == 0 || v == c.views[0] {
 		return
 	}
+
 	if plan != nil {
 		for _, op := range plan.Operations {
 			h, ok := op.(analysisHolder)
@@ -186,6 +203,7 @@ func (c *viewIndexes) planned(v *analysis.View, plan *types.RefactoringPlan) {
 			}
 		}
 	}
+
 	delete(c.indexes, v)
 	v.DropTypeInfo()
 	c.dropped[v] = true
@@ -202,12 +220,15 @@ type analysisHolder interface {
 // information of every secondary view.
 func (c *viewIndexes) finish() {
 	c.warming.Wait()
+
 	for _, p := range c.preps {
 		<-p.done
 	}
+
 	for _, v := range c.views[1:] {
 		v.ReleaseTypeInfo()
 	}
+
 	c.views, c.preps, c.dropped = nil, nil, nil
 }
 
@@ -249,12 +270,15 @@ func (e *DefaultEngine) beginRun(p viewPreparer) ([]*analysis.View, error) {
 	}
 	// One run at a time: a run releases the secondary views it planned in.
 	e.configRuns.Lock()
+
 	views, err := e.set.Views()
 	if err != nil {
 		e.configRuns.Unlock()
 		return nil, err
 	}
+
 	p.prepare(views)
+
 	return views, nil
 }
 
@@ -271,12 +295,15 @@ func (e *DefaultEngine) planAcrossConfigs(p indexedPlanner) (*types.RefactoringP
 		return nil, err
 	}
 	defer e.endRun(p)
+
 	plan, rounds, err := planAcrossViews(views, p, maxConfigRounds)
 	if err != nil {
 		return nil, err
 	}
+
 	e.logger.Info("planned across build configurations",
 		"configs", len(views), "rounds", rounds, "changes", len(plan.Changes))
+
 	return plan, nil
 }
 
@@ -288,6 +315,7 @@ func (e *DefaultEngine) blockersAcrossConfigs(p gatedIndexedPlanner) ([]types.Bl
 		return nil, err
 	}
 	defer e.endRun(p)
+
 	return blockersAcrossViews(views, p, maxConfigRounds)
 }
 
@@ -300,16 +328,21 @@ func planAcrossViews(views []*analysis.View, p configPlanner, maxRounds int) (*t
 		return nil, rounds, err
 	}
 	var unverified []types.Blocker
+
 	g, ok := p.(gatedPlanner)
 	if ok {
 		blockers := run.blockers()
+
 		err := g.refuse(blockers)
 		if err != nil {
 			return nil, rounds, err
 		}
+
 		unverified = unverifiedOf(blockers)
 	}
+
 	plan, err := run.merge(unverified)
+
 	return plan, rounds, err
 }
 
@@ -320,9 +353,11 @@ func blockersAcrossViews(views []*analysis.View, p gatedPlanner, maxRounds int) 
 	if err != nil {
 		return nil, err
 	}
+
 	if err := run.absentEverywhere(); err != nil {
 		return nil, err
 	}
+
 	return run.blockers(), nil
 }
 
@@ -336,6 +371,7 @@ func settleViews(views []*analysis.View, p configPlanner, maxRounds int) (*confi
 		results: make([]configResult, len(views)),
 		seen:    make([]types.SymbolKeySet, len(views)),
 	}
+
 	rounds := 0
 	for run.anyStale() {
 		if rounds == maxRounds {
@@ -346,12 +382,15 @@ func settleViews(views []*analysis.View, p configPlanner, maxRounds int) (*confi
 					maxRounds, len(run.linked)),
 			}
 		}
+
 		rounds++
+
 		err := run.round()
 		if err != nil {
 			return nil, rounds, err
 		}
 	}
+
 	return run, rounds, nil
 }
 
@@ -372,12 +411,14 @@ func (r *configRun) stale(i int) bool {
 	if r.seen[i] == nil {
 		return true
 	}
+
 	declared := r.results[i].declared
 	for key := range r.linked {
 		if !r.seen[i].Has(key) && (declared == nil || declared.Has(key)) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -387,6 +428,7 @@ func (r *configRun) anyStale() bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -396,15 +438,18 @@ func (r *configRun) round() error {
 		if !r.stale(i) {
 			continue
 		}
+
 		res, err := r.planner.planIn(v, r.linked)
 		if err != nil {
 			return r.configError(v, err)
 		}
+
 		r.results[i] = res
 		r.seen[i] = r.linked.Clone()
 		r.seen[i].AddAll(res.changed)
 		r.linked.AddAll(res.changed)
 	}
+
 	return nil
 }
 
@@ -418,6 +463,7 @@ func viewError(views []*analysis.View, v *analysis.View, err error) error {
 	if len(views) == 1 {
 		return err
 	}
+
 	return fmt.Errorf("build configuration %s: %w", v.Config, err)
 }
 
@@ -425,14 +471,17 @@ func viewError(views []*analysis.View, v *analysis.View, err error) error {
 // when the target is absent from every view.
 func (r *configRun) absentEverywhere() error {
 	var absent error
+
 	for _, res := range r.results {
 		if res.plan != nil {
 			return nil
 		}
+
 		if absent == nil {
 			absent = res.absent
 		}
 	}
+
 	return absent
 }
 
@@ -444,25 +493,32 @@ func (r *configRun) merge(unverified []types.Blocker) (*types.RefactoringPlan, e
 		return nil, err
 	}
 	var plans []ConfigPlan
+
 	configs := make([]string, 0, len(r.views))
 	for i, v := range r.views {
 		name := v.Config.String()
 		configs = append(configs, name)
+
 		res := r.results[i]
 		if res.plan != nil {
 			plans = append(plans, ConfigPlan{Config: name, Plan: res.plan})
 		}
 	}
+
 	merged, err := MergeConfigPlans(plans)
 	if err != nil {
 		return nil, err
 	}
+
 	merged.Coverage = types.Coverage{Configs: configs}
+
 	err = r.reportUncovered(merged)
 	if err != nil {
 		return nil, err
 	}
+
 	reportUnverified(merged, unverified)
 	r.reportTypeErrors(merged)
+
 	return merged, nil
 }

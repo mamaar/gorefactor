@@ -21,6 +21,7 @@ var update = flag.Bool("update", false, "update golden files")
 // copyFixture copies a fixture directory to a temp dir, skipping .golden and .deleted files.
 func copyFixture(t *testing.T, fixtureDir string) string {
 	t.Helper()
+
 	src := filepath.Join("testdata", fixtureDir)
 	dst := t.TempDir()
 
@@ -28,31 +29,38 @@ func copyFixture(t *testing.T, fixtureDir string) string {
 		if err != nil {
 			return err
 		}
+
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(dst, rel)
 
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
+
 		if strings.HasSuffix(path, ".golden") || strings.HasSuffix(path, ".deleted") {
 			return nil
 		}
+
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
+
 		return os.WriteFile(target, data, 0o644)
 	})
 	if err != nil {
 		t.Fatalf("copyFixture(%s): %v", fixtureDir, err)
 	}
+
 	return dst
 }
 
 // createEngine creates a refactoring engine with SkipCompilation and AllowBreaking enabled.
 func createEngine(t *testing.T) refactor.RefactorEngine {
 	t.Helper()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
 	return refactor.CreateEngineWithConfig(&refactor.EngineConfig{
 		SkipCompilation: true,
 		AllowBreaking:   true,
@@ -62,18 +70,22 @@ func createEngine(t *testing.T) refactor.RefactorEngine {
 // loadWorkspace loads a workspace from the given directory.
 func loadWorkspace(t *testing.T, eng refactor.RefactorEngine, dir string) *types.Workspace {
 	t.Helper()
+
 	ws, err := eng.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace(%s): %v", dir, err)
 	}
+
 	return ws
 }
 
 // buildReferenceIndex builds a reference index needed by change_signature and add_context_parameter.
 func buildReferenceIndex(t *testing.T, ws *types.Workspace) *analysis.ReferenceIndex {
 	t.Helper()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	resolver := analysis.NewSymbolResolver(ws, logger)
+
 	return resolver.BuildReferenceIndex()
 }
 
@@ -85,6 +97,7 @@ func buildReferenceIndex(t *testing.T, ws *types.Workspace) *analysis.ReferenceI
 // allows initial golden file generation when no .golden files exist yet.
 func compareGoldenFiles(t *testing.T, fixtureDir, tmpDir string) {
 	t.Helper()
+
 	srcDir := filepath.Join("testdata", fixtureDir)
 
 	if *update {
@@ -93,9 +106,11 @@ func compareGoldenFiles(t *testing.T, fixtureDir, tmpDir string) {
 			if err != nil {
 				return err
 			}
+
 			if d.IsDir() {
 				return nil
 			}
+
 			if strings.HasSuffix(path, ".golden") || strings.HasSuffix(path, ".deleted") {
 				return nil
 			}
@@ -103,8 +118,10 @@ func compareGoldenFiles(t *testing.T, fixtureDir, tmpDir string) {
 			if d.Name() == "go.mod" {
 				return nil
 			}
+
 			rel, _ := filepath.Rel(srcDir, path)
 			actualPath := filepath.Join(tmpDir, rel)
+
 			actual, err := os.ReadFile(actualPath)
 			if err != nil {
 				// File may have been deleted by the refactoring; skip.
@@ -112,27 +129,33 @@ func compareGoldenFiles(t *testing.T, fixtureDir, tmpDir string) {
 			}
 			// Normalize temp paths before writing golden files.
 			normalized := normalizeTempPaths(string(actual), tmpDir)
+
 			goldenPath := path + ".golden"
 			if err := os.WriteFile(goldenPath, []byte(normalized), 0o644); err != nil {
 				t.Errorf("failed to update golden file %s: %v", goldenPath, err)
 			}
+
 			return nil
 		})
 		if err != nil {
 			t.Fatalf("walking source files for update: %v", err)
 		}
+
 		return
 	}
 
 	// Normal mode: compare actual output against existing golden files.
 	found := 0
+
 	err := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+
 		if d.IsDir() || !strings.HasSuffix(path, ".golden") {
 			return nil
 		}
+
 		found++
 
 		rel, _ := filepath.Rel(srcDir, path)
@@ -158,11 +181,13 @@ func compareGoldenFiles(t *testing.T, fixtureDir, tmpDir string) {
 		if actualStr != goldenStr {
 			t.Errorf("mismatch for %s:\n%s", actualRel, unifiedDiff(goldenStr, actualStr))
 		}
+
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("walking golden files: %v", err)
 	}
+
 	if found == 0 {
 		t.Fatal("no golden files found")
 	}
@@ -175,6 +200,7 @@ func normalizeTempPaths(s, tmpDir string) string {
 	if tmpDir != "" {
 		s = strings.ReplaceAll(s, tmpDir, "$TMPDIR")
 	}
+
 	return s
 }
 
@@ -182,18 +208,22 @@ func normalizeTempPaths(s, tmpDir string) string {
 // the corresponding files don't exist in tmpDir.
 func checkDeleted(t *testing.T, fixtureDir, tmpDir string) {
 	t.Helper()
+
 	srcDir := filepath.Join("testdata", fixtureDir)
 
 	err := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".deleted") {
 			return err
 		}
+
 		rel, _ := filepath.Rel(srcDir, path)
 		actualRel := strings.TrimSuffix(rel, ".deleted")
+
 		actualPath := filepath.Join(tmpDir, actualRel)
 		if _, err := os.Stat(actualPath); err == nil {
 			t.Errorf("expected %s to be deleted, but it still exists", actualRel)
 		}
+
 		return nil
 	})
 	if err != nil {
@@ -213,10 +243,12 @@ func unifiedDiff(expected, actual string) string {
 
 	for i := range maxLen {
 		var eLine, aLine string
+
 		haveE, haveA := i < len(expectedLines), i < len(actualLines)
 		if haveE {
 			eLine = expectedLines[i]
 		}
+
 		if haveA {
 			aLine = actualLines[i]
 		}
@@ -227,10 +259,12 @@ func unifiedDiff(expected, actual string) string {
 			if haveE {
 				fmt.Fprintf(&buf, "-%s\n", eLine)
 			}
+
 			if haveA {
 				fmt.Fprintf(&buf, "+%s\n", aLine)
 			}
 		}
 	}
+
 	return buf.String()
 }

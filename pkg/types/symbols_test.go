@@ -207,6 +207,7 @@ func TestFindSymbolDottedTypeMember(t *testing.T) {
 	if got != nameField {
 		t.Errorf("FindSymbol(\"User.Name\") = %v, want the struct field", got)
 	}
+
 	got = st.FindSymbol("User.Greet")
 	if got != greet {
 		t.Errorf("FindSymbol(\"User.Greet\") = %v, want the method", got)
@@ -217,6 +218,7 @@ func TestFindSymbolDottedTypeMember(t *testing.T) {
 	if got != nil {
 		t.Errorf("FindSymbol(\"Name\") = %v, want nil (fields are dotted-form only)", got)
 	}
+
 	got = st.FindSymbol("User.Missing")
 	if got != nil {
 		t.Errorf("FindSymbol(\"User.Missing\") = %v, want nil", got)

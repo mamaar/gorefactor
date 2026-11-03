@@ -71,12 +71,15 @@ func TestToUpper(t *testing.T) {
 		if pkg.Name != "main" {
 			t.Errorf("Expected package name to be 'main', got '%s'", pkg.Name)
 		}
+
 		if pkg.Dir != tempDir {
 			t.Errorf("Expected Dir to be '%s', got '%s'", tempDir, pkg.Dir)
 		}
+
 		if len(pkg.Files) != 2 {
 			t.Errorf("Expected 2 regular files, got %d", len(pkg.Files))
 		}
+
 		if len(pkg.TestFiles) != 1 {
 			t.Errorf("Expected 1 test file, got %d", len(pkg.TestFiles))
 		}
@@ -87,6 +90,7 @@ func TestToUpper(t *testing.T) {
 		if len(pkg.Imports) != len(expectedImports) {
 			t.Errorf("Expected %d imports, got %d", len(expectedImports), len(pkg.Imports))
 		}
+
 		for _, expectedImport := range expectedImports {
 			if !slices.Contains(pkg.Imports, expectedImport) {
 				t.Errorf("Expected import '%s' not found", expectedImport)
@@ -100,6 +104,7 @@ func TestToUpper(t *testing.T) {
 				t.Error("Expected file to have back-reference to package")
 			}
 		}
+
 		for _, file := range pkg.TestFiles {
 			if file.Package != pkg {
 				t.Error("Expected test file to have back-reference to package")
@@ -121,8 +126,7 @@ func TestParser_ParsePackage_Empty(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	var refErr *types.RefactorError
-	if errors.As(err, &refErr) {
+	if refErr, ok := errors.AsType[*types.RefactorError](err); ok {
 		if refErr.Type != types.ParseError {
 			t.Errorf("Expected ParseError, got %v", refErr.Type)
 		}
@@ -159,11 +163,13 @@ func Add(a, b int) int {
 		if ws.RootPath != tempDir {
 			t.Errorf("Expected RootPath to be '%s', got '%s'", tempDir, ws.RootPath)
 		}
+
 		if ws.Module == nil {
 			t.Error("Expected Module to be non-nil")
 		} else if ws.Module.Path != "test/workspace" {
 			t.Errorf("Expected module path to be 'test/workspace', got '%s'", ws.Module.Path)
 		}
+
 		if ws.FileSet == nil {
 			t.Error("Expected FileSet to be non-nil")
 		}
@@ -173,10 +179,12 @@ func Add(a, b int) int {
 		if len(ws.Packages) < 2 {
 			t.Errorf("Expected at least 2 packages, got %d", len(ws.Packages))
 		}
+
 		for _, pkg := range ws.Packages {
 			if pkg.Name == "" {
 				t.Error("Expected package to have a name")
 			}
+
 			if len(pkg.Files) == 0 {
 				t.Error("Expected package to have files")
 			}
@@ -201,10 +209,12 @@ func TestParser_TypeCheckPackage_DiamondMemoization(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0755)
 		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0644)
 		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
@@ -275,6 +285,7 @@ func UseBoth() {
 	if !ok {
 		t.Fatal("expected test/diamond/d to be in ImportToPath")
 	}
+
 	pkgD, ok := ws.Packages[fsPath]
 	if !ok {
 		t.Fatal("expected package d to be parsed")
@@ -301,10 +312,12 @@ func TestParser_TypeCheckPackage_CycleThroughTestFiles(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0755)
 		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0644)
 		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
@@ -343,12 +356,14 @@ func G() {
 	if !ok {
 		t.Fatal("expected test/cycle/a to be in ImportToPath")
 	}
+
 	pkgA, ok := ws.Packages[fsPath]
 	if !ok {
 		t.Fatal("expected package a to be parsed")
 	}
 
 	done := make(chan struct{})
+
 	go func() {
 		parser.EnsureTypeChecked(ws, pkgA)
 		close(done)
@@ -371,6 +386,7 @@ func G() {
 		t.Errorf("expected package a's test files to be included despite the cycle, got excluded (cause: %v)",
 			pkgA.ExcludedTestFiles)
 	}
+
 	if pkgA.TypesErr != nil {
 		t.Errorf("expected package a to type-check cleanly despite the cycle, got: %v", pkgA.TypesErr)
 	}
@@ -515,10 +531,12 @@ func Run(e *Entry) {
 	// to receive the real view while bridge had already received the
 	// rescue.
 	done := make(chan struct{})
+
 	go func() {
 		parser.EnsureTypeChecked(ws, pkgDep)
 		close(done)
 	}()
+
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -543,6 +561,7 @@ func Run(e *Entry) {
 	// exactly the branch that must still prefer an existing rescue over
 	// dep's real view for this test to mean anything.
 	parser.EnsureTypeChecked(ws, pkgEntry)
+
 	if pkgEntry.TypesErr != nil {
 		t.Fatalf("expected entry to type-check cleanly, got: %v (this is the two-views-of-dep "+
 			"inconsistency if it mentions dep.Thing / other.Use)", pkgEntry.TypesErr)
@@ -558,11 +577,13 @@ func Run(e *Entry) {
 	seed := funcDefNamed(t, pkgSlow, "Ping")
 	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
 	var sawTest bool
+
 	for _, site := range idx.CallSitesOf(seed) {
 		if strings.HasSuffix(site.File.Path, "dep_test.go") {
 			sawTest = true
 		}
 	}
+
 	if !sawTest {
 		t.Error("expected a call site in dep_test.go (this is the bug: it used to go missing)")
 	}
@@ -599,10 +620,12 @@ func TestParser_TypeCheckPackage_ExternalTestPackage(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0755)
 		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0644)
 		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
@@ -638,33 +661,39 @@ func TestProcess(t *testing.T) {
 	if !ok {
 		t.Fatal("expected test/externaltest/foo to be in ImportToPath")
 	}
+
 	pkgFoo, ok := ws.Packages[fsPath]
 	if !ok {
 		t.Fatal("expected package foo to be parsed")
 	}
 
 	parser.EnsureTypeChecked(ws, pkgFoo)
+
 	if pkgFoo.TypesErr != nil {
 		t.Fatalf("expected foo to type-check cleanly, got: %v", pkgFoo.TypesErr)
 	}
 
 	var seed *gotypes.Func
+
 	for ident, obj := range pkgFoo.TypesInfo.Defs {
 		if ident.Name == "Process" {
 			seed, _ = obj.(*gotypes.Func)
 		}
 	}
+
 	if seed == nil {
 		t.Fatal("expected Process to resolve to a go/types object")
 	}
 
 	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
 	var sawExternalTest bool
+
 	for _, site := range idx.CallSitesOf(seed) {
 		if strings.HasSuffix(site.File.Path, "foo_test.go") {
 			sawExternalTest = true
 		}
 	}
+
 	if !sawExternalTest {
 		t.Error("expected a call site in the external test package's foo_test.go " +
 			"(this is the bug: external test packages were never type-checked at all)")
@@ -676,10 +705,12 @@ func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0755)
 		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0644)
 		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
@@ -692,9 +723,11 @@ func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
 	// for the other goroutines to pile up behind it.
 	var dep strings.Builder
 	dep.WriteString("package dep\n\ntype T int\n")
+
 	for i := range 400 {
 		fmt.Fprintf(&dep, "\nfunc F%d(a, b T) T { x := a + b; y := x * 2; return y - a }\n", i)
 	}
+
 	writeFile("dep/dep.go", dep.String())
 
 	const dependents = 8
@@ -718,27 +751,33 @@ func Use() dep.T {
 	pkgs := make([]*types.Package, 0, dependents)
 	for i := range dependents {
 		importPath := fmt.Sprintf("test/conc/user%d", i)
+
 		fsPath, ok := ws.ImportToPath[importPath]
 		if !ok {
 			t.Fatalf("expected %s to be in ImportToPath", importPath)
 		}
+
 		pkg, ok := ws.Packages[fsPath]
 		if !ok {
 			t.Fatalf("expected package %s to be parsed", importPath)
 		}
+
 		pkgs = append(pkgs, pkg)
 	}
 
 	var wg sync.WaitGroup
 	start := make(chan struct{})
+
 	for _, pkg := range pkgs {
 		wg.Add(1)
 		go func(pkg *types.Package) {
 			defer wg.Done()
+
 			<-start // release all goroutines together to maximise overlap
 			parser.EnsureTypeChecked(ws, pkg)
 		}(pkg)
 	}
+
 	close(start)
 	wg.Wait()
 
@@ -747,9 +786,11 @@ func Use() dep.T {
 			t.Errorf("expected %s to be marked TypesChecked", pkg.ImportPath)
 			continue
 		}
+
 		if pkg.TypesErr == nil {
 			continue
 		}
+
 		t.Errorf("package %s failed to type-check against the shared dependency: %v\n"+
 			"this means Import handed it a placeholder for test/conc/dep instead of the real package",
 			pkg.ImportPath, pkg.TypesErr)
@@ -773,7 +814,9 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 	// is a legitimate reason to skip this test, not to fail it — the test
 	// must never become flaky in a clean environment with no prior `go build`.
 	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "golang.org/x/tools")
+
 	cmd.Env = append(os.Environ(), "GOPROXY=off")
+
 	out, err := cmd.Output()
 	if err != nil || strings.TrimSpace(string(out)) == "" {
 		t.Skip("golang.org/x/tools not present in the local module cache; skipping")
@@ -783,6 +826,7 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to resolve repo root: %v", err)
 	}
+
 	if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err != nil {
 		t.Skipf("repo root %s has no go.mod; skipping", repoRoot)
 	}
@@ -793,10 +837,12 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 	}
 
 	const importPath = "github.com/mamaar/gorefactor/pkg/analysis"
+
 	fsPath, ok := ws.ImportToPath[importPath]
 	if !ok {
 		t.Fatalf("expected %s to be in ImportToPath", importPath)
 	}
+
 	pkg, ok := ws.Packages[fsPath]
 	if !ok {
 		t.Fatalf("expected %s to be parsed", importPath)
@@ -807,20 +853,24 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 	if pkg.TypesErr != nil {
 		t.Fatalf("expected %s to type-check cleanly via the go/packages fallback, got: %v", importPath, pkg.TypesErr)
 	}
+
 	if pkg.TypesPkg == nil {
 		t.Fatal("expected TypesPkg to be populated")
 	}
 
 	var extPkg *gotypes.Package
+
 	for _, imp := range pkg.TypesPkg.Imports() {
 		if imp.Path() == "golang.org/x/tools/go/packages" {
 			extPkg = imp
 			break
 		}
 	}
+
 	if extPkg == nil {
 		t.Fatal("expected golang.org/x/tools/go/packages among pkg/analysis's resolved imports")
 	}
+
 	obj := extPkg.Scope().Lookup("Load")
 	if obj == nil {
 		t.Error("expected golang.org/x/tools/go/packages.Load to resolve from the externally-loaded package")
@@ -857,12 +907,15 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 // mirrored from TestParser_WorkspaceImporter_ExternalModuleFallback).
 func TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport(t *testing.T) {
 	cmd := exec.Command("go", "list", "-m", "-f", "{{.Dir}} {{.Version}} {{.Sum}} {{.GoModSum}}", "golang.org/x/tools")
+
 	cmd.Env = append(os.Environ(), "GOPROXY=off")
 	out, err := cmd.Output()
+
 	fields := strings.Fields(string(out))
 	if err != nil || len(fields) != 4 {
 		t.Skip("golang.org/x/tools not present in the local module cache; skipping")
 	}
+
 	version, sum, goModSum := fields[1], fields[2], fields[3]
 
 	tempDir := t.TempDir()
@@ -905,10 +958,12 @@ func TestProcess(t *testing.T) {
 	pkg := packageByImportPath(t, ws, "example.com/testws/foo")
 
 	parser.EnsureTypeChecked(ws, pkg)
+
 	if len(pkg.ExcludedTestFiles) > 0 {
 		t.Fatalf("expected foo's test files to type-check together with the package, got excluded (cause: %v)",
 			pkg.ExcludedTestFiles)
 	}
+
 	if pkg.TypesErr != nil {
 		t.Fatalf("expected foo to type-check cleanly, got: %v", pkg.TypesErr)
 	}
@@ -922,6 +977,7 @@ func TestProcess(t *testing.T) {
 
 	sites := idx.CallSitesOf(seed)
 	var sawProd, sawTest bool
+
 	for _, site := range sites {
 		switch {
 		case strings.HasSuffix(site.File.Path, "bar.go"):
@@ -930,9 +986,11 @@ func TestProcess(t *testing.T) {
 			sawTest = true
 		}
 	}
+
 	if !sawProd {
 		t.Errorf("expected a call site in bar.go, got sites: %+v", sites)
 	}
+
 	if !sawTest {
 		t.Errorf("expected a call site in foo_test.go (this is the bug: it used to go missing), got sites: %+v", sites)
 	}
@@ -985,10 +1043,12 @@ func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
 			tempDir := t.TempDir()
 			for rel, content := range tt.files {
 				full := filepath.Join(tempDir, rel)
+
 				err := os.MkdirAll(filepath.Dir(full), 0755)
 				if err != nil {
 					t.Fatalf("failed to create dir for %s: %v", rel, err)
 				}
+
 				err = os.WriteFile(full, []byte(content), 0644)
 				if err != nil {
 					t.Fatalf("failed to write %s: %v", rel, err)
@@ -1016,28 +1076,35 @@ const (
 func writeWorkspace(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
+
 	files["go.mod"] = "module example.com/w\n\ngo 1.22\n"
 	for name, content := range files {
 		path := filepath.Join(root, name)
+
 		err := os.MkdirAll(filepath.Dir(path), 0o755)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		err = os.WriteFile(path, []byte(content), 0o644)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	return root
 }
 
 func writeTestFile(t *testing.T, root, rel, content string) {
 	t.Helper()
+
 	full := filepath.Join(root, rel)
+
 	err := os.MkdirAll(filepath.Dir(full), 0o755)
 	if err != nil {
 		t.Fatalf("failed to create dir for %s: %v", rel, err)
 	}
+
 	err = os.WriteFile(full, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("failed to write %s: %v", rel, err)
@@ -1047,39 +1114,48 @@ func writeTestFile(t *testing.T, root, rel, content string) {
 // packageByImportPath returns the parsed workspace package for importPath.
 func packageByImportPath(t *testing.T, ws *types.Workspace, importPath string) *types.Package {
 	t.Helper()
+
 	fsPath, ok := ws.ImportToPath[importPath]
 	if !ok {
 		t.Fatalf("expected %s to be in ImportToPath", importPath)
 	}
+
 	pkg, ok := ws.Packages[fsPath]
 	if !ok {
 		t.Fatalf("expected package %s to be parsed", importPath)
 	}
+
 	return pkg
 }
 
 // funcDefNamed returns the go/types function declared as name in pkg.
 func funcDefNamed(t *testing.T, pkg *types.Package, name string) *gotypes.Func {
 	t.Helper()
+
 	for ident, obj := range pkg.TypesInfo.Defs {
 		if ident.Name != name {
 			continue
 		}
+
 		fn, ok := obj.(*gotypes.Func)
 		if ok {
 			return fn
 		}
 	}
+
 	t.Fatalf("expected %s to resolve to a go/types object", name)
+
 	return nil
 }
 
 func loadWithConfig(t *testing.T, root string, cfg BuildConfig) (*GoParser, *types.Workspace) {
 	t.Helper()
+
 	set, err := LoadWorkspaceSet(root, cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return set.Primary().Parser, set.Primary().Workspace
 }
 
@@ -1090,10 +1166,13 @@ func parseWorkspace(root string) (*GoParser, *types.Workspace, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse workspace: %w", err)
 	}
+
 	return set.Primary().Parser, set.Primary().Workspace, nil
 }
 
 func constrainedWorkspace(t *testing.T) string {
+	t.Helper()
+
 	return writeWorkspace(t, map[string]string{
 		"p/p.go":             "package p\n",
 		"p/x_fts5_test.go":   fts5TestSrc,
@@ -1107,29 +1186,37 @@ func fileNames(m map[string]*types.File) []string {
 	for n := range m {
 		names = append(names, n)
 	}
+
 	slices.Sort(names)
+
 	return names
 }
 
 func TestParseWorkspace_ExcludesConstrainedFilesAndTypeChecks(t *testing.T) {
 	root := constrainedWorkspace(t)
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+
 	pkg := ws.Packages[filepath.Join(root, "p")]
 	if pkg == nil {
 		t.Fatal("package p not loaded")
 	}
+
 	got := fileNames(pkg.TestFiles)
 	if !slices.Equal(got, []string{"x_nofts5_test.go"}) {
 		t.Errorf("TestFiles = %v", got)
 	}
+
 	got = fileNames(pkg.Files)
 	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
 	}
+
 	p.EnsureTypeChecked(ws, pkg)
+
 	if pkg.TypesErr != nil {
 		t.Errorf("TypesErr = %v", pkg.TypesErr)
 	}
+
 	if len(pkg.ExcludedTestFiles) > 0 {
 		t.Errorf("test files excluded from type-check: %v", pkg.ExcludedTestFiles)
 	}
@@ -1139,6 +1226,7 @@ func TestParseWorkspace_TagSelectsConstrainedTestFile(t *testing.T) {
 	root := constrainedWorkspace(t)
 	_, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false, "fts5"))
 	pkg := ws.Packages[filepath.Join(root, "p")]
+
 	got := fileNames(pkg.TestFiles)
 	if !slices.Equal(got, []string{"x_fts5_test.go"}) {
 		t.Errorf("TestFiles = %v", got)
@@ -1149,6 +1237,7 @@ func TestParseWorkspace_GOOSSelectsSuffixedFile(t *testing.T) {
 	root := constrainedWorkspace(t)
 	_, ws := loadWithConfig(t, root, NewBuildConfig("windows", "amd64", false))
 	pkg := ws.Packages[filepath.Join(root, "p")]
+
 	_, ok := pkg.Files["y_windows.go"]
 	if !ok {
 		t.Errorf("Files = %v, want y_windows.go", fileNames(pkg.Files))
@@ -1162,6 +1251,7 @@ func TestParseWorkspace_LegacyPlusBuildIgnoreExcluded(t *testing.T) {
 	})
 	_, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
 	pkg := ws.Packages[filepath.Join(root, "p")]
+
 	got := fileNames(pkg.Files)
 	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
@@ -1174,11 +1264,14 @@ func TestParseWorkspace_ImportCRequiresCgo(t *testing.T) {
 		"p/c.go": "package p\n\n// int x;\nimport \"C\"\n",
 	})
 	_, off := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+
 	got := fileNames(off.Packages[filepath.Join(root, "p")].Files)
 	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("cgo off: Files = %v", got)
 	}
+
 	_, on := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
+
 	got = fileNames(on.Packages[filepath.Join(root, "p")].Files)
 	if !slices.Equal(got, []string{"c.go", "p.go"}) {
 		t.Errorf("cgo on: Files = %v", got)
@@ -1191,14 +1284,17 @@ func TestParseWorkspace_UnparsableFileDoesNotDropPackage(t *testing.T) {
 		"p/bad.go": "package p\n\nfunc (\n",
 	})
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+
 	pkg := ws.Packages[filepath.Join(root, "p")]
 	if pkg == nil {
 		t.Fatal("package p dropped")
 	}
+
 	got := fileNames(pkg.Files)
 	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
 	}
+
 	bad := p.sources.File(filepath.Join(root, "p", "bad.go"))
 	if bad == nil || bad.Err == nil {
 		t.Errorf("bad.go record = %+v, want non-nil Err", bad)
@@ -1211,14 +1307,17 @@ func TestParseWorkspace_FullyConstrainedDirectoryIsNotAPackage(t *testing.T) {
 		"win/w_windows.go": "package win\n",
 	})
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+
 	_, ok := ws.Packages[filepath.Join(root, "win")]
 	if ok {
 		t.Error("win loaded as a package")
 	}
+
 	_, ok = ws.Packages[filepath.Join(root, "p")]
 	if !ok {
 		t.Error("p not loaded")
 	}
+
 	if p.sources.File(filepath.Join(root, "win", "w_windows.go")) == nil {
 		t.Error("constrained file missing from source tree")
 	}
@@ -1227,6 +1326,7 @@ func TestParseWorkspace_FullyConstrainedDirectoryIsNotAPackage(t *testing.T) {
 func TestParsePackage_AllUnparsableYieldsNoPackage(t *testing.T) {
 	root := writeWorkspace(t, map[string]string{"p/bad.go": "package p\n\nfunc (\n"})
 	p := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	pkg, err := p.ParsePackage(filepath.Join(root, "p"))
 	if pkg != nil || !errors.Is(err, ErrNoPackage) {
 		t.Errorf("ParsePackage = %v, %v; want nil, ErrNoPackage", pkg, err)
@@ -1254,30 +1354,38 @@ func main() {
 func TestTypeCheck_CgoFilePackageIsTyped(t *testing.T) {
 	root := writeWorkspace(t, map[string]string{"main.go": cgoSrc})
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
+
 	pkg := ws.Packages[root]
 	if pkg == nil {
 		t.Fatal("root package not loaded")
 	}
+
 	p.EnsureTypeChecked(ws, pkg)
+
 	if pkg.TypesErr != nil {
 		t.Fatalf("TypesErr = %v", pkg.TypesErr)
 	}
+
 	if pkg.TypesInfo == nil {
 		t.Fatal("TypesInfo is nil")
 	}
 	var plainFunc, putsUse bool
+
 	for id, obj := range pkg.TypesInfo.Uses {
 		_, ok := obj.(*gotypes.Func)
 		if ok && id.Name == "plain" {
 			plainFunc = true
 		}
+
 		if id.Name == "puts" || id.Name == "CString" {
 			putsUse = true
 		}
 	}
+
 	if !plainFunc {
 		t.Error("no use of plain resolved to *types.Func")
 	}
+
 	if putsUse {
 		t.Error("C.puts / C.CString selectors have entries in Uses")
 	}
@@ -1291,6 +1399,7 @@ func TestTypeCheck_CgoPackageKeepsInPackageTestFiles(t *testing.T) {
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
 	pkg := ws.Packages[root]
 	p.EnsureTypeChecked(ws, pkg)
+
 	if len(pkg.ExcludedTestFiles) > 0 {
 		t.Errorf("test files excluded from type-check: %v", pkg.ExcludedTestFiles)
 	}
@@ -1305,11 +1414,14 @@ const (
 func checkedDir(t *testing.T, root, rel string) (*GoParser, *types.Workspace, *types.Package) {
 	t.Helper()
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
+
 	pkg := ws.Packages[filepath.Join(root, rel)]
 	if pkg == nil {
 		t.Fatalf("package %s not loaded", rel)
 	}
+
 	p.EnsureTypeChecked(ws, pkg)
+
 	return p, ws, pkg
 }
 
@@ -1325,15 +1437,18 @@ func usesIn(pkg *types.Package, file, name string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 func assertErrorIn(t *testing.T, ws *types.Workspace, pkg *types.Package, file string) {
 	t.Helper()
+
 	var terr gotypes.Error
 	if !errors.As(pkg.ExcludedTestFiles[file], &terr) {
 		t.Fatalf("%s: recorded error %v is not a types.Error", file, pkg.ExcludedTestFiles[file])
 	}
+
 	got := filepath.Base(ws.FileSet.Position(terr.Pos).Filename)
 	if got != file {
 		t.Errorf("%s: recorded error is located in %s: %v", file, got, terr)
@@ -1352,13 +1467,17 @@ func TestTypeCheck_OnlyTestFileWithErrorIsExcluded(t *testing.T) {
 	if !slices.Equal(got, []string{"bad_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want only bad_test.go", got)
 	}
+
 	assertErrorIn(t, ws, pkg, "bad_test.go")
+
 	if !usesIn(pkg, "good_test.go", "F") {
 		t.Error("good_test.go's call of F is missing from TypesInfo.Uses")
 	}
+
 	if pkg.TypesErr != nil {
 		t.Errorf("TypesErr = %v, want nil", pkg.TypesErr)
 	}
+
 	if pkg.UnattributedTestErr != nil {
 		t.Errorf("UnattributedTestErr = %v, want nil", pkg.UnattributedTestErr)
 	}
@@ -1376,6 +1495,7 @@ func TestTypeCheck_TestOnlyPackageIsCheckedAndExcludesBrokenTestFile(t *testing.
 	if !slices.Equal(got, []string{"bad_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want only bad_test.go", got)
 	}
+
 	if pkg.TypesPkg == nil || !usesIn(pkg, "good_test.go", "F") {
 		t.Error("good_test.go's call of p.F is missing from the package's type information")
 	}
@@ -1406,11 +1526,14 @@ func TestTypeCheck_TestFileDependingOnExcludedFileIsExcludedWithItsOwnError(t *t
 	if !slices.Equal(got, []string{"helper_test.go", "user_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want helper_test.go and user_test.go", got)
 	}
+
 	assertErrorIn(t, ws, pkg, "helper_test.go")
 	assertErrorIn(t, ws, pkg, "user_test.go")
+
 	if !usesIn(pkg, "good_test.go", "F") {
 		t.Error("good_test.go's call of F is missing from TypesInfo.Uses")
 	}
+
 	if pkg.UnattributedTestErr != nil {
 		t.Errorf("UnattributedTestErr = %v, want nil", pkg.UnattributedTestErr)
 	}
@@ -1426,9 +1549,11 @@ func TestTypeCheck_ProductionFileErrorExcludesNoTestFile(t *testing.T) {
 	if len(pkg.ExcludedTestFiles) != 0 {
 		t.Errorf("ExcludedTestFiles = %v, want none", excludedNames(pkg))
 	}
+
 	if pkg.TypesErr == nil {
 		t.Error("TypesErr = nil, want the production file's error")
 	}
+
 	if !usesIn(pkg, "good_test.go", "F") {
 		t.Error("good_test.go's call of F is missing from TypesInfo.Uses")
 	}
@@ -1443,22 +1568,28 @@ func TestTypeCheck_ErrorChainLongerThanPassLimitDropsAllTestFilesUnattributed(t 
 	for i := 1; i <= maxTestExclusionPasses+1; i++ {
 		files[fmt.Sprintf("p/t%d_test.go", i)] = fmt.Sprintf("package p\n\nfunc h%d() { h%d() }\n", i, i-1)
 	}
+
 	_, ws, pkg := checkedDir(t, writeWorkspace(t, files), "p")
 
 	if pkg.UnattributedTestErr == nil {
 		t.Fatal("UnattributedTestErr = nil, want the error left after the last pass")
 	}
+
 	got, want := excludedNames(pkg), fileNames(pkg.TestFiles)
 	if !slices.Equal(got, want) {
 		t.Errorf("ExcludedTestFiles = %v, want every test file %v", got, want)
 	}
+
 	assertErrorIn(t, ws, pkg, "t0_test.go")
-	if got := pkg.ExcludedTestFiles["good_test.go"]; got != pkg.UnattributedTestErr {
+
+	if got := pkg.ExcludedTestFiles["good_test.go"]; got != pkg.UnattributedTestErr { //nolint:errorlint // pins the error as returned unchanged
 		t.Errorf("good_test.go recorded %v, want the unattributed error", got)
 	}
+
 	if usesIn(pkg, "good_test.go", "F") {
 		t.Error("good_test.go is in TypesInfo.Uses although all test files were dropped")
 	}
+
 	if pkg.TypesErr != nil {
 		t.Errorf("TypesErr = %v, want nil for the production files", pkg.TypesErr)
 	}
@@ -1476,10 +1607,13 @@ func TestTypeCheck_ExternalTestFileWithErrorIsExcludedAndTheRestMerged(t *testin
 	if !slices.Equal(got, []string{"bad_ext_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want only bad_ext_test.go", got)
 	}
+
 	assertErrorIn(t, ws, pkg, "bad_ext_test.go")
+
 	if !usesIn(pkg, "good_ext_test.go", "F") {
 		t.Error("good_ext_test.go's call of p.F is missing from TypesInfo.Uses")
 	}
+
 	if pkg.UnattributedTestErr != nil {
 		t.Errorf("UnattributedTestErr = %v, want nil", pkg.UnattributedTestErr)
 	}
@@ -1499,6 +1633,7 @@ func TestTypeCheck_HealthyPackageIsCheckedInOnePass(t *testing.T) {
 	if passes != 1 {
 		t.Errorf("check passes = %d, want 1", passes)
 	}
+
 	if pkg.ExcludedTestFiles != nil || pkg.UnattributedTestErr != nil {
 		t.Errorf("exclusion record = %v / %v, want none", pkg.ExcludedTestFiles, pkg.UnattributedTestErr)
 	}
@@ -1510,18 +1645,22 @@ func TestTypeCheck_FixedTestFileIsNoLongerExcludedAfterInvalidation(t *testing.T
 		"p/good_test.go": callsFTestSrc,
 		"p/bad_test.go":  brokenImportTestSrc,
 	})
+
 	set, err := LoadWorkspaceSet(root, NewBuildConfig("linux", "amd64", false), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	p, ws := set.Primary().Parser, set.Primary().Workspace
 	pkg := ws.Packages[filepath.Join(root, "p")]
 	p.EnsureTypeChecked(ws, pkg)
+
 	if len(pkg.ExcludedTestFiles) != 1 {
 		t.Fatalf("ExcludedTestFiles = %v, want bad_test.go", excludedNames(pkg))
 	}
 
 	p.InvalidateTypeCheck(pkg)
+
 	if pkg.ExcludedTestFiles != nil || pkg.UnattributedTestErr != nil {
 		t.Fatalf("exclusion record survived invalidation: %v / %v", pkg.ExcludedTestFiles, pkg.UnattributedTestErr)
 	}
@@ -1530,9 +1669,11 @@ func TestTypeCheck_FixedTestFileIsNoLongerExcludedAfterInvalidation(t *testing.T
 	if err := os.WriteFile(bad, []byte("package p\n\nfunc alsoUseF() { F() }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := set.SyncSource(bad); err != nil {
 		t.Fatal(err)
 	}
+
 	p.ProjectFile(pkg, bad)
 	p.InvalidateTypeCheck(pkg)
 	p.EnsureTypeChecked(ws, pkg)
@@ -1540,6 +1681,7 @@ func TestTypeCheck_FixedTestFileIsNoLongerExcludedAfterInvalidation(t *testing.T
 	if len(pkg.ExcludedTestFiles) != 0 {
 		t.Errorf("ExcludedTestFiles = %v, want none", excludedNames(pkg))
 	}
+
 	if !usesIn(pkg, "bad_test.go", "F") {
 		t.Error("the fixed bad_test.go's call of F is missing from TypesInfo.Uses")
 	}
@@ -1549,25 +1691,32 @@ func TestTypeCheck_FixedTestFileIsNoLongerExcludedAfterInvalidation(t *testing.T
 // cycle and reports it, naming every import path in want.
 func assertCycleReported(t *testing.T, pkg *types.Package, fn string, want ...string) {
 	t.Helper()
+
 	if !pkg.TypesChecked || pkg.TypesInfo == nil {
 		t.Fatalf("%s: TypesChecked=%v TypesInfo nil=%v", pkg.ImportPath, pkg.TypesChecked, pkg.TypesInfo == nil)
 	}
+
 	defined := false
+
 	for id := range pkg.TypesInfo.Defs {
 		if id.Name == fn {
 			defined = true
 		}
 	}
+
 	if !defined {
 		t.Errorf("%s: Defs has no entry for %s", pkg.ImportPath, fn)
 	}
+
 	var msg string
 	for _, err := range pkg.ProductionErrs {
 		msg += err.Error() + "\n"
 	}
+
 	if !strings.Contains(msg, "import cycle not allowed") {
 		t.Fatalf("%s: ProductionErrs = %q, want an import cycle error", pkg.ImportPath, msg)
 	}
+
 	for _, path := range want {
 		if !strings.Contains(msg, path) {
 			t.Errorf("%s: ProductionErrs = %q, want %s named", pkg.ImportPath, msg, path)
@@ -1651,10 +1800,12 @@ func TestParser_InvalidateTypeCheck_CycleIntroducedAfterLoadIsReported(t *testin
 		"a/a.go": "package a\n\nfunc FA() {}\n",
 		"b/b.go": "package b\n\nimport \"example.com/w/a\"\n\nfunc FB() { a.FA() }\n",
 	})
+
 	set, err := LoadWorkspaceSet(root, DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	p, ws := set.Primary().Parser, set.Primary().Workspace
 	pkgA, pkgB := ws.Packages[filepath.Join(root, "a")], ws.Packages[filepath.Join(root, "b")]
 	p.EnsureTypeChecked(ws, pkgB)
@@ -1663,9 +1814,11 @@ func TestParser_InvalidateTypeCheck_CycleIntroducedAfterLoadIsReported(t *testin
 	if err := os.WriteFile(file, []byte("package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if _, err := set.SyncSource(file); err != nil {
 		t.Fatal(err)
 	}
+
 	p.ProjectFile(pkgA, file)
 	p.InvalidateTypeCheck(pkgA)
 	p.InvalidateTypeCheck(pkgB)
@@ -1684,16 +1837,20 @@ func TestParseWorkspace_SkipsTestdataAndUnderscoreDirs(t *testing.T) {
 		"b/_gen/z.go":       "package z\n",
 		"testdata/top/t.go": "package top\n",
 	})
+
 	_, ws, err := parseWorkspace(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
+
 	for path := range ws.Packages {
 		rel, _ := filepath.Rel(root, path)
 		got = append(got, rel)
 	}
+
 	slices.Sort(got)
+
 	if !slices.Equal(got, []string{"a"}) {
 		t.Errorf("packages = %v, want [a]", got)
 	}
@@ -1704,9 +1861,11 @@ func TestInSkippedDir_RootIsExempt(t *testing.T) {
 	if InSkippedDir(root, root) {
 		t.Error("root itself must not be skipped")
 	}
+
 	if !InSkippedDir(root, filepath.Join(root, "a", "testdata")) {
 		t.Error("testdata below root must be skipped")
 	}
+
 	if InSkippedDir(root, filepath.Join(root, "a", "b")) {
 		t.Error("plain dir must not be skipped")
 	}
@@ -1719,13 +1878,16 @@ func TestSyncSource_UntrackedAndRemovedPathsYieldSentinels(t *testing.T) {
 		"p/notes.txt":   "x",
 		"p/gone.go":     "package p\n",
 	})
+
 	set, err := LoadWorkspaceSet(root, DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := os.Remove(filepath.Join(root, "p", "gone.go")); err != nil {
 		t.Fatal(err)
 	}
+
 	for path, want := range map[string]error{
 		filepath.Join(root, "p", "notes.txt"):   ErrSkippedSource,
 		filepath.Join(root, "testdata", "t.go"): ErrSkippedSource,

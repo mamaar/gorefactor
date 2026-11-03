@@ -13,6 +13,7 @@ func TestRenameMethod_RenamesCallInSecondFile(t *testing.T) {
 		"p/b.go": "package p\n\nfunc Use(t T) { t.M() }\n",
 		"p/c.go": "package p\n\nfunc Use2(t T) { t.M() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

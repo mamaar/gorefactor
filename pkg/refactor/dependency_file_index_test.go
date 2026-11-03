@@ -21,6 +21,7 @@ func TestBuildFilePackageIndex_KeysByAbsoluteFilePath(t *testing.T) {
 				t.Errorf("index[%s] = %v, want its package", f.Path, index[f.Path])
 			}
 		}
+
 		for _, f := range pkg.TestFiles {
 			if index[f.Path] != pkg {
 				t.Errorf("index[%s] = %v, want its package", f.Path, index[f.Path])

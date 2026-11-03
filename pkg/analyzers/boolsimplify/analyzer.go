@@ -70,6 +70,7 @@ func WithMinReduction(n int) Option {
 		if n < 1 {
 			n = 1
 		}
+
 		c.minReduction = n
 	}
 }
@@ -90,6 +91,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	return &analysis.Analyzer{
 		Name:     "boolsimplify",
 		Doc:      doc,
@@ -124,10 +126,12 @@ type walker struct {
 func (w *walker) walkFile(file *ast.File) {
 	for _, decl := range file.Decls {
 		name := ""
+
 		fn, ok := decl.(*ast.FuncDecl)
 		if ok {
 			name = fn.Name.Name
 		}
+
 		w.walkNode(decl, name)
 	}
 }
@@ -143,12 +147,14 @@ func (w *walker) walkNode(root ast.Node, fnName string) {
 			stack = stack[:len(stack)-1]
 			return true
 		}
+
 		stack = append(stack, n)
 
 		unary, ok := n.(*ast.UnaryExpr)
 		if !ok || unary.Op != token.NOT {
 			return true
 		}
+
 		if !w.trySimplify(unary, stack, fnName) {
 			return true
 		}
@@ -159,6 +165,7 @@ func (w *walker) walkNode(root ast.Node, fnName string) {
 		// validator rejects outright. ast.Inspect does not call back with nil
 		// for a node whose children are skipped, so pop the stack by hand.
 		stack = stack[:len(stack)-1]
+
 		return false
 	})
 }
@@ -206,6 +213,7 @@ func (w *walker) trySimplify(unary *ast.UnaryExpr, stack []ast.Node, fnName stri
 			},
 		}},
 	})
+
 	return true
 }
 

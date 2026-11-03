@@ -15,6 +15,7 @@ func refreshMiddleware(state *MCPServer) mcpsdk.Middleware {
 			if method == "tools/call" {
 				state.RefreshStaleFiles()
 			}
+
 			return next(ctx, method, req)
 		}
 	}

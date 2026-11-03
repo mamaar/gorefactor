@@ -88,16 +88,19 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	if err != nil {
 		return nil, fmt.Errorf("find unused symbols: %w", err)
 	}
+
 	m.markFrom(g, m.isRoot)
 
 	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live), callers: deadCallers(g, m.live)}
 	var unused []*UnusedSymbol
+
 	for _, n := range g.nodes {
 		u := r.symbolOf(n)
 		if u != nil {
 			unused = append(unused, u)
 		}
 	}
+
 	slices.SortFunc(unused, compareUnused)
 
 	return unused, nil
@@ -110,6 +113,7 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		if pkg.Symbols != nil {
 			continue
 		}
+
 		_, err := ua.resolver.BuildSymbolTable(pkg)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
@@ -130,6 +134,7 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		ifaceMethodNames: interfaceMethodNames(ua.workspace),
 		conversions:      CollectInterfaceConversions(ua.workspace),
 	}
+
 	return g, idx, m, nil
 }
 
@@ -151,14 +156,17 @@ func interfaceMethodNames(ws *types.Workspace) map[string]bool {
 	}
 
 	c := &interfaceMethodCollector{names: names}
+
 	for _, pkg := range ws.Packages {
 		for _, file := range indexedFiles(pkg) {
 			ast.Walk(c, file.AST)
 		}
 	}
+
 	for name := range externalMethodNames(importedPackages(ws)) {
 		names[name] = true
 	}
+
 	return names
 }
 
@@ -173,14 +181,17 @@ func importedPackages(ws *types.Workspace) []*gotypes.Package {
 	var imported []*gotypes.Package
 	seen := make(map[*gotypes.Package]bool)
 	var walk func(p *gotypes.Package)
+
 	walk = func(p *gotypes.Package) {
 		if p == nil || seen[p] {
 			return
 		}
+
 		seen[p] = true
 		if !inWorkspace[p] {
 			imported = append(imported, p)
 		}
+
 		for _, imp := range p.Imports() {
 			walk(imp)
 		}
@@ -188,6 +199,7 @@ func importedPackages(ws *types.Workspace) []*gotypes.Package {
 	for p := range inWorkspace {
 		walk(p)
 	}
+
 	return imported
 }
 
@@ -200,11 +212,13 @@ func (c *interfaceMethodCollector) Visit(n ast.Node) ast.Visitor {
 	if !ok || iface.Methods == nil {
 		return c
 	}
+
 	for _, field := range iface.Methods.List {
 		for _, name := range field.Names {
 			c.names[name.Name] = true
 		}
 	}
+
 	return c
 }
 
@@ -261,10 +275,12 @@ func (m *marker) mark(n, parent *usageNode) {
 	if n == nil || m.live[n] {
 		return
 	}
+
 	m.live[n] = true
 	if parent != nil {
 		m.from[n] = parent
 	}
+
 	m.work = append(m.work, n)
 }
 
@@ -274,12 +290,15 @@ func (m *marker) visit(n *usageNode) {
 	for _, target := range n.out {
 		m.mark(target, n)
 	}
+
 	if m.followTests {
 		for _, target := range n.testOut {
 			m.mark(target, n)
 		}
 	}
+
 	m.mark(n.recv, n)
+
 	for _, method := range n.methods {
 		if m.isKeptMethod(method) {
 			m.mark(method, n)
@@ -293,16 +312,20 @@ func (m *marker) isRoot(n *usageNode) bool {
 	case "main", "init", "_":
 		return true
 	}
+
 	s := n.symbol
 	if s == nil {
 		return false
 	}
+
 	if m.ua.isTestFunction(s) {
 		return true
 	}
+
 	if s.Kind == types.MethodSymbol {
 		return n.recv == nil && m.isKeptMethod(n)
 	}
+
 	return s.Exported && !m.includeExported
 }
 
@@ -315,12 +338,15 @@ func (m *marker) isKeptMethod(n *usageNode) bool {
 	if s == nil || s.Kind != types.MethodSymbol {
 		return false
 	}
+
 	if s.Exported && !m.includeExported {
 		return true
 	}
+
 	if n.test || n.pkg.TypesInfo == nil {
 		return m.ifaceMethodNames[s.Name]
 	}
+
 	return m.conversions.KeepsMethod(s.Position)
 }
 
@@ -339,16 +365,19 @@ type unusedReport struct {
 // deadCallers inverts the reference edges that lead to dead nodes.
 func deadCallers(g *usageGraph, live map[*usageNode]bool) map[*usageNode][]*usageNode {
 	callers := make(map[*usageNode][]*usageNode)
+
 	for _, n := range g.nodes {
 		if n.test {
 			continue
 		}
+
 		for _, target := range n.out {
 			if !live[target] && !slices.Contains(callers[target], n) {
 				callers[target] = append(callers[target], n)
 			}
 		}
 	}
+
 	return callers
 }
 
@@ -356,18 +385,22 @@ func deadCallers(g *usageGraph, live map[*usageNode]bool) map[*usageNode][]*usag
 // to from outside the type's own methods.
 func outsideCallers(g *usageGraph, live map[*usageNode]bool) map[*usageNode]UnusedCause {
 	outside := make(map[*usageNode]UnusedCause)
+
 	for _, n := range g.nodes {
 		for _, target := range n.out {
 			typ := target.recv
 			if typ == nil || typ == n.recv || live[typ] {
 				continue
 			}
+
 			outside[typ] = CauseOnlyUnusedCode
 		}
+
 		if n.recv != nil && !live[n.recv] && n.testRefs > 0 && outside[n.recv] < CauseOnlyTests {
 			outside[n.recv] = CauseOnlyTests
 		}
 	}
+
 	return outside
 }
 
@@ -377,11 +410,13 @@ func (r *unusedReport) symbolOf(n *usageNode) *UnusedSymbol {
 	if s == nil || r.live[n] {
 		return nil
 	}
+
 	if s.Exported && !r.ua.includeExported {
 		return nil
 	}
 
 	cause := r.causeOf(n)
+
 	return &UnusedSymbol{
 		Symbol:        s,
 		SafeToDelete:  !s.Exported && cause <= CauseOnlyDeclarations,
@@ -404,6 +439,7 @@ func (r *unusedReport) causeOf(n *usageNode) UnusedCause {
 	if n.symbol.Kind == types.MethodSymbol && n.recv != nil && !r.live[n.recv] {
 		cause = CauseReceiverUnused
 	}
+
 	return max(cause, r.outside[n])
 }
 
@@ -411,6 +447,7 @@ func (r *unusedReport) causeOf(n *usageNode) UnusedCause {
 // the symbol.
 func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 	s := n.symbol
+
 	targetObj := r.ua.resolver.resolveTypesObject(s)
 	if targetObj != nil {
 		objEntries := r.idx.ObjectEntries(targetObj)
@@ -420,6 +457,7 @@ func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 					return CauseOnlyDeclarations
 				}
 			}
+
 			return CauseNoReferences
 		}
 	}
@@ -430,6 +468,7 @@ func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 		if entry.Pos == s.Position {
 			continue
 		}
+
 		if entry.IsSelector {
 			if r.ua.resolver.importAliasRefersToPackage(entry.PkgAlias, entry.File, s.Package) {
 				return CauseOnlyDeclarations
@@ -438,6 +477,7 @@ func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 			return CauseOnlyDeclarations
 		}
 	}
+
 	return CauseNoReferences
 }
 
@@ -445,17 +485,21 @@ func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 // method of n when they are outside the type.
 func (r *unusedReport) referrersOf(n *usageNode) []*types.Symbol {
 	var out []*types.Symbol
+
 	for _, src := range append([]*usageNode{n}, n.methods...) {
 		for _, ref := range src.referrers {
 			if len(out) == MaxReferrers {
 				return out
 			}
+
 			if ref.symbol == nil || ref.recv == n || slices.Contains(out, ref.symbol) {
 				continue
 			}
+
 			out = append(out, ref.symbol)
 		}
 	}
+
 	return out
 }
 
@@ -463,15 +507,19 @@ func (r *unusedReport) referrersOf(n *usageNode) []*types.Symbol {
 // method of n when they are outside the type, ordered by position.
 func (r *unusedReport) unusedCallersOf(n *usageNode) []*types.Symbol {
 	var out []*types.Symbol
+
 	for _, src := range append([]*usageNode{n}, n.methods...) {
 		for _, ref := range r.callers[src] {
 			if ref.symbol == nil || ref == n || ref.recv == n || slices.Contains(out, ref.symbol) {
 				continue
 			}
+
 			out = append(out, ref.symbol)
 		}
 	}
+
 	slices.SortFunc(out, compareSymbols)
+
 	return out
 }
 

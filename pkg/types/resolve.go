@@ -26,6 +26,7 @@ func ResolvePackagePath(workspace *Workspace, userPath string) string {
 
 	// Strategy 2: Try relative to workspace root
 	absPath := filepath.Join(workspace.RootPath, userPath)
+
 	_, exists = workspace.Packages[absPath]
 	if exists {
 		return absPath
@@ -53,16 +54,20 @@ func ResolvePackagePath(workspace *Workspace, userPath string) string {
 	// Strategy 4: Try to find by Go package name (only if unique)
 	var matchedPath string
 	matchCount := 0
+
 	for pkgPath, pkg := range workspace.Packages {
 		if pkg.Name != userPath {
 			continue
 		}
+
 		matchedPath = pkgPath
+
 		matchCount++
 		if matchCount > 1 {
 			break
 		}
 	}
+
 	if matchCount == 1 {
 		return matchedPath
 	}
@@ -100,11 +105,13 @@ func ResolveNewPackagePath(workspace *Workspace, userPath string) (string, error
 	if userPath == "" {
 		return "", fmt.Errorf("package path cannot be empty")
 	}
+
 	if workspace == nil || workspace.RootPath == "" {
 		return "", fmt.Errorf("cannot resolve %q: workspace has no root path", userPath)
 	}
 
-	resolved := ""
+	var resolved string
+
 	switch {
 	case filepath.IsAbs(userPath):
 		resolved = filepath.Clean(userPath)
@@ -123,6 +130,7 @@ func ResolveNewPackagePath(workspace *Workspace, userPath string) (string, error
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve %q against workspace root %s: %w", userPath, workspace.RootPath, err)
 	}
+
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("package path %q resolves to %s, which is outside the workspace root %s",
 			userPath, resolved, workspace.RootPath)
@@ -137,6 +145,7 @@ func isModuleImportPath(workspace *Workspace, userPath string) bool {
 	if workspace.Module == nil || workspace.Module.Path == "" {
 		return false
 	}
+
 	return userPath == workspace.Module.Path ||
 		strings.HasPrefix(userPath, workspace.Module.Path+"/")
 }

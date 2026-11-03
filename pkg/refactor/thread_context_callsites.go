@@ -25,14 +25,18 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 			Message: "call_sites_of needs entry_package: only call sites the entry program reaches are seeded",
 		}
 	}
+
 	op.resolved = make(map[string]bool)
 	var all []analysis.Target
+
 	for _, spec := range op.CallSitesOf {
 		targets, err := analysis.ResolveTargets(ws, []string{spec})
 		if err != nil {
 			continue // another build configuration may declare it
 		}
+
 		op.resolved[spec] = true
+
 		all = append(all, targets...)
 	}
 	// A target never gains a ctx: the climb stops at every one of them.
@@ -40,7 +44,9 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 	if op.StopAt == nil {
 		op.StopAt = make(pkgtypes.SymbolKeySet)
 	}
+
 	op.targets = make(pkgtypes.SymbolKeySet)
+
 	for _, t := range all {
 		fn, ok := t.Obj.(*gotypes.Func)
 		if ok {
@@ -52,18 +58,22 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 		}
 	}
 	var seeds []*gotypes.Func
+
 	for _, t := range all {
 		for _, site := range idx.CallSitesOf(t.Obj) {
 			seed, err := op.callSiteSeed(idx, plan, site)
 			if errors.Is(err, errNoSeed) {
 				continue
 			}
+
 			if err != nil {
 				return nil, fmt.Errorf("call site seeds: %w", err)
 			}
+
 			seeds = append(seeds, seed)
 		}
 	}
+
 	return seeds, nil
 }
 
@@ -76,26 +86,32 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 	if strings.HasSuffix(site.File.Path, "_test.go") {
 		return nil, errNoSeed
 	}
+
 	if site.Fn == nil {
 		if op.Reach.reachesPackage(site.Pkg.ImportPath) {
 			op.note(plan, site, "(package-level var)", "var initializer: it has no ctx in scope and cannot take a parameter")
 		}
+
 		return nil, errNoSeed
 	}
+
 	enclosing, err := op.callerObject(site)
 	if err != nil {
 		return nil, err
 	}
+
 	key, ok := pkgtypes.SymbolKeyOf(enclosing)
 	if ok && op.targets.Has(key) {
 		return nil, errNoSeed
 	}
+
 	if op.Reach.outside(enclosing) || op.Reach.outsideWithin(enclosing) {
 		return nil, errNoSeed
 	}
 
 	// A closure captures the ctx of its declaration, so the declaration is the seed.
 	site.Lit = nil
+
 	src, found := findCtxSource(site.Pkg, site.Fn, site.Call)
 	if !found && src.Kind != ctxUnknown {
 		_, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, false)
@@ -104,22 +120,28 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 			if site.Fn.Recv == nil && site.Fn.Name.Name == "init" {
 				kind = "init"
 			}
+
 			op.note(plan, site, funcLabel(enclosing), fmt.Sprintf("%s: %s has no ctx in scope and cannot take a parameter", kind, funcLabel(enclosing)))
+
 			return nil, errNoSeed
 		}
 	}
+
 	caller, climb, err := op.climbTarget(idx, plan, site)
 	if err != nil {
 		return nil, err
 	}
+
 	if !climb {
 		return nil, errNoSeed
 	}
+
 	fd := op.declIndex[caller]
 	if fd != nil && fd.File != nil && fd.File.Generated {
 		op.note(plan, site, funcLabel(caller), fmt.Sprintf("generated: %s is declared in generated code, which is not edited", funcLabel(caller)))
 		return nil, errNoSeed
 	}
+
 	return caller, nil
 }
 
@@ -142,14 +164,17 @@ func (op *ThreadContextOperation) gainBlocker(ws *pkgtypes.Workspace, idx *analy
 			return fmt.Sprintf("func value: %s is used as a value at %s:%d, so its signature stays", funcLabel(f), pos.Filename, pos.Line)
 		}
 	}
+
 	ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f)
 	if ok {
 		return fmt.Sprintf("external interface: %s implements %s, declared outside the workspace, so its signature stays", funcLabel(f), ext.label())
 	}
+
 	m := stdMethodOf(f.Name(), f)
 	if m != nil {
 		return fmt.Sprintf("standard method: %s: %s; its signature stays", funcLabel(f), stdMethodWhy(m))
 	}
+
 	return ""
 }
 

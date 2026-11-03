@@ -32,6 +32,7 @@ func (d *inlineDecls) record(v *analysis.View, file string, impl MethodImpl) {
 			return
 		}
 	}
+
 	d.decls = append(d.decls, decl)
 }
 
@@ -43,6 +44,7 @@ func (d *inlineDecls) refuse([]types.Blocker) error {
 		if other.impl.Body == first.impl.Body && slices.Equal(other.impl.ParamNames, first.impl.ParamNames) {
 			continue
 		}
+
 		return &types.RefactorError{
 			Type: types.InvalidOperation,
 			Message: fmt.Sprintf(
@@ -51,6 +53,7 @@ func (d *inlineDecls) refuse([]types.Blocker) error {
 				d.name, first.file, first.view.Config, other.file, other.view.Config),
 		}
 	}
+
 	return nil
 }
 
@@ -79,6 +82,7 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 		CachedIndex:  p.indexOf(v),
 	}
 	declared := declaredSymbolKeys(ws)
+
 	err := op.Validate(ws)
 	if err != nil {
 		return configResult{}, fmt.Errorf("inline function operation validation failed: %w", err)
@@ -88,21 +92,26 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 	if err != nil {
 		return configResult{}, err
 	}
+
 	if sym == nil {
 		sym = linkedFunction(ws, linked, op.FunctionName)
 		if sym != nil {
 			op.SourceFile = sym.File
 		}
 	}
+
 	impl, err := op.findFunctionImplementation(ws)
 	if err != nil {
 		err = fmt.Errorf("failed to generate inline function plan: %w", err)
 		if sym != nil || !isAbsentTarget(err) {
 			return configResult{}, err
 		}
+
 		p.planned(v, nil)
+
 		return configResult{absent: err, declared: declared}, nil
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate inline function plan: %w", err)
@@ -111,6 +120,7 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 	p.record(v, sym.File, impl)
 	op.dropAnalysis()
 	p.planned(v, plan)
+
 	return configResult{
 		plan:     plan,
 		changed:  keysOf([]*types.Symbol{sym}),
@@ -126,12 +136,15 @@ func (p *inlineFunctionPlanner) targetFiles(ws *types.Workspace) []string {
 		return p.req.TargetFiles
 	}
 	var files []string
+
 	for _, pkg := range ws.Packages {
 		for _, f := range packageAllFiles(pkg) {
 			files = append(files, f.Path)
 		}
 	}
+
 	slices.Sort(files)
+
 	return files
 }
 
@@ -144,6 +157,7 @@ func linkedFunction(ws *types.Workspace, linked types.SymbolKeySet, name string)
 			return sym
 		}
 	}
+
 	return nil
 }
 
@@ -163,20 +177,24 @@ func (p *inlineMethodPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (co
 		TargetFile:   p.req.TargetFile,
 		CachedIndex:  p.indexOf(v),
 	}
+
 	err := op.Validate(ws)
 	if err != nil {
 		err = fmt.Errorf("inline method operation validation failed: %w", err)
 		if !isAbsentTarget(err) {
 			return configResult{}, err
 		}
+
 		p.planned(v, nil)
 		// Linking a key cannot make the target file part of the view.
 		return configResult{absent: err, declared: types.SymbolKeySet{}}, nil
 	}
+
 	impl, err := op.findMethodImplementation(ws)
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate inline method plan: %w", err)
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate inline method plan: %w", err)
@@ -186,6 +204,7 @@ func (p *inlineMethodPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (co
 	p.record(v, sym.File, impl)
 	op.dropAnalysis()
 	p.planned(v, plan)
+
 	return configResult{
 		plan:     plan,
 		changed:  keysOf([]*types.Symbol{sym}),

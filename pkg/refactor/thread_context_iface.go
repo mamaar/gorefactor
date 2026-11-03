@@ -29,6 +29,7 @@ func (c ifaceCandidate) label() string {
 	if obj.Pkg() == nil {
 		return obj.Name() // a builtin such as `error`
 	}
+
 	return fmt.Sprintf("%s.%s", obj.Pkg().Path(), obj.Name())
 }
 
@@ -55,6 +56,7 @@ func (op *ThreadContextOperation) interfaceSurvey(ws *pkgtypes.Workspace) *iface
 	if op.ifaceCache == nil {
 		op.ifaceCache = surveyInterfaces(ws)
 	}
+
 	return op.ifaceCache
 }
 
@@ -82,6 +84,7 @@ func surveyInterfaces(ws *pkgtypes.Workspace) *ifaceSurvey {
 			b.declareScope(pkg.TypesPkg)
 			b.addImportedInterfaces(pkg.TypesPkg)
 		}
+
 		if pkg.TypesInfo != nil {
 			b.addMentionedInterfaces(pkg.TypesInfo)
 		}
@@ -90,6 +93,7 @@ func surveyInterfaces(ws *pkgtypes.Workspace) *ifaceSurvey {
 	for _, checked := range checkedPackages(ws, b.inWorkspace) {
 		b.addScope(checked)
 	}
+
 	return b.survey
 }
 
@@ -97,26 +101,33 @@ func surveyInterfaces(ws *pkgtypes.Workspace) *ifaceSurvey {
 // package: each package's own check and the copies its importers hold.
 func checkedPackages(ws *pkgtypes.Workspace, inWorkspace func(*gotypes.Package) bool) []*gotypes.Package {
 	var work, out []*gotypes.Package
+
 	for _, pkg := range ws.Packages {
 		if pkg.TypesPkg != nil {
 			work = append(work, pkg.TypesPkg)
 		}
+
 		if pkg.ExternalTestTypesPkg != nil {
 			work = append(work, pkg.ExternalTestTypesPkg)
 			work = append(work, pkg.ExternalTestTypesPkg.Imports()...)
 		}
 	}
+
 	seen := make(map[*gotypes.Package]bool)
+
 	for len(work) > 0 {
 		checked := work[len(work)-1]
 		work = work[:len(work)-1]
+
 		if seen[checked] || !inWorkspace(checked) {
 			continue
 		}
+
 		seen[checked] = true
 		out = append(out, checked)
 		work = append(work, checked.Imports()...)
 	}
+
 	return out
 }
 
@@ -124,6 +135,7 @@ func (b *ifaceSurveyor) add(c ifaceCandidate) {
 	if b.seenIface[c.named] {
 		return
 	}
+
 	b.seenIface[c.named] = true
 	if c.named.Obj().Pkg() != nil && b.inWorkspace(c.named.Obj().Pkg()) {
 		b.survey.workspace = append(b.survey.workspace, c)
@@ -135,15 +147,18 @@ func (b *ifaceSurveyor) add(c ifaceCandidate) {
 // scopeTypes returns the named types checked declares at package level.
 func scopeTypes(checked *gotypes.Package) []*gotypes.Named {
 	var out []*gotypes.Named
+
 	for _, name := range checked.Scope().Names() {
 		tn, ok := checked.Scope().Lookup(name).(*gotypes.TypeName)
 		if !ok {
 			continue
 		}
+
 		if named, ok := tn.Type().(*gotypes.Named); ok {
 			out = append(out, named)
 		}
 	}
+
 	return out
 }
 
@@ -155,8 +170,10 @@ func (b *ifaceSurveyor) declareScope(own *gotypes.Package) {
 			for method := range iface.ExplicitMethods() {
 				b.declare(method)
 			}
+
 			continue
 		}
+
 		for method := range named.Methods() {
 			b.declare(method)
 		}
@@ -172,6 +189,7 @@ func (b *ifaceSurveyor) addScope(checked *gotypes.Package) {
 	for _, named := range scopeTypes(checked) {
 		id := analysis.ObjectIDOf(named.Obj())
 		b.survey.views[id] = append(b.survey.views[id], named)
+
 		iface, ok := asInterfaceType(named)
 		if ok {
 			b.add(ifaceCandidate{named: named, iface: iface})
@@ -191,10 +209,12 @@ func (b *ifaceSurveyor) addImportedInterfaces(checked *gotypes.Package) {
 		if b.inWorkspace(imp) {
 			continue
 		}
+
 		for _, named := range scopeTypes(imp) {
 			if !named.Obj().Exported() {
 				continue
 			}
+
 			iface, ok := asInterfaceType(named)
 			if ok {
 				b.add(ifaceCandidate{named: named, iface: iface})
@@ -211,11 +231,13 @@ func (b *ifaceSurveyor) addMentionedInterfaces(info *gotypes.Info) {
 	for _, tv := range info.Types {
 		collectIfaceTypes(tv.Type, b.seenType, b.add)
 	}
+
 	for _, obj := range info.Defs {
 		if obj != nil {
 			collectIfaceTypes(obj.Type(), b.seenType, b.add)
 		}
 	}
+
 	for _, obj := range info.Uses {
 		if obj != nil {
 			collectIfaceTypes(obj.Type(), b.seenType, b.add)
@@ -231,21 +253,26 @@ func (b *ifaceSurveyor) addMentionedInterfaces(info *gotypes.Info) {
 func workspacePkgPredicate(ws *pkgtypes.Workspace) func(*gotypes.Package) bool {
 	byPtr := make(map[*gotypes.Package]bool)
 	byPath := make(map[string]bool)
+
 	for _, pkg := range ws.Packages {
 		if pkg.TypesPkg != nil {
 			byPtr[pkg.TypesPkg] = true
 		}
+
 		if pkg.ImportPath != "" {
 			byPath[pkg.ImportPath] = true
 		}
 	}
+
 	for importPath := range ws.ImportToPath {
 		byPath[importPath] = true
 	}
+
 	return func(p *gotypes.Package) bool {
 		if p == nil {
 			return false
 		}
+
 		return byPtr[p] || byPath[p.Path()]
 	}
 }
@@ -265,6 +292,7 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 	if t == nil || seen[t] {
 		return
 	}
+
 	seen[t] = true
 
 	switch t := t.(type) {
@@ -312,6 +340,7 @@ func (op *ThreadContextOperation) externalInterfaceAbort(ws *pkgtypes.Workspace,
 	if ok {
 		return op.externalIfaceError(f, ext)
 	}
+
 	return nil
 }
 
@@ -326,6 +355,7 @@ func (s *ifaceSurvey) externalInterfaceOf(f *gotypes.Func) (ifaceCandidate, bool
 			}
 		}
 	}
+
 	return ifaceCandidate{}, false
 }
 
@@ -336,7 +366,9 @@ func (s *ifaceSurvey) receiversOf(f *gotypes.Func) []gotypes.Type {
 	if recv == nil {
 		return nil
 	}
+
 	out := s.viewsOf(recv)
+
 	id := analysis.ObjectIDOf(f)
 	for _, named := range s.impls {
 		m := lookupMethod(named, f.Name())
@@ -344,6 +376,7 @@ func (s *ifaceSurvey) receiversOf(f *gotypes.Func) []gotypes.Type {
 			out = append(out, named)
 		}
 	}
+
 	return out
 }
 
@@ -356,6 +389,7 @@ func (op *ThreadContextOperation) externalIfaceError(f *gotypes.Func, ext ifaceC
 			"cannot thread context: %s must gain a ctx parameter to reach the seed, but it implements",
 			funcLabel(f))
 	}
+
 	return &pkgtypes.RefactorError{
 		Type: pkgtypes.InvalidOperation,
 		Message: fmt.Sprintf(
@@ -370,15 +404,18 @@ func (op *ThreadContextOperation) externalIfaceError(f *gotypes.Func, ext ifaceC
 // already in the visited set by the time this runs, so discover drops it.
 func (s *ifaceSurvey) implementationsOf(iface *gotypes.Interface, methodName string) []*gotypes.Func {
 	var out []*gotypes.Func
+
 	for _, named := range s.impls {
 		if !typeImplements(named, iface) {
 			continue
 		}
+
 		m := lookupMethod(named, methodName)
 		if m != nil {
 			out = append(out, canonicalFunc(m))
 		}
 	}
+
 	return out
 }
 
@@ -391,8 +428,10 @@ func lookupMethod(named *gotypes.Named, name string) *gotypes.Func {
 	if named.Obj() != nil {
 		pkg = named.Obj().Pkg()
 	}
+
 	obj, _, _ := gotypes.LookupFieldOrMethod(gotypes.NewPointer(named), true, pkg, name)
 	m, _ := obj.(*gotypes.Func)
+
 	return m
 }
 
@@ -409,6 +448,7 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 	if t == nil || iface == nil {
 		return false
 	}
+
 	if gotypes.Implements(t, iface) {
 		return true
 	}
@@ -418,9 +458,11 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 	if isPtr {
 		return false
 	}
+
 	if gotypes.IsInterface(t) {
 		return false
 	}
+
 	return gotypes.Implements(gotypes.NewPointer(t), iface)
 }
 
@@ -429,11 +471,11 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 // interface (io.WriteCloser's Write, from io.Writer) is found.
 func interfaceMethodNamed(iface *gotypes.Interface, name string) *gotypes.Func {
 	for m := range iface.Methods() {
-		m := m
 		if m.Name() == name {
 			return m
 		}
 	}
+
 	return nil
 }
 
@@ -443,6 +485,7 @@ func methodRecvType(f *gotypes.Func) gotypes.Type {
 	if !ok || sig.Recv() == nil {
 		return nil
 	}
+
 	return sig.Recv().Type()
 }
 
@@ -459,30 +502,37 @@ func findInterfaceMethodIdent(file *ast.File, name string) *ast.Ident {
 		return nil
 	}
 	var found *ast.Ident
+
 	ast.Inspect(file, func(n ast.Node) bool {
 		if found != nil {
 			return false
 		}
+
 		ts, ok := n.(*ast.TypeSpec)
 		if !ok || ts.Name.Name != typeName {
 			return true
 		}
+
 		iface, ok := ts.Type.(*ast.InterfaceType)
 		if !ok || iface.Methods == nil {
 			return false
 		}
+
 		for _, field := range iface.Methods.List {
 			if len(field.Names) == 0 || field.Names[0].Name != methodName {
 				continue
 			}
+
 			_, ok := field.Type.(*ast.FuncType)
 			if ok {
 				found = field.Names[0]
 				return false
 			}
 		}
+
 		return false
 	})
+
 	return found
 }
 
@@ -491,7 +541,9 @@ func asInterfaceType(t gotypes.Type) (*gotypes.Interface, bool) {
 	if t == nil {
 		return nil, false
 	}
+
 	iface, ok := t.Underlying().(*gotypes.Interface)
+
 	return iface, ok
 }
 
@@ -502,20 +554,24 @@ func asInterfaceType(t gotypes.Type) (*gotypes.Interface, bool) {
 // implementations and the interfaces those satisfy.
 func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
 	var out []*gotypes.Func
+
 	for _, view := range s.receiversOf(f) {
 		iface, ok := asInterfaceType(view)
 		if ok {
 			out = append(out, s.implementationsOf(iface, f.Name())...)
 			continue
 		}
+
 		for _, cand := range s.workspace {
 			m := interfaceMethodNamed(cand.iface, f.Name())
 			if m == nil || !typeImplements(view, cand.iface) {
 				continue
 			}
+
 			out = append(out, canonicalFunc(m))
 		}
 	}
+
 	return s.declaredFuncs(out)
 }
 
@@ -523,22 +579,27 @@ func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
 // or recv alone when the workspace does not declare it at package level.
 func (s *ifaceSurvey) viewsOf(recv gotypes.Type) []gotypes.Type {
 	t := gotypes.Unalias(recv)
+
 	ptr, ok := t.(*gotypes.Pointer)
 	if ok {
 		t = gotypes.Unalias(ptr.Elem())
 	}
+
 	named, ok := t.(*gotypes.Named)
 	if !ok {
 		return []gotypes.Type{recv}
 	}
+
 	copies := s.views[analysis.ObjectIDOf(named.Obj())]
 	if len(copies) == 0 {
 		return []gotypes.Type{recv}
 	}
+
 	out := make([]gotypes.Type, len(copies))
 	for i, c := range copies {
 		out[i] = c
 	}
+
 	return out
 }
 
@@ -550,15 +611,18 @@ func (s *ifaceSurvey) viewsOf(recv gotypes.Type) []gotypes.Type {
 // by object, so nothing found through types may leave here unmapped.
 func (s *ifaceSurvey) declaredFuncs(funcs []*gotypes.Func) []*gotypes.Func {
 	var out []*gotypes.Func
+
 	for _, f := range funcs {
 		own, ok := s.declared[analysis.ObjectIDOf(f)]
 		if ok {
 			f = own
 		}
+
 		if !slices.Contains(out, f) {
 			out = append(out, f)
 		}
 	}
+
 	return out
 }
 
@@ -571,20 +635,25 @@ func methodClosure(
 ) ([]*gotypes.Func, error) {
 	var members []*gotypes.Func
 	visited := make(map[gotypes.Object]bool)
+
 	for work := []*gotypes.Func{seed}; len(work) > 0; work = work[1:] {
 		f := work[0]
 		if visited[f] {
 			continue
 		}
+
 		visited[f] = true
+
 		ext, ok := survey.externalInterfaceOf(f)
 		if ok {
 			return nil, refuse(f, ext)
 		}
+
 		members = append(members, f)
 		for _, next := range survey.expansionOf(f) {
 			work = append(work, canonicalFunc(next))
 		}
 	}
+
 	return members, nil
 }

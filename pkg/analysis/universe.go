@@ -15,19 +15,24 @@ import (
 func (p *GoParser) UniverseErrors(ws *types.Workspace) []string {
 	p.checkMu.Lock()
 	defer p.checkMu.Unlock()
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	u := universe{ws: ws}
 	if p.importer != nil {
 		u.productionOnly = p.importer.productionOnly
 	}
+
 	for _, path := range slices.Sorted(maps.Keys(ws.Packages)) {
 		pkg := ws.Packages[path]
 		u.checkImports(pkg.ImportPath, pkg.TypesPkg)
 		u.checkImports(pkg.ImportPath+" (production only)", u.productionOnly[pkg])
 		u.checkUses(pkg)
 	}
+
 	slices.Sort(u.errs)
+
 	return slices.Compact(u.errs)
 }
 
@@ -44,10 +49,12 @@ func (u *universe) canonical(importPath string) *gotypes.Package {
 	if pkg == nil {
 		return nil
 	}
+
 	rescued, ok := u.productionOnly[pkg]
 	if ok {
 		return rescued
 	}
+
 	return pkg.TypesPkg
 }
 
@@ -55,6 +62,7 @@ func (u *universe) checkImports(from string, checked *gotypes.Package) {
 	if checked == nil {
 		return
 	}
+
 	for _, imp := range checked.Imports() {
 		u.checkRef(from, imp)
 	}
@@ -67,6 +75,7 @@ func (u *universe) checkUses(pkg *types.Package) {
 	if pkg.TypesInfo == nil {
 		return
 	}
+
 	for _, obj := range pkg.TypesInfo.Uses {
 		ref := obj.Pkg()
 		if ref != nil && ref.Path() != pkg.ImportPath {
@@ -80,5 +89,6 @@ func (u *universe) checkRef(from string, ref *gotypes.Package) {
 	if want == nil || want == ref {
 		return
 	}
+
 	u.errs = append(u.errs, fmt.Sprintf("%s refers to a copy of %s (%p) that is not the one importers get (%p)", from, ref.Path(), ref, want))
 }

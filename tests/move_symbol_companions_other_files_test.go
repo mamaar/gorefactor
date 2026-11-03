@@ -10,9 +10,12 @@ import (
 func moveTypeAcrossFiles(t *testing.T, files map[string]string, symbol string) (string, bool, string) {
 	t.Helper()
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")
+
 	return dir, res.IsError, errText(res)
 }
 
@@ -25,12 +28,15 @@ func TestMoveSymbolMovesConstructorDeclaredInAnotherFile(t *testing.T) {
 	if isErr {
 		t.Fatalf("move: %s", msg)
 	}
+
 	assertFileContains(t, dir, "dst/dst.go", "type T struct")
 	assertFileContains(t, dir, "dst/dst.go", "func NewT()")
+
 	got := fileTextOrEmpty(t, dir, "src/new.go")
 	if strings.Contains(got, "NewT") {
 		t.Errorf("NewT remains in src/new.go:\n%s", got)
 	}
+
 	assertFileContains(t, dir, "use/use.go", "dst.NewT()")
 	goVets(t, dir, "")
 }
@@ -43,12 +49,15 @@ func TestMoveSymbolBringsImportOfConstructorInAnotherFile(t *testing.T) {
 	if isErr {
 		t.Fatalf("move: %s", msg)
 	}
+
 	assertFileContains(t, dir, "dst/dst.go", "\"strings\"")
 	assertFileContains(t, dir, "dst/dst.go", "func NewT(")
+
 	got := fileTextOrEmpty(t, dir, "src/new.go")
 	if strings.Contains(got, "strings") {
 		t.Errorf("unused import remains in src/new.go:\n%s", got)
 	}
+
 	goVets(t, dir, "")
 }
 
@@ -61,18 +70,23 @@ func TestMoveSymbolOrdersConstructorsOwnFileFirstThenOtherFilesByName(t *testing
 		}
 	}
 	var outputs []string
+
 	for range 2 {
 		dir, isErr, msg := moveTypeAcrossFiles(t, files(), "T")
 		if isErr {
 			t.Fatalf("move: %s", msg)
 		}
+
 		goVets(t, dir, "")
 		outputs = append(outputs, fileText(t, dir, "dst/dst.go"))
 	}
+
 	if outputs[0] != outputs[1] {
 		t.Errorf("output differs between runs:\n%s\n---\n%s", outputs[0], outputs[1])
 	}
+
 	got := outputs[0]
+
 	iT, iNew, iA, iB := strings.Index(got, "type T struct"), strings.Index(got, "func NewT()"), strings.Index(got, "func NewTA()"), strings.Index(got, "func NewTB()")
 	if iT < 0 || iNew < iT || iA < iNew || iB < iA {
 		t.Errorf("unexpected order (T=%d NewT=%d NewTA=%d NewTB=%d):\n%s", iT, iNew, iA, iB, got)
@@ -88,6 +102,7 @@ func TestMoveSymbolRefusesWhenUnexportedLiteralInAnotherFileCannotMove(t *testin
 	if !isErr || !strings.Contains(msg, "moving T would strand code that constructs it via unexported fields (n)") || !strings.Contains(msg, "other.go") {
 		t.Fatalf("want a stranded-construction refusal naming other.go, got isErr=%v msg=%s", isErr, msg)
 	}
+
 	assertFileContains(t, dir, "src/other.go", "func Peek()")
 }
 
@@ -99,6 +114,7 @@ func TestMoveSymbolRefusesConstructorInTestFile(t *testing.T) {
 	if !isErr || !strings.Contains(msg, "moving T would strand code that constructs it via unexported fields (n)") || !strings.Contains(msg, "t_test.go") {
 		t.Fatalf("want a stranded-construction refusal naming t_test.go, got isErr=%v msg=%s", isErr, msg)
 	}
+
 	assertFileContains(t, dir, "src/t.go", "type T struct")
 }
 
@@ -109,6 +125,7 @@ func TestMoveSymbolMovesSameFileFunctionBuildingTypeWithoutReturningIt(t *testin
 	if isErr {
 		t.Fatalf("move: %s", msg)
 	}
+
 	assertFileContains(t, dir, "dst/dst.go", "func Peek()")
 	goVets(t, dir, "")
 }

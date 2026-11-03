@@ -26,31 +26,38 @@ func TestSafeDeleteBlockingReferences_AttributesEachReferenceToItsConfigs(t *tes
 	eng, dir := loadConfigsEngine(t, portedCallersWorkspace())
 
 	got, err := eng.SafeDeleteBlockingReferences(types.SafeDeleteRequest{Symbol: "leaf", SourceFile: filepath.Join(dir, "p/leaf.go")})
-
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got) != 5 {
 		t.Fatalf("blockers = %+v, want one per call site", got)
 	}
+
 	owners := make(map[string]string)
+
 	for _, b := range got {
 		file := filepath.Base(b.File)
 		if file == "leaf.go" {
 			if len(b.Configs) != 0 {
 				t.Errorf("leaf.go is in every configuration, got Configs %v", b.Configs)
 			}
+
 			continue
 		}
+
 		if len(b.Configs) != 1 {
 			t.Fatalf("%s: Configs = %v, want the one configuration that includes it", file, b.Configs)
 		}
+
 		other, taken := owners[b.Configs[0]]
 		if taken {
 			t.Errorf("%s and %s are both attributed to %s", file, other, b.Configs[0])
 		}
+
 		owners[b.Configs[0]] = file
 	}
+
 	if !strings.Contains(strings.Join(slices.Collect(maps.Keys(owners)), "|"), "tags=tagx") {
 		t.Errorf("no blocker attributed to the tagx configuration: %v", owners)
 	}
@@ -76,13 +83,16 @@ func TestSafeDeleteAcrossConfigs_BoundsAndReleasesSecondaryViews(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "found 5 references") {
 		t.Fatalf("err = %v, want the delete refused for 5 references", err)
 	}
+
 	if !reflect.DeepEqual(planner.held, []int{2, 2, 2, 2, 1}) {
 		t.Errorf("secondary views holding type info at each plan = %v, want [2 2 2 2 1]", planner.held)
 	}
+
 	views, err := eng.WorkspaceSet().Views()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, v := range views[1:] {
 		for _, pkg := range v.Workspace.Packages {
 			if pkg.TypesChecked || pkg.TypesInfo != nil {
@@ -107,12 +117,15 @@ func TestSafeDeleteAcrossConfigs_MentionInUncheckedFileOfAnImporterBlocks(t *tes
 			t.Fatal(err)
 		}
 		var files []string
+
 		for _, b := range got {
 			if b.Unverified == "" {
 				t.Errorf("%s: blocker %+v is not marked unverified", symbol, b)
 			}
+
 			files = append(files, filepath.Base(b.File))
 		}
+
 		if !reflect.DeepEqual(files, wantFiles) {
 			t.Errorf("%s: blocked by %v, want %v", symbol, files, wantFiles)
 		}

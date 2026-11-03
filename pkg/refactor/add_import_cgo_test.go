@@ -9,15 +9,19 @@ func addContextImport(t *testing.T, src string) string {
 	t.Helper()
 	ws := buildScopeWorkspace(t, map[string]string{"p/p.go": src})
 	pkg := findPackageByName(t, ws, "p")
+
 	var path string
 	for _, f := range pkg.Files {
 		path = f.Path
 	}
+
 	c := GenerateAddImportChange(ws, path, "", "context")
 	if c == nil {
 		t.Fatal("no import change")
 	}
+
 	content := originalContent(t, ws, path)
+
 	return string(content[:c.Start]) + c.NewText + string(content[c.End:])
 }
 

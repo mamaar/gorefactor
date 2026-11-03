@@ -13,8 +13,24 @@ linters:
     - ineffassign
     - gocritic
     - misspell
+    - wsl_v5
+    - nilnil
+    - durationcheck
+    - exptostd
+    - usetesting
+    - nolintlint
+    - predeclared
+    - thelper
+    - errorlint
+    - makezero
+    - wastedassign
+    - unconvert
+    - modernize
+    - mirror
+    - intrange
+    - copyloopvar
 
-issues:
-  exclude-dirs:
-    - testdata
-    - bin
+  settings:
+    wsl_v5:
+      disable:
+        - decl

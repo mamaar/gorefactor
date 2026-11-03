@@ -18,6 +18,7 @@ func stdAddParamArgs(file, fn, name, typ string) map[string]any {
 
 func TestStdMethodSignatures_RemoveReturnRefusesMarshalJSONAndLeavesFilesAlone(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/j.go": stdMarshalJSON})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -30,6 +31,7 @@ func TestStdMethodSignatures_RemoveReturnRefusesMarshalJSONAndLeavesFilesAlone(t
 func TestStdMethodSignatures_RenameMethodRefusesString(t *testing.T) {
 	const src = "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"t\" }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -43,6 +45,7 @@ func TestStdMethodSignatures_ChangeSignatureRefusesStdMethodButAllowsSameNameWit
 	const std = "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"t\" }\n"
 	const other = "package p\n\ntype U struct{}\n\nfunc (U) String(x int) string { return \"u\" }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": std, "p/u.go": other})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -57,6 +60,7 @@ func TestStdMethodSignatures_ChangeSignatureRefusesStdMethodButAllowsSameNameWit
 func TestStdMethodSignatures_IsOnNonErrorTypeIsNotStd(t *testing.T) {
 	const src = "package p\n\ntype T struct{}\n\nfunc (T) Is(e error) bool { return false }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -103,12 +107,14 @@ func TestStdMethodSignatures_UnusedParamsReportsUnmarshalJSONNotFixable(t *testi
 func TestStdMethodSignatures_MessageNamesTheInterfaceWithoutVetForAdditions(t *testing.T) {
 	const src = "package p\n\ntype T struct{}\n\nfunc (T) MarshalText() ([]byte, error) { return nil, nil }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	res := changeSig(t, sess, returnArgs("T.MarshalText", "p/t.go", "remove_return", "[]byte"))
 
 	assertRefused(t, res, "encoding.TextMarshaler")
+
 	if strings.Contains(errText(res), "go vet") {
 		t.Errorf("refusal mentions go vet for an addition: %s", errText(res))
 	}
@@ -116,6 +122,7 @@ func TestStdMethodSignatures_MessageNamesTheInterfaceWithoutVetForAdditions(t *t
 
 func TestStdMethodSignatures_BareNameRemoveReturnRefusesMarshalJSON(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/j.go": stdMarshalJSON})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -128,6 +135,7 @@ func TestStdMethodSignatures_BareNameRemoveReturnRefusesMarshalJSON(t *testing.T
 func TestStdMethodSignatures_BareNameAddContextParameterRefusesError(t *testing.T) {
 	const src = "package p\n\ntype E struct{}\n\nfunc (E) Error() string { return \"e\" }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/e.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -140,6 +148,7 @@ func TestStdMethodSignatures_BareNameAddContextParameterRefusesError(t *testing.
 func TestStdMethodSignatures_BareNameAddParamRefusesWriteSatisfyingIoWriter(t *testing.T) {
 	const src = "package p\n\nimport \"io\"\n\ntype W struct{}\n\nfunc (W) Write(p []byte) (int, error) { return len(p), nil }\n\nfunc Use(r io.Reader) { _ = r }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/w.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -152,6 +161,7 @@ func TestStdMethodSignatures_BareNameAddParamRefusesWriteSatisfyingIoWriter(t *t
 func TestStdMethodSignatures_RenameSymbolRefusesStdMethodDotted(t *testing.T) {
 	const src = "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"t\" }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -166,6 +176,7 @@ func TestStdMethodSignatures_RenameSymbolRenamesPlainMethod(t *testing.T) {
 		"p/t.go":   "package p\n\ntype T struct{}\n\nfunc (T) Helper() {}\n",
 		"p/use.go": "package p\n\nfunc Use(t T) { t.Helper() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -174,6 +185,7 @@ func TestStdMethodSignatures_RenameSymbolRenamesPlainMethod(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("rename_symbol refused: %s", errText(res))
 	}
+
 	assertFileContains(t, dir, "p/t.go", "func (T) Assist()")
 	assertFileContains(t, dir, "p/use.go", "t.Assist()")
 	goVets(t, dir, "")
@@ -181,6 +193,7 @@ func TestStdMethodSignatures_RenameSymbolRenamesPlainMethod(t *testing.T) {
 
 func TestStdMethodSignatures_RenameMethodRefusesNewNameThatIsStdMethod(t *testing.T) {
 	const name = "package p\n\ntype T struct{}\n\nfunc (T) Name() string { return \"t\" }\n"
+
 	const encode = "package p\n\ntype T struct{}\n\nfunc (T) Encode() ([]byte, error) { return nil, nil }\n"
 	for _, c := range []struct{ src, method, newName, iface string }{
 		{name, "Name", "String", "fmt.Stringer"},
@@ -206,6 +219,7 @@ func TestStdMethodSignatures_RenameMethodAllowsNewNameWhenSignatureDiffers(t *te
 		"p/t.go":   src,
 		"p/use.go": "package p\n\nfunc Use(t T) string { return t.Name(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -222,6 +236,7 @@ func TestStdMethodSignatures_CallSitesOfSkipsStdMethodWithReason(t *testing.T) {
 		"main.go":  "package main\n\nimport \"example.com/threadmcp/p\"\n\nfunc main() { p.Run() }\n",
 		"p/p.go":   "package p\n\nimport \"example.com/threadmcp/lg\"\n\ntype S struct{}\n\nfunc (S) String() string { lg.Warn(\"x\"); return \"s\" }\n\nfunc Run() { _ = S{}.String() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -230,5 +245,6 @@ func TestStdMethodSignatures_CallSitesOfSkipsStdMethodWithReason(t *testing.T) {
 	if !hasReason(out, "standard method:") {
 		t.Errorf("skipped_sites reasons = %v, want one starting standard method:", skippedReasons(out))
 	}
+
 	assertFileUnchanged(t, dir, "p/p.go", "package p\n\nimport \"example.com/threadmcp/lg\"\n\ntype S struct{}\n\nfunc (S) String() string { lg.Warn(\"x\"); return \"s\" }\n\nfunc Run() { _ = S{}.String() }\n")
 }

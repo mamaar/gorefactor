@@ -73,6 +73,7 @@ func newUsageGraph(ws *types.Workspace) *usageGraph {
 	}
 
 	slices.SortFunc(g.spans, compareSpans)
+
 	return g
 }
 
@@ -89,9 +90,11 @@ func linkMethod(m methodDecl, typeNodes map[receiverKey]*usageNode) {
 	for hops := 0; typ != nil && typ.aliasOf != "" && hops < len(typeNodes); hops++ {
 		typ = typeNodes[receiverKey{m.key.pkg, m.key.clause, typ.aliasOf}]
 	}
+
 	if typ == nil || typ.aliasOf != "" {
 		return
 	}
+
 	m.node.recv = typ
 	typ.methods = append(typ.methods, m.node)
 }
@@ -115,6 +118,7 @@ func (b fileNodes) add() []methodDecl {
 		case *ast.FuncDecl:
 			n := b.newNode(d.Name)
 			b.addSpan(d.Pos(), d.End(), n)
+
 			if d.Recv != nil {
 				methods = append(methods, methodDecl{node: n, key: receiverKey{b.pkg, clause, receiverTypeName(d.Recv)}})
 			}
@@ -122,6 +126,7 @@ func (b fileNodes) add() []methodDecl {
 			b.addGenDecl(d, clause)
 		}
 	}
+
 	return methods
 }
 
@@ -130,10 +135,12 @@ func (b fileNodes) addGenDecl(d *ast.GenDecl, clause string) {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
 			n := b.newNode(s.Name)
+
 			id, ok := s.Type.(*ast.Ident)
 			if ok && s.Assign.IsValid() {
 				n.aliasOf = id.Name
 			}
+
 			b.typeNodes[receiverKey{b.pkg, clause, s.Name.Name}] = n
 			b.addSpan(s.Pos(), s.End(), n)
 		case *ast.ValueSpec:
@@ -141,6 +148,7 @@ func (b fileNodes) addGenDecl(d *ast.GenDecl, clause string) {
 			for _, name := range s.Names {
 				owners = append(owners, b.newNode(name))
 			}
+
 			b.addSpan(s.Pos(), s.End(), owners...)
 		}
 	}
@@ -154,6 +162,7 @@ func (b fileNodes) newNode(name *ast.Ident) *usageNode {
 		test:   strings.HasSuffix(b.file.Path, "_test.go"),
 	}
 	b.g.nodes[name.Pos()] = n
+
 	return n
 }
 
@@ -167,16 +176,19 @@ func symbolsByPosition(pkg *types.Package) map[token.Pos]*types.Symbol {
 	if pkg.Symbols == nil {
 		return byPos
 	}
+
 	for _, m := range []map[string]*types.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
 		for _, s := range m {
 			byPos[s.Position] = s
 		}
 	}
+
 	for _, methods := range pkg.Symbols.Methods {
 		for _, s := range methods {
 			byPos[s.Position] = s
 		}
 	}
+
 	return byPos
 }
 
@@ -186,6 +198,7 @@ func receiverTypeName(recv *ast.FieldList) string {
 	if recv == nil || len(recv.List) == 0 {
 		return ""
 	}
+
 	expr := recv.List[0].Type
 	for {
 		switch e := expr.(type) {
@@ -216,9 +229,11 @@ func (g *usageGraph) enclosing(pos token.Pos) []*usageNode {
 	if !found {
 		i--
 	}
+
 	if i < 0 || pos >= g.spans[i].end {
 		return nil
 	}
+
 	return g.spans[i].owners
 }
 
@@ -229,6 +244,7 @@ func buildUsageGraph(ws *types.Workspace, resolver *SymbolResolver, idx *Referen
 	typed := g.addTypedEdges(idx.workspaceIdx)
 	g.addNameEdges(resolver, idx, typed)
 	g.addEmbeddedEdges(ws, resolver, idx.workspaceIdx)
+
 	return g
 }
 
@@ -244,14 +260,17 @@ func (g *usageGraph) addTypedEdges(wi *workspaceIndex) map[token.Pos]bool {
 		for id := range pix.def {
 			defined[id.pos] = true
 		}
+
 		for id, u := range pix.uses {
 			target := g.nodes[id.pos]
 			if target == nil {
 				continue
 			}
+
 			g.addUsesOf(target, pix, u)
 		}
 	}
+
 	return defined
 }
 
@@ -263,6 +282,7 @@ func (g *usageGraph) addUsesOf(target *usageNode, pix *packageIndex, u *uses) {
 		if !ok || ident.Name != target.name {
 			continue
 		}
+
 		g.addUseAt(ident.Pos(), target)
 	}
 }
@@ -274,6 +294,7 @@ func (g *usageGraph) addNameEdges(resolver *SymbolResolver, idx *ReferenceIndex,
 		if defined[pos] || target.symbol == nil {
 			continue
 		}
+
 		entries, _ := idx.NameEntries(target.name)
 		for i := range entries {
 			if resolver.isNonDeclarationReference(&entries[i], target.symbol, nil) {
@@ -293,6 +314,7 @@ func (g *usageGraph) addEmbeddedEdges(ws *types.Workspace, resolver *SymbolResol
 		for _, file := range indexedFiles(pkg) {
 			c := &embedCollector{}
 			ast.Walk(c, file.AST)
+
 			for _, ref := range c.refs {
 				if !typed[ref.name] {
 					g.addEmbeddedByName(resolver, pkg, file, ref)
@@ -317,6 +339,7 @@ func (g *usageGraph) addTypedEmbeddedEdges(wi *workspaceIndex) map[*ast.Ident]bo
 				if obj == nil {
 					continue
 				}
+
 				resolved[ref.name] = true
 
 				target := g.nodes[canonicalObject(obj).Pos()]
@@ -326,6 +349,7 @@ func (g *usageGraph) addTypedEmbeddedEdges(wi *workspaceIndex) map[*ast.Ident]bo
 			}
 		}
 	}
+
 	return resolved
 }
 
@@ -334,10 +358,12 @@ func (g *usageGraph) addTypedEmbeddedEdges(wi *workspaceIndex) map[*ast.Ident]bo
 func (g *usageGraph) addEmbeddedByName(resolver *SymbolResolver, pkg *types.Package, file *types.File, ref embeddedRef) {
 	if ref.qual == nil {
 		clause := file.AST.Name.Name
+
 		target := g.typeNodes[receiverKey{pkg, clause, ref.name.Name}]
 		if target != nil {
 			g.addUseAt(ref.name.Pos(), target)
 		}
+
 		return
 	}
 
@@ -368,22 +394,26 @@ func (c *embedCollector) Visit(n ast.Node) ast.Visitor {
 // type, including the terms of an embedded constraint.
 func embeddedRefs(n ast.Node) []embeddedRef {
 	var fields *ast.FieldList
+
 	switch t := n.(type) {
 	case *ast.StructType:
 		fields = t.Fields
 	case *ast.InterfaceType:
 		fields = t.Methods
 	}
+
 	if fields == nil {
 		return nil
 	}
 
 	var refs []embeddedRef
+
 	for _, f := range fields.List {
 		if len(f.Names) == 0 {
 			refs = appendTypeNames(refs, f.Type)
 		}
 	}
+
 	return refs
 }
 
@@ -409,6 +439,7 @@ func appendTypeNames(refs []embeddedRef, expr ast.Expr) []embeddedRef {
 	case *ast.BinaryExpr:
 		return appendTypeNames(appendTypeNames(refs, e.X), e.Y)
 	}
+
 	return refs
 }
 
@@ -433,14 +464,17 @@ func addUse(referrer, target *usageNode) {
 
 	if referrer.test && !target.test {
 		target.testRefs++
+
 		n := len(referrer.testOut)
 		if n == 0 || referrer.testOut[n-1] != target {
 			referrer.testOut = append(referrer.testOut, target)
 		}
+
 		return
 	}
 
 	target.prodRefs++
+
 	n := len(referrer.out)
 	if n == 0 || referrer.out[n-1] != target {
 		referrer.out = append(referrer.out, target)

@@ -41,10 +41,12 @@ func planInlineMethod(state *MCPServer, in InlineMethodInput) (*types.Refactorin
 	if err != nil {
 		return nil, fmt.Errorf("plan inline method: %w", err)
 	}
+
 	tgt := in.TargetFile
 	if tgt != "" {
 		tgt = resolveFile(ws, tgt)
 	}
+
 	return state.GetEngine().InlineMethodAcrossConfigs(types.InlineMethodRequest{
 		MethodName:   in.MethodName,
 		SourceStruct: in.SourceStruct,
@@ -59,6 +61,7 @@ func planInlineFunction(state *MCPServer, in InlineFunctionInput) (*types.Refact
 	if err != nil {
 		return nil, fmt.Errorf("plan inline function: %w", err)
 	}
+
 	return state.GetEngine().InlineFunctionAcrossConfigs(types.InlineFunctionRequest{
 		FunctionName: in.FunctionName,
 		SourceFile:   resolveFile(ws, in.SourceFile),
@@ -76,13 +79,16 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 		state.RLock()
 		plan, err := planInlineMethod(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlan(state, plan, "inline method "+in.SourceStruct+"."+in.MethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -98,6 +104,7 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().InlineVariable(ws, types.InlineVariableRequest{
 			VariableName: in.VariableName,
 			SourceFile:   resolveFile(ws, in.SourceFile),
@@ -106,10 +113,12 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "inline variable "+in.VariableName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -123,13 +132,16 @@ func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 		state.RLock()
 		plan, err := planInlineFunction(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlan(state, plan, "inline function "+in.FunctionName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }

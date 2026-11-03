@@ -60,6 +60,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	return &analysis.Analyzer{
 		Name:     "complexity",
 		Doc:      "analyzes cyclomatic and cognitive complexity of functions",
@@ -142,16 +143,20 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 	case *ast.IfStmt:
 		m.CyclomaticComplexity++
 		m.CognitiveComplexity += cognitiveWeight(depth)
+
 		if stmt.Else != nil {
 			_, ok := stmt.Else.(*ast.IfStmt)
 			if !ok {
 				m.CyclomaticComplexity++
 			}
 		}
+
 		if stmt.Init != nil {
 			walkWithDepth(stmt.Init, m, depth+1)
 		}
+
 		walkWithDepth(stmt.Body, m, depth+1)
+
 		if stmt.Else != nil {
 			_, ok := stmt.Else.(*ast.IfStmt)
 			if ok {
@@ -176,11 +181,13 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 			caseCount := countSwitchCases(stmt.Body)
 			m.CyclomaticComplexity += caseCount
 			m.CognitiveComplexity += cognitiveWeight(depth)
+
 			for _, s := range stmt.Body.List {
 				cc, ok := s.(*ast.CaseClause)
 				if !ok {
 					continue
 				}
+
 				for _, child := range cc.Body {
 					walkWithDepth(child, m, depth+1)
 				}
@@ -192,11 +199,13 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 			caseCount := countSwitchCases(stmt.Body)
 			m.CyclomaticComplexity += caseCount
 			m.CognitiveComplexity += cognitiveWeight(depth)
+
 			for _, s := range stmt.Body.List {
 				cc, ok := s.(*ast.CaseClause)
 				if !ok {
 					continue
 				}
+
 				for _, child := range cc.Body {
 					walkWithDepth(child, m, depth+1)
 				}
@@ -208,11 +217,13 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 			caseCount := countSelectCases(stmt.Body)
 			m.CyclomaticComplexity += caseCount
 			m.CognitiveComplexity += cognitiveWeight(depth)
+
 			for _, s := range stmt.Body.List {
 				cc, ok := s.(*ast.CommClause)
 				if !ok {
 					continue
 				}
+
 				for _, child := range cc.Body {
 					walkWithDepth(child, m, depth+1)
 				}
@@ -234,9 +245,11 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 		if depth > 0 {
 			m.NestedBlocks++
 		}
+
 		if depth > m.MaxNestingDepth {
 			m.MaxNestingDepth = depth
 		}
+
 		for _, child := range stmt.List {
 			walkWithDepth(child, m, depth)
 		}
@@ -279,6 +292,7 @@ func cognitiveWeight(nestingLevel int) int {
 	if nestingLevel == 0 {
 		return 1
 	}
+
 	return 1 + nestingLevel
 }
 
@@ -291,6 +305,7 @@ func countSwitchCases(body *ast.BlockStmt) int {
 		if !ok {
 			continue
 		}
+
 		if caseClause.List == nil {
 			hasDefault = true
 		} else {
@@ -307,12 +322,14 @@ func countSwitchCases(body *ast.BlockStmt) int {
 
 func countSelectCases(body *ast.BlockStmt) int {
 	count := 0
+
 	for _, stmt := range body.List {
 		_, ok := stmt.(*ast.CommClause)
 		if ok {
 			count++
 		}
 	}
+
 	return count
 }
 

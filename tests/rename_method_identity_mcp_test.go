@@ -15,6 +15,7 @@ func TestRenameMethod_UpdatesOnlyUsesOfTheTargetMethod(t *testing.T) {
 		"q/q.go":      qUse,
 		"w/w.go":      "package w\n\nimport \"example.com/threadmcp/p\"\n\ntype W struct{ *p.P }\n\nfunc Use(w W) { w.M(); w.P.M() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

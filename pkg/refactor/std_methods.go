@@ -62,18 +62,23 @@ func stdMethodOf(name string, f *gotypes.Func) *stdMethod {
 	if sig.Recv() == nil || sig.Variadic() {
 		return nil
 	}
+
 	signature := stdSignatureOf(sig)
+
 	for i := range stdMethods[name] {
 		m := &stdMethods[name][i]
 		if m.signature != signature {
 			continue
 		}
+
 		if slices.Contains([]string{"As", "Is", "Unwrap"}, name) &&
 			!typeImplements(sig.Recv().Type(), errorType.Underlying().(*gotypes.Interface)) {
 			return nil
 		}
+
 		return m
 	}
+
 	return nil
 }
 
@@ -89,6 +94,7 @@ func stdResultsOf(results *gotypes.Tuple) string {
 	case 1:
 		return " " + stdTypeOf(results.At(0).Type())
 	}
+
 	return " (" + stdTupleOf(results) + ")"
 }
 
@@ -97,6 +103,7 @@ func stdTupleOf(t *gotypes.Tuple) string {
 	for i := range names {
 		names[i] = stdTypeOf(t.At(i).Type())
 	}
+
 	return strings.Join(names, ", ")
 }
 
@@ -112,6 +119,7 @@ func stdTypeOf(t gotypes.Type) string {
 		if obj.Pkg() == nil {
 			return obj.Name()
 		}
+
 		return obj.Pkg().Path() + "." + obj.Name()
 	case *gotypes.Slice:
 		return "[]" + stdTypeOf(t.Elem())
@@ -122,6 +130,7 @@ func stdTypeOf(t gotypes.Type) string {
 			return "any"
 		}
 	}
+
 	return gotypes.TypeString(t, nil)
 }
 
@@ -130,6 +139,7 @@ func vetClause(m *stdMethod) string {
 	if m.vet {
 		return ", whose method signature go vet checks"
 	}
+
 	return ""
 }
 
@@ -145,6 +155,7 @@ func stdMethodError(verb string, f *gotypes.Func) error {
 	if m == nil {
 		return nil
 	}
+
 	return &pkgtypes.RefactorError{
 		Type:    pkgtypes.InvalidOperation,
 		Message: fmt.Sprintf("cannot %s %s: %s. No changes were made.", verb, funcLabel(f), stdMethodWhy(m)),
@@ -158,6 +169,7 @@ func stdRenameError(f *gotypes.Func, newName string) error {
 	if m == nil {
 		return nil
 	}
+
 	return &pkgtypes.RefactorError{
 		Type: pkgtypes.InvalidOperation,
 		Message: fmt.Sprintf("cannot rename %s to %s: with this signature the new name would implement %s%s, so the method would start satisfying %s. No changes were made.",

@@ -16,6 +16,7 @@ import (
 // "p", with test files under TestFiles, and builds its symbol table.
 func parsedGraphWorkspace(t *testing.T, files map[string]string) *types.Workspace {
 	t.Helper()
+
 	fset := token.NewFileSet()
 	pkg := &types.Package{
 		Name:      "p",
@@ -23,11 +24,13 @@ func parsedGraphWorkspace(t *testing.T, files map[string]string) *types.Workspac
 		Files:     map[string]*types.File{},
 		TestFiles: map[string]*types.File{},
 	}
+
 	for name, src := range files {
 		astFile, err := parser.ParseFile(fset, name, src, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
+
 		f := &types.File{Path: name, AST: astFile, OriginalContent: []byte(src), Package: pkg}
 		if strings.HasSuffix(name, "_test.go") {
 			pkg.TestFiles[name] = f
@@ -35,35 +38,43 @@ func parsedGraphWorkspace(t *testing.T, files map[string]string) *types.Workspac
 			pkg.Files[name] = f
 		}
 	}
+
 	ws := &types.Workspace{
 		Packages: map[string]*types.Package{pkg.Path: pkg},
 		FileSet:  fset,
 	}
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	_, err := resolver.BuildSymbolTable(pkg)
 	if err != nil {
 		t.Fatalf("symbol table: %v", err)
 	}
+
 	return ws
 }
 
 // posAfter returns the position of the first byte of needle in file.
 func posAfter(t *testing.T, ws *types.Workspace, file, needle string) token.Pos {
 	t.Helper()
+
 	for _, pkg := range ws.Packages {
 		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 			f := fileNamed(group, file)
 			if f == nil {
 				continue
 			}
+
 			off := strings.Index(string(f.OriginalContent), needle)
 			if off < 0 {
 				t.Fatalf("%q not found in %s", needle, file)
 			}
+
 			return ws.FileSet.File(f.AST.Pos()).Pos(off)
 		}
 	}
+
 	t.Fatalf("no file %s", file)
+
 	return token.NoPos
 }
 
@@ -74,6 +85,7 @@ func fileNamed(group map[string]*types.File, name string) *types.File {
 			return f
 		}
 	}
+
 	return nil
 }
 
@@ -82,7 +94,9 @@ func nodeNames(nodes []*usageNode) []string {
 	for _, n := range nodes {
 		names = append(names, n.name)
 	}
+
 	slices.Sort(names)
+
 	return names
 }
 
@@ -90,6 +104,7 @@ func assertEnclosing(t *testing.T, files map[string]string, file, needle string,
 	t.Helper()
 	ws := parsedGraphWorkspace(t, files)
 	g := newUsageGraph(ws)
+
 	got := nodeNames(g.enclosing(posAfter(t, ws, file, needle)))
 	if !slices.Equal(got, want) {
 		t.Errorf("enclosing(%q) = %v, want %v", needle, got, want)
@@ -149,10 +164,12 @@ func TestUsageGraph_TestFileDeclarationIsMarkedTest(t *testing.T) {
 	g := newUsageGraph(ws)
 
 	prod := g.nodes[posAfter(t, ws, "a.go", "prod")]
+
 	helper := g.nodes[posAfter(t, ws, "a_test.go", "helper")]
 	if prod == nil || prod.test {
 		t.Errorf("prod = %+v, want a non-test node", prod)
 	}
+
 	if helper == nil || !helper.test {
 		t.Errorf("helper = %+v, want a test node", helper)
 	}
@@ -165,15 +182,18 @@ func TestUsageGraph_MethodReceiverPointsAtItsTypeNode(t *testing.T) {
 	g := newUsageGraph(ws)
 
 	typ := g.nodes[posAfter(t, ws, "a.go", "T struct")]
+
 	m := g.nodes[posAfter(t, ws, "a.go", "M()")]
 	if m.recv != typ {
 		t.Errorf("M.recv = %v, want the T node", m.recv)
 	}
+
 	if !slices.Contains(typ.methods, m) {
 		t.Errorf("T.methods = %v, want M in it", nodeNames(typ.methods))
 	}
 
 	generic := g.nodes[posAfter(t, ws, "a.go", "G[X any]")]
+
 	n := g.nodes[posAfter(t, ws, "a.go", "N()")]
 	if n.recv != generic {
 		t.Errorf("N.recv = %v, want the G node", n.recv)
@@ -213,10 +233,12 @@ type graphFixture struct {
 
 func (f graphFixture) node(t *testing.T, file, needle string) *usageNode {
 	t.Helper()
+
 	n := f.g.nodes[posAfter(t, f.ws, file, needle)]
 	if n == nil {
 		t.Fatalf("no node at %q in %s", needle, file)
 	}
+
 	return n
 }
 
@@ -226,6 +248,7 @@ func untypedGraph(t *testing.T, files map[string]string) graphFixture {
 	t.Helper()
 	ws := parsedGraphWorkspace(t, files)
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	return graphFixture{ws: ws, g: buildUsageGraph(ws, resolver, resolver.BuildReferenceIndex())}
 }
 
@@ -235,21 +258,26 @@ func untypedGraph(t *testing.T, files map[string]string) graphFixture {
 func typedGraph(t *testing.T, files map[string]string) graphFixture {
 	t.Helper()
 	set, _ := loadSet(t, files)
+
 	v := set.Primary()
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+
 		if pkg.Symbols != nil {
 			continue
 		}
+
 		_, err := v.Resolver.BuildSymbolTable(pkg)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	idx, err := v.ReferenceIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return graphFixture{ws: v.Workspace, g: buildUsageGraph(v.Workspace, v.Resolver, idx)}
 }
 
@@ -263,11 +291,13 @@ func inBothModes(t *testing.T, files map[string]string, check func(t *testing.T,
 	for name, src := range files {
 		prefixed["p/"+name] = src
 	}
+
 	t.Run("typed", func(t *testing.T) { check(t, typedGraph(t, prefixed)) })
 }
 
 func assertRefs(t *testing.T, n *usageNode, prod, test int) {
 	t.Helper()
+
 	if n.prodRefs != prod || n.testRefs != test {
 		t.Errorf("%s: prodRefs=%d testRefs=%d, want %d and %d", n.name, n.prodRefs, n.testRefs, prod, test)
 	}
@@ -275,6 +305,7 @@ func assertRefs(t *testing.T, n *usageNode, prod, test int) {
 
 func assertEdge(t *testing.T, from, to *usageNode, want bool) {
 	t.Helper()
+
 	got := slices.Contains(from.out, to)
 	if got != want {
 		t.Errorf("edge %s -> %s = %v, want %v", from.name, to.name, got, want)
@@ -283,10 +314,11 @@ func assertEdge(t *testing.T, from, to *usageNode, want bool) {
 
 func TestUsageGraph_CallFromProductionFunctionIsACountedEdge(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc callee() {}\n\nfunc caller() { callee() }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			callee, caller := f.node(t, "a.go", "callee()"), f.node(t, "a.go", "caller()")
 			assertRefs(t, callee, 1, 0)
 			assertEdge(t, caller, callee, true)
+
 			if !slices.Equal(callee.referrers, []*usageNode{caller}) {
 				t.Errorf("referrers = %v, want [caller]", nodeNames(callee.referrers))
 			}
@@ -297,10 +329,11 @@ func TestUsageGraph_CallFromTestFileToProductionIsATestRefWithoutEdge(t *testing
 	inBothModes(t, map[string]string{
 		"a.go":      "package p\n\nfunc callee() {}\n",
 		"a_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { callee() }\n",
-	}, func(t *testing.T, f graphFixture) {
+	}, func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 		callee, test := f.node(t, "a.go", "callee()"), f.node(t, "a_test.go", "TestX")
 		assertRefs(t, callee, 0, 1)
 		assertEdge(t, test, callee, false)
+
 		if !slices.Equal(callee.referrers, []*usageNode{test}) {
 			t.Errorf("referrers = %v, want [TestX]", nodeNames(callee.referrers))
 		}
@@ -322,7 +355,7 @@ func TestUsageGraph_TestHelperCalledFromTestIsACountedEdge(t *testing.T) {
 	inBothModes(t, map[string]string{
 		"a.go":      "package p\n",
 		"a_test.go": "package p\n\nimport \"testing\"\n\nfunc helper() {}\n\nfunc TestX(t *testing.T) { helper() }\n",
-	}, func(t *testing.T, f graphFixture) {
+	}, func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 		helper, test := f.node(t, "a_test.go", "helper()"), f.node(t, "a_test.go", "TestX")
 		assertRefs(t, helper, 1, 0)
 		assertEdge(t, test, helper, true)
@@ -331,7 +364,7 @@ func TestUsageGraph_TestHelperCalledFromTestIsACountedEdge(t *testing.T) {
 
 func TestUsageGraph_RecursionDoesNotCountAsAUse(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc rec(n int) {\n\tif n > 0 {\n\t\trec(n - 1)\n\t}\n}\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			rec := f.node(t, "a.go", "rec(n int)")
 			assertRefs(t, rec, 0, 0)
 			assertEdge(t, rec, rec, false)
@@ -340,9 +373,10 @@ func TestUsageGraph_RecursionDoesNotCountAsAUse(t *testing.T) {
 
 func TestUsageGraph_MethodDoesNotCountAsAUseOfItsReceiverType(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype T struct{}\n\nfunc (t *T) M() *T { return &T{} }\n\nfunc (t T) N() { _ = T{} }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			typ := f.node(t, "a.go", "T struct")
 			assertRefs(t, typ, 0, 0)
+
 			for _, m := range []string{"M()", "N()"} {
 				assertEdge(t, f.node(t, "a.go", m), typ, false)
 			}
@@ -351,7 +385,7 @@ func TestUsageGraph_MethodDoesNotCountAsAUseOfItsReceiverType(t *testing.T) {
 
 func TestUsageGraph_PackageVarInitialiserReferenceIsAnEdgeFromTheVar(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc callee() int { return 1 }\n\nvar v = callee()\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			callee, v := f.node(t, "a.go", "callee()"), f.node(t, "a.go", "v =")
 			assertRefs(t, callee, 1, 0)
 			assertEdge(t, v, callee, true)
@@ -360,7 +394,7 @@ func TestUsageGraph_PackageVarInitialiserReferenceIsAnEdgeFromTheVar(t *testing.
 
 func TestUsageGraph_StructFieldTypeIsAnEdgeFromTheStructType(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\ntype S struct{ d Dep }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			dep, s := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "S struct")
 			assertRefs(t, dep, 1, 0)
 			assertEdge(t, s, dep, true)
@@ -369,7 +403,7 @@ func TestUsageGraph_StructFieldTypeIsAnEdgeFromTheStructType(t *testing.T) {
 
 func TestUsageGraph_InterfaceMethodSignatureTypeIsAnEdgeFromTheInterfaceType(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\ntype I interface{ M(d Dep) }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			dep, i := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "I interface")
 			assertRefs(t, dep, 1, 0)
 			assertEdge(t, i, dep, true)
@@ -378,7 +412,7 @@ func TestUsageGraph_InterfaceMethodSignatureTypeIsAnEdgeFromTheInterfaceType(t *
 
 func TestUsageGraph_ParameterTypeIsAnEdgeFromTheFunction(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\nfunc f(d Dep) {}\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			dep, fn := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "f(d")
 			assertRefs(t, dep, 1, 0)
 			assertEdge(t, fn, dep, true)
@@ -387,7 +421,7 @@ func TestUsageGraph_ParameterTypeIsAnEdgeFromTheFunction(t *testing.T) {
 
 func TestUsageGraph_MethodCallIsAnEdgeToTheMethod(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype T struct{}\n\nfunc (t T) M() {}\n\nfunc f(t T) { t.M() }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			m, fn := f.node(t, "a.go", "M()"), f.node(t, "a.go", "f(t")
 			assertRefs(t, m, 1, 0)
 			assertEdge(t, fn, m, true)
@@ -399,21 +433,26 @@ func TestUsageGraph_EmbeddingStructHasEdgeToEmbeddedType(t *testing.T) {
 		"p/a.go": "package p\n\ntype base struct{}\n\ntype Impl struct{ base }\n",
 	})
 	v := set.Primary()
+
 	resolver := NewSymbolResolver(v.Workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+
 		_, err := resolver.BuildSymbolTable(pkg)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	idx, err := v.ReferenceIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	g := buildUsageGraph(v.Workspace, resolver, idx)
 
 	base := g.nodes[posAfter(t, v.Workspace, "a.go", "base struct")]
+
 	impl := g.nodes[posAfter(t, v.Workspace, "a.go", "Impl struct")]
 	if !slices.Contains(impl.out, base) {
 		t.Errorf("Impl.out = %v, want base in it", nodeNames(impl.out))

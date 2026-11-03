@@ -27,6 +27,7 @@ func (s *Session) Close() {
 	if s.cancel != nil {
 		s.cancel()
 	}
+
 	if s.state != nil {
 		s.state.Close()
 	}
@@ -39,11 +40,12 @@ type Transport interface {
 
 // Dial connects to an MCP server using the given transport,
 // then calls load_workspace with workspacePath.
-func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath string) *Session {
-	t.Helper()
+func Dial(ctx context.Context, tb testing.TB, transport Transport, workspacePath string) *Session {
+	tb.Helper()
+
 	sess, err := transport.connect(ctx)
 	if err != nil {
-		t.Fatalf("mcptest.Dial: connect: %v", err)
+		tb.Fatalf("mcptest.Dial: connect: %v", err)
 	}
 	// Load the workspace via the MCP tool.
 	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
@@ -52,12 +54,14 @@ func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath 
 	})
 	if err != nil {
 		sess.Close()
-		t.Fatalf("mcptest.Dial: load_workspace: %v", err)
+		tb.Fatalf("mcptest.Dial: load_workspace: %v", err)
 	}
+
 	if result.IsError {
 		sess.Close()
-		t.Fatalf("mcptest.Dial: load_workspace returned error: %v", result.Content)
+		tb.Fatalf("mcptest.Dial: load_workspace returned error: %v", result.Content)
 	}
+
 	return sess
 }
 
@@ -101,12 +105,15 @@ func (ip inProcess) connect(ctx context.Context) (*Session, error) {
 	go func() { _ = server.Run(ctx, serverT) }()
 
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, ip.clientOpts)
+
 	session, err := client.Connect(ctx, clientT, ip.sessionOpts)
 	if err != nil {
 		cancel()
 		state.Close()
+
 		return nil, fmt.Errorf("connect: %w", err)
 	}
+
 	return &Session{ClientSession: session, cancel: cancel, state: state}, nil
 }
 
@@ -123,10 +130,12 @@ func (sp subprocess) connect(ctx context.Context) (*Session, error) {
 	cmd := exec.CommandContext(ctx, sp.binPath)
 
 	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, nil)
+
 	session, err := client.Connect(ctx, &mcpsdk.CommandTransport{Command: cmd}, nil)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("connect: %w", err)
 	}
+
 	return &Session{ClientSession: session, cancel: cancel}, nil
 }

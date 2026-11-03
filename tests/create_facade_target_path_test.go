@@ -35,6 +35,7 @@ func New() *Store { return &Store{} }
 `)
 
 			ctx := context.Background()
+
 			sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -50,15 +51,18 @@ func New() *Store { return &Store{} }
 			if err != nil {
 				t.Fatalf("CallTool transport error: %v", err)
 			}
+
 			if result.IsError {
 				t.Fatalf("create_facade returned an error result: %+v", result.Content)
 			}
 
 			facade := filepath.Join(dir, "api", "facade.go")
+
 			got, readErr := os.ReadFile(facade)
 			if readErr != nil {
 				t.Fatalf("facade was not created inside the workspace at %s: %v", facade, readErr)
 			}
+
 			if !strings.Contains(string(got), "package api") {
 				t.Errorf("facade has the wrong package clause:\n%s", got)
 			}

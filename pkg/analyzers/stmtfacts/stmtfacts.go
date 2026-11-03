@@ -70,6 +70,7 @@ func terminates(info *types.Info, stmt ast.Stmt, label string, breakExits bool) 
 		case token.BREAK:
 			return breakExits
 		}
+
 		return false
 
 	case *ast.ExprStmt:
@@ -86,6 +87,7 @@ func terminates(info *types.Info, stmt ast.Stmt, label string, breakExits bool) 
 		if s.Else == nil {
 			return false
 		}
+
 		return lastTerminates(info, s.Body.List, breakExits) &&
 			terminates(info, s.Else, "", breakExits)
 
@@ -119,6 +121,7 @@ func lastTerminates(info *types.Info, list []ast.Stmt, breakExits bool) bool {
 	if len(list) == 0 {
 		return false
 	}
+
 	return terminates(info, list[len(list)-1], "", breakExits)
 }
 
@@ -135,17 +138,20 @@ func clausesTerminate(info *types.Info, body *ast.BlockStmt, label string, needD
 	if body == nil || len(body.List) == 0 {
 		return false
 	}
+
 	if BreaksOut(body.List, label) {
 		return false
 	}
 
 	hasDefault := false
+
 	for _, clause := range body.List {
 		switch c := clause.(type) {
 		case *ast.CaseClause:
 			if c.List == nil {
 				hasDefault = true
 			}
+
 			if !lastTerminates(info, c.Body, false) {
 				return false
 			}
@@ -153,6 +159,7 @@ func clausesTerminate(info *types.Info, body *ast.BlockStmt, label string, needD
 			if c.Comm == nil {
 				hasDefault = true
 			}
+
 			if !lastTerminates(info, c.Body, false) {
 				return false
 			}
@@ -191,6 +198,7 @@ func BreaksOut(list []ast.Stmt, label string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -200,9 +208,11 @@ func breaksOut(stmt ast.Stmt, label string) bool {
 		if s.Tok != token.BREAK {
 			return false
 		}
+
 		if s.Label == nil {
 			return true
 		}
+
 		return label != "" && s.Label.Name == label
 
 	case *ast.BlockStmt:
@@ -212,9 +222,11 @@ func breaksOut(stmt ast.Stmt, label string) bool {
 		if BreaksOut(s.Body.List, label) {
 			return true
 		}
+
 		if s.Else != nil {
 			return breaksOut(s.Else, label)
 		}
+
 		return false
 
 	case *ast.LabeledStmt:
@@ -242,18 +254,23 @@ func hasLabeledBreak(n ast.Node, label string) bool {
 	if label == "" {
 		return false
 	}
+
 	found := false
+
 	ast.Inspect(n, func(node ast.Node) bool {
 		if found {
 			return false
 		}
+
 		br, ok := node.(*ast.BranchStmt)
 		if ok && br.Tok == token.BREAK && br.Label != nil && br.Label.Name == label {
 			found = true
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -268,6 +285,7 @@ func IsPanicCall(info *types.Info, expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
+
 	ident, ok := call.Fun.(*ast.Ident)
 	if !ok || ident.Name != "panic" {
 		return false
@@ -280,6 +298,7 @@ func IsPanicCall(info *types.Info, expr ast.Expr) bool {
 			return isBuiltin
 		}
 	}
+
 	return true
 }
 
@@ -295,6 +314,7 @@ func DeclaredNames(list []ast.Stmt) map[string]bool {
 			if s.Tok != token.DEFINE {
 				continue
 			}
+
 			for _, lhs := range s.Lhs {
 				AddName(names, lhs)
 			}
@@ -303,6 +323,7 @@ func DeclaredNames(list []ast.Stmt) map[string]bool {
 			if !ok {
 				continue
 			}
+
 			for _, spec := range decl.Specs {
 				switch sp := spec.(type) {
 				case *ast.ValueSpec:
@@ -333,6 +354,7 @@ func SignatureNames(recv *ast.FieldList, fnType *ast.FuncType) map[string]bool {
 		if list == nil {
 			continue
 		}
+
 		for _, field := range list.List {
 			for _, ident := range field.Names {
 				AddName(names, ident)
@@ -356,15 +378,19 @@ func AddName(names map[string]bool, expr ast.Expr) {
 // disjoint. Candidates are sorted so the reported reason is stable across runs.
 func FirstClash(moved, destination map[string]bool) string {
 	var clashes []string
+
 	for name := range moved {
 		if destination[name] {
 			clashes = append(clashes, name)
 		}
 	}
+
 	if len(clashes) == 0 {
 		return ""
 	}
+
 	sort.Strings(clashes)
+
 	return clashes[0]
 }
 
@@ -387,6 +413,7 @@ func ReferencesAny(n ast.Node, names map[string]bool) bool {
 		if found || node == nil {
 			return false
 		}
+
 		switch v := node.(type) {
 		case *ast.SelectorExpr:
 			// Descend into the operand under the same visitor, so a selector
@@ -398,8 +425,10 @@ func ReferencesAny(n ast.Node, names map[string]bool) bool {
 			if names[v.Name] {
 				found = true
 			}
+
 			return false
 		}
+
 		return true
 	}
 	ast.Inspect(n, visit)
@@ -413,10 +442,12 @@ func ReferencesAny(n ast.Node, names map[string]bool) bool {
 // type conversions are not calls; with nil, every call counts.
 func HasCallOrReceive(info *types.Info, nodes []ast.Node) bool {
 	found := false
+
 	for _, n := range nodes {
 		if n == nil {
 			continue
 		}
+
 		ast.Inspect(n, func(node ast.Node) bool {
 			switch v := node.(type) {
 			case *ast.CallExpr:
@@ -424,11 +455,14 @@ func HasCallOrReceive(info *types.Info, nodes []ast.Node) bool {
 			case *ast.UnaryExpr:
 				found = found || v.Op == token.ARROW
 			}
+
 			return !found
 		})
+
 		if found {
 			return true
 		}
 	}
+
 	return false
 }

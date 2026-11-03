@@ -32,44 +32,56 @@ type unusedParamsJSON struct {
 // callUnusedParams runs detect_unused_params over files, with args when non-nil.
 func callUnusedParams(t *testing.T, args map[string]any, files map[string]string) unusedParamsJSON {
 	t.Helper()
+
 	if args == nil {
 		args = map[string]any{}
 	}
+
 	files["go.mod"] = "module example.com/up\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_unused_params", Arguments: args})
 	if err != nil {
 		t.Fatalf("detect_unused_params: %v", err)
 	}
+
 	if res.IsError {
 		t.Fatalf("detect_unused_params: %s", errText(res))
 	}
+
 	var out unusedParamsJSON
 	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
+
 	if out.TotalCount != len(out.Params) {
 		t.Errorf("total_count %d, want %d", out.TotalCount, len(out.Params))
 	}
+
 	return out
 }
 
 // findParam returns the finding for param of function; param "" is an unnamed one.
 func findParam(t *testing.T, out unusedParamsJSON, function, param string) unusedParamJSON {
 	t.Helper()
+
 	for _, p := range out.Params {
 		if p.Function == function && p.Param == param {
 			return p
 		}
 	}
+
 	t.Fatalf("no finding for %s(%s): %+v", function, param, out.Params)
+
 	return unusedParamJSON{}
 }
 
 func wantFixable(t *testing.T, p unusedParamJSON) {
 	t.Helper()
+
 	if !p.Fixable || p.Reason != "" {
 		t.Errorf("%s(%s): fixable=%v reason=%q, want fixable", p.Function, p.Param, p.Fixable, p.Reason)
 	}
@@ -77,6 +89,7 @@ func wantFixable(t *testing.T, p unusedParamJSON) {
 
 func wantRefused(t *testing.T, p unusedParamJSON, reason string) {
 	t.Helper()
+
 	if p.Fixable || !strings.Contains(p.Reason, reason) {
 		t.Errorf("%s(%s): fixable=%v reason=%q, want a refusal containing %q", p.Function, p.Param, p.Fixable, p.Reason, reason)
 	}
@@ -104,13 +117,17 @@ func use() {
 	if len(out.Params) != 4 {
 		t.Fatalf("got %+v, want unused, alsoUnused, x and b", out.Params)
 	}
+
 	f := findParam(t, out, "F", "unused")
 	wantFixable(t, f)
+
 	if f.Index != 1 || f.CallSites != 2 || f.File != "a/a.go" || f.Line != 3 || f.Blank {
 		t.Errorf("F(unused) = %+v", f)
 	}
+
 	wantFixable(t, findParam(t, out, "F", "alsoUnused"))
 	wantFixable(t, findParam(t, out, "Closure", "x"))
+
 	p := findParam(t, out, "Closure", "x")
 	if p.Index != 0 {
 		t.Errorf("Closure(x) index = %d", p.Index)
@@ -133,11 +150,13 @@ func use() {
 	if len(out.Params) != 2 {
 		t.Fatalf("got %+v, want the blank and the unnamed parameter", out.Params)
 	}
+
 	for _, f := range []string{"Blank", "Unnamed"} {
 		p := findParam(t, out, f, map[string]string{"Blank": "_", "Unnamed": ""}[f])
 		if !p.Blank || p.Index != 0 {
 			t.Errorf("%s: %+v, want blank at index 0", f, p)
 		}
+
 		wantFixable(t, p)
 	}
 }
@@ -158,11 +177,13 @@ func use() {
 	if len(out.Params) != 5 {
 		t.Fatalf("got %+v, want every parameter listed", out.Params)
 	}
+
 	for _, p := range out.Params {
 		if p.Function == "Mixed" && p.Index == 2 {
 			wantFixable(t, p) // removing the string leaves one result
 			continue
 		}
+
 		wantRefused(t, p, "ambiguous")
 	}
 }
@@ -285,6 +306,7 @@ var _ Doer = Two{}
 	for _, recv := range []string{"One", "Two"} {
 		p := findParam(t, out, recv+".Do", "x")
 		wantFixable(t, p)
+
 		if !p.Propagate {
 			t.Errorf("%s.Do: propagate = false, want true", recv)
 		}
@@ -373,16 +395,21 @@ func Shared(x int) {}
 	if len(out.Params) != 3 {
 		t.Fatalf("got %+v, want Shared and both Sys variants that ignore x", out.Params)
 	}
+
 	shared := findParam(t, out, "Shared", "x")
 	wantFixable(t, shared)
+
 	if len(shared.Configs) != 0 {
 		t.Errorf("Shared: configs = %v, want none when every configuration declares it", shared.Configs)
 	}
+
 	for _, p := range out.Params {
 		if p.Function != "Sys" {
 			continue
 		}
+
 		wantRefused(t, p, "another build configuration")
+
 		if len(p.Configs) == 0 || p.CallSites != 1 {
 			t.Errorf("Sys: configs=%v call_sites=%d, want the declaring configurations and the one call", p.Configs, p.CallSites)
 		}
@@ -415,12 +442,15 @@ func next() int { return 1 }
 	})
 
 	wantRefused(t, findParam(t, out, "F", "unused"), "side effects")
+
 	f := findParam(t, out, "F", "unused")
 	if f.CallSites != 1 {
 		t.Errorf("F: call_sites = %d", f.CallSites)
 	}
+
 	h := findParam(t, out, "helper", "unused")
 	wantFixable(t, h)
+
 	if h.CallSites != 1 {
 		t.Errorf("helper: call_sites = %d", h.CallSites)
 	}
@@ -486,6 +516,7 @@ func TestUnusedParams_VariantsWithDifferentSignaturesAcrossConfigurationsAreNotF
 			wantRefused(t, p, "make the declarations agree first")
 		}
 	}
+
 	if findParam(t, out, "Sys", "b").Fixable {
 		t.Errorf("Sys(b) fixable")
 	}
@@ -502,6 +533,7 @@ func TestUnusedParams_FunctionWithoutABodyIsNotListed(t *testing.T) {
 			t.Errorf("listed the bodiless stub: %+v", p)
 		}
 	}
+
 	wantFixable(t, findParam(t, out, "Real", "x"))
 }
 
@@ -514,6 +546,7 @@ func TestUnusedParams_ResultNamesDoNotSplitConfigurations(t *testing.T) {
 	if len(out.Params) != 2 {
 		t.Fatalf("got %+v, want x under both configurations", out.Params)
 	}
+
 	for _, p := range out.Params {
 		wantFixable(t, p)
 	}
@@ -528,11 +561,13 @@ func TestUnusedParams_MismatchNamesTheCurrentFileSignatureFirst(t *testing.T) {
 	if len(out.Params) != 2 {
 		t.Fatalf("got %+v, want x and y", out.Params)
 	}
+
 	for _, p := range out.Params {
 		want := "in a/sys_linux.go has signature (x int), which differs from (y int)"
 		if p.File == "a/sys_darwin.go" {
 			want = "in a/sys_darwin.go has signature (y int), which differs from (x int)"
 		}
+
 		wantRefused(t, p, want)
 	}
 }

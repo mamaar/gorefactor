@@ -42,6 +42,7 @@ type commentBlock struct {
 // (parse failure, etc.) the original source is returned unchanged.
 func OrganizeImports(src string, modulePath string, workspaceModules []string) string {
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, "", src, parser.ParseComments)
 	if err != nil {
 		return src
@@ -64,6 +65,7 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 		if !ok || genDecl.Tok != token.IMPORT {
 			continue
 		}
+
 		importDeclCount++
 
 		pos := genDecl.Pos()
@@ -72,6 +74,7 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 		if firstImportPos == 0 || pos < firstImportPos {
 			firstImportPos = pos
 		}
+
 		if end > lastImportEnd {
 			lastImportEnd = end
 		}
@@ -94,8 +97,10 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 
 	lines := strings.Split(src, "\n")
 	free := freeStandingComments(f, firstImportPos, lastImportEnd, attached)
+
 	for _, ispec := range specs {
 		entry := newImportEntry(ispec)
+
 		entry.leading, free = takeLeadingBlocks(fset, lines, ispec, free)
 		if entry.path == "C" {
 			cgoEntries = append(cgoEntries, entry)
@@ -103,6 +108,7 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 			entries = append(entries, entry)
 		}
 	}
+
 	tail := commentBlocks(fset, lines, free)
 
 	// Classify and group.
@@ -120,11 +126,13 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 	}
 
 	result := src[:startOff] + newBlock + src[endOff:]
+
 	return result
 }
 
 func groupImports(entries []importEntry, modulePath string, workspaceModules []string) map[ImportGroup][]importEntry {
 	groups := make(map[ImportGroup][]importEntry)
+
 	for _, e := range entries {
 		g := classifyImport(e.path, modulePath, workspaceModules)
 		groups[g] = append(groups[g], e)
@@ -136,6 +144,7 @@ func groupImports(entries []importEntry, modulePath string, workspaceModules []s
 			return groups[g][i].path < groups[g][j].path
 		})
 	}
+
 	return groups
 }
 
@@ -143,17 +152,21 @@ func groupImports(entries []importEntry, modulePath string, workspaceModules []s
 func newImportEntry(spec *ast.ImportSpec) importEntry {
 	// The parser accepted the literal, so it unquotes; raw strings included.
 	path, _ := strconv.Unquote(spec.Path.Value)
+
 	e := importEntry{path: path}
 	if spec.Name != nil {
 		e.alias = spec.Name.Name
 	}
+
 	if spec.Comment != nil {
 		texts := make([]string, len(spec.Comment.List))
 		for i, c := range spec.Comment.List {
 			texts[i] = c.Text
 		}
+
 		e.comment = strings.Join(texts, " ")
 	}
+
 	return e
 }
 
@@ -161,11 +174,13 @@ func newImportEntry(spec *ast.ImportSpec) importEntry {
 // not a spec's doc or trailing comment.
 func freeStandingComments(f *ast.File, start, end token.Pos, attached map[*ast.CommentGroup]bool) []*ast.CommentGroup {
 	var free []*ast.CommentGroup
+
 	for _, g := range f.Comments {
 		if g.Pos() >= start && g.End() <= end && !attached[g] {
 			free = append(free, g)
 		}
 	}
+
 	return free
 }
 
@@ -176,12 +191,14 @@ func takeLeadingBlocks(fset *token.FileSet, lines []string, spec *ast.ImportSpec
 	for n < len(free) && free[n].End() <= spec.Pos() {
 		n++
 	}
+
 	blocks := commentBlocks(fset, lines, free[:n])
 	if spec.Doc != nil {
 		doc := commentBlocks(fset, lines, []*ast.CommentGroup{spec.Doc})[0]
 		doc.blankAfter = false
 		blocks = append(blocks, doc)
 	}
+
 	return blocks, free[n:]
 }
 
@@ -193,11 +210,13 @@ func commentBlocks(fset *token.FileSet, lines []string, groups []*ast.CommentGro
 		for _, c := range g.List {
 			blocks[i].lines = append(blocks[i].lines, c.Text)
 		}
+
 		first := fset.Position(g.Pos()).Line
 		last := fset.Position(g.End()).Line
 		blocks[i].blankBefore = isBlankLine(lines, first-1)
 		blocks[i].blankAfter = isBlankLine(lines, last+1)
 	}
+
 	return blocks
 }
 
@@ -222,10 +241,12 @@ func classifyImport(importPath, modulePath string, workspaceModules []string) Im
 
 	// Stdlib: first path segment has no dot.
 	firstSeg := importPath
+
 	before, _, ok := strings.Cut(importPath, "/")
 	if ok {
 		firstSeg = before
 	}
+
 	if !strings.Contains(firstSeg, ".") {
 		return ImportGroupStdlib
 	}
@@ -246,6 +267,7 @@ func renderImportBlock(groups map[ImportGroup][]importEntry, cgoEntries []import
 	// Cgo imports come first, separated from everything else.
 	if len(cgoEntries) > 0 {
 		writeImportGroup(&b, cgoEntries)
+
 		wroteGroup = true
 	}
 
@@ -258,7 +280,9 @@ func renderImportBlock(groups map[ImportGroup][]importEntry, cgoEntries []import
 		if wroteGroup {
 			b.WriteString("\n")
 		}
+
 		writeImportGroup(&b, entries)
+
 		wroteGroup = true
 	}
 
@@ -267,6 +291,7 @@ func renderImportBlock(groups map[ImportGroup][]importEntry, cgoEntries []import
 	}
 
 	b.WriteString(")")
+
 	return b.String()
 }
 
@@ -276,6 +301,7 @@ func writeImportGroup(b *strings.Builder, entries []importEntry) {
 		for _, blk := range e.leading {
 			writeCommentBlock(b, blk)
 		}
+
 		b.WriteString("\t")
 		writeImportLine(b, e)
 		b.WriteString("\n")
@@ -288,11 +314,13 @@ func writeCommentBlock(b *strings.Builder, blk commentBlock) {
 	if blk.blankBefore {
 		writeBlankLine(b)
 	}
+
 	for _, l := range blk.lines {
 		b.WriteString("\t")
 		b.WriteString(l)
 		b.WriteString("\n")
 	}
+
 	if blk.blankAfter {
 		writeBlankLine(b)
 	}
@@ -305,6 +333,7 @@ func writeBlankLine(b *strings.Builder) {
 	if strings.HasSuffix(out, "\n\n") || strings.HasSuffix(out, "(\n") {
 		return
 	}
+
 	b.WriteString("\n")
 }
 
@@ -314,9 +343,11 @@ func writeImportLine(b *strings.Builder, e importEntry) {
 		b.WriteString(e.alias)
 		b.WriteString(" ")
 	}
+
 	b.WriteString(`"`)
 	b.WriteString(e.path)
 	b.WriteString(`"`)
+
 	if e.comment != "" {
 		b.WriteString(" ")
 		b.WriteString(e.comment)

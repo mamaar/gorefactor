@@ -26,6 +26,7 @@ func renamePackageWorkspace() map[string]string {
 
 func assertRenamedEverywhere(t *testing.T, dir string) {
 	t.Helper()
+
 	for rel, want := range map[string]string{
 		"old/p.go":       "package fresh\n",
 		"old/p_test.go":  "package fresh\n",
@@ -35,7 +36,9 @@ func assertRenamedEverywhere(t *testing.T, dir string) {
 	} {
 		assertFileContains(t, dir, rel, want)
 	}
+
 	assertFileContains(t, dir, "old/x_test.go", "fresh.P()")
+
 	for _, rel := range []string{"use/use.go", "use/use_plan9.go", "use/use_test.go", "use/use_tagx_test.go"} {
 		got := readRel(t, dir, rel)
 		if !strings.Contains(got, "fresh.") || strings.Contains(got, "old.") {
@@ -58,12 +61,15 @@ func TestRenamePackageRewritesFilesOfEveryConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenamePackage: %v", err)
 	}
+
 	if len(plan.Coverage.Configs) < 2 {
 		t.Errorf("Coverage.Configs = %v, want every configuration", plan.Coverage.Configs)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertRenamedEverywhere(t, dir)
 }
 
@@ -104,6 +110,7 @@ func TestRenamePackageRefusesMain(t *testing.T) {
 
 func TestBatchRenamePackageRewritesFilesOfEveryConfiguration(t *testing.T) {
 	dir := writeFiles(t, renamePackageWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -134,15 +141,18 @@ func TestRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenamePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "old/p_plan9.go", "package fresh\n")
 	assertFileContains(t, dir, "use/use_plan9.go", "fresh.Plan9()")
 }
 
 func TestBatchRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	dir := writeFiles(t, excludedOnlyRenameWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -155,6 +165,7 @@ func TestBatchRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
 
 func TestMCPRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
 	dir := writeFiles(t, excludedOnlyRenameWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

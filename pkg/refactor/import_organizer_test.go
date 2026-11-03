@@ -134,9 +134,11 @@ func main() {}
 	if fmtIdx > assertIdx {
 		t.Error("expected stdlib before external")
 	}
+
 	if assertIdx > otherIdx {
 		t.Error("expected external before workspace")
 	}
+
 	if otherIdx > typesIdx {
 		t.Error("expected workspace before module")
 	}
@@ -189,9 +191,11 @@ func main() {}
 	if !strings.Contains(result, `. "github.com/onsi/gomega"`) {
 		t.Error("expected dot import to be preserved")
 	}
+
 	if !strings.Contains(result, `_ "github.com/lib/pq"`) {
 		t.Error("expected blank import to be preserved")
 	}
+
 	if !strings.Contains(result, `myalias "github.com/mamaar/gorefactor/pkg/types"`) {
 		t.Error("expected named alias to be preserved")
 	}
@@ -249,9 +253,11 @@ func main() {}
 	if !strings.Contains(result, `"fmt"`) {
 		t.Error("expected fmt import")
 	}
+
 	if !strings.Contains(result, `"net/http"`) {
 		t.Error("expected net/http import")
 	}
+
 	if !strings.Contains(result, `"github.com/mamaar/gorefactor/pkg/types"`) {
 		t.Error("expected types import")
 	}
@@ -288,6 +294,7 @@ func main() {}
 	// Should have blank line separating groups
 	lines := strings.Split(importBlock, "\n")
 	hasBlankLine := false
+
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			hasBlankLine = true
@@ -372,6 +379,7 @@ import (
 
 func main() {}
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
@@ -386,6 +394,7 @@ import (
 	"fmt" // printing
 )
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	for _, want := range []string{`"fmt" // printing`, `"os" // first /* second */`} {
 		if !strings.Contains(got, want) {
@@ -411,6 +420,7 @@ import (
 	"fmt"
 )
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
@@ -428,6 +438,7 @@ import (
 	"github.com/x/y"
 )
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	if got != src {
 		t.Errorf("got:\n%s\nwant:\n%s", got, src)
@@ -442,6 +453,7 @@ import "fmt"
 // kept
 import "os"
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	if !strings.Contains(got, "// kept\n\t\"os\"") {
 		t.Errorf("comment lost or detached:\n%s", got)
@@ -456,6 +468,7 @@ import (
 	// "os"
 )
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	if !strings.Contains(got, `// "os"`) {
 		t.Errorf("comment lost:\n%s", got)
@@ -474,10 +487,12 @@ import (
 	"fmt"
 )
 `
+
 	got := OrganizeImports(src, "example.com/m", nil)
 	if !strings.Contains(got, "// #include <stdio.h>\nimport (\n\t\"C\"\n") {
 		t.Errorf("cgo preamble detached:\n%s", got)
 	}
+
 	if !strings.Contains(got, "// used for exit\n\t\"fmt\"") {
 		t.Errorf("doc comment detached:\n%s", got)
 	}
@@ -509,6 +524,7 @@ import "os"
 	}
 	for _, src := range srcs {
 		once := OrganizeImports(src, "example.com/m", nil)
+
 		twice := OrganizeImports(once, "example.com/m", nil)
 		if once != twice {
 			t.Errorf("not idempotent:\nonce:\n%s\ntwice:\n%s", once, twice)
@@ -529,10 +545,12 @@ import (
 )
 `
 	got := OrganizeImports(src, "example.com/m", nil)
+
 	formatted, err := format.Source([]byte(got))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, want := range []string{"//nolint:gosec\n\t\"crypto/md5\"", `"encoding/json" // j`, "// for go:embed\n\t_ \"embed\""} {
 		if !strings.Contains(string(formatted), want) {
 			t.Errorf("missing %q in:\n%s", want, formatted)

@@ -44,6 +44,7 @@ func (p *renameMethodPlanner) linkedOp(ws *types.Workspace, idx *analysis.Refere
 	if pkg == nil || key.Recv == "" || key.Name != p.req.MethodName {
 		return nil
 	}
+
 	return &RenameMethodOperation{Request: types.RenameMethodRequest{
 		TypeName:      key.Recv,
 		MethodName:    key.Name,
@@ -60,21 +61,27 @@ func (op *RenameMethodOperation) validateIn(ws *types.Workspace) (types.SymbolKe
 	if err != nil {
 		return nil, err
 	}
+
 	if err := op.validateNames(ws, typeSymbol); err != nil {
 		return nil, err
 	}
+
 	members, err := op.renamedMembers(ws)
 	if err != nil {
 		return nil, err
 	}
+
 	keys := make(types.SymbolKeySet)
+
 	for _, member := range members {
 		err := op.checkSiblingConflict(ws, member)
 		if err != nil {
 			return nil, err
 		}
+
 		addSymbolKey(keys, member)
 	}
+
 	return keys, nil
 }
 
@@ -85,10 +92,12 @@ func (op *RenameMethodOperation) checkSiblingConflict(ws *types.Workspace, membe
 	if !ok {
 		return nil
 	}
+
 	key.Name = op.Request.NewMethodName
 	if symbolForKey(ws, key) == nil {
 		return nil
 	}
+
 	return &types.RefactorError{
 		Type:    types.NameConflict,
 		Message: fmt.Sprintf("method %s already exists on type %s", key.Name, key.Recv),
@@ -102,33 +111,41 @@ func (op *RenameMethodOperation) renamedMembers(ws *types.Workspace) ([]*types.S
 	if op.members != nil {
 		return op.members, nil
 	}
+
 	seed, err := op.targetFunc(ws)
 	if err != nil {
 		return nil, err
 	}
+
 	funcs, err := methodClosure(surveyInterfaces(ws), seed, func(f *gotypes.Func, ext ifaceCandidate) error {
 		return externalInterfaceError("rename", f, ext)
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	members := make([]*types.Symbol, 0, len(funcs))
 	for _, f := range funcs {
 		err := stdMethodError("rename", f)
 		if err != nil {
 			return nil, err
 		}
+
 		err = stdRenameError(f, op.Request.NewMethodName)
 		if err != nil {
 			return nil, err
 		}
+
 		member, err := memberSymbol(ws, f)
 		if err != nil {
 			return nil, err
 		}
+
 		members = append(members, member)
 	}
+
 	op.members = members
+
 	return members, nil
 }
 
@@ -138,6 +155,7 @@ func (op *RenameMethodOperation) targetFunc(ws *types.Workspace) (*gotypes.Func,
 	if err != nil {
 		return nil, fmt.Errorf("target func: %w", err)
 	}
+
 	return resolveMethod(resolveSymbolPackage(ws, typeSymbol), typeSymbol.Name, methodSymbol.Name, methodSymbol.Position)
 }
 
@@ -151,14 +169,17 @@ func resolveMethod(pkg *types.Package, typeName, name string, pos token.Pos) (*g
 				"method operations require a type-checked workspace", typeName, name),
 		}
 	}
+
 	tn, ok := pkg.TypesPkg.Scope().Lookup(typeName).(*gotypes.TypeName)
 	if ok {
 		obj, _, _ := gotypes.LookupFieldOrMethod(tn.Type(), true, pkg.TypesPkg, name)
+
 		f, ok := obj.(*gotypes.Func)
 		if ok && f.Pos() == pos {
 			return canonicalFunc(f), nil
 		}
 	}
+
 	return nil, &types.RefactorError{
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("cannot resolve method %s.%s to a type-checked object", typeName, name),
@@ -171,12 +192,16 @@ func receiverNamed(f *gotypes.Func) *gotypes.Named {
 	if recv == nil {
 		return nil
 	}
+
 	recv = gotypes.Unalias(recv)
+
 	ptr, ok := recv.(*gotypes.Pointer)
 	if ok {
 		recv = gotypes.Unalias(ptr.Elem())
 	}
+
 	named, _ := recv.(*gotypes.Named)
+
 	return named
 }
 
@@ -186,12 +211,14 @@ func memberSymbol(ws *types.Workspace, f *gotypes.Func) (*types.Symbol, error) {
 	if named == nil || f.Pkg() == nil {
 		return nil, fmt.Errorf("%s is not a method of a named workspace type", funcLabel(f))
 	}
+
 	if named.TypeParams().Len() > 0 {
 		return nil, &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: fmt.Sprintf("cannot change %s: methods of generic types are not supported, and this one must change with the method requested", funcLabel(f)),
 		}
 	}
+
 	sym := symbolForKey(ws, types.SymbolKey{PkgPath: f.Pkg().Path(), Recv: named.Obj().Name(), Name: f.Name()})
 	if sym == nil || sym.Position != f.Pos() {
 		return nil, &types.RefactorError{
@@ -200,6 +227,7 @@ func memberSymbol(ws *types.Workspace, f *gotypes.Func) (*types.Symbol, error) {
 				"but must change with the method requested", f.Pkg().Path(), named.Obj().Name(), f.Name()),
 		}
 	}
+
 	return sym, nil
 }
 

@@ -10,6 +10,7 @@ import (
 func TestInlineFunction_InlinesCallersInTestFiles(t *testing.T) {
 	const useTest = "package p\n\nimport \"testing\"\n\nfunc TestUse(t *testing.T) {\n\tif f(2) != 2 {\n\t\tt.Fatal()\n\t}\n}\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": sdcF, "p/use_test.go": useTest})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -23,6 +24,7 @@ func TestInlineFunction_RefusesWhenCallersExistButNoneCanBeInlined(t *testing.T)
 		"p/f.go": "package p\n\nfunc F(n int) int { return n }\n",
 		"q/q.go": "package q\n\nimport \"example.com/threadmcp/p\"\n\nfunc Use() int { return p.F(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -31,5 +33,6 @@ func TestInlineFunction_RefusesWhenCallersExistButNoneCanBeInlined(t *testing.T)
 	if !res.IsError {
 		t.Fatalf("inline_function succeeded with no changes though F has a caller: %s", errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "q/q.go", "package q\n\nimport \"example.com/threadmcp/p\"\n\nfunc Use() int { return p.F(1) }\n")
 }

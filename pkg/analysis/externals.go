@@ -39,10 +39,12 @@ type externalPackage struct {
 // several listed variants of one path, the one compiled for no test is kept.
 func newExternalSet(fset *token.FileSet, goarch string, roots []*packages.Package) *externalSet {
 	s := &externalSet{fset: fset, sizes: gotypes.SizesFor("gc", goarch), byPath: make(map[string]*externalPackage)}
+
 	byID := make(map[string]*externalPackage)
 	for _, root := range roots {
 		s.add(byID, root)
 	}
+
 	return s
 }
 
@@ -50,19 +52,24 @@ func (s *externalSet) add(byID map[string]*externalPackage, meta *packages.Packa
 	if meta == nil {
 		return nil
 	}
+
 	n := byID[meta.ID]
 	if n != nil {
 		return n
 	}
+
 	n = &externalPackage{meta: meta, imports: make(map[string]*externalPackage, len(meta.Imports))}
 	byID[meta.ID] = n
+
 	prev := s.byPath[meta.PkgPath]
 	if prev == nil || meta.ID == meta.PkgPath {
 		s.byPath[meta.PkgPath] = n
 	}
+
 	for path, dep := range meta.Imports {
 		n.imports[path] = s.add(byID, dep)
 	}
+
 	return n
 }
 
@@ -76,23 +83,29 @@ func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	if s == nil {
 		return nil, errNotListed
 	}
+
 	n := s.byPath[path]
 	if n == nil {
 		return nil, errNotListed
 	}
+
 	err := n.listingError()
 	if err != nil {
 		return nil, fmt.Errorf("lookup: %w", err)
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if !n.checked {
 		s.parse(n)
 		s.check(n)
 	}
+
 	if n.types == nil {
 		return nil, errNotListed
 	}
+
 	return n.types, nil
 }
 
@@ -103,9 +116,11 @@ func (n *externalPackage) listingError() error {
 	if n.meta.Types != nil || n.meta.Name != "" {
 		return nil
 	}
+
 	if len(n.meta.Errors) > 0 {
 		return errors.New(n.meta.Errors[0].Msg)
 	}
+
 	return fmt.Errorf("the package listing has no name and no files for %s", n.meta.PkgPath)
 }
 
@@ -118,12 +133,15 @@ func (s *externalSet) parse(n *externalPackage) {
 	for _, job := range p.jobs {
 		next <- job
 	}
+
 	close(next)
+
 	var wg sync.WaitGroup
 	for range workerCount(len(p.jobs)) {
 		wg.Add(1)
 		go p.work(next, &wg)
 	}
+
 	wg.Wait()
 }
 
@@ -143,6 +161,7 @@ func (p *externalParser) collect(n *externalPackage) {
 	if n == nil || n.checked || p.seen[n] {
 		return
 	}
+
 	p.seen[n] = true
 	if n.meta.Types == nil && n.files == nil {
 		n.files = make([]*ast.File, len(n.meta.CompiledGoFiles))
@@ -150,6 +169,7 @@ func (p *externalParser) collect(n *externalPackage) {
 			p.jobs = append(p.jobs, parseJob{pkg: n, slot: i})
 		}
 	}
+
 	for _, dep := range n.imports {
 		p.collect(dep)
 	}
@@ -157,6 +177,7 @@ func (p *externalParser) collect(n *externalPackage) {
 
 func (p *externalParser) work(next chan parseJob, wg *sync.WaitGroup) {
 	defer wg.Done()
+
 	for job := range next {
 		name := job.pkg.meta.CompiledGoFiles[job.slot]
 		// A file with errors still yields the declarations that parsed.
@@ -170,6 +191,7 @@ func (s *externalSet) check(n *externalPackage) {
 	if n.checked || n.checking {
 		return
 	}
+
 	n.checking = true
 	defer s.finish(n)
 
@@ -179,6 +201,7 @@ func (s *externalSet) check(n *externalPackage) {
 		if n.meta.Types.Complete() {
 			n.types = n.meta.Types
 		}
+
 		return
 	case n.meta.PkgPath == "unsafe":
 		n.types = gotypes.Unsafe
@@ -191,6 +214,7 @@ func (s *externalSet) check(n *externalPackage) {
 			files = append(files, f)
 		}
 	}
+
 	n.types = gotypes.NewPackage(n.meta.PkgPath, n.meta.Name)
 	conf := gotypes.Config{
 		Importer:         &externalImporter{set: s, pkg: n},
@@ -221,17 +245,22 @@ func (i *externalImporter) Import(path string) (*gotypes.Package, error) {
 	if path == "unsafe" {
 		return gotypes.Unsafe, nil
 	}
+
 	dep := i.pkg.imports[path]
 	if dep == nil {
 		return nil, fmt.Errorf("no metadata for %s", path)
 	}
+
 	err := dep.listingError()
 	if err != nil {
 		return nil, fmt.Errorf("import: %w", err)
 	}
+
 	i.set.check(dep)
+
 	if dep.types == nil {
 		return nil, fmt.Errorf("no types for %s", path)
 	}
+
 	return dep.types, nil
 }

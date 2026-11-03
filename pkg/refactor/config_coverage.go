@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/scanner"
@@ -28,14 +29,17 @@ type reach struct {
 func (r *configRun) reached() (dirs []string, names map[string]bool) {
 	seen := make(map[string]bool)
 	names = make(map[string]bool)
+
 	for _, res := range r.results {
 		for _, dir := range res.reach.dirs {
 			seen[dir] = true
 		}
+
 		for _, name := range res.reach.names {
 			names[name] = true
 		}
 	}
+
 	return slices.Sorted(maps.Keys(seen)), names
 }
 
@@ -45,18 +49,22 @@ func (r *configRun) reached() (dirs []string, names map[string]bool) {
 // left out.
 func (r *configRun) reportUncovered(plan *types.RefactoringPlan) error {
 	dirs, names := r.reached()
+
 	err := r.unattributedAbort(dirs)
 	if err != nil {
 		return fmt.Errorf("report uncovered: %w", err)
 	}
+
 	for _, u := range analysis.UncheckedFiles(r.views, dirs) {
 		file := types.UncoveredFile{Path: u.Source.Path, Configs: configNames(u.Configs), Reason: u.Reason}
 		plan.Coverage.Uncovered = append(plan.Coverage.Uncovered, file)
+
 		site, ok := mentionSite(u.Source, names, file)
 		if ok {
 			plan.SkippedSites = append(plan.SkippedSites, site)
 		}
 	}
+
 	return nil
 }
 
@@ -65,16 +73,19 @@ func (r *configRun) reportUncovered(plan *types.RefactoringPlan) error {
 func (r *configRun) unattributedAbort(dirs []string) error {
 	for _, v := range r.views {
 		var blind []*types.Package
+
 		for _, dir := range dirs {
 			pkg := v.Workspace.Packages[dir]
 			if pkg != nil && pkg.UnattributedTestErr != nil {
 				blind = append(blind, pkg)
 			}
 		}
+
 		if len(blind) > 0 {
 			return r.configError(v, unattributedTestsError(blind))
 		}
 	}
+
 	return nil
 }
 
@@ -87,10 +98,13 @@ func unattributedTestsError(pkgs []*types.Package) error {
 			"dropping the files that carry errors did not leave the rest error-free. Which of those files "+
 			"reference the changed symbols cannot be told, so proceeding could leave them uncompilable "+
 			"without saying where:\n", len(pkgs))
+
 	for _, pkg := range pkgs {
 		fmt.Fprintf(&b, "  - %s (%d test file(s)): %v\n", pkg.ImportPath, len(pkg.ExcludedTestFiles), pkg.UnattributedTestErr)
 	}
+
 	b.WriteString("fix the type errors in those test files and re-run")
+
 	return &types.RefactorError{Type: types.InvalidOperation, Message: b.String()}
 }
 
@@ -98,10 +112,12 @@ func configNames(configs []analysis.BuildConfig) []string {
 	if len(configs) == 0 {
 		return nil
 	}
+
 	names := make([]string, len(configs))
 	for i, c := range configs {
 		names[i] = c.String()
 	}
+
 	return names
 }
 
@@ -112,6 +128,7 @@ func mentionSite(src *analysis.SourceFile, names map[string]bool, file types.Unc
 	if !ok {
 		return types.SkippedSite{}, false
 	}
+
 	return types.SkippedSite{File: src.Path, Line: m.Line, Reason: mentionReason(m.name, file), Snippet: m.Context}, true
 }
 
@@ -127,6 +144,7 @@ func firstMention(src *analysis.SourceFile, names map[string]bool) (mention, boo
 	if len(found) == 0 {
 		return mention{}, false
 	}
+
 	return found[0], true
 }
 
@@ -137,23 +155,28 @@ func mentions(src *analysis.SourceFile, names map[string]bool, skip map[int]bool
 	if len(names) == 0 || len(src.Content) == 0 {
 		return nil
 	}
+
 	tf := token.NewFileSet().AddFile(src.Path, -1, len(src.Content))
 	var s scanner.Scanner
 	s.Init(tf, src.Content, nil, 0)
 	var found []mention
+
 	seen := make(map[string]bool)
 	for len(seen) < len(names) {
 		pos, tok, lit := s.Scan()
 		if tok == token.EOF {
 			break
 		}
+
 		if tok != token.IDENT || !names[lit] || seen[lit] {
 			continue
 		}
+
 		at := tf.Position(pos)
 		if skip[at.Offset] {
 			continue
 		}
+
 		seen[lit] = true
 		found = append(found, mention{name: lit,
 			File:    src.Path,
@@ -161,10 +184,12 @@ func mentions(src *analysis.SourceFile, names map[string]bool, skip map[int]bool
 			Line:    at.Line,
 			Column:  at.Column,
 			Context: lineAt(src.Content, at.Offset)})
+
 		if firstOnly {
 			break
 		}
 	}
+
 	return found
 }
 
@@ -178,17 +203,20 @@ func uncheckedWhere(file types.UncoveredFile) string {
 	if len(file.Configs) > 0 {
 		where = "not type-checked under " + strings.Join(file.Configs, ", ")
 	}
+
 	return fmt.Sprintf("%s (%s)", where, file.Reason)
 }
 
 // lineAt returns the line of content that holds offset, without surrounding space.
 func lineAt(content []byte, offset int) string {
-	start := strings.LastIndexByte(string(content[:offset]), '\n') + 1
+	start := bytes.LastIndexByte(content[:offset], '\n') + 1
 	end := len(content)
-	i := strings.IndexByte(string(content[offset:]), '\n')
+
+	i := bytes.IndexByte(content[offset:], '\n')
 	if i >= 0 {
 		end = offset + i
 	}
+
 	return strings.TrimSpace(string(content[start:end]))
 }
 
@@ -196,6 +224,7 @@ func lineAt(content []byte, offset int) string {
 // configurations that see it, followed by the uses no view could type-check.
 func (r *configRun) blockers() []types.Blocker {
 	unverified := unverifiedUses(r.views, r.linked)
+
 	unchecked := make(map[string]bool, len(unverified))
 	for _, b := range unverified {
 		unchecked[b.File] = true
@@ -208,41 +237,51 @@ func (r *configRun) blockers() []types.Blocker {
 	var out []types.Blocker
 	var seenBy [][]string
 	at := make(map[site]int)
+
 	for i, res := range r.results {
 		name := r.views[i].Config.String()
+
 		for _, b := range res.blockers {
 			if unchecked[b.File] {
 				continue
 			}
+
 			key := site{b.File, b.Offset}
+
 			j, ok := at[key]
 			if !ok {
 				j = len(out)
 				at[key] = j
+
 				out = append(out, b)
 				seenBy = append(seenBy, nil)
 			}
+
 			if !slices.Contains(seenBy[j], name) {
 				seenBy[j] = append(seenBy[j], name)
 			}
 		}
 	}
+
 	for j := range out {
 		if len(seenBy[j]) < len(r.views) {
 			out[j].Configs = seenBy[j]
 		}
 	}
+
 	return append(out, unverified...)
 }
 
 // unverifiedOf returns the blockers known by name only.
 func unverifiedOf(blockers []types.Blocker) []types.Blocker {
 	var out []types.Blocker
+
 	for _, b := range blockers {
 		if b.Unverified != "" {
 			out = append(out, b)
 		}
 	}
+
 	return out
 }
 
@@ -255,6 +294,7 @@ func unverifiedUses(views []*analysis.View, keys types.SymbolKeySet) []types.Blo
 			out = append(out, m.site)
 		}
 	}
+
 	return out
 }
 
@@ -271,18 +311,22 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 	if len(keys) == 0 {
 		return nil
 	}
+
 	dirs, declared := declarations(views, keys)
 	ordered := orderedKeys(keys)
 	var out []uncheckedMention
+
 	for _, u := range analysis.UncheckedFiles(views, views[0].SourceDirs()) {
 		names := make(map[string]bool)
 		byName := make(map[string][]types.SymbolKey)
+
 		for _, key := range ordered {
 			if mayUse(u.Source.Dir, u.Source.AST, key, dirs[key]) {
 				names[key.Name] = true
 				byName[key.Name] = append(byName[key.Name], key)
 			}
 		}
+
 		for _, m := range mentions(u.Source, names, declared[u.Source.Path], false) {
 			site := types.Blocker{Reference: m.Reference, Configs: configNames(u.Configs), Unverified: u.Reason}
 			for _, key := range byName[m.name] {
@@ -290,6 +334,7 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 			}
 		}
 	}
+
 	return out
 }
 
@@ -298,19 +343,23 @@ func uncheckedMentions(views []*analysis.View, keys types.SymbolKeySet) []unchec
 func declarations(views []*analysis.View, keys types.SymbolKeySet) (map[types.SymbolKey]string, map[string]map[int]bool) {
 	dirs := make(map[types.SymbolKey]string, len(keys))
 	declared := make(map[string]map[int]bool)
+
 	for key := range keys {
 		for _, v := range views {
 			sym := symbolForKey(v.Workspace, key)
 			if sym == nil {
 				continue
 			}
+
 			dirs[key] = filepath.Dir(sym.File)
 			if declared[sym.File] == nil {
 				declared[sym.File] = make(map[int]bool)
 			}
+
 			declared[sym.File][v.Workspace.FileSet.Position(sym.Position).Offset] = true
 		}
 	}
+
 	return dirs, declared
 }
 
@@ -322,17 +371,21 @@ func mayUse(fileDir string, file *ast.File, key types.SymbolKey, declDir string)
 	if fileDir == declDir {
 		return true
 	}
+
 	if !token.IsExported(key.Name) {
 		return false
 	}
+
 	if key.Recv != "" || file == nil {
 		return true
 	}
+
 	for _, imp := range file.Imports {
 		if strings.Trim(imp.Path.Value, "\"`") == key.PkgPath {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -352,12 +405,15 @@ func unresolvedMentions(v *analysis.View, names map[string]bool) []unresolvedMen
 		return nil
 	}
 	var out []unresolvedMention
+
 	for _, e := range v.ProductionErrors() {
 		if e.File.AST == nil {
 			continue
 		}
+
 		w := &unresolvedWalker{names: names, info: e.Package.TypesInfo}
 		ast.Walk(w, e.File.AST)
+
 		for _, id := range w.found {
 			at := v.Workspace.FileSet.Position(id.Pos())
 			out = append(out, unresolvedMention{file: e.File, err: e.Err, name: id.Name,
@@ -369,6 +425,7 @@ func unresolvedMentions(v *analysis.View, names map[string]bool) []unresolvedMen
 				Context:  lineAt(e.File.OriginalContent, at.Offset)})
 		}
 	}
+
 	return out
 }
 
@@ -389,17 +446,21 @@ func (w *unresolvedWalker) Visit(n ast.Node) ast.Visitor {
 	if !ok || !w.names[id.Name] {
 		return w
 	}
+
 	if w.info != nil {
 		_, defined := w.info.Defs[id]
 		if defined {
 			return w
 		}
+
 		_, used := w.info.Uses[id]
 		if used {
 			return w
 		}
 	}
+
 	w.found = append(w.found, id)
+
 	return w
 }
 
@@ -410,10 +471,12 @@ func reportUnverified(plan *types.RefactoringPlan, unverified []types.Blocker) {
 	for _, u := range plan.Coverage.Uncovered {
 		listed[u.Path] = true
 	}
+
 	for _, b := range unverified {
 		if listed[b.File] || rewrites(plan, b) {
 			continue
 		}
+
 		file := types.UncoveredFile{Path: b.File, Configs: b.Configs, Reason: b.Unverified}
 		plan.Coverage.Uncovered = append(plan.Coverage.Uncovered, file)
 		plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
@@ -432,6 +495,7 @@ func rewrites(plan *types.RefactoringPlan, b types.Blocker) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -443,15 +507,18 @@ func (r *configRun) reportTypeErrors(plan *types.RefactoringPlan) {
 	for key := range r.linked {
 		names[key.Name] = true
 	}
+
 	for _, v := range r.views {
 		if v.Parser == nil {
 			continue
 		}
+
 		listed := make(map[*types.Package]bool)
 		for _, e := range v.ProductionErrors() {
 			if listed[e.Package] || (!slices.Contains(dirs, e.Package.Dir) && !namesAny(e.File, names)) {
 				continue
 			}
+
 			listed[e.Package] = true
 			plan.Coverage.TypeErrors = append(plan.Coverage.TypeErrors, types.PackageTypeError{
 				Package: e.Package.ImportPath,

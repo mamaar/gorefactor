@@ -20,10 +20,12 @@ func writeRenameFieldWorkspace(t *testing.T, files map[string]string) (RefactorE
 	files["go.mod"] = "module example.com/m\n\ngo 1.21\n"
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0o755)
 		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
@@ -31,10 +33,12 @@ func writeRenameFieldWorkspace(t *testing.T, files map[string]string) (RefactorE
 	}
 
 	engine := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
 	}
+
 	return engine, ws
 }
 
@@ -76,6 +80,7 @@ func Run() string {
 		if ch.OldText != "Name" || ch.NewText != "FullName" {
 			t.Errorf("unexpected change %+v", ch)
 		}
+
 		if ch.End-ch.Start != len("Name") {
 			t.Errorf("change span %d != len(Name); %+v", ch.End-ch.Start, ch)
 		}
@@ -90,9 +95,11 @@ func Run() string {
 	// Both files must be affected (cross-package reference).
 	userFile := filepath.Join(ws.RootPath, "foo", "user.go")
 	appFile := filepath.Join(ws.RootPath, "app", "main.go")
+
 	if !contains(plan.AffectedFiles, userFile) {
 		t.Errorf("affected files missing %s: %v", userFile, plan.AffectedFiles)
 	}
+
 	if !contains(plan.AffectedFiles, appFile) {
 		t.Errorf("affected files missing %s: %v", appFile, plan.AffectedFiles)
 	}
@@ -125,6 +132,7 @@ type User struct {
 	if err == nil {
 		t.Fatal("expected error renaming embedded field, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "embedded") || !strings.Contains(err.Error(), "rename_symbol") {
 		t.Errorf("expected targeted embedded-field error, got: %v", err)
 	}
@@ -149,6 +157,7 @@ type User struct {
 	if err == nil {
 		t.Fatal("expected field-collision error, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("expected 'already exists' error, got: %v", err)
 	}
@@ -176,6 +185,7 @@ func (u User) FullName() string {
 	if err == nil {
 		t.Fatal("expected method-collision error, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "method") && !strings.Contains(err.Error(), "promoted") {
 		t.Errorf("expected method-collision error, got: %v", err)
 	}
@@ -199,6 +209,7 @@ type User struct {
 	if err == nil {
 		t.Fatal("expected type-not-found error, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected 'not found' error, got: %v", err)
 	}

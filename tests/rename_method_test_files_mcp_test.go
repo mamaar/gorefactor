@@ -13,6 +13,7 @@ func TestRenameMethod_RenamesCallInTestFile(t *testing.T) {
 		"p/use.go":    "package p\n\nfunc Use(t T) { t.M() }\n",
 		"p/t_test.go": "package p\n\nimport \"testing\"\n\nfunc TestT(t *testing.T) { T{}.M() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

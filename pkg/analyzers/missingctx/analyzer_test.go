@@ -13,6 +13,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -50,6 +51,7 @@ func process() {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, missingctx.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +61,7 @@ func process() {
 	if !ok {
 		t.Fatalf("Expected []*missingctx.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
@@ -67,9 +70,11 @@ func process() {
 	if v.FunctionName != "process" {
 		t.Errorf("Expected function 'process', got %q", v.FunctionName)
 	}
+
 	if len(v.ContextCalls) == 0 {
 		t.Error("Expected at least one context call to be reported")
 	}
+
 	if v.ContextCalls[0] != "context.TODO()" {
 		t.Errorf("Expected context call 'context.TODO()', got %q", v.ContextCalls[0])
 	}
@@ -85,6 +90,7 @@ func process(ctx context.Context) {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, missingctx.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +100,7 @@ func process(ctx context.Context) {
 	if !ok {
 		t.Fatalf("Expected []*missingctx.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations when context param is present, got %d", len(results))
 	}
@@ -115,6 +122,7 @@ func init() {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, missingctx.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +132,7 @@ func init() {
 	if !ok {
 		t.Fatalf("Expected []*missingctx.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations: main and init should be skipped, got %d", len(results))
 	}
@@ -146,10 +155,12 @@ func Testify()                { _ = context.Background() }
 func helper(t *testing.T)     { _ = context.Background() }
 `
 	fileSet := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fileSet, "testpkg_test.go", src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	file := &types.File{Path: "testpkg_test.go", AST: astFile, OriginalContent: []byte(src)}
 	pkg := &types.Package{Name: "testpkg", Path: "test/testpkg", TestFiles: map[string]*types.File{file.Path: file}}
 	ws := &types.Workspace{Packages: map[string]*types.Package{"test/testpkg": pkg}, FileSet: fileSet}
@@ -158,10 +169,12 @@ func helper(t *testing.T)     { _ = context.Background() }
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var got []string
 	for _, r := range rr.Result.([]*missingctx.Result) {
 		got = append(got, r.FunctionName)
 	}
+
 	want := []string{"Testify", "helper"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("reported %v, want %v", got, want)

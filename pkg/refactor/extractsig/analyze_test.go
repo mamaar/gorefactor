@@ -29,12 +29,15 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	dir := t.TempDir()
 	all := map[string]string{"go.mod": "module example.com/m\n\ngo 1.21\n"}
 	maps.Copy(all, files)
+
 	for rel, content := range all {
 		full := filepath.Join(dir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0o755)
 		if err != nil {
 			t.Fatalf("mkdir for %s: %v", rel, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("write %s: %v", rel, err)
@@ -45,17 +48,22 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	if err != nil {
 		t.Fatalf("LoadWorkspaceSet: %v", err)
 	}
+
 	parser, ws := set.Primary().Parser, set.Primary().Workspace
 
 	pkgDir := filepath.Join(dir, filepath.Dir(target))
+
 	pkg, ok := ws.Packages[pkgDir]
 	if !ok {
-		t.Fatalf("package %s not found in workspace (have %v)", pkgDir, slices(ws))
+		t.Fatalf("package %s not found in workspace (have %v)", pkgDir, pkgDirs(ws))
 	}
+
 	parser.EnsureTypeChecked(ws, pkg)
+
 	if pkg.TypesErr != nil {
 		t.Fatalf("type-checking %s failed: %v", pkg.ImportPath, pkg.TypesErr)
 	}
+
 	if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 		t.Fatal("expected TypesInfo and TypesPkg after EnsureTypeChecked")
 	}
@@ -64,14 +72,16 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	if !ok {
 		t.Fatalf("file %s not found in package", target)
 	}
+
 	return ws, pkg, file
 }
 
-func slices(ws *types.Workspace) []string {
+func pkgDirs(ws *types.Workspace) []string {
 	var out []string
 	for p := range ws.Packages {
 		out = append(out, p)
 	}
+
 	return out
 }
 
@@ -80,19 +90,25 @@ func slices(ws *types.Workspace) []string {
 // not.
 func markLine(t *testing.T, src, mark string) int {
 	t.Helper()
+
 	found := 0
+
 	for i, line := range strings.Split(src, "\n") {
 		if !strings.Contains(line, mark) {
 			continue
 		}
+
 		if found != 0 {
 			t.Fatalf("mark %q appears on lines %d and %d", mark, found, i+1)
 		}
+
 		found = i + 1
 	}
+
 	if found == 0 {
 		t.Fatalf("mark %q not found in source", mark)
 	}
+
 	return found
 }
 
@@ -561,6 +577,7 @@ func fill(sink func(*int)) int {
 			ws, pkg, file := setup(t, "app/app.go", files)
 
 			start := markLine(t, tc.src, tc.startMark)
+
 			end := start + tc.endOffset
 			if tc.endMark != "" {
 				end = markLine(t, tc.src, tc.endMark) + tc.endOffset
@@ -574,24 +591,31 @@ func fill(sink func(*int)) int {
 			if !reflect.DeepEqual(got.Params, tc.wantParams) {
 				t.Errorf("Params = %+v, want %+v", got.Params, tc.wantParams)
 			}
+
 			if !reflect.DeepEqual(got.Results, tc.wantResults) {
 				t.Errorf("Results = %+v, want %+v", got.Results, tc.wantResults)
 			}
+
 			if got.TailReturns != tc.wantTail {
 				t.Errorf("TailReturns = %v, want %v", got.TailReturns, tc.wantTail)
 			}
+
 			if !reflect.DeepEqual(got.EnclosingResults, tc.wantEnclosing) {
 				t.Errorf("EnclosingResults = %+v, want %+v", got.EnclosingResults, tc.wantEnclosing)
 			}
+
 			if tc.wantImports != nil && !reflect.DeepEqual(got.Imports, tc.wantImports) {
 				t.Errorf("Imports = %v, want %v", got.Imports, tc.wantImports)
 			}
+
 			if got.Imports == nil {
 				t.Error("Imports must never be nil")
 			}
+
 			if got.EnclosingFunc == nil {
 				t.Error("EnclosingFunc must be set")
 			}
+
 			if len(got.Stmts) == 0 {
 				t.Error("Stmts must be set")
 			}
@@ -603,6 +627,7 @@ func fill(sink func(*int)) int {
 					t.Errorf("param %s rendered as %s", p.Name, p.Type)
 				}
 			}
+
 			for _, r := range got.Results {
 				if strings.Contains(r.Type, "interface{}") {
 					t.Errorf("result %s rendered as %s", r.Name, r.Type)
@@ -614,6 +639,7 @@ func fill(sink func(*int)) int {
 					t.Errorf("BodyText missing %q:\n%s", want, got.BodyText)
 				}
 			}
+
 			for _, absent := range tc.wantBodyAbsent {
 				if strings.Contains(got.BodyText, absent) {
 					t.Errorf("BodyText unexpectedly contains %q:\n%s", absent, got.BodyText)
@@ -642,10 +668,12 @@ func run(zebra, alpha, middle int) int {
 	if err != nil {
 		t.Fatalf("Analyze: %v", err)
 	}
+
 	var names []string
 	for _, p := range got.Params {
 		names = append(names, p.Name)
 	}
+
 	want := []string{"zebra", "alpha", "middle"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("param order = %v, want %v", names, want)
@@ -849,6 +877,7 @@ func run() func() int {
 			start, end := tc.startLine, tc.endLine
 			if start == 0 {
 				start = markLine(t, tc.src, tc.startMark)
+
 				end = start + tc.endOffset
 				if tc.endMark != "" {
 					end = markLine(t, tc.src, tc.endMark) + tc.endOffset
@@ -859,10 +888,12 @@ func run() func() int {
 			if err == nil {
 				t.Fatalf("expected a refusal, got analysis %+v", got)
 			}
+
 			var refusal *Refusal
 			if !errors.As(err, &refusal) {
 				t.Fatalf("expected *Refusal, got %T: %v", err, err)
 			}
+
 			if !strings.Contains(refusal.Reason, tc.wantReason) {
 				t.Errorf("refusal reason %q does not contain %q", refusal.Reason, tc.wantReason)
 			}
@@ -888,10 +919,12 @@ func run(n int) int {
 	line := markLine(t, src, "n = n * 2")
 
 	_, err := Analyze(ws, pkg, file, line, line)
+
 	var refusal *Refusal
 	if !errors.As(err, &refusal) {
 		t.Fatalf("expected *Refusal, got %T: %v", err, err)
 	}
+
 	if !strings.Contains(refusal.Reason, "type information is unavailable") {
 		t.Errorf("unexpected reason: %q", refusal.Reason)
 	}

@@ -18,6 +18,7 @@ func TestRenameSymbolAcrossConfigs_SingleConfigPlanEqualsSingleWorkspacePlan(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got, err := eng.RenameSymbolAcrossConfigs(req)
 	if err != nil {
 		t.Fatal(err)
@@ -26,6 +27,7 @@ func TestRenameSymbolAcrossConfigs_SingleConfigPlanEqualsSingleWorkspacePlan(t *
 	if !slices.Equal(sortedChanges(got), sortedChanges(want)) {
 		t.Errorf("changes differ:\n got %+v\nwant %+v", sortedChanges(got), sortedChanges(want))
 	}
+
 	if len(got.Coverage.Configs) > 1 {
 		t.Errorf("configs = %v, want a single configuration", got.Coverage.Configs)
 	}
@@ -37,18 +39,22 @@ func TestRenameSymbolPlanner_LinkedSupersetKeepsPlan(t *testing.T) {
 		"p/f_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc f(n int) int { return n + 1 }\n",
 		"p/use.go":       "package p\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	views, err := eng.WorkspaceSet().Views()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	planner := &renameSymbolPlanner{req: types.RenameSymbolRequest{SymbolName: "f", NewName: "g", Scope: types.WorkspaceScope}}
 
 	first, err := planner.planIn(views[0], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	linked := first.changed.Clone()
 	linked[types.SymbolKey{PkgPath: "example.com/threadtest/p", Name: "absent"}] = struct{}{}
+
 	second, err := planner.planIn(views[0], linked)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +76,7 @@ func TestRenameSymbolAcrossConfigs_DottedMethodNameLeavesOtherReceiverAlone(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}

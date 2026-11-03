@@ -16,17 +16,21 @@ func writeTemp(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secret.go")
+
 	err := os.WriteFile(path, []byte(src), 0o644)
 	if err != nil {
 		t.Fatalf("writeTemp: %v", err)
 	}
+
 	return path
 }
 
 // buildWorkspace creates a minimal Workspace with a single file parsed from src.
 func buildWorkspace(t *testing.T, path, src string) *pkgtypes.Workspace {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, path, src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("ParseFile: %v", err)
@@ -50,6 +54,7 @@ func buildWorkspace(t *testing.T, path, src string) *pkgtypes.Workspace {
 			},
 		},
 	}
+
 	return ws
 }
 
@@ -82,9 +87,11 @@ func getSecret(project string, secretName string, version string) (secret []byte
 	if c.NewText != "" {
 		t.Errorf("expected NewText to be empty (deletion), got %q", c.NewText)
 	}
+
 	if !strings.Contains(c.OldText, "context.Background") {
 		t.Errorf("expected OldText to contain 'context.Background', got %q", c.OldText)
 	}
+
 	if !strings.Contains(c.Description, "ctx is now a parameter") {
 		t.Errorf("expected description to mention 'ctx is now a parameter', got %q", c.Description)
 	}
@@ -110,6 +117,7 @@ func listVersions(project string) ([]string, error) {
 	if len(changes) != 1 {
 		t.Fatalf("expected 1 change (remove ctx := context.TODO()), got %d: %v", len(changes), changes)
 	}
+
 	if !strings.Contains(changes[0].OldText, "context.TODO") {
 		t.Errorf("expected OldText to contain 'context.TODO', got %q", changes[0].OldText)
 	}
@@ -183,6 +191,7 @@ func getSecret(project string, secretName string, version string) (secret []byte
 	if len(changes) != 1 {
 		t.Fatalf("expected exactly 1 change, got %d", len(changes))
 	}
+
 	if changes[0].NewText != "" {
 		t.Errorf("removal change must have empty NewText, got %q", changes[0].NewText)
 	}

@@ -74,6 +74,7 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 `)
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -89,6 +90,7 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 	if err != nil {
 		t.Fatalf("step 1 CallTool transport error: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("step 1 move_symbol returned an error result: %+v", result.Content)
 	}
@@ -99,6 +101,7 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 	}
 
 	commonPath := filepath.Join(tmpDir, "common", "asyncserver.go")
+
 	afterStep1 := mustRead(t, commonPath)
 	if !strings.Contains(afterStep1, "func NewLoggedAsyncServer(") {
 		t.Fatalf("expected NewLoggedAsyncServer to stay behind in package common after step 1, got:\n%s", afterStep1)
@@ -117,6 +120,7 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 	if err != nil {
 		t.Fatalf("step 2 CallTool transport error: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("step 2 move_symbol returned an error result: %+v", result.Content)
 	}
@@ -126,12 +130,15 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 	if strings.Contains(afterStep2, "asyncserver.NewAsyncServer") {
 		t.Errorf("expected NewLoggedAsyncServer's call to NewAsyncServer to stay unqualified inside package asyncserver, got self-qualified reference:\n%s", afterStep2)
 	}
+
 	if strings.Contains(afterStep2, "asyncserver.AsyncServer") {
 		t.Errorf("expected NewLoggedAsyncServer's *AsyncServer return type to stay unqualified inside package asyncserver, got self-qualified reference:\n%s", afterStep2)
 	}
+
 	if strings.Contains(afterStep2, `"reprotest/pkg/asyncserver"`) {
 		t.Errorf("expected package asyncserver to not import itself, got:\n%s", afterStep2)
 	}
+
 	if !strings.Contains(afterStep2, "func NewLoggedAsyncServer(") {
 		t.Errorf("expected NewLoggedAsyncServer to have moved into %s, got:\n%s", targetPath, afterStep2)
 	}
@@ -139,6 +146,7 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 	// The acceptance criterion: the whole fixture module must actually
 	// build. Before the fix this failed with "import cycle not allowed".
 	cmd := exec.Command("go", "build", "./...")
+
 	cmd.Dir = tmpDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fixture module does not compile after the two moves (this is the actual bug):\n%s", out)

@@ -66,6 +66,7 @@ func TestAddContextParameter_UnnamedParametersGetAnUnnamedContext(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +86,7 @@ func TestAddContextParameter_UnnamedParametersNameTheContextWhenTheBodyUsesIt(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}
@@ -108,6 +110,7 @@ func TestChangeSignature_AddingNamedParameterToUnnamedListNamesTheRest(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}
@@ -128,6 +131,7 @@ func TestAddContextParameter_PropagatedInterfaceMethodWithUnnamedParameters(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}

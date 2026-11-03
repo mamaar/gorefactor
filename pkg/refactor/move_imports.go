@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -45,10 +46,12 @@ func importLocalName(imp *ast.ImportSpec) (string, bool) {
 	// (packagePathToImportPath, lastPathComponent), and is right for the
 	// overwhelming majority of stdlib and third-party packages.
 	path := strings.Trim(imp.Path.Value, `"`)
-	idx := strings.LastIndex(path, "/")
-	if idx >= 0 {
-		return path[idx+1:], false
+
+	_, after, ok := strings.CutLast(path, "/")
+	if ok {
+		return after, false
 	}
+
 	return path, false
 }
 
@@ -72,29 +75,37 @@ func chooseImportNames(ws *types.Workspace, targetFile *types.File, moving []*mo
 		if ok {
 			return w
 		}
+
 		w = &want{path: path, realName: realName}
 		byPath[path] = w
 		wants = append(wants, w)
+
 		return w
 	}
 	avoid := make(map[string]bool)
 	shadow := make(map[string]bool)
+
 	for _, m := range moving {
 		if m.typ == nil {
 			avoid[m.sym.Name] = true
 		}
+
 		maps.Copy(shadow, uses[m].idents)
+
 		if len(uses[m].leftBehind) > 0 {
 			get(packagePathToImportPath(ws, m.pkg.Path), m.pkg.Name).inserted = true
 		}
+
 		for _, u := range uses[m].pkgUses {
 			if u.path == targetImportPath {
 				continue
 			}
+
 			w := get(u.path, u.pkgName)
 			if w.preferred == "" {
 				w.preferred = u.name
 			}
+
 			w.used = append(w.used, u.name)
 		}
 	}
@@ -107,45 +118,56 @@ func chooseImportNames(ws *types.Workspace, targetFile *types.File, moving []*mo
 		if chosen[name] || avoid[name] {
 			return false
 		}
+
 		return !shadow[name] || !w.inserted && !slices.ContainsFunc(w.used, func(u string) bool { return u != name })
 	}
 
 	names := make(map[string]string, len(wants))
 	var needed []neededImport
+
 	for _, w := range wants {
 		name := ""
+
 		if targetFile.AST != nil {
 			for _, imp := range targetFile.AST.Imports {
 				if strings.Trim(imp.Path.Value, `"`) != w.path {
 					continue
 				}
+
 				existing := w.realName
 				if imp.Name != nil {
 					existing, _ = importLocalName(imp)
 				}
+
 				if existing != "" && fits(w, existing) {
 					name = existing
 					break
 				}
 			}
 		}
+
 		if name == "" && w.preferred != "" && !taken[w.preferred] && fits(w, w.preferred) {
 			name = w.preferred
 		}
+
 		if name == "" {
 			blocked := maps.Clone(chosen)
 			maps.Copy(blocked, avoid)
 			maps.Copy(blocked, shadow)
 			name = chooseImportName(ws, targetFile, nil, w.path, w.realName, blocked)
 		}
+
 		chosen[name] = true
 		names[w.path] = name
+
 		imp := neededImport{path: w.path}
 		if name != w.realName {
 			imp.alias = name
 		}
+
 		needed = append(needed, imp)
 	}
+
 	return names, needed
 }
 
@@ -156,6 +178,7 @@ func chooseImportNames(ws *types.Workspace, targetFile *types.File, moving []*mo
 func qualifierEdits(ws *types.Workspace, m *movingSymbol, u *movedUses, names map[string]string, targetImportPath string) []textEdit {
 	content := m.file.OriginalContent
 	var edits []textEdit
+
 	for _, use := range u.pkgUses {
 		end := use.offset + use.length
 		switch {
@@ -163,20 +186,24 @@ func qualifierEdits(ws *types.Workspace, m *movingSymbol, u *movedUses, names ma
 			for end < len(content) && (content[end] == ' ' || content[end] == '\t') {
 				end++
 			}
+
 			if end < len(content) && content[end] == '.' {
 				end++
 			}
+
 			edits = append(edits, textEdit{start: use.offset, end: end})
 		case names[use.path] != use.name:
 			edits = append(edits, textEdit{start: use.offset, end: end, text: names[use.path]})
 		}
 	}
+
 	if len(u.leftBehind) > 0 {
 		qualifier := names[packagePathToImportPath(ws, m.pkg.Path)] + "."
 		for _, offset := range u.leftBehind {
 			edits = append(edits, textEdit{start: offset, end: offset, text: qualifier})
 		}
 	}
+
 	return edits
 }
 
@@ -188,29 +215,35 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 
 	if targetFile.AST == nil || targetFile.AST.Name == nil || ws.FileSet == nil {
 		// Fallback: assume the file starts with "package <name>\n".
-		idx := strings.IndexByte(string(content), '\n')
+		idx := bytes.IndexByte(content, '\n')
 		if idx >= 0 {
 			return idx + 1
 		}
+
 		return len(content)
 	}
 
 	pos := ws.FileSet.Position(targetFile.AST.Name.End())
 
 	offset := 0
+
 	line := 1
 	for offset < len(content) && line < pos.Line {
 		if content[offset] == '\n' {
 			line++
 		}
+
 		offset++
 	}
+
 	for offset < len(content) && content[offset] != '\n' {
 		offset++
 	}
+
 	if offset < len(content) {
 		offset++ // move past the newline itself
 	}
+
 	return offset
 }
 
@@ -240,16 +273,19 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 	}
 
 	var lines []string
+
 	for _, n := range needed {
 		if importsUnder(targetFile, n) {
 			continue
 		}
+
 		if n.alias != "" {
 			lines = append(lines, fmt.Sprintf("\t%s %q", n.alias, n.path))
 		} else {
 			lines = append(lines, fmt.Sprintf("\t%q", n.path))
 		}
 	}
+
 	if len(lines) == 0 {
 		return nil
 	}
@@ -258,6 +294,7 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 		!isSingleLineImport(targetFile.AST, targetFile.OriginalContent) {
 		lastImport := targetFile.AST.Imports[len(targetFile.AST.Imports)-1]
 		_, insertAt := lineRange(ws, targetFile.OriginalContent, lastImport.End())
+
 		return &types.Change{
 			File:        targetFile.Path,
 			Start:       insertAt,
@@ -269,6 +306,7 @@ func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, ne
 	}
 
 	offset := packageClauseEndOffset(ws, targetFile)
+
 	return &types.Change{
 		File:        targetFile.Path,
 		Start:       offset,
@@ -285,13 +323,16 @@ func importsUnder(file *types.File, n neededImport) bool {
 	if file.AST == nil {
 		return false
 	}
+
 	return slices.ContainsFunc(file.AST.Imports, func(imp *ast.ImportSpec) bool {
 		if strings.Trim(imp.Path.Value, `"`) != n.path {
 			return false
 		}
+
 		if imp.Name == nil {
 			return n.alias == ""
 		}
+
 		return imp.Name.Name == n.alias
 	})
 }
@@ -312,8 +353,10 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 		if c.Start < 0 || c.End > len(result) || c.Start > c.End {
 			continue // leave malformed changes for the real serializer to report
 		}
+
 		result = result[:c.Start] + c.NewText + result[c.End:]
 	}
+
 	return []byte(result)
 }
 
@@ -323,21 +366,25 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 // import stays: those say something on their own.
 func emptiedFileDeletion(file *types.File, removals []types.Change) (types.Change, bool) {
 	rest := applyChangesInMemory(file.OriginalContent, removals)
+
 	parsed, err := parser.ParseFile(token.NewFileSet(), file.Path, rest, parser.ParseComments)
 	if err != nil || len(parsed.Comments) > 0 {
 		return types.Change{}, false
 	}
+
 	for _, decl := range parsed.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.IMPORT {
 			return types.Change{}, false
 		}
 	}
+
 	for _, imp := range parsed.Imports {
 		if imp.Name != nil && imp.Name.Name == "_" || imp.Path.Value == `"C"` {
 			return types.Change{}, false
 		}
 	}
+
 	return types.Change{File: file.Path, Delete: true, Description: fmt.Sprintf("Remove file %s: no declarations left", file.Path)}, true
 }
 
@@ -359,24 +406,29 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 	// remaining reports whether pos lies in sourceFile outside the removed ranges.
 	remaining := func(pos token.Pos) bool {
 		at := ws.FileSet.Position(pos)
+
 		return at.Filename == sourceFile.Path && !slices.ContainsFunc(removeChanges, func(c types.Change) bool {
 			return c.File == at.Filename && at.Offset >= c.Start && at.Offset < c.End
 		})
 	}
 	var stillUsed func(imp *ast.ImportSpec) bool
+
 	info := typeInfoOf(ws, sourceFile)
 	if info != nil {
 		stillUsed = func(imp *ast.ImportSpec) bool {
 			path := strings.Trim(imp.Path.Value, `"`)
+
 			for ident, obj := range info.Uses {
 				pkgName, ok := obj.(*gotypes.PkgName)
 				if !ok || pkgName.Imported().Path() != path || !remaining(ident.Pos()) {
 					continue
 				}
+
 				if imp.Name == nil && pkgName.Name() == pkgName.Imported().Name() || imp.Name != nil && pkgName.Name() == imp.Name.Name {
 					return true
 				}
 			}
+
 			return false
 		}
 	} else {
@@ -384,7 +436,9 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 			if imp.Name == nil {
 				return true
 			}
+
 			used := false
+
 			ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectorExpr)
 				if ok {
@@ -393,19 +447,24 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 						used = true
 					}
 				}
+
 				return !used
 			})
+
 			return used
 		}
 	}
 
 	var unused []*ast.ImportSpec
+
 	for _, imp := range sourceFile.AST.Imports {
 		if imp.Name != nil && (imp.Name.Name == "_" || imp.Name.Name == ".") || stillUsed(imp) {
 			continue
 		}
+
 		unused = append(unused, imp)
 	}
+
 	return unused
 }
 
@@ -416,10 +475,12 @@ func typeInfoOf(ws *types.Workspace, file *types.File) *gotypes.Info {
 	if pkg == nil || pkg.TypesInfo == nil {
 		return nil
 	}
+
 	_, ok := pkg.TypesInfo.Defs[file.AST.Name]
 	if !ok {
 		return nil
 	}
+
 	return pkg.TypesInfo
 }
 
@@ -431,19 +492,24 @@ func lineRange(ws *types.Workspace, content []byte, pos token.Pos) (int, int) {
 	line := ws.FileSet.Position(pos).Line
 
 	offset := 0
+
 	curLine := 1
 	for offset < len(content) && curLine < line {
 		if content[offset] == '\n' {
 			curLine++
 		}
+
 		offset++
 	}
+
 	start := offset
 	for offset < len(content) && content[offset] != '\n' {
 		offset++
 	}
+
 	if offset < len(content) {
 		offset++ // include the newline itself
 	}
+
 	return start, offset
 }

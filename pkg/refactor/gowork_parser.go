@@ -17,15 +17,18 @@ func DiscoverWorkspaceModules(rootPath string) ([]string, error) {
 	// Walk up to find go.work.
 	for {
 		candidate := filepath.Join(workDir, "go.work")
+
 		_, err := os.Stat(candidate)
 		if err == nil {
 			goWorkPath = candidate
 			break
 		}
+
 		parent := filepath.Dir(workDir)
 		if parent == workDir {
 			break // reached filesystem root
 		}
+
 		workDir = parent
 	}
 
@@ -42,16 +45,20 @@ func DiscoverWorkspaceModules(rootPath string) ([]string, error) {
 	workRoot := filepath.Dir(goWorkPath)
 
 	var modules []string
+
 	for _, dir := range useDirs {
 		absDir := dir
 		if !filepath.IsAbs(dir) {
 			absDir = filepath.Join(workRoot, dir)
 		}
+
 		modPath := filepath.Join(absDir, "go.mod")
+
 		modContent, err := os.ReadFile(modPath)
 		if err != nil {
 			continue // skip directories without go.mod
 		}
+
 		moduleName := parseModuleName(modContent)
 		if moduleName != "" {
 			modules = append(modules, moduleName)
@@ -68,6 +75,7 @@ func parseGoWorkFile(content []byte) []string {
 	lines := strings.Split(string(content), "\n")
 
 	inUseBlock := false
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
@@ -86,12 +94,14 @@ func parseGoWorkFile(content []byte) []string {
 			if dir != "" {
 				dirs = append(dirs, dir)
 			}
+
 			continue
 		}
 
 		after, ok := strings.CutPrefix(trimmed, "use ")
 		if ok {
 			rest := after
+
 			rest = strings.TrimSpace(rest)
 			if rest == "(" {
 				inUseBlock = true
@@ -114,10 +124,12 @@ func parseModuleName(content []byte) string {
 	lines := strings.SplitSeq(string(content), "\n")
 	for line := range lines {
 		trimmed := strings.TrimSpace(line)
+
 		after, ok := strings.CutPrefix(trimmed, "module ")
 		if ok {
 			return strings.TrimSpace(after)
 		}
 	}
+
 	return ""
 }

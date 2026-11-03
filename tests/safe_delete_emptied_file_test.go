@@ -22,16 +22,19 @@ func TestSafeDelete_EmptiedFileIsKeptWhenItSaysSomethingOnItsOwn(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writeInlineWorkspace(t, map[string]string{"p/a.go": "package p\n\nfunc Live() {}\n", "p/drivers.go": tc.src})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
 			callJSON(t, sess, "safe_delete", map[string]any{"symbol": "dead", "source_file": "p/drivers.go"})
 
 			_, err := os.Stat(filepath.Join(dir, "p/drivers.go"))
+
 			gone := os.IsNotExist(err)
 			if gone != tc.deleted {
 				t.Fatalf("file deleted = %v, want %v", gone, tc.deleted)
 			}
+
 			if !tc.deleted {
 				assertFileOmits(t, dir, "p/drivers.go", "dead")
 			}
@@ -41,6 +44,7 @@ func TestSafeDelete_EmptiedFileIsKeptWhenItSaysSomethingOnItsOwn(t *testing.T) {
 
 func TestSafeDelete_RefusesANameSourceFileDoesNotDeclare(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/a.go": "package p\n\nfunc Live() {}\n", "p/b.go": "package p\n\nfunc other() {}\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

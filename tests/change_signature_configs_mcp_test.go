@@ -14,10 +14,12 @@ import (
 
 func changeSig(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "change_signature", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	return res
 }
 
@@ -31,6 +33,7 @@ func intParams(names ...string) []map[string]any {
 	for i, n := range names {
 		out[i] = map[string]any{"name": n, "type": "int"}
 	}
+
 	return out
 }
 
@@ -44,6 +47,7 @@ func addMArgs(file string, extra map[string]any) map[string]any {
 		"position":      1,
 	}
 	maps.Copy(args, extra)
+
 	return args
 }
 
@@ -53,6 +57,7 @@ func TestChangeSignature_RewritesCallSiteInTaggedTestFile(t *testing.T) {
 		"p/use.go":           "package p\n\nfunc Use() int { return f(1) }\n",
 		"p/use_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestTagx(t *testing.T) { f(2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -70,6 +75,7 @@ func TestChangeSignature_TagSiblingsBothChangeAndSharedCallerOnce(t *testing.T) 
 		"p/f_tagx.go":    ctxFTagx,
 		"p/use.go":       "package p\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -79,16 +85,19 @@ func TestChangeSignature_TagSiblingsBothChangeAndSharedCallerOnce(t *testing.T) 
 	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
+
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
 		got := fileText(t, dir, f)
 		if strings.Count(got, "func f(n int, m int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	got := fileText(t, dir, "p/use.go")
 	if strings.Count(got, "f(1, 0)") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -98,6 +107,7 @@ func TestChangeSignature_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 		"p/use_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use() int { return f(1) }\n",
 		"p/plain.go":    "package p\n\nfunc plain() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -105,15 +115,18 @@ func TestChangeSignature_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 
 	assertFileContains(t, dir, "p/f_tagx.go", "func f(n int, m int) int")
 	assertFileContains(t, dir, "p/use_tagx.go", "f(1, 0)")
+
 	got := fileText(t, dir, "p/plain.go")
 	if got != "package p\n\nfunc plain() int { return 1 }\n" {
 		t.Errorf("plain.go changed:\n%s", got)
 	}
+
 	goVets(t, dir, "tagx")
 }
 
 func TestChangeSignature_MissingFunctionErrorTextIsUnchanged(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": "package p\n\nfunc f(n int) int { return n }\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -127,6 +140,7 @@ func TestChangeSignature_MissingFunctionErrorTextIsUnchanged(t *testing.T) {
 
 func TestChangeSignature_MissingFileErrorTextIsUnchanged(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": "package p\n\nfunc f(n int) int { return n }\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -140,6 +154,7 @@ func TestChangeSignature_MissingFileErrorTextIsUnchanged(t *testing.T) {
 
 func TestChangeSignature_ReportsBrokenTaggedTestFileAsUncovered(t *testing.T) {
 	dir := brokenTaggedTestWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -155,6 +170,7 @@ func TestChangeSignature_ReportsBrokenTaggedTestFileAsUncovered(t *testing.T) {
 
 func assertFileUnchanged(t *testing.T, dir, rel, want string) {
 	t.Helper()
+
 	got := fileText(t, dir, rel)
 	if got != want {
 		t.Errorf("%s changed:\n%s", rel, got)
@@ -165,11 +181,13 @@ func TestChangeSignature_SingleConfigOmitsBuildConfigs(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nfunc f(n int) int { return n }\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	for _, dryRun := range []bool{true, false} {
 		out := changeSigOK(t, sess, addMArgs("p/f.go", map[string]any{"dry_run": dryRun}))
+
 		_, ok := out["build_configs"]
 		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
@@ -183,6 +201,7 @@ func TestChangeSignature_RemoveParamReachesTaggedCallSite(t *testing.T) {
 		"p/use.go":           "package p\n\nfunc Use() int { return f(1, 5) }\n",
 		"p/use_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestTagx(t *testing.T) { f(2, 6) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -201,6 +220,7 @@ func TestChangeSignature_SiblingWithDifferentSignatureAborts(t *testing.T) {
 		"p/f_default.go": ctxFDefault,
 		"p/f_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc f(s string) int { return len(s) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -210,6 +230,7 @@ func TestChangeSignature_SiblingWithDifferentSignatureAborts(t *testing.T) {
 	if !res.IsError || !strings.Contains(msg, "p/f_tagx.go") || !strings.Contains(msg, "tags=tagx") {
 		t.Errorf("error = %q (IsError %v), want one naming p/f_tagx.go and tags=tagx", msg, res.IsError)
 	}
+
 	assertFileUnchanged(t, dir, "p/f_default.go", ctxFDefault)
 }
 
@@ -219,6 +240,7 @@ func TestChangeSignature_SiblingAlreadyHavingRequestedSignatureIsLeftAlone(t *te
 		"p/f_default.go": ctxFDefault,
 		"p/f_tagx.go":    tagx,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -234,6 +256,7 @@ func TestChangeSignature_ImportsNewParameterTypeInSiblingWithoutCallSite(t *test
 		"p/f_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc f(n int) int { return n + 1 }\n",
 		"p/use.go":       "package p\n\nimport \"time\"\n\nvar _ time.Duration\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -247,6 +270,7 @@ func TestChangeSignature_ImportsNewParameterTypeInSiblingWithoutCallSite(t *test
 		assertFileContains(t, dir, f, "func f(n int, d time.Duration) int")
 		assertFileContains(t, dir, f, "\"time\"")
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -256,6 +280,7 @@ func TestChangeSignature_PropagateReachesImplementationOnlyUnderTag(t *testing.T
 		"p/a.go":      "//go:build !tagx\n\npackage p\n\ntype A struct{}\n\nfunc (A) Run(n int) int { return n }\n",
 		"p/b_tagx.go": "//go:build tagx\n\npackage p\n\ntype B struct{}\n\nfunc (B) Run(n int) int { return n + 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -270,6 +295,7 @@ func TestChangeSignature_PropagateReachesImplementationOnlyUnderTag(t *testing.T
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	assertFileContains(t, dir, "p/iface.go", "r.Run(1, 0)")
 	goVets(t, dir, "", "tagx")
 }

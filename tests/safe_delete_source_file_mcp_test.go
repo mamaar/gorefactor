@@ -13,6 +13,7 @@ const sdsB = "package p\n\ntype V struct{}\n\nfunc (V) helper() int { return 2 }
 
 func TestSafeDelete_BareNameResolvesToTheDeclarationInSourceFile(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/a.go": sdsA, "p/b.go": sdsB})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -25,6 +26,7 @@ func TestSafeDelete_BareNameResolvesToTheDeclarationInSourceFile(t *testing.T) {
 func TestSafeDelete_BareNameInAFileWithFunctionAndMethodDeletesTheFunction(t *testing.T) {
 	const both = "package p\n\ntype V struct{}\n\nfunc (V) helper() int { return 2 }\n\nfunc helper() int { return 1 }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/a.go": both})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -36,6 +38,7 @@ func TestSafeDelete_BareNameInAFileWithFunctionAndMethodDeletesTheFunction(t *te
 func TestSafeDelete_RefusesABareNameOfMethodsOnSeveralTypesInSourceFile(t *testing.T) {
 	const both = "package p\n\ntype V struct{}\n\ntype W struct{}\n\nfunc (V) helper() int { return 2 }\n\nfunc (W) helper() int { return 1 }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/a.go": both})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -49,6 +52,7 @@ func TestSafeDelete_RefusesABareNameOfMethodsOnSeveralTypesInSourceFile(t *testi
 func TestSafeDelete_RemovesTheTrailingCommentOfAConstSpec(t *testing.T) {
 	const src = "package p\n\nconst (\n\t// First is one.\n\tFirst = 1 // one\n\tSecond = 2 // two\n)\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/c.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

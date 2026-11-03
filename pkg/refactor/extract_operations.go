@@ -38,18 +38,21 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 			Message: "source file cannot be empty",
 		}
 	}
+
 	if op.NewMethodName == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "method name cannot be empty",
 		}
 	}
+
 	if op.StartLine > op.EndLine {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "start line must be before or equal to end line",
 		}
 	}
+
 	if op.StartLine < 1 || op.EndLine < 1 {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -64,6 +67,7 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return err
 	}
@@ -87,9 +91,11 @@ func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve source file: %w", err)
 	}
+
 	return file, pkg, nil
 }
 
@@ -115,11 +121,14 @@ func (op *ExtractMethodOperation) resolveReceiver(an *extractsig.Analysis) (*ext
 	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 || fn.Recv.List[0].Names[0].Name == "_" {
 		return nil, fmt.Errorf("no value of type %s is available at the call site: the block captures none and the enclosing function has no named receiver", op.TargetStruct)
 	}
+
 	base := receiverBaseTypeName(fn.Recv.List[0].Type)
 	if base != op.TargetStruct {
 		return nil, fmt.Errorf("the enclosing function's receiver has type %s, not %s, so the new method could not be called there", base, op.TargetStruct)
 	}
+
 	recvName := fn.Recv.List[0].Names[0].Name
+
 	return &extractReceiver{decl: recvName + " *" + op.TargetStruct, name: recvName, paramIdx: -1}, nil
 }
 
@@ -150,6 +159,7 @@ func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.Refactori
 		if r == nil {
 			return
 		}
+
 		logFile, _ := os.Create("/tmp/gorefactor-panic.log")
 		if logFile != nil {
 			_, _ = fmt.Fprintf(logFile, "PANIC in ExtractMethodOperation.Execute: %v\n", r)
@@ -159,6 +169,7 @@ func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.Refactori
 			_, _ = fmt.Fprintf(logFile, "TargetStruct: %s\n", op.TargetStruct)
 			_ = logFile.Close()
 		}
+
 		panic(fmt.Sprintf("ExtractMethodOperation panic: %v", r))
 	}()
 
@@ -177,6 +188,7 @@ func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.Refactori
 	if err != nil {
 		return nil, refuseExtraction("method", op.NewMethodName, err)
 	}
+
 	if selectionHasDefer(an.Stmts) {
 		return nil, refuseExtraction("method", op.NewMethodName, errDeferInSelection)
 	}
@@ -241,18 +253,21 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 			Message: "source file cannot be empty",
 		}
 	}
+
 	if op.NewFunctionName == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "function name cannot be empty",
 		}
 	}
+
 	if op.StartLine > op.EndLine {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "start line must be before or equal to end line",
 		}
 	}
+
 	if op.StartLine < 1 || op.EndLine < 1 {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -283,9 +298,11 @@ func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*typ
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("resolve source file: %w", err)
 	}
+
 	return file, pkg, nil
 }
 
@@ -305,6 +322,7 @@ func (op *ExtractFunctionOperation) Execute(ws *types.Workspace) (*types.Refacto
 	if err != nil {
 		return nil, refuseExtraction("function", op.NewFunctionName, err)
 	}
+
 	if selectionHasDefer(an.Stmts) {
 		return nil, refuseExtraction("function", op.NewFunctionName, errDeferInSelection)
 	}
@@ -365,10 +383,12 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
 		if err != nil {
 			continue
 		}
+
 		if symbol.Kind == types.TypeSymbol {
 			structSymbol = symbol
 			break
@@ -405,37 +425,44 @@ func (op *ExtractInterfaceOperation) checkRequestFields() error {
 			Message: "source struct cannot be empty",
 		}
 	}
+
 	if op.InterfaceName == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "interface name cannot be empty",
 		}
 	}
+
 	if len(op.Methods) == 0 {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "methods list cannot be empty",
 		}
 	}
+
 	if !isValidGoIdentifierExtract(op.InterfaceName) {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: fmt.Sprintf("invalid Go identifier: %s", op.InterfaceName),
 		}
 	}
+
 	return nil
 }
 
 func (op *ExtractInterfaceOperation) findStructPackage(ws *types.Workspace, resolver *analysis.SymbolResolver) (*types.Package, error) {
 	var sourcePackage *types.Package
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
 		if err != nil {
 			continue
 		}
+
 		if symbol.Kind == types.TypeSymbol {
 			sourcePackage = pkg
 			break
@@ -448,12 +475,14 @@ func (op *ExtractInterfaceOperation) findStructPackage(ws *types.Workspace, reso
 			Message: fmt.Sprintf("package containing struct %s not found", op.SourceStruct),
 		}
 	}
+
 	return sourcePackage, nil
 }
 
 func (op *ExtractInterfaceOperation) checkMethodsExist(sourcePackage *types.Package) error {
 	for _, methodName := range op.Methods {
 		found := false
+
 		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
 		if exists {
 			for _, method := range methods {
@@ -463,14 +492,17 @@ func (op *ExtractInterfaceOperation) checkMethodsExist(sourcePackage *types.Pack
 				}
 			}
 		}
+
 		if found {
 			continue
 		}
+
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("method %s not found on struct %s", methodName, op.SourceStruct),
 		}
 	}
+
 	return nil
 }
 
@@ -484,15 +516,19 @@ func (op *ExtractInterfaceOperation) Execute(ws *types.Workspace) (*types.Refact
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
 		if err != nil {
 			continue
 		}
+
 		if symbol.Kind != types.TypeSymbol {
 			continue
 		}
+
 		structSymbol = symbol
 		sourcePackage = pkg
+
 		break
 	}
 
@@ -557,6 +593,7 @@ func (op *ExtractInterfaceOperation) generateInterface(sourcePackage *types.Pack
 		if !exists {
 			continue
 		}
+
 		for _, method := range methods {
 			if method.Name != methodName {
 				continue
@@ -564,18 +601,19 @@ func (op *ExtractInterfaceOperation) generateInterface(sourcePackage *types.Pack
 			// Extract method signature without receiver
 			signature := op.extractMethodSignature(method.Signature)
 			fmt.Fprintf(&interfaceCode, "\t%s%s\n", methodName, signature)
+
 			break
 		}
 	}
 
 	interfaceCode.WriteString("}")
+
 	return interfaceCode.String()
 }
 
 func (op *ExtractInterfaceOperation) extractMethodSignature(fullSignature string) string {
 	// Remove receiver from method signature
 	// Example: "func (c *Calculator) Add(a, b float64) float64" -> "(a, b float64) float64"
-
 	if fullSignature == "" {
 		return "()"
 	}
@@ -594,10 +632,12 @@ func (op *ExtractInterfaceOperation) extractMethodSignature(fullSignature string
 	if receiverStart == -1 {
 		return "()"
 	}
+
 	receiverStart += funcStart
 
 	// Find the matching closing parenthesis for receiver
 	parenCount := 1
+
 	receiverEnd := receiverStart + 1
 	for receiverEnd < len(fullSignature) && parenCount > 0 {
 		switch fullSignature[receiverEnd] {
@@ -606,6 +646,7 @@ func (op *ExtractInterfaceOperation) extractMethodSignature(fullSignature string
 		case ')':
 			parenCount--
 		}
+
 		receiverEnd++
 	}
 
@@ -618,6 +659,7 @@ func (op *ExtractInterfaceOperation) extractMethodSignature(fullSignature string
 
 	// Find method name (skip whitespace and method name)
 	spaceOrParen := -1
+
 	for i, r := range remaining {
 		if r == ' ' || r == '(' {
 			spaceOrParen = i
@@ -634,6 +676,7 @@ func (op *ExtractInterfaceOperation) extractMethodSignature(fullSignature string
 	if paramStart == -1 {
 		return "()"
 	}
+
 	paramStart += spaceOrParen
 
 	// Return everything from the parameters onward
@@ -649,6 +692,7 @@ func (op *ExtractInterfaceOperation) getTargetFileName() string {
 	if op.TargetPackage != "" {
 		return op.TargetPackage + "/interfaces.go"
 	}
+
 	return "interfaces.go"
 }
 
@@ -658,6 +702,7 @@ func (op *ExtractInterfaceOperation) getTargetPackageName(sourcePackage *types.P
 		parts := strings.Split(op.TargetPackage, "/")
 		return parts[len(parts)-1]
 	}
+
 	return sourcePackage.Name
 }
 
@@ -681,24 +726,28 @@ func (op *ExtractVariableOperation) Validate(ws *types.Workspace) error {
 			Message: "source file cannot be empty",
 		}
 	}
+
 	if op.VariableName == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "variable name cannot be empty",
 		}
 	}
+
 	if op.Expression == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "expression cannot be empty",
 		}
 	}
+
 	if op.StartLine > op.EndLine {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "start line must be before or equal to end line",
 		}
 	}
+
 	if !isValidGoIdentifierExtract(op.VariableName) {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -717,6 +766,7 @@ func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.Refacto
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -781,6 +831,7 @@ func (op *ExtractVariableOperation) findExpressionStart(content string, line int
 	}
 
 	lineContent := lines[line-1]
+
 	index := strings.Index(lineContent, expression)
 	if index == -1 {
 		// If exact expression not found, return start of line
@@ -804,9 +855,10 @@ func getLineOffset(content string, line int) int {
 	}
 
 	offset := 0
-	for i := 0; i < line-1; i++ {
+	for i := range line - 1 {
 		offset += len(lines[i]) + 1 // +1 for newline
 	}
+
 	return offset
 }
 

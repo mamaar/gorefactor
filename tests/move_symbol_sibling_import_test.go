@@ -87,6 +87,7 @@ func Something(t *testing.T) {
 `)
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -101,6 +102,7 @@ func Something(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool transport error: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
 	}
@@ -111,6 +113,7 @@ func Something(t *testing.T) {
 	if !strings.Contains(refContent, `"reprotest/test/skip"`) {
 		t.Errorf("expected flaky_test.go to import the destination package, got:\n%s", refContent)
 	}
+
 	if !strings.Contains(refContent, "skip.SkipFlaky(") {
 		t.Errorf("expected flaky_test.go's call to be rewritten to skip.SkipFlaky, got:\n%s", refContent)
 	}
@@ -118,6 +121,7 @@ func Something(t *testing.T) {
 	// _test.go files are not compiled by `go build`, so the missing import only
 	// surfaces under vet/test.
 	cmd := exec.Command("go", "vet", "./...")
+
 	cmd.Dir = tmpDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fixture module does not vet clean after the move (this is the actual bug):\n%s", out)

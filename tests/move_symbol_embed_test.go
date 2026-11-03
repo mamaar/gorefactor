@@ -11,6 +11,7 @@ const embedSrc = "package src\n\nimport _ \"embed\"\n\n//go:embed x.txt\nvar Dat
 
 func TestMoveSymbol_RefusesAVariableWithAGoEmbedDirective(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": embedSrc, "src/x.txt": "hi"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -20,6 +21,7 @@ func TestMoveSymbol_RefusesAVariableWithAGoEmbedDirective(t *testing.T) {
 
 func TestMoveSymbol_RefusesAGoEmbedVariableRequestedAmongOthers(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": embedSrc, "src/x.txt": "hi"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

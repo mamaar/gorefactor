@@ -67,9 +67,11 @@ func TestResolveStopAt_Shapes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			if len(got) != 1 || !got.Has(tc.want) {
 				t.Fatalf("got %v, want {%v}", got, tc.want)
 			}
+
 			if !declared.Has(tc.want) {
 				t.Errorf("%v not in declaredFuncKeys", tc.want)
 			}
@@ -87,13 +89,16 @@ func TestResolveStopAt_BareNameSkipsMethods(t *testing.T) {
 
 func TestResolveStopAt_ExternalTestFile(t *testing.T) {
 	ws := buildScopeWorkspace(t, stopResolveFiles())
+
 	got, err := resolveOne(t, ws, "helper")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got) != 1 {
 		t.Fatalf("got %v", got)
 	}
+
 	for k := range got {
 		for fn := range buildFuncDeclIndex(ws) {
 			want, ok := pkgtypes.SymbolKeyOf(fn)
@@ -108,10 +113,12 @@ func TestResolveStopAt_SameSymbolInTwoViewsIsOneKey(t *testing.T) {
 	files := stopResolveFiles()
 	ws1 := buildScopeWorkspace(t, files)
 	ws2 := buildScopeWorkspace(t, stopResolveFiles())
+
 	got, err := resolveStopAt([]*pkgtypes.Workspace{ws1, ws2}, []string{"Ptr.Save"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got) != 1 || !got.Has(fooKey("Ptr", "Save")) {
 		t.Fatalf("got %v", got)
 	}
@@ -147,10 +154,12 @@ func TestResolveStopAt_EmptyEntries(t *testing.T) {
 
 func assertStopErr(t *testing.T, err error, want string) {
 	t.Helper()
+
 	var re *pkgtypes.RefactorError
 	if !errors.As(err, &re) || re.Type != pkgtypes.InvalidOperation {
 		t.Fatalf("err = %#v, want InvalidOperation RefactorError", err)
 	}
+
 	if !strings.Contains(re.Message, want) {
 		t.Fatalf("message %q does not contain %q", re.Message, want)
 	}

@@ -38,6 +38,7 @@ func approximateConfigs(views []analysis.ApproximateView) []ApproximateConfig {
 	for _, v := range views {
 		out = append(out, ApproximateConfig{Config: v.Config.String(), Error: v.Err.Error()})
 	}
+
 	return out
 }
 
@@ -67,8 +68,10 @@ func buildConfigInfos(cov analysis.Covering) []BuildConfigInfo {
 		if tags == nil {
 			tags = []string{}
 		}
+
 		out[i] = BuildConfigInfo{Name: c.String(), GOOS: c.GOOS, GOARCH: c.GOARCH, Cgo: c.Cgo, Tags: tags, Files: cov.Files[i]}
 	}
+
 	return out
 }
 
@@ -77,6 +80,7 @@ func uncoveredFileInfos(cov analysis.Covering, root string) []UncoveredFileInfo 
 	for _, u := range cov.Uncovered {
 		out = append(out, UncoveredFileInfo{File: relativeTo(root, u.Path), Constraint: u.Constraint, Reason: u.Reason})
 	}
+
 	return out
 }
 
@@ -88,6 +92,7 @@ func uncheckedFileInfos(files []analysis.UncheckedFile, root string) []Uncovered
 			out[i].Configs = append(out[i].Configs, c.String())
 		}
 	}
+
 	return out
 }
 
@@ -98,6 +103,7 @@ func relativeTo(root, path string) string {
 	if err != nil {
 		return path
 	}
+
 	return filepath.ToSlash(rel)
 }
 
@@ -127,7 +133,9 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		ws, _ := state.GetWorkspace()
+
 		out := LoadWorkspaceOutput{
 			PackageCount:        len(ws.Packages),
 			RootPath:            ws.RootPath,
@@ -136,10 +144,12 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		if ws.Module != nil {
 			out.Module = ws.Module.Path
 		}
+
 		cov := state.Covering()
 		out.BuildConfigs = buildConfigInfos(cov)
 		out.UncoveredFiles = uncoveredFileInfos(cov, ws.RootPath)
 		out.ApproximateConfigs = approximateConfigs(state.set.ApproximateViews())
+
 		return textResult(out), nil, nil
 	})
 
@@ -154,6 +164,7 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return textResult(WorkspaceStatusOutput{Loaded: false}), nil, nil
 		}
+
 		out := WorkspaceStatusOutput{
 			Loaded:       true,
 			RootPath:     ws.RootPath,
@@ -162,14 +173,18 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		if ws.Module != nil {
 			out.Module = ws.Module.Path
 		}
+
 		for _, pkg := range ws.Packages {
 			out.Packages = append(out.Packages, pkg.ImportPath)
 		}
+
 		sort.Strings(out.Packages)
+
 		cov := state.Covering()
 		out.BuildConfigs = buildConfigInfos(cov)
 		out.UncoveredFiles = uncoveredFileInfos(cov, ws.RootPath)
 		out.ApproximateConfigs = approximateConfigs(state.set.ApproximateViews())
+
 		return textResult(out), nil, nil
 	})
 }

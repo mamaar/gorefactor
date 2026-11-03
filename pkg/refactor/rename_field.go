@@ -42,6 +42,7 @@ func resolverAndIndex(ws *types.Workspace, cached *analysis.ReferenceIndex) (*an
 	if cached == nil {
 		cached = resolver.BuildReferenceIndex()
 	}
+
 	return resolver, cached
 }
 
@@ -57,17 +58,20 @@ func (op *RenameFieldOperation) findOwningPackage(ws *types.Workspace) (*types.P
 				Message: fmt.Sprintf("package %s not found", op.Request.PackagePath),
 			}
 		}
+
 		if pkg.Symbols == nil || pkg.Symbols.Types[op.Request.TypeName] == nil {
 			return nil, &types.RefactorError{
 				Type:    types.SymbolNotFound,
 				Message: fmt.Sprintf("type %s not found in package %s", op.Request.TypeName, op.Request.PackagePath),
 			}
 		}
+
 		return pkg, nil
 	}
 
 	var candidates []*types.Package
 	var candidatePaths []string
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil && pkg.Symbols.Types[op.Request.TypeName] != nil {
 			candidates = append(candidates, pkg)
@@ -102,6 +106,7 @@ func findStructTypeSpec(pkg *types.Package, typeName string, typeSymbol *types.S
 	for _, f := range pkg.Files {
 		files = append(files, f)
 	}
+
 	for _, f := range pkg.TestFiles {
 		files = append(files, f)
 	}
@@ -110,11 +115,13 @@ func findStructTypeSpec(pkg *types.Package, typeName string, typeSymbol *types.S
 		if file.AST == nil {
 			continue
 		}
+
 		for _, decl := range file.AST.Decls {
 			genDecl, ok := decl.(*ast.GenDecl)
 			if !ok {
 				continue
 			}
+
 			for _, spec := range genDecl.Specs {
 				ts, ok := spec.(*ast.TypeSpec)
 				if !ok || ts.Name.Name != typeName {
@@ -125,11 +132,14 @@ func findStructTypeSpec(pkg *types.Package, typeName string, typeSymbol *types.S
 				if typeSymbol != nil && ts.Name.Pos() != typeSymbol.Position {
 					continue
 				}
+
 				structType, _ := ts.Type.(*ast.StructType)
+
 				return ts, structType
 			}
 		}
 	}
+
 	return nil, nil
 }
 
@@ -144,6 +154,7 @@ func embeddedFieldTypeName(expr ast.Expr) string {
 	case *ast.SelectorExpr:
 		return t.Sel.Name
 	}
+
 	return ""
 }
 
@@ -154,6 +165,7 @@ func (op *RenameFieldOperation) fieldSymbol(pkg *types.Package) *types.Symbol {
 			return f
 		}
 	}
+
 	return nil
 }
 
@@ -167,6 +179,7 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("invalid Go identifier: %s", req.NewFieldName),
 		}
 	}
+
 	if req.FieldName == req.NewFieldName {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -178,6 +191,7 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 	if err != nil {
 		return err
 	}
+
 	typeSymbol := pkg.Symbols.Types[req.TypeName]
 
 	// The type must be a struct.
@@ -188,6 +202,7 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("could not locate declaration of type %s", req.TypeName),
 		}
 	}
+
 	if structType == nil {
 		return &types.RefactorError{
 			Type: types.InvalidOperation,
@@ -228,9 +243,11 @@ func (op *RenameFieldOperation) checkFieldExists(pkg *types.Package, structType 
 				if len(field.Names) != 0 {
 					continue
 				}
+
 				if embeddedFieldTypeName(field.Type) != req.FieldName {
 					continue
 				}
+
 				return &types.RefactorError{
 					Type: types.InvalidOperation,
 					Message: fmt.Sprintf(
@@ -239,11 +256,13 @@ func (op *RenameFieldOperation) checkFieldExists(pkg *types.Package, structType 
 				}
 			}
 		}
+
 		return &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("field %s not found on type %s", req.FieldName, req.TypeName),
 		}
 	}
+
 	return nil
 }
 
@@ -252,6 +271,7 @@ func (op *RenameFieldOperation) checkMemberNameConflicts(pkg *types.Package, req
 		if f.Name != req.NewFieldName {
 			continue
 		}
+
 		return &types.RefactorError{
 			Type:    types.NameConflict,
 			Message: fmt.Sprintf("field %s already exists on type %s", req.NewFieldName, req.TypeName),
@@ -263,11 +283,13 @@ func (op *RenameFieldOperation) checkMemberNameConflicts(pkg *types.Package, req
 		if m.Name != req.NewFieldName {
 			continue
 		}
+
 		return &types.RefactorError{
 			Type:    types.NameConflict,
 			Message: fmt.Sprintf("type %s already has a method named %s", req.TypeName, req.NewFieldName),
 		}
 	}
+
 	return nil
 }
 
@@ -289,6 +311,7 @@ func (op *RenameFieldOperation) checkPromotedCollision(pkg *types.Package, req t
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -325,13 +348,16 @@ func (op *RenameFieldOperation) Execute(ws *types.Workspace) (*types.Refactoring
 		for _, f := range pkg.Files {
 			ownFiles[f.Path] = true
 		}
+
 		for _, f := range pkg.TestFiles {
 			ownFiles[f.Path] = true
 		}
+
 		for _, ref := range refs {
 			if ownFiles[ref.File] {
 				continue
 			}
+
 			return nil, &types.RefactorError{
 				Type: types.VisibilityViolation,
 				Message: fmt.Sprintf(

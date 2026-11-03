@@ -26,6 +26,7 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	if len(fixed) != 1 {
 		t.Fatalf("expected exactly 1 applied rewrite, got %d: %v", len(fixed), fixed)
 	}
+
 	fn, _ := fixed[0].(string)
 	if fn != "goodChain" {
 		t.Errorf("functions_fixed = %v, want [goodChain]", fixed)
@@ -33,16 +34,20 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 
 	unfixable, _ := result["unfixable"].([]any)
 	var typeErrorItem map[string]any
+
 	for _, u := range unfixable {
 		item := u.(map[string]any)
+
 		fn, _ := item["function_name"].(string)
 		if fn == "typeErrorChain" {
 			typeErrorItem = item
 		}
 	}
+
 	if typeErrorItem == nil {
 		t.Fatalf("expected typeErrorChain to be reported unfixable after failing type-check verification, got unfixable=%v", unfixable)
 	}
+
 	reason, _ := typeErrorItem["reason"].(string)
 	if !strings.Contains(reason, "would not type-check") {
 		t.Errorf("reason = %q, want it to explain the rewrite would not type-check", reason)
@@ -61,6 +66,7 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	if !strings.Contains(after, `} else if cond2 {`) {
 		t.Errorf("typeErrorChain's original else-if chain should have been left untouched on disk, got:\n%s", after)
 	}
+
 	if strings.Contains(after, "if x%2 == 0 {\n\t\t\t\treturn fmt.Sprintf(\"even") {
 		t.Errorf("goodChain should have been flattened, but its original nested form is still present:\n%s", after)
 	}
@@ -69,6 +75,7 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	// too, and it does not drop a compiled binary next to the sources.
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fixture module does not compile after fix_deep_if_else_chains ran:\n%s", out)
@@ -90,6 +97,7 @@ func TestFixDeepIfElse_DryRunOnlyDiffsSurvivingChanges(t *testing.T) {
 	if after != before {
 		t.Errorf("dry run modified the file on disk:\n%s", after)
 	}
+
 	dryRun, _ := result["dry_run"].(bool)
 	if !dryRun {
 		t.Error("result should report dry_run=true")
@@ -99,11 +107,14 @@ func TestFixDeepIfElse_DryRunOnlyDiffsSurvivingChanges(t *testing.T) {
 	if len(diffs) == 0 {
 		t.Fatal("expected the preview to carry a diff for goodChain")
 	}
+
 	for _, d := range diffs {
 		file := d.(map[string]any)
+
 		hunks, _ := file["hunks"].([]any)
 		for _, h := range hunks {
 			hunk := h.(map[string]any)
+
 			old, _ := hunk["old"].(string)
 			if strings.Contains(old, "typeErrorChain") || strings.Contains(old, "cond1") {
 				t.Errorf("dry run should not preview typeErrorChain's rewrite, which fails verification, got hunk:\n%v", hunk)
@@ -113,13 +124,16 @@ func TestFixDeepIfElse_DryRunOnlyDiffsSurvivingChanges(t *testing.T) {
 
 	unfixable, _ := result["unfixable"].([]any)
 	found := false
+
 	for _, u := range unfixable {
 		item := u.(map[string]any)
+
 		fn, _ := item["function_name"].(string)
 		if fn == "typeErrorChain" {
 			found = true
 		}
 	}
+
 	if !found {
 		t.Errorf("expected typeErrorChain in unfixable even on a dry run, got %v", unfixable)
 	}

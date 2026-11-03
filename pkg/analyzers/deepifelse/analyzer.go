@@ -108,6 +108,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	return &analysis.Analyzer{
 		Name:     "deepifelse",
 		Doc:      "detects nested if-else chains that should use early returns (guard clauses)",
@@ -204,8 +205,10 @@ func (w *walker) walkFile(file *ast.File) {
 			if !ok || lit.Body == nil {
 				return true
 			}
+
 			w.fnBody = lit.Body
 			w.walkStmts(lit.Body.List, fn.Name.Name+".func", stmtfacts.SignatureNames(nil, lit.Type))
+
 			return true
 		})
 	}
@@ -227,6 +230,7 @@ func (w *walker) walkStmts(list []ast.Stmt, fnName string, scope map[string]bool
 				continue
 			}
 		}
+
 		w.descend(stmt, fnName, names)
 	}
 }
@@ -240,6 +244,7 @@ func (w *walker) descend(stmt ast.Stmt, fnName string, scope map[string]bool) {
 	switch s := stmt.(type) {
 	case *ast.IfStmt:
 		w.walkStmts(s.Body.List, fnName, scope)
+
 		switch e := s.Else.(type) {
 		case *ast.BlockStmt:
 			w.walkStmts(e.List, fnName, scope)
@@ -274,6 +279,7 @@ func (w *walker) walkClauses(body *ast.BlockStmt, fnName string, scope map[strin
 	if body == nil {
 		return
 	}
+
 	for _, clause := range body.List {
 		switch c := clause.(type) {
 		case *ast.CaseClause:
@@ -298,6 +304,7 @@ func assignedNames(stmt ast.Stmt) map[string]bool {
 	for _, lhs := range assign.Lhs {
 		stmtfacts.AddName(names, lhs)
 	}
+
 	return names
 }
 
@@ -309,9 +316,11 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 	if depth <= w.cfg.maxNesting {
 		return false
 	}
+
 	if countElseLines(w.pass.Fset, ifStmt) < w.cfg.minElseLines {
 		return false
 	}
+
 	if w.alreadyReported(ifStmt) {
 		return false
 	}
@@ -322,6 +331,7 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 	}
 
 	var fixes []analysis.SuggestedFix
+
 	if res.lifted > 0 {
 		startOffset := w.offset(ifStmt.Pos())
 		indent := srctext.Indentation(w.content, startOffset)
@@ -341,6 +351,7 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 	})
 
 	pos := w.pass.Fset.Position(ifStmt.Pos())
+
 	reductionPercent := 0
 	if depth > 0 {
 		reductionPercent = ((depth - 1) * 100) / depth
@@ -362,6 +373,7 @@ func (w *walker) tryChain(ifStmt *ast.IfStmt, fnName string, d dest) bool {
 	})
 
 	w.reported = append(w.reported, span{ifStmt.Pos(), ifStmt.End()})
+
 	return true
 }
 
@@ -371,6 +383,7 @@ func (w *walker) alreadyReported(n ast.Node) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -384,9 +397,11 @@ func measureIfElseDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 		if !ok {
 			continue
 		}
+
 		if innerIf.Else == nil {
 			continue
 		}
+
 		d := measureIfElseDepth(innerIf, currentDepth+1)
 		if d > maxDepth {
 			maxDepth = d
@@ -409,9 +424,11 @@ func measureIfElseDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 				if !ok {
 					continue
 				}
+
 				if innerIf.Else == nil {
 					continue
 				}
+
 				d := measureIfElseDepth(innerIf, currentDepth+1)
 				if d > maxDepth {
 					maxDepth = d
@@ -483,6 +500,7 @@ func blockLooksLikeErrorReturn(block *ast.BlockStmt) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -494,9 +512,11 @@ func measureHappyPathDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 		if !ok {
 			continue
 		}
+
 		if innerIf.Else == nil {
 			continue
 		}
+
 		d := measureHappyPathDepth(innerIf, currentDepth+1)
 		if d > maxDepth {
 			maxDepth = d
@@ -545,6 +565,7 @@ func (w *walker) flattenChain(root *ast.IfStmt, d dest) flattened {
 		if text == "" {
 			return flattened{strings.Join(stmts, "\n"), lifted, reasonNoText}
 		}
+
 		stmts = append(stmts, text)
 		// why describes this chain; reason came from a nested one. The outer
 		// explanation is the one that says where flattening actually stopped.
@@ -583,6 +604,7 @@ func (w *walker) flattenChain(root *ast.IfStmt, d dest) flattened {
 		if !ok {
 			return stop(link, reasonNoText)
 		}
+
 		body := w.flattenBlock(link.Body, d.nested(link.Body))
 		if body.text == "" {
 			return stop(link, reasonNoText)
@@ -598,6 +620,7 @@ func (w *walker) flattenChain(root *ast.IfStmt, d dest) flattened {
 		if res.text == "" {
 			return flattened{strings.Join(stmts, "\n"), lifted, reasonNoText}
 		}
+
 		stmts = append(stmts, res.text)
 		lifted += res.lifted
 		reason = firstReason(reason, res.reason)
@@ -646,12 +669,14 @@ func (w *walker) invert(link *ast.IfStmt, final *ast.BlockStmt, d dest, read map
 	// The else keeps its own block, so it is rendered in a scope of its own.
 	// The body is dedented into the enclosing one.
 	guard := w.flattenBlock(final, d.nested(final))
+
 	body := w.flattenBlock(link.Body, d.dedented(link.Body))
 	if guard.text == "" || body.text == "" {
 		return flattened{}, false, reasonNoText
 	}
 
 	text := "if " + inverted + " {\n" + srctext.IndentLines(guard.text, "\t") + "\n}\n" + body.text
+
 	return flattened{
 		text:   text,
 		lifted: 1 + guard.lifted + body.lifted,
@@ -694,10 +719,12 @@ func (w *walker) flattenBlock(block *ast.BlockStmt, d dest) flattened {
 	}
 
 	start := w.offset(block.Lbrace) + 1
+
 	end := w.offset(block.Rbrace)
 	if start < 1 || end > len(w.content) || start >= end {
 		return flattened{}
 	}
+
 	base := string(w.content[start:end])
 
 	var edits []splice
@@ -711,6 +738,7 @@ func (w *walker) flattenBlock(block *ast.BlockStmt, d dest) flattened {
 		}
 
 		res := w.flattenChain(ifStmt, d)
+
 		reason = firstReason(reason, res.reason)
 		if res.lifted == 0 {
 			continue
@@ -753,6 +781,7 @@ func (w *walker) dedentBlocked(block *ast.BlockStmt, d dest, read map[string]boo
 			return fmt.Sprintf(
 				"dedenting the branch would reuse %q, which the surrounding code still reads", name)
 		}
+
 		return ""
 	}
 
@@ -762,15 +791,18 @@ func (w *walker) dedentBlocked(block *ast.BlockStmt, d dest, read map[string]boo
 			if s.Tok != token.DEFINE {
 				continue
 			}
+
 			names := make(map[string]bool)
 			for _, lhs := range s.Lhs {
 				stmtfacts.AddName(names, lhs)
 			}
+
 			if len(names) > 0 && stmtfacts.FirstClash(names, d.list) != "" && subset(names, d.list) {
 				return fmt.Sprintf(
 					"dedenting the branch would redeclare %q with no new variable on the left",
 					stmtfacts.FirstClash(names, d.list))
 			}
+
 			for name := range names {
 				why := reuse(name)
 				if why != "" {
@@ -780,11 +812,13 @@ func (w *walker) dedentBlocked(block *ast.BlockStmt, d dest, read map[string]boo
 
 		case *ast.DeclStmt:
 			names := stmtfacts.DeclaredNames([]ast.Stmt{s})
+
 			clash := stmtfacts.FirstClash(names, d.list)
 			if clash != "" {
 				return fmt.Sprintf(
 					"dedenting the branch would redeclare %q in the enclosing scope", clash)
 			}
+
 			for name := range names {
 				why := reuse(name)
 				if why != "" {
@@ -834,15 +868,18 @@ func (w *walker) namesReadOutside(n ast.Node) map[string]bool {
 				for _, rhs := range v.Rhs {
 					ast.Inspect(rhs, visit)
 				}
+
 				return false
 			}
 		case *ast.ValueSpec:
 			if v.Type != nil {
 				ast.Inspect(v.Type, visit)
 			}
+
 			for _, value := range v.Values {
 				ast.Inspect(value, visit)
 			}
+
 			return false
 		case *ast.TypeSpec:
 			ast.Inspect(v.Type, visit)
@@ -898,6 +935,7 @@ func (w *walker) linkHeader(link *ast.IfStmt) (string, bool) {
 	if cond == "" {
 		return "", false
 	}
+
 	if link.Init == nil {
 		return "if " + cond, true
 	}
@@ -906,6 +944,7 @@ func (w *walker) linkHeader(link *ast.IfStmt) (string, bool) {
 	if init == "" {
 		return "", false
 	}
+
 	return "if " + init + "; " + cond, true
 }
 
@@ -917,16 +956,19 @@ func (w *walker) stmtText(n ast.Node) string {
 	if text == "" {
 		return ""
 	}
+
 	return srctext.Normalize(srctext.Indentation(w.content, w.offset(n.Pos())) + text)
 }
 
 func (w *walker) blockLines(block *ast.BlockStmt) int {
 	start := w.pass.Fset.Position(block.Lbrace).Line
 	end := w.pass.Fset.Position(block.Rbrace).Line
+
 	lines := end - start - 1
 	if lines > 0 {
 		return lines
 	}
+
 	return 0
 }
 
@@ -953,15 +995,19 @@ func applySplices(base string, base0 int, edits []splice) string {
 
 	var sb strings.Builder
 	cursor := 0
+
 	for _, e := range edits {
 		start, end := e.start-base0, e.end-base0
 		if start < cursor || end > len(base) || start > end {
 			continue
 		}
+
 		sb.WriteString(base[cursor:start])
 		sb.WriteString(e.text)
+
 		cursor = end
 	}
+
 	sb.WriteString(base[cursor:])
 
 	return sb.String()
@@ -976,6 +1022,7 @@ func subset(a, b map[string]bool) bool {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -984,9 +1031,11 @@ func union(a, b map[string]bool) map[string]bool {
 	for n := range a {
 		names[n] = true
 	}
+
 	for n := range b {
 		names[n] = true
 	}
+
 	return names
 }
 
@@ -998,6 +1047,7 @@ func firstReason(reasons ...string) string {
 			return r
 		}
 	}
+
 	return ""
 }
 
@@ -1008,11 +1058,13 @@ func nameList(names map[string]bool) string {
 	for name := range names {
 		sorted = append(sorted, name)
 	}
+
 	sort.Strings(sorted)
 
 	quoted := make([]string, len(sorted))
 	for i, name := range sorted {
 		quoted[i] = fmt.Sprintf("%q", name)
 	}
+
 	return strings.Join(quoted, ", ")
 }

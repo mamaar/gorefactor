@@ -45,10 +45,12 @@ func (s declSignature) String() string {
 	for i, p := range s.params {
 		params[i] = strings.TrimSpace(p.Name + " " + p.Type)
 	}
+
 	out := "(" + strings.Join(params, ", ") + ")"
 	if len(s.returns) > 0 {
 		out += " (" + strings.Join(s.returns, ", ") + ")"
 	}
+
 	return out
 }
 
@@ -71,27 +73,32 @@ func normalizeType(text string) string {
 	if err != nil {
 		return text
 	}
+
 	return gotypes.ExprString(expr)
 }
 
 // signatureOf returns ft's parameters and results, one entry per name.
 func signatureOf(ft *ast.FuncType) declSignature {
 	var s declSignature
+
 	for _, f := range listOf(ft.Params) {
 		typ := gotypes.ExprString(f.Type)
 		if len(f.Names) == 0 {
 			s.params = append(s.params, Parameter{Type: typ})
 		}
+
 		for _, n := range f.Names {
 			s.params = append(s.params, Parameter{Name: n.Name, Type: typ})
 		}
 	}
+
 	for _, f := range listOf(ft.Results) {
 		typ := gotypes.ExprString(f.Type)
 		for range max(len(f.Names), 1) {
 			s.returns = append(s.returns, typ)
 		}
 	}
+
 	return s
 }
 
@@ -99,6 +106,7 @@ func listOf(fl *ast.FieldList) []*ast.Field {
 	if fl == nil {
 		return nil
 	}
+
 	return fl.List
 }
 
@@ -116,6 +124,7 @@ func (p *changeSignaturePlanner) verify(v *analysis.View, plan *types.Refactorin
 			return
 		}
 	}
+
 	p.checks = append(p.checks, check)
 }
 
@@ -127,20 +136,25 @@ func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
 	for _, u := range plan.Coverage.Uncovered {
 		unedited = append(unedited, u.Path+":")
 	}
+
 	for _, s := range plan.SkippedSites {
 		unedited = append(unedited, s.File+":")
 	}
 	var newErrors []string
+
 	for _, c := range p.checks {
 		for _, e := range c.result.NewErrors {
 			if slices.ContainsFunc(unedited, func(prefix string) bool { return strings.HasPrefix(e, prefix) }) {
 				continue
 			}
+
 			if len(p.checks) > 1 {
 				e = fmt.Sprintf("[%s] %s", c.view.Config, e)
 			}
+
 			newErrors = append(newErrors, e)
 		}
+
 		if c.result.Skipped == "" {
 			continue
 		}
@@ -149,12 +163,15 @@ func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
 			Reason: "the plan could not be type-checked and is unverified: " + c.result.Skipped,
 		})
 	}
+
 	if len(newErrors) == 0 {
 		return
 	}
+
 	if plan.Impact == nil {
 		plan.Impact = &types.ImpactAnalysis{}
 	}
+
 	plan.Impact.PotentialIssues = append(plan.Impact.PotentialIssues, types.Issue{
 		Type:        types.IssueTypeMismatch,
 		Severity:    types.Error,
@@ -166,16 +183,19 @@ func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
 // SymbolNotFound error.
 func (p *changeSignaturePlanner) requestedIn(ws *types.Workspace) (*funcTarget, error) {
 	op := p.operation(p.req.FunctionName, p.req.SourceFile)
+
 	err := op.Validate(ws)
 	if err != nil {
 		return nil, fmt.Errorf("change signature operation validation failed: %w", err)
 	}
+
 	return &funcTarget{name: op.FunctionName, file: op.SourceFile}, nil
 }
 
 func (p *changeSignaturePlanner) operation(name, file string) *ChangeSignatureOperation {
 	req := p.req
 	req.FunctionName, req.SourceFile = name, file
+
 	return req.operation(p.engine.logger)
 }
 
@@ -184,30 +204,37 @@ func (p *changeSignaturePlanner) operation(name, file string) *ChangeSignatureOp
 // declaration the change was planned against aborts the run.
 func (p *changeSignaturePlanner) run(r *signatureRun, t funcTarget, requested bool) error {
 	ws := r.view.Workspace
+
 	op := p.operation(t.name, t.file)
 	if !requested {
 		skip, err := p.checkLinked(t)
 		if skip || err != nil {
 			return err
 		}
+
 		if err := op.Validate(ws); err != nil {
 			return fmt.Errorf("change signature operation validation failed: %w", err)
 		}
 	}
+
 	altered, err := r.execute(op)
 	if err != nil {
 		return fmt.Errorf("failed to generate change signature plan: %w", err)
 	}
+
 	if p.before == nil {
 		p.before = make(map[types.SymbolKey]declSignature)
 	}
+
 	for _, d := range altered {
 		_, seen := p.before[d.Key]
+
 		decl, ok := r.decls[d.Key]
 		if ok && !seen {
 			p.before[d.Key] = signatureOf(decl.ft)
 		}
 	}
+
 	return nil
 }
 
@@ -215,13 +242,16 @@ func (p *changeSignaturePlanner) run(r *signatureRun, t funcTarget, requested bo
 // when it differs from the signature the change was planned against.
 func (p *changeSignaturePlanner) checkLinked(t funcTarget) (skip bool, err error) {
 	cur := signatureOf(t.ft)
+
 	want, ok := p.before[t.key]
 	if !ok || cur.equal(want) {
 		return false, nil
 	}
+
 	if p.satisfiedBy(cur) {
 		return true, nil
 	}
+
 	return false, fmt.Errorf(
 		"%s in %s has signature %s, which differs from %s, the signature it is changed from under another build configuration; make the declarations agree first",
 		qualifiedName(t.key), t.file, cur, want)
@@ -230,17 +260,21 @@ func (p *changeSignaturePlanner) checkLinked(t funcTarget) (skip bool, err error
 // satisfiedBy reports whether cur already has what the request asks for.
 func (p *changeSignaturePlanner) satisfiedBy(cur declSignature) bool {
 	changesParams := len(p.req.NewParams) > 0 || strings.HasSuffix(p.req.Subcommand, "_param")
+
 	changesReturns := len(p.req.NewReturns) > 0 || strings.HasSuffix(p.req.Subcommand, "_return")
 	if changesParams && !paramsEqual(cur.params, p.req.NewParams) {
 		return false
 	}
+
 	if changesReturns {
 		want := make([]string, len(p.req.NewReturns))
 		for i, ret := range p.req.NewReturns {
 			want[i] = normalizeType(ret)
 		}
+
 		return slices.Equal(cur.returns, want)
 	}
+
 	return true
 }
 
@@ -251,27 +285,33 @@ func (p *changeSignaturePlanner) complete(r *signatureRun) {
 	for _, param := range p.req.NewParams {
 		typeTexts = append(typeTexts, param.Type)
 	}
+
 	typeTexts = append(typeTexts, p.req.NewReturns...)
 	var paths []string
+
 	for _, q := range typeQualifiers(typeTexts) {
 		ipath := importPathFor(r.view.Workspace, q, p.req.SourceFile)
 		if ipath != "" && !slices.Contains(paths, ipath) {
 			paths = append(paths, ipath)
 		}
 	}
+
 	r.addImports(paths)
 }
 
 // typeQualifiers returns the package qualifiers the type expressions use, sorted.
 func typeQualifiers(typeTexts []string) []string {
 	var c qualifierCollector
+
 	for _, text := range typeTexts {
 		expr, err := parser.ParseExpr(text)
 		if err == nil {
 			ast.Inspect(expr, c.visit)
 		}
 	}
+
 	slices.Sort(c.names)
+
 	return c.names
 }
 
@@ -285,6 +325,7 @@ func (c *qualifierCollector) visit(n ast.Node) bool {
 			c.names = append(c.names, id.Name)
 		}
 	}
+
 	return true
 }
 
@@ -294,16 +335,19 @@ func (c *qualifierCollector) visit(n ast.Node) bool {
 func importPathFor(ws *types.Workspace, qualifier, preferFile string) string {
 	found := make(map[string]bool)
 	preferred := ""
+
 	for _, pkg := range ws.Packages {
 		for _, f := range allFilesOf(pkg) {
 			if f.AST == nil {
 				continue
 			}
+
 			for _, imp := range f.AST.Imports {
 				ipath, err := strconv.Unquote(imp.Path.Value)
 				if err != nil || importedAs(imp, ipath) != qualifier {
 					continue
 				}
+
 				found[ipath] = true
 				if f.Path == preferFile {
 					preferred = ipath
@@ -311,20 +355,24 @@ func importPathFor(ws *types.Workspace, qualifier, preferFile string) string {
 			}
 		}
 	}
+
 	if preferred != "" {
 		return preferred
 	}
+
 	for ipath := range found {
 		if len(found) == 1 {
 			return ipath
 		}
 	}
+
 	if len(found) == 0 {
 		pkg, err := build.Default.Import(qualifier, "", build.FindOnly)
 		if err == nil && pkg.Goroot {
 			return qualifier
 		}
 	}
+
 	return ""
 }
 
@@ -335,9 +383,11 @@ func importedAs(imp *ast.ImportSpec, ipath string) string {
 	if imp.Name != nil {
 		return imp.Name.Name
 	}
+
 	base := path.Base(ipath)
 	if majorVersionElem.MatchString(base) && strings.Contains(ipath, "/") {
 		base = path.Base(path.Dir(ipath))
 	}
+
 	return base
 }

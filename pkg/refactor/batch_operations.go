@@ -23,6 +23,7 @@ type batchStep struct {
 // default configuration only.
 func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep, error) {
 	var raw map[string]string
+
 	err := json.Unmarshal([]byte(opStr), &raw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse operation JSON: %w", err)
@@ -41,11 +42,13 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 			NewName:    raw["new_name"],
 			Scope:      types.WorkspaceScope,
 		}
+
 		pkg := raw["package"]
 		if pkg != "" {
 			req.Package = types.ResolvePackagePath(ws, pkg)
 			req.Scope = types.PackageScope
 		}
+
 		step.packages = []string{req.Package}
 		step.plan = func() (*types.RefactoringPlan, error) { return e.RenameSymbolAcrossConfigs(req) }
 	case "move_symbol":
@@ -62,6 +65,7 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 		if err != nil {
 			return nil, err
 		}
+
 		req := types.RenamePackageRequest{
 			OldPackageName: raw["old_name"],
 			NewPackageName: raw["new_name"],
@@ -76,6 +80,7 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 		if err != nil {
 			return nil, err
 		}
+
 		req := types.MovePackageRequest{
 			SourcePackage: dir,
 			TargetPackage: raw["target"],
@@ -105,6 +110,7 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 	default:
 		return nil, fmt.Errorf("unknown operation type: %s", opType)
 	}
+
 	return step, nil
 }
 
@@ -117,23 +123,28 @@ func findPackageStepConflict(steps []*batchStep) error {
 		if !a.renamesPackage {
 			continue
 		}
+
 		for j, b := range steps {
 			if i == j || (b.renamesPackage && j < i) {
 				continue
 			}
+
 			for _, pa := range a.packages {
 				for _, pb := range b.packages {
 					if pa != "" && pb != "" && pa != pb {
 						continue
 					}
+
 					lo, hi, first, second := i, j, a, b
 					if j < i {
 						lo, hi, first, second = j, i, b, a
 					}
+
 					what := fmt.Sprintf("both refer to package %q", pa)
 					if pa == "" || pb == "" {
 						what = "cannot be shown to touch different packages, as one names no package"
 					}
+
 					return &types.RefactorError{
 						Type: types.InvalidOperation,
 						Message: fmt.Sprintf(
@@ -144,6 +155,7 @@ func findPackageStepConflict(steps []*batchStep) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -154,13 +166,16 @@ func (e *DefaultEngine) resolveStepPackage(ws *types.Workspace, path string) (st
 	if path == "" {
 		return "", nil
 	}
+
 	dir, ok, err := findSourceDir(ws, e.set.Sources(), path)
 	if err != nil {
 		return "", fmt.Errorf("resolve step package: %w", err)
 	}
+
 	if !ok {
 		return types.ResolvePackagePath(ws, path), nil
 	}
+
 	return dir, nil
 }
 
@@ -168,6 +183,7 @@ func resolveOptionalPackage(ws *types.Workspace, path string) string {
 	if path == "" {
 		return ""
 	}
+
 	return types.ResolvePackagePath(ws, path)
 }
 
@@ -181,20 +197,25 @@ func (e *DefaultEngine) planSteps(ws *types.Workspace, steps []string) (*types.R
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", i+1, err)
 		}
+
 		parsed = append(parsed, step)
 	}
+
 	err := findPackageStepConflict(parsed)
 	if err != nil {
 		return nil, fmt.Errorf("plan steps: %w", err)
 	}
+
 	plans := make([]*types.RefactoringPlan, 0, len(parsed))
 	for i, step := range parsed {
 		plan, err := step.plan()
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", i+1, err)
 		}
+
 		plans = append(plans, plan)
 	}
+
 	return MergeStepPlans(plans)
 }
 
@@ -216,6 +237,7 @@ func (op *BatchOperationOperation) Validate(ws *types.Workspace) error {
 	if len(op.Request.Operations) == 0 {
 		return fmt.Errorf("no operations specified for batch execution")
 	}
+
 	return nil
 }
 
@@ -224,18 +246,22 @@ func (op *BatchOperationOperation) Execute(ws *types.Workspace) (*types.Refactor
 	if err != nil {
 		return nil, err
 	}
+
 	plan.Operations = []types.Operation{op}
+
 	return plan, nil
 }
 
 func removeDuplicateStrings(strs []string) []string {
 	keys := make(map[string]bool)
 	var result []string
+
 	for _, str := range strs {
 		if !keys[str] {
 			keys[str] = true
 			result = append(result, str)
 		}
 	}
+
 	return result
 }

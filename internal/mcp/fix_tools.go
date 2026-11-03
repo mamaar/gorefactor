@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -65,12 +66,15 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// Get workspace root path
 		state.RLock()
+
 		ws, err := state.GetWorkspace()
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		rootPath := ws.RootPath
+
 		state.RUnlock()
 
 		pkgPattern := in.Packages
@@ -83,9 +87,11 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		if in.DiffOnly {
 			args = append(args, "-diff")
 		}
+
 		for _, f := range in.Fixers {
 			args = append(args, "-"+f)
 		}
+
 		args = append(args, pkgPattern)
 
 		cmd := exec.CommandContext(ctx, "go", args...)
@@ -96,9 +102,10 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		cmd.Stderr = &stderr
 
 		exitCode := 0
+
 		err = cmd.Run()
 		if err != nil {
-			exitErr, ok := err.(*exec.ExitError)
+			exitErr, ok := errors.AsType[*exec.ExitError](err)
 			if ok {
 				exitCode = exitErr.ExitCode()
 			} else {
@@ -114,6 +121,7 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 			Stderr:         stderr.String(),
 			ExitCode:       exitCode,
 		}
+
 		return textResult(out), nil, nil
 	})
 }
@@ -123,5 +131,6 @@ func knownFixersList() string {
 	for k := range knownFixers {
 		names = append(names, k)
 	}
+
 	return strings.Join(names, ", ")
 }

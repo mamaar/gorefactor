@@ -18,6 +18,7 @@ import (
 // removedParamIndex returns the one index whose deletion from old gives updated.
 func removedParamIndex(old, updated []Parameter) (int, error) {
 	var found []int
+
 	if len(old) == len(updated)+1 {
 		for i := range old {
 			if paramsEqual(slices.Delete(slices.Clone(old), i, i+1), updated) {
@@ -25,12 +26,14 @@ func removedParamIndex(old, updated []Parameter) (int, error) {
 			}
 		}
 	}
+
 	switch len(found) {
 	case 0:
 		return 0, fmt.Errorf("remove_param: params must be the current %d parameters with exactly one removed", len(old))
 	case 1:
 		return found[0], nil
 	}
+
 	return 0, fmt.Errorf("remove_param: removal is ambiguous, parameters %v are identical and unnamed or equal; name them first", found)
 }
 
@@ -38,6 +41,7 @@ func removedParamIndex(old, updated []Parameter) (int, error) {
 // the target's body uses it.
 func (op *ChangeSignatureOperation) planRemoveParam(ws *pkgtypes.Workspace, pkg *pkgtypes.Package, file *pkgtypes.File, typeName, methodName string, isIface bool) error {
 	var decl *ast.FuncDecl
+
 	var old []Parameter
 	if isIface {
 		old = op.extractInterfaceMethodParams(file, typeName, methodName)
@@ -46,17 +50,22 @@ func (op *ChangeSignatureOperation) planRemoveParam(ws *pkgtypes.Workspace, pkg 
 		if decl == nil {
 			return nil // collectConcreteChanges reports it
 		}
+
 		old = op.extractParamList(decl.Type.Params)
 	}
+
 	idx, err := removedParamIndex(old, op.NewParams)
 	if err != nil {
 		return fmt.Errorf("plan remove param: %w", err)
 	}
+
 	op.removedIdx, op.removedCount = idx, len(old)
+
 	op.removedVariadic = strings.HasPrefix(old[len(old)-1].Type, "...")
 	if decl != nil {
 		op.checkRemovedUnused(ws, pkg, decl)
 	}
+
 	return nil
 }
 
@@ -66,11 +75,13 @@ func (op *ChangeSignatureOperation) checkRemovedUnused(ws *pkgtypes.Workspace, p
 	if param == nil || param.Name == "_" || decl.Body == nil {
 		return
 	}
+
 	uses, ok := paramUses(pkg.TypesInfo, decl, param)
 	if !ok {
 		op.refuse(ws, param.Pos(), fmt.Sprintf("no type information to check whether parameter %s of %s is used", param.Name, decl.Name.Name))
 		return
 	}
+
 	for _, id := range uses {
 		op.refuse(ws, id.Pos(), fmt.Sprintf("parameter %s of %s is used in its body", param.Name, decl.Name.Name))
 	}
@@ -80,17 +91,21 @@ func (op *ChangeSignatureOperation) checkRemovedUnused(ws *pkgtypes.Workspace, p
 // is unnamed.
 func paramIdent(decl *ast.FuncDecl, idx int) *ast.Ident {
 	i := 0
+
 	for _, f := range decl.Type.Params.List {
 		for _, n := range f.Names {
 			if i == idx {
 				return n
 			}
+
 			i++
 		}
+
 		if len(f.Names) == 0 {
 			i++
 		}
 	}
+
 	return nil
 }
 
@@ -100,14 +115,18 @@ func paramUses(info *gotypes.Info, decl *ast.FuncDecl, param *ast.Ident) (uses [
 	if info == nil || info.Defs[param] == nil {
 		return nil, false
 	}
+
 	obj := info.Defs[param]
+
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
 		id, ok := n.(*ast.Ident)
 		if ok && info.Uses[id] == obj {
 			uses = append(uses, id)
 		}
+
 		return true
 	})
+
 	return uses, true
 }
 
@@ -127,6 +146,7 @@ func compareRefusals(a, b siteRefusal) int {
 // refuse records a site that stops the change.
 func (op *ChangeSignatureOperation) refuse(ws *pkgtypes.Workspace, pos token.Pos, reason string) {
 	p := ws.FileSet.Position(pos)
+
 	r := siteRefusal{file: p.Filename, line: p.Line, reason: reason}
 	if !slices.Contains(op.refusals, r) {
 		op.refusals = append(op.refusals, r)
@@ -143,6 +163,7 @@ func (op *ChangeSignatureOperation) subcommandName() string {
 	case op.RemovedReturnIndex >= 0:
 		return "remove_return"
 	}
+
 	return "change_signature"
 }
 
@@ -153,13 +174,16 @@ func (op *ChangeSignatureOperation) removeArg(callExpr *ast.CallExpr, args []str
 	if reason != "" {
 		return nil, reason
 	}
+
 	out := slices.Clone(args)
 	if op.removedIdx < len(out) {
 		out = slices.Delete(out, op.removedIdx, op.removedIdx+1)
 	}
+
 	if callExpr.Ellipsis.IsValid() {
 		out[len(out)-1] += "..."
 	}
+
 	return out, ""
 }
 
@@ -173,6 +197,7 @@ func dropArgRefusal(call *ast.CallExpr, info *gotypes.Info, idx, n int, variadic
 			return "method expression passes the receiver as an argument"
 		}
 	}
+
 	args := len(call.Args)
 	if args == 1 && info != nil {
 		tuple, ok := info.TypeOf(call.Args[0]).(*gotypes.Tuple)
@@ -180,15 +205,19 @@ func dropArgRefusal(call *ast.CallExpr, info *gotypes.Info, idx, n int, variadic
 			return "passes a multi-value call as the arguments"
 		}
 	}
+
 	if variadic && args < n-1 || !variadic && args != n {
 		return "arguments do not match the parameters"
 	}
+
 	if variadic && idx == n-1 && args > n-1 {
 		return "passes variadic arguments to the parameter being removed"
 	}
+
 	if idx < args && stmtfacts.HasCallOrReceive(info, []ast.Node{call.Args[idx]}) {
 		return "the argument being dropped has side effects (a call or a receive)"
 	}
+
 	return ""
 }
 
@@ -206,6 +235,7 @@ func (op *ChangeSignatureOperation) removedParamChange(ws *pkgtypes.Workspace, f
 		Description: description,
 	}
 	op.removedSpans = append(op.removedSpans, change)
+
 	return change
 }
 
@@ -216,6 +246,7 @@ func (op *ChangeSignatureOperation) pruneRemovedImports(ws *pkgtypes.Workspace, 
 	for _, c := range op.removedSpans {
 		paths[c.File] = true
 	}
+
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
 		file, _, _ := ws.FindFile(path)
 		plan.Changes = append(plan.Changes, removeImportSpecs(ws, file, unusedImportsAfterRemoval(ws, file, op.removedSpans))...)
@@ -231,15 +262,19 @@ func removedParamSpan(src []byte, off func(token.Pos) int, params *ast.FieldList
 	if params.NumFields() == 1 {
 		return off(params.Opening) + 1, off(params.Closing)
 	}
+
 	fi, ni := 0, idx
+
 	for i, f := range fields {
 		n := max(len(f.Names), 1)
 		if ni < n {
 			fi = i
 			break
 		}
+
 		ni -= n
 	}
+
 	f := fields[fi]
 	switch {
 	case len(f.Names) > 1 && ni < len(f.Names)-1:
@@ -251,8 +286,10 @@ func removedParamSpan(src []byte, off func(token.Pos) int, params *ast.FieldList
 		for end < len(src) && strings.IndexByte(" \t\r\n", src[end]) >= 0 {
 			end++
 		}
+
 		return off(f.Pos()), end
 	}
+
 	return commaAfter(src, off(fields[fi-1].End())), off(f.End())
 }
 
@@ -271,5 +308,6 @@ func commaAfter(src []byte, i int) int {
 			i++
 		}
 	}
+
 	return i
 }

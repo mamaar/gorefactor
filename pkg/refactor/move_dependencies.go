@@ -45,40 +45,51 @@ func scanMovedUses(ws *types.Workspace, moving []*movingSymbol) map[*movingSymbo
 	for _, m := range moving {
 		uses[m] = &movedUses{imports: make(map[string]bool), idents: make(map[string]bool)}
 	}
+
 	done := make(map[*types.Package]bool)
+
 	for _, m := range moving {
 		pkg := m.pkg
 		if done[pkg] || pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 			continue
 		}
+
 		done[pkg] = true
+
 		qualified := qualifiedSelectors(moving, pkg)
 		for ident, obj := range pkg.TypesInfo.Defs {
 			_, isPkg := obj.(*gotypes.PkgName)
 			if obj == nil || isPkg {
 				continue
 			}
+
 			at := ws.FileSet.Position(ident.Pos())
+
 			user := movingAt(moving, at.Filename, at.Offset)
 			if user != nil {
 				uses[user].idents[ident.Name] = true
 			}
 		}
+
 		recordMovedUses(pkg, ws, moving, uses, qualified)
 	}
+
 	for _, u := range uses {
 		sort.Slice(u.pkgUses, func(i, j int) bool { return u.pkgUses[i].offset < u.pkgUses[j].offset })
 	}
+
 	return uses
 }
 
 func recordMovedUses(pkg *types.Package, ws *types.Workspace, moving []*movingSymbol, uses map[*movingSymbol]*movedUses, qualified map[*ast.Ident]bool) {
 	for ident, obj := range pkg.TypesInfo.Uses {
 		at := ws.FileSet.Position(ident.Pos())
+
 		user := movingAt(moving, at.Filename, at.Offset)
 		if user == nil {
 			continue
 		}
+
 		switch o := obj.(type) {
 		case *gotypes.PkgName:
 			path := o.Imported().Path()
@@ -90,11 +101,14 @@ func recordMovedUses(pkg *types.Package, ws *types.Workspace, moving []*movingSy
 				if hasDotImport(user.file, obj.Pkg().Path()) {
 					uses[user].dotImport = obj.Pkg().Path()
 				}
+
 				continue
 			}
+
 			if obj.Pkg() != pkg.TypesPkg || !obj.Exported() || obj.Parent() != pkg.TypesPkg.Scope() {
 				continue
 			}
+
 			def := ws.FileSet.Position(obj.Pos())
 			if movingAt(moving, def.Filename, def.Offset) == nil {
 				uses[user].leftBehind = append(uses[user].leftBehind, at.Offset)
@@ -107,11 +121,13 @@ func recordMovedUses(pkg *types.Package, ws *types.Workspace, moving []*movingSy
 // selectors ("Client" in "http.Client") in the files of moving symbols of pkg.
 func qualifiedSelectors(moving []*movingSymbol, pkg *types.Package) map[*ast.Ident]bool {
 	qualified := make(map[*ast.Ident]bool)
+
 	seen := make(map[*types.File]bool)
 	for _, m := range moving {
 		if m.pkg != pkg || m.file == nil || m.file.AST == nil || seen[m.file] {
 			continue
 		}
+
 		seen[m.file] = true
 		ast.Inspect(m.file.AST, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
@@ -124,9 +140,11 @@ func qualifiedSelectors(moving []*movingSymbol, pkg *types.Package) map[*ast.Ide
 					}
 				}
 			}
+
 			return true
 		})
 	}
+
 	return qualified
 }
 
@@ -134,6 +152,7 @@ func hasDotImport(file *types.File, path string) bool {
 	if file == nil || file.AST == nil {
 		return false
 	}
+
 	return slices.ContainsFunc(file.AST.Imports, func(imp *ast.ImportSpec) bool {
 		return imp.Name != nil && imp.Name.Name == "." && strings.Trim(imp.Path.Value, `"`) == path
 	})
@@ -151,7 +170,9 @@ func importCycle(graph map[string][]string, target string, imports []string, imp
 		for p := last; p != target; p = parent[p] {
 			rev = append(rev, p)
 		}
+
 		slices.Reverse(rev)
+
 		return append(append([]string{target}, rev...), target)
 	}
 	visit := func(from string, tos []string) []string {
@@ -159,36 +180,45 @@ func importCycle(graph map[string][]string, target string, imports []string, imp
 			if to == target {
 				return closing(from)
 			}
+
 			_, seen := parent[to]
 			if seen {
 				continue
 			}
+
 			parent[to] = from
 			if slices.Contains(importers, to) {
 				return closing(to)
 			}
+
 			queue = append(queue, to)
 		}
+
 		return nil
 	}
+
 	path := visit(target, mergeSorted(graph[target], imports))
 	if path != nil {
 		return path
 	}
+
 	for len(queue) > 0 {
 		next := queue[0]
 		queue = queue[1:]
+
 		path := visit(next, graph[next])
 		if path != nil {
 			return path
 		}
 	}
+
 	return nil
 }
 
 func mergeSorted(a, b []string) []string {
 	merged := slices.Concat(a, b)
 	sort.Strings(merged)
+
 	return slices.Compact(merged)
 }
 
@@ -204,22 +234,28 @@ func importsAndImporters(ws *types.Workspace, moving []*movingSymbol, uses map[*
 				imports[to] = m
 			}
 		}
+
 		if len(uses[m].leftBehind) > 0 && imports[m.pkg.Path] == nil {
 			imports[m.pkg.Path] = m
 		}
 	}
+
 	importers = make(map[string]*movingSymbol)
+
 	for _, ref := range surviving {
 		pkg := findPackageForFile(ws, ref.File)
+
 		file := findParsedFile(ws, ref.File)
 		if pkg == nil || file == nil || file.AST == nil || pkg.Path == target || strings.HasSuffix(file.AST.Name.Name, "_test") {
 			continue
 		}
+
 		i := slices.IndexFunc(moving, func(m *movingSymbol) bool { return m.sym == ref.Symbol })
 		if i >= 0 && importers[pkg.Path] == nil {
 			importers[pkg.Path] = moving[i]
 		}
 	}
+
 	return imports, importers
 }
 
@@ -229,19 +265,24 @@ func importsAndImporters(ws *types.Workspace, moving []*movingSymbol, uses map[*
 func (op *MoveSymbolOperation) checkImportCycles(ws *types.Workspace, moving []*movingSymbol, uses map[*movingSymbol]*movedUses, surviving []*types.Reference, target string) error {
 	imports, importers := importsAndImporters(ws, moving, uses, surviving, target)
 	op.targetImports, op.importers = slices.Sorted(maps.Keys(imports)), slices.Sorted(maps.Keys(importers))
+
 	cycle := importCycle(analysis.ImportGraph(ws).Union(), target, op.targetImports, op.importers)
 	if cycle == nil {
 		return nil
 	}
+
 	blamed := importers[cycle[len(cycle)-2]]
+
 	m := imports[cycle[1]]
 	if m != nil {
 		blamed = m
 	}
+
 	names := make([]string, len(cycle))
 	for i, p := range cycle {
 		names[i] = packagePathToImportPath(ws, p)
 	}
+
 	return &groupMemberError{index: blamed.owner, err: &types.RefactorError{
 		Type: types.CyclicDependency,
 		Message: fmt.Sprintf("moving %s to %s would create an import cycle: %s",

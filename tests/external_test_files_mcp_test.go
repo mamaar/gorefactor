@@ -13,6 +13,7 @@ func TestRenameSymbol_LeavesParameterNamedLikeTheSymbolInExternalTestFile(t *tes
 		"a/a.go":          "package a\n\nfunc parse() int { return 1 }\n\nfunc Use() int { return parse() }\n",
 		"a/a_ext_test.go": ext,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -28,6 +29,7 @@ func TestRenameSymbol_RenamesMapKeyConstantUsedThroughDotImportInExternalTestFil
 		"a/a.go":          "package a\n\ntype Kinds map[int]string\n\nconst Foo = 1\n",
 		"a/a_ext_test.go": "package a_test\n\nimport . \"example.com/threadmcp/a\"\n\nvar _ = Kinds{Foo: \"x\"}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -43,6 +45,7 @@ func TestMoveSymbol_LeavesLocalNamedLikeTheSymbolInExternalTestFile(t *testing.T
 		"a/a.go":          "package a\n\nfunc Foo() int { return 1 }\n",
 		"a/a_ext_test.go": ext,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -62,6 +65,7 @@ func TestRenameSymbol_RenamesCallInTestOnlyPackage(t *testing.T) {
 				"a/a.go":                  "package a\n\nfunc Helper() int { return 1 }\n",
 				"integration/run_test.go": "package " + pkgName + "\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/a\"\n)\n\nfunc TestRun(t *testing.T) { _ = a.Helper() }\n",
 			})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 

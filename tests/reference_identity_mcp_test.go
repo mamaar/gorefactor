@@ -23,6 +23,7 @@ func crossTestImportWorkspace() map[string]string {
 
 func TestRenameSymbol_RenamesReferencesInPackagesReachedDuringAnotherPackagesCheck(t *testing.T) {
 	dir := writeInlineWorkspace(t, crossTestImportWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -35,6 +36,7 @@ func TestRenameSymbol_RenamesReferencesInPackagesReachedDuringAnotherPackagesChe
 
 func TestMoveSymbol_UpdatesReferencesInPackagesReachedDuringAnotherPackagesCheck(t *testing.T) {
 	dir := writeInlineWorkspace(t, crossTestImportWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -51,6 +53,7 @@ func TestMoveSymbol_UpdatesReferencesInPackagesReachedDuringAnotherPackagesCheck
 func TestSafeDelete_BlocksOnReferencesInPackagesReachedDuringAnotherPackagesCheck(t *testing.T) {
 	files := crossTestImportWorkspace()
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -59,11 +62,13 @@ func TestSafeDelete_BlocksOnReferencesInPackagesReachedDuringAnotherPackagesChec
 	if !res.IsError || !strings.Contains(text, "found 2 references") {
 		t.Errorf("safe_delete = %q (IsError %v), want it refused with the 2 references in c and b_test", text, res.IsError)
 	}
+
 	assertFileUnchanged(t, dir, "a/a.go", files["a/a.go"])
 }
 
 func TestUnused_DoesNotListSymbolUsedFromPackagesReachedDuringAnotherPackagesCheck(t *testing.T) {
 	dir := writeInlineWorkspace(t, crossTestImportWorkspace())
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

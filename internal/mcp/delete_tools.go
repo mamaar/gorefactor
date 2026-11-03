@@ -34,19 +34,24 @@ const safeDeleteConfirmInput = "confirm_delete"
 func safeDeleteConfirmMessage(symbol string, refs []types.Blocker) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Deleting %q will break %d reference", symbol, len(refs))
+
 	if len(refs) != 1 {
 		b.WriteByte('s')
 	}
+
 	b.WriteString(":\n")
 
 	n := min(len(refs), maxListedRefs)
 	for _, ref := range refs[:n] {
 		fmt.Fprintf(&b, "  %s:%d%s\n", ref.File, ref.Line, ref.Note())
 	}
+
 	if len(refs) > maxListedRefs {
 		fmt.Fprintf(&b, "  …and %d more\n", len(refs)-maxListedRefs)
 	}
+
 	b.WriteString("\nDelete anyway?")
+
 	return b.String()
 }
 
@@ -57,6 +62,7 @@ func safeDeleteRequest(state *MCPServer, in SafeDeleteInput) (types.SafeDeleteRe
 	if err != nil {
 		return types.SafeDeleteRequest{}, err
 	}
+
 	return types.SafeDeleteRequest{Symbol: in.Symbol, SourceFile: resolveFile(ws, in.SourceFile), Force: in.Force}, nil
 }
 
@@ -65,10 +71,12 @@ func safeDeleteRequest(state *MCPServer, in SafeDeleteInput) (types.SafeDeleteRe
 func safeDeleteBlockers(state *MCPServer, in SafeDeleteInput) ([]types.Blocker, error) {
 	state.RLock()
 	defer state.RUnlock()
+
 	req, err := safeDeleteRequest(state, in)
 	if err != nil {
 		return nil, fmt.Errorf("safe delete blockers: %w", err)
 	}
+
 	return state.GetEngine().SafeDeleteBlockingReferences(req)
 }
 
@@ -78,10 +86,12 @@ func safeDeleteBlockers(state *MCPServer, in SafeDeleteInput) ([]types.Blocker, 
 func planSafeDelete(state *MCPServer, in SafeDeleteInput) (*types.RefactoringPlan, error) {
 	state.RLock()
 	defer state.RUnlock()
+
 	req, err := safeDeleteRequest(state, in)
 	if err != nil {
 		return nil, fmt.Errorf("plan safe delete: %w", err)
 	}
+
 	return state.GetEngine().SafeDeleteAcrossConfigs(req)
 }
 
@@ -93,20 +103,25 @@ func confirmSafeDelete(req *mcpsdk.CallToolRequest, state *MCPServer, in SafeDel
 	if in.Force || in.DryRun {
 		return in.Force, nil, nil
 	}
+
 	refs, err := safeDeleteBlockers(state, in)
 	if err != nil || len(refs) == 0 {
 		return false, nil, err
 	}
+
 	if !canConfirm(req.Session) {
 		return false, nil, nil
 	}
+
 	answer, answered := req.Params.InputResponses[safeDeleteConfirmInput]
 	if !answered {
 		return false, confirmRequest(safeDeleteConfirmMessage(in.Symbol, refs)), nil
 	}
+
 	if !confirmAccepted(answer) {
 		return false, nil, fmt.Errorf("deletion of %q cancelled: user did not confirm removing %d blocking reference(s)", in.Symbol, len(refs))
 	}
+
 	return true, nil, nil
 }
 
@@ -120,18 +135,23 @@ func registerDeleteTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		if dialog != nil {
 			return &mcpsdk.CallToolResult{InputRequests: mcpsdk.InputRequestMap{safeDeleteConfirmInput: dialog}}, nil, nil
 		}
+
 		in.Force = force
+
 		plan, err := planSafeDelete(state, in)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlan(state, plan, "safe delete "+in.Symbol, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }

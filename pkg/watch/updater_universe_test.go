@@ -12,6 +12,7 @@ import (
 // in-package test imports common.
 func universeWorkspace() map[string]string {
 	const mod = "example.com/test/"
+
 	return map[string]string{
 		"common/common.go":      "package common\n\ntype GBNR struct{ N int }\n",
 		"common/common_test.go": "package common\n\nimport \"" + mod + "x\"\n\nvar _ = x.X\n",
@@ -25,14 +26,17 @@ func universeWorkspace() map[string]string {
 
 func checkAll(t *testing.T, v *analysis.View) {
 	t.Helper()
+
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
 	}
+
 	for _, pkg := range v.Workspace.Packages {
 		if pkg.TypesErr != nil {
 			t.Errorf("%s: TypesErr = %v", pkg.ImportPath, pkg.TypesErr)
 		}
 	}
+
 	for _, msg := range v.Parser.UniverseErrors(v.Workspace) {
 		t.Error(msg)
 	}
@@ -42,6 +46,7 @@ func TestUpdater_ModifyKeepsOnePackageObjectPerImportPath(t *testing.T) {
 	u, set, root := setupViews(t, universeWorkspace())
 	v := builtViews(t, set, 1)[0]
 	checkAll(t, v)
+
 	if t.Failed() {
 		t.Fatal("workspace is inconsistent before the change")
 	}

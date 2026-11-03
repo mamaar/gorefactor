@@ -31,59 +31,74 @@ type alwaysNilReportJSON struct {
 // detectAlwaysNil runs detect_always_nil_errors on an open session.
 func detectAlwaysNil(t *testing.T, sess *mcptest.Session) alwaysNilReportJSON {
 	t.Helper()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_always_nil_errors", Arguments: map[string]any{}})
 	if err != nil {
 		t.Fatalf("detect_always_nil_errors: %v", err)
 	}
+
 	if res.IsError {
 		t.Fatalf("detect_always_nil_errors: %s", errText(res))
 	}
+
 	var out alwaysNilReportJSON
 	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
+
 	if out.TotalCount != len(out.Funcs) {
 		t.Errorf("total_count %d, want %d", out.TotalCount, len(out.Funcs))
 	}
+
 	return out
 }
 
 // callAlwaysNilErrors runs detect_always_nil_errors over files.
 func callAlwaysNilErrors(t *testing.T, files map[string]string) alwaysNilReportJSON {
 	t.Helper()
+
 	files["go.mod"] = "module example.com/nilerr\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	return detectAlwaysNil(t, sess)
 }
 
 // findAlwaysNil returns the finding for function.
 func findAlwaysNil(t *testing.T, out alwaysNilReportJSON, function string) alwaysNilJSON {
 	t.Helper()
+
 	for _, f := range out.Funcs {
 		if f.Function == function {
 			return f
 		}
 	}
+
 	t.Fatalf("no finding for %s: %+v", function, out.Funcs)
+
 	return alwaysNilJSON{}
 }
 
 // findAlwaysNilIn returns the finding for function declared in file.
 func findAlwaysNilIn(t *testing.T, out alwaysNilReportJSON, function, file string) alwaysNilJSON {
 	t.Helper()
+
 	for _, f := range out.Funcs {
 		if f.Function == function && f.File == file {
 			return f
 		}
 	}
+
 	t.Fatalf("no finding for %s in %s: %+v", function, file, out.Funcs)
+
 	return alwaysNilJSON{}
 }
 
 func wantNoAlwaysNil(t *testing.T, out alwaysNilReportJSON, function string) {
 	t.Helper()
+
 	for _, f := range out.Funcs {
 		if f.Function == function {
 			t.Errorf("%s listed, want it not listed: %+v", function, f)
@@ -93,6 +108,7 @@ func wantNoAlwaysNil(t *testing.T, out alwaysNilReportJSON, function string) {
 
 func wantNilFixable(t *testing.T, f alwaysNilJSON) {
 	t.Helper()
+
 	if !f.Fixable || f.Reason != "" {
 		t.Errorf("%s: fixable=%v reason=%q, want fixable", f.Function, f.Fixable, f.Reason)
 	}
@@ -100,6 +116,7 @@ func wantNilFixable(t *testing.T, f alwaysNilJSON) {
 
 func wantNilRefused(t *testing.T, f alwaysNilJSON, reason string) {
 	t.Helper()
+
 	if f.Fixable || !strings.Contains(f.Reason, reason) {
 		t.Errorf("%s: fixable=%v reason=%q, want a refusal containing %q", f.Function, f.Fixable, f.Reason, reason)
 	}
@@ -129,9 +146,11 @@ func use() {
 	if len(out.Funcs) != 3 {
 		t.Fatalf("got %+v, want Plain, Branch and Pair", out.Funcs)
 	}
+
 	for _, name := range []string{"Plain", "Branch", "Pair"} {
 		wantNilFixable(t, findAlwaysNil(t, out, name))
 	}
+
 	f := findAlwaysNil(t, out, "Plain")
 	if f.CallSites != 1 || f.File != "a/a.go" || f.Line != 3 {
 		t.Errorf("Plain = %+v", f)
@@ -249,6 +268,7 @@ func Fwd() error { return g() }
 	if len(out.Funcs) != 1 {
 		t.Fatalf("got %+v, want g only", out.Funcs)
 	}
+
 	wantNilRefused(t, findAlwaysNil(t, out, "g"), "used in an expression")
 }
 
@@ -267,6 +287,7 @@ func Use() error {
 
 	f := findAlwaysNil(t, out, "F")
 	wantNilFixable(t, f)
+
 	if f.CallSites != 1 {
 		t.Errorf("F: call_sites = %d", f.CallSites)
 	}
@@ -290,11 +311,13 @@ func Use() error {
 `,
 		"a/use_tagx.go": "//go:build tagx\n\npackage a\n\nfunc UseTagx() {\n\tif err := F(); err != nil {\n\t\treturn\n\t}\n}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	f := findAlwaysNil(t, detectAlwaysNil(t, sess), "F")
 	wantNilFixable(t, f)
+
 	if f.CallSites != 2 {
 		t.Errorf("F: call_sites = %d, want the default and tagx callers", f.CallSites)
 	}
@@ -304,6 +327,7 @@ func Use() error {
 	if strings.Contains(fileText(t, dir, "a/a.go"), `"errors"`) {
 		t.Errorf("errors import kept after the folded branch that used it was removed")
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -363,6 +387,7 @@ func run() { use(C{}) }
 
 	f := findAlwaysNil(t, out, "C.Flush")
 	wantNilFixable(t, f)
+
 	if !f.Propagate {
 		t.Errorf("C.Flush: propagate = false, want true")
 	}
@@ -403,6 +428,7 @@ func use(c Flusher) { _ = c.Flush() }
 func run() { use(C{}); use(&D{}) }
 `,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -410,6 +436,7 @@ func run() { use(C{}); use(&D{}) }
 	for _, name := range []string{"C.Flush", "D.Flush"} {
 		f := findAlwaysNil(t, out, name)
 		wantNilFixable(t, f)
+
 		if !f.Propagate {
 			t.Errorf("%s: propagate = false, want true", name)
 		}
@@ -467,13 +494,16 @@ func TestAlwaysNilErrors_MergesDeclarationsAcrossBuildConfigurations(t *testing.
 	})
 
 	wantNilFixable(t, findAlwaysNil(t, out, "Shared"))
+
 	f := findAlwaysNil(t, out, "Shared")
 	if len(f.Configs) != 0 {
 		t.Errorf("Shared: configs = %v, want none when every configuration declares it", f.Configs)
 	}
+
 	wantNoAlwaysNil(t, out, "Split")
 	only := findAlwaysNil(t, out, "Only")
 	wantNilFixable(t, only)
+
 	if len(only.Configs) == 0 {
 		t.Errorf("Only: configs empty, want the configuration declaring it")
 	}
@@ -488,6 +518,7 @@ func TestAlwaysNilErrors_ResultNamesDoNotSplitConfigurations(t *testing.T) {
 	if len(out.Funcs) != 2 {
 		t.Fatalf("got %+v, want Sys under both configurations", out.Funcs)
 	}
+
 	for _, f := range out.Funcs {
 		wantNilFixable(t, f)
 	}
@@ -502,6 +533,7 @@ func TestAlwaysNilErrors_MismatchNamesTheCurrentFileSignatureFirst(t *testing.T)
 	if len(out.Funcs) != 2 {
 		t.Fatalf("got %+v, want Sys under both configurations", out.Funcs)
 	}
+
 	wantNilRefused(t, findAlwaysNilIn(t, out, "Sys", "a/sys_linux.go"),
 		"in a/sys_linux.go has signature (x int) (error), which differs from (s string) (error)")
 	wantNilRefused(t, findAlwaysNilIn(t, out, "Sys", "a/sys_darwin.go"),
@@ -517,6 +549,7 @@ func TestAlwaysNilErrors_GeneratedDeclarationsAreNotListed(t *testing.T) {
 	if len(out.Funcs) != 1 {
 		t.Fatalf("got %+v, want Plain only", out.Funcs)
 	}
+
 	wantNilFixable(t, findAlwaysNil(t, out, "Plain"))
 }
 
@@ -537,6 +570,7 @@ func TestExt(t *testing.T) {
 
 	f := findAlwaysNil(t, out, "helper")
 	wantNilFixable(t, f)
+
 	if f.CallSites != 1 {
 		t.Errorf("helper: call_sites = %d", f.CallSites)
 	}

@@ -23,13 +23,16 @@ func buildThreadPlanWithWorkspace(t *testing.T, files map[string]string, sourceF
 	t.Helper()
 	ws := buildScopeWorkspace(t, files)
 	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile}
+
 	_, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
+
 	if op.plan == nil {
 		t.Fatalf("Execute returned no plan")
 	}
+
 	return ws, op.plan
 }
 
@@ -38,13 +41,16 @@ func buildThreadPlanWithWorkspace(t *testing.T, files map[string]string, sourceF
 // thread_context.go itself uses.
 func findFunc(t *testing.T, ws *pkgtypes.Workspace, name string) (*gotypes.Func, *funcDecl) {
 	t.Helper()
+
 	idx := buildFuncDeclIndex(ws)
 	for f, fd := range idx {
 		if f.Name() == name && fd.Decl.Recv == nil {
 			return f, fd
 		}
 	}
+
 	t.Fatalf("function %s not found in workspace", name)
+
 	return nil, nil
 }
 
@@ -52,38 +58,46 @@ func findFunc(t *testing.T, ws *pkgtypes.Workspace, name string) (*gotypes.Func,
 // (checking both regular and test files).
 func originalContent(t *testing.T, ws *pkgtypes.Workspace, path string) []byte {
 	t.Helper()
+
 	for _, pkg := range ws.Packages {
 		f, ok := pkg.Files[filepath.Base(path)]
 		if ok && f.Path == path {
 			return f.OriginalContent
 		}
+
 		f, ok = pkg.TestFiles[filepath.Base(path)]
 		if ok && f.Path == path {
 			return f.OriginalContent
 		}
+
 		for _, f := range pkg.Files {
 			if f.Path == path {
 				return f.OriginalContent
 			}
 		}
+
 		for _, f := range pkg.TestFiles {
 			if f.Path == path {
 				return f.OriginalContent
 			}
 		}
 	}
+
 	t.Fatalf("file %s not found in workspace", path)
+
 	return nil
 }
 
 // changesInFile filters changes down to those targeting path.
 func changesInFile(changes []pkgtypes.Change, path string) []pkgtypes.Change {
 	var out []pkgtypes.Change
+
 	for _, c := range changes {
 		if c.File == path {
 			out = append(out, c)
 		}
 	}
+
 	return out
 }
 
@@ -94,6 +108,7 @@ func changesInFile(changes []pkgtypes.Change, path string) []pkgtypes.Change {
 func renderedContent(t *testing.T, ws *pkgtypes.Workspace, path string, changes []pkgtypes.Change) string {
 	t.Helper()
 	content := originalContent(t, ws, path)
+
 	return string(applyChangesInMemory(content, changesInFile(changes, path)))
 }
 
@@ -103,10 +118,12 @@ func renderedContent(t *testing.T, ws *pkgtypes.Workspace, path string, changes 
 // every emitted change set be checked this way.
 func assertNoOverlaps(t *testing.T, changes []pkgtypes.Change) {
 	t.Helper()
+
 	byFile := make(map[string][]pkgtypes.Change)
 	for _, c := range changes {
 		byFile[c.File] = append(byFile[c.File], c)
 	}
+
 	s := NewSerializer()
 	for file, cs := range byFile {
 		err := s.validateChangePositions(cs)
@@ -120,6 +137,7 @@ func assertNoOverlaps(t *testing.T, changes []pkgtypes.Change) {
 // proxy for "the applied changes did not corrupt the file".
 func assertParses(t *testing.T, name, src string) {
 	t.Helper()
+
 	_, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("rendered content does not parse: %v\n--- content ---\n%s", err, src)
@@ -132,11 +150,13 @@ func wsPath(ws *pkgtypes.Workspace, rel string) string {
 
 func countImportChanges(changes []pkgtypes.Change, path string) int {
 	n := 0
+
 	for _, c := range changes {
 		if c.File == path && strings.Contains(c.NewText, `import "context"`) {
 			n++
 		}
 	}
+
 	return n
 }
 
@@ -168,6 +188,7 @@ func F[T any](fn func(int) error, xs ...string) {}
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -177,9 +198,11 @@ func F[T any](fn func(int) error, xs ...string) {}
 	if !strings.Contains(got, "func F[T any](ctx context.Context, fn func(int) error, xs ...string) {}") {
 		t.Fatalf("generics/variadic/func-param signature corrupted, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, `import "context"`) {
 		t.Errorf("expected context import to be added, got:\n%s", got)
 	}
+
 	if len(changes) != 2 {
 		t.Fatalf("expected 2 changes (signature insert + import), got %d: %+v", len(changes), changes)
 	}
@@ -208,6 +231,7 @@ func f() {}
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -244,6 +268,7 @@ func Load(id int) int { return id }
 	_, callerFd := findFunc(t, ws, "caller")
 
 	saveCall := findCallTo(callerFd.Decl, "Save")
+
 	loadCall := findCallTo(callerFd.Decl, "Load")
 	if saveCall == nil || loadCall == nil {
 		t.Fatalf("expected calls to Save and Load inside caller, got Save=%v Load=%v", saveCall, loadCall)
@@ -267,7 +292,9 @@ func Load(id int) int { return id }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
+
 	if len(changes) != 5 { // 2 signatures + 2 call inserts + 1 import
 		t.Fatalf("expected 5 changes, got %d: %+v", len(changes), changes)
 	}
@@ -279,9 +306,11 @@ func Load(id int) int { return id }
 	if !strings.Contains(got, "Save(ctx, Load(ctx, 1))") {
 		t.Fatalf("expected Save(ctx, Load(ctx, 1)), got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "func Save(ctx context.Context, id int) {}") {
 		t.Fatalf("Save signature not threaded correctly, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "func Load(ctx context.Context, id int) int { return id }") {
 		t.Fatalf("Load signature not threaded correctly, got:\n%s", got)
 	}
@@ -301,6 +330,7 @@ func f() { f() }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -328,6 +358,7 @@ func f(id string, xs ...string) {}
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -337,6 +368,7 @@ func f(id string, xs ...string) {}
 	if !strings.Contains(got, "f(ctx, a, b...)") {
 		t.Fatalf("expected variadic call site f(ctx, a, b...), got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "func caller(ctx context.Context, a string, b []string)") {
 		t.Fatalf("caller must also be threaded, got:\n%s", got)
 	}
@@ -366,6 +398,7 @@ func caller() { seed(1, context.Background()) }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -375,6 +408,7 @@ func caller() { seed(1, context.Background()) }
 	if !strings.Contains(got, "func caller(ctx context.Context) { seed(1, ctx) }") {
 		t.Fatalf("expected context.Background() replaced by ctx, got:\n%s", got)
 	}
+
 	if strings.Contains(got, "context.Background()") {
 		t.Fatalf("fabricated root context.Background() must be gone, got:\n%s", got)
 	}
@@ -413,6 +447,7 @@ func caller(c context.Context) string { return seed("k") }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -422,9 +457,11 @@ func caller(c context.Context) string { return seed("k") }
 	if !strings.Contains(got, "func seed(ctx context.Context, key string) string {") {
 		t.Fatalf("expected seed to gain a ctx parameter, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "return fetch(ctx, key)") {
 		t.Fatalf("expected the fabricated context.TODO() to become ctx, got:\n%s", got)
 	}
+
 	if strings.Contains(got, "context.TODO()") {
 		t.Fatalf("fabricated context.TODO() must be gone, got:\n%s", got)
 	}
@@ -464,6 +501,7 @@ func caller(c context.Context) string { return seed("k") }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -473,6 +511,7 @@ func caller(c context.Context) string { return seed("k") }
 	if !strings.Contains(got, "_ = fetch(context.Background(), key)") {
 		t.Fatalf("closure's own context.Background() must survive, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "return fetch(ctx, key)") {
 		t.Fatalf("expected the non-closure context.TODO() to become ctx, got:\n%s", got)
 	}
@@ -503,6 +542,7 @@ func caller() { seed(1, context.Background()) }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
@@ -538,6 +578,7 @@ func caller(c context.Context) { seed(1, c) }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	if len(changes) != 0 {
@@ -564,18 +605,21 @@ func Leaf() {}
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
 	if countImportChanges(changes, full) != 1 {
 		t.Fatalf("expected exactly 1 import-adding change for %s, changes: %+v", full, changes)
 	}
+
 	if len(changes) != 2 { // signature insert + import
 		t.Fatalf("expected 2 changes (signature + import), got %d: %+v", len(changes), changes)
 	}
 
 	got := renderedContent(t, ws, full, changes)
 	assertParses(t, path, got)
+
 	if !strings.Contains(got, "func Leaf(ctx context.Context) {}") {
 		t.Fatalf("expected Leaf's signature to gain ctx, got:\n%s", got)
 	}
@@ -603,12 +647,14 @@ func Leaf() {}
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	full := wsPath(ws, path)
 	if countImportChanges(changes, full) != 0 {
 		t.Fatalf("import must not be duplicated, changes: %+v", changes)
 	}
+
 	if len(changes) != 1 {
 		t.Fatalf("expected exactly 1 change (signature only), got %d: %+v", len(changes), changes)
 	}
@@ -640,6 +686,7 @@ func TestX(t *testing.T) { target() }
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	assertNoOverlaps(t, changes)
 
 	fullTarget := wsPath(ws, targetPath)
@@ -648,18 +695,21 @@ func TestX(t *testing.T) { target() }
 	if countImportChanges(changes, fullTarget) != 1 {
 		t.Fatalf("expected target.go to get the context import, changes: %+v", changes)
 	}
+
 	if countImportChanges(changes, fullTest) != 0 {
 		t.Fatalf("main_test.go must not get a context import (only a plain t.Context() call edit), changes: %+v", changes)
 	}
 
 	gotTest := renderedContent(t, ws, fullTest, changes)
 	assertParses(t, testPath, gotTest)
+
 	if !strings.Contains(gotTest, "target(t.Context())") {
 		t.Fatalf("expected target(t.Context()) in the test file, got:\n%s", gotTest)
 	}
 
 	gotTarget := renderedContent(t, ws, fullTarget, changes)
 	assertParses(t, targetPath, gotTarget)
+
 	if !strings.Contains(gotTarget, "func target(ctx context.Context) {}") {
 		t.Fatalf("expected target's signature to gain ctx, got:\n%s", gotTarget)
 	}

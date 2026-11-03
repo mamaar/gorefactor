@@ -22,12 +22,15 @@ type planAccum struct {
 func (a *planAccum) add(plan *types.RefactoringPlan) {
 	if a.out == nil {
 		a.out = plan
+
 		a.seen = make(map[changeIdentity]bool)
 		for _, c := range plan.Changes {
 			a.seen[identityOf(c)] = true
 		}
+
 		return
 	}
+
 	a.merge(plan.Changes, plan.AffectedFiles)
 }
 
@@ -38,10 +41,12 @@ func (a *planAccum) merge(changes []types.Change, files []string) {
 		if a.seen[id] {
 			continue
 		}
+
 		a.seen[id] = true
 		a.out.Changes = append(a.out.Changes, c)
 		files = append(files, c.File)
 	}
+
 	for _, f := range files {
 		if !slices.Contains(a.out.AffectedFiles, f) {
 			a.out.AffectedFiles = append(a.out.AffectedFiles, f)
@@ -54,9 +59,11 @@ func (a *planAccum) plan() *types.RefactoringPlan {
 	if a.out == nil {
 		return &types.RefactoringPlan{Reversible: true}
 	}
+
 	if a.out.Impact != nil {
 		a.out.Impact.AffectedFiles = a.out.AffectedFiles
 	}
+
 	return a.out
 }
 
@@ -71,17 +78,20 @@ func reachOf(plan *types.RefactoringPlan, names []string) reach {
 	if plan == nil {
 		return out
 	}
+
 	for _, c := range plan.Changes {
 		dir := filepath.Dir(c.File)
 		if !slices.Contains(out.dirs, dir) {
 			out.dirs = append(out.dirs, dir)
 		}
 	}
+
 	for _, name := range names {
 		if !slices.Contains(out.names, name) {
 			out.names = append(out.names, name)
 		}
 	}
+
 	return out
 }
 
@@ -96,30 +106,37 @@ type funcTarget struct {
 // funcTargetsByKey returns the functions and interface methods ws declares.
 func funcTargetsByKey(ws *types.Workspace) map[types.SymbolKey]funcTarget {
 	targets := make(map[types.SymbolKey]funcTarget)
+
 	for fn, decl := range buildFuncDeclIndex(ws) {
 		key, ok := types.SymbolKeyOf(fn)
 		if !ok {
 			continue
 		}
+
 		ft := decl.IfaceFuncType
 		if decl.Decl != nil {
 			ft = decl.Decl.Type
 		}
+
 		targets[key] = funcTarget{key: key, name: qualifiedName(key), file: decl.File.Path, ft: ft}
 	}
+
 	return targets
 }
 
 // linkedFuncTargets returns the declared targets whose key is linked, in key order.
 func linkedFuncTargets(declared map[types.SymbolKey]funcTarget, linked types.SymbolKeySet) []funcTarget {
 	var targets []funcTarget
+
 	for key := range linked {
 		t, ok := declared[key]
 		if ok {
 			targets = append(targets, t)
 		}
 	}
+
 	slices.SortFunc(targets, compareTargets)
+
 	return targets
 }
 
@@ -129,6 +146,7 @@ func qualifiedName(key types.SymbolKey) string {
 	if key.Recv == "" {
 		return key.Name
 	}
+
 	return key.Recv + "." + key.Name
 }
 
@@ -147,15 +165,19 @@ type signatureRun struct {
 // execute runs op, adds its plan and returns the declarations it altered.
 func (r *signatureRun) execute(op *ChangeSignatureOperation) ([]AlteredDecl, error) {
 	op.CachedIndex = r.idx
+
 	plan, err := op.Execute(r.view.Workspace)
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}
+
 	r.add(plan)
+
 	for _, d := range op.AlteredDecls() {
 		r.covered[d.Key] = struct{}{}
 		r.altered = append(r.altered, d)
 	}
+
 	return op.AlteredDecls(), nil
 }
 
@@ -187,43 +209,55 @@ func planSignatureView(c *viewIndexes, s signatureStrategy, v *analysis.View, li
 	if err != nil && !isSymbolNotFound(err) {
 		return configResult{}, err
 	}
+
 	notFound := err
 	decls := funcTargetsByKey(ws)
+
 	declared := make(types.SymbolKeySet, len(decls))
 	for key := range decls {
 		declared[key] = struct{}{}
 	}
+
 	targets := linkedFuncTargets(decls, linked)
 	if requested != nil {
 		targets = append([]funcTarget{*requested}, targets...)
 	}
+
 	if len(targets) == 0 {
 		c.planned(v, nil)
 		return configResult{absent: notFound, declared: declared}, nil
 	}
 
 	run := &signatureRun{view: v, idx: idx, covered: make(types.SymbolKeySet), decls: decls}
+
 	for i, t := range targets {
 		isRequested := i == 0 && requested != nil
 		if !isRequested && run.covered.Has(t.key) {
 			continue
 		}
+
 		err := s.run(run, t, isRequested)
 		if err != nil {
 			return configResult{}, err
 		}
 	}
+
 	s.complete(run)
+
 	names := make([]string, len(run.altered))
 	for i, d := range run.altered {
 		names[i] = d.Key.Name
 	}
+
 	res := configResult{plan: run.plan(), changed: run.covered, reach: run.reach(names), declared: declared}
+
 	pv, ok := s.(planVerifier)
 	if ok {
 		pv.verify(v, res.plan)
 	}
+
 	c.planned(v, res.plan)
+
 	return res, nil
 }
 
@@ -236,6 +270,7 @@ func (r *signatureRun) addImports(paths []string) {
 			if hasImport(ws, d.File, path) {
 				continue
 			}
+
 			c := GenerateAddImportChange(ws, d.File, "", path)
 			if c != nil {
 				r.merge([]types.Change{*c}, nil)

@@ -22,6 +22,7 @@ func (g *fakeGate) refuse(blockers []types.Blocker) error {
 	if len(blockers) == 0 {
 		return nil
 	}
+
 	return g.err
 }
 
@@ -38,18 +39,21 @@ func TestPlanAcrossViews_BlockerInAnyViewStopsTheMerge(t *testing.T) {
 		if v == tagged {
 			res.blockers = []types.Blocker{blockerAt("/ws/use_tagx.go", 7)}
 		}
+
 		return res, nil
 	}
 
 	plan, _, err := planAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
 
-	if err != refused || plan != nil {
+	if !errors.Is(err, refused) || plan != nil {
 		t.Fatalf("plan = %v, err = %v; want the gate's refusal and no plan", plan, err)
 	}
+
 	want := []types.Blocker{{File: "/ws/use_tagx.go", Offset: 7, Configs: []string{tagged.Config.String()}}}
 	if len(gate.seen) != 1 || !reflect.DeepEqual(gate.seen[0], want) {
 		t.Errorf("gate saw %+v, want %+v", gate.seen, want)
 	}
+
 	if len(gate.calls[primary]) != 1 || len(gate.calls[tagged]) != 1 {
 		t.Errorf("views planned %d/%d times, want every view planned before the gate", len(gate.calls[primary]), len(gate.calls[tagged]))
 	}
@@ -67,6 +71,7 @@ func TestPlanAcrossViews_NoBlockersMergesThePlans(t *testing.T) {
 	if err != nil || len(plan.Changes) != 1 {
 		t.Fatalf("plan = %+v, err = %v; want the merged plan", plan, err)
 	}
+
 	if len(gate.seen) != 1 || len(gate.seen[0]) != 0 {
 		t.Errorf("gate saw %+v, want one call without blockers", gate.seen)
 	}
@@ -94,14 +99,15 @@ func TestBlockersAcrossViews_OneBlockerPerSiteWithoutConfigsWhenEveryViewSeesIt(
 		if v == primary {
 			res.blockers = append(res.blockers, blockerAt("/ws/use_default.go", 9))
 		}
+
 		return res, nil
 	}
 
 	got, err := blockersAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
-
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := []types.Blocker{
 		blockerAt("/ws/use.go", 3),
 		{File: "/ws/use_default.go", Offset: 9, Configs: []string{primary.Config.String()}},
@@ -109,6 +115,7 @@ func TestBlockersAcrossViews_OneBlockerPerSiteWithoutConfigsWhenEveryViewSeesIt(
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("blockers = %+v, want %+v", got, want)
 	}
+
 	if len(gate.seen) != 0 {
 		t.Errorf("gate was asked to refuse %d times, want none for a query", len(gate.seen))
 	}
@@ -122,11 +129,12 @@ func TestBlockersAcrossViews_TargetAbsentEverywhereReturnsThePrimaryError(t *tes
 		if v == primary {
 			return configResult{absent: primaryErr}, nil
 		}
+
 		return configResult{absent: errors.New("not in tagged")}, nil
 	}
 
 	_, err := blockersAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
-	if err != primaryErr {
+	if err != primaryErr { //nolint:errorlint // pins the error as returned unchanged
 		t.Errorf("err = %v, want the primary view's error unchanged", err)
 	}
 }
@@ -138,6 +146,7 @@ func TestBlockersAcrossViews_PlannerErrorNamesItsConfig(t *testing.T) {
 		if v == tagged {
 			return configResult{}, errors.New("boom")
 		}
+
 		return configResult{plan: planOf()}, nil
 	}
 

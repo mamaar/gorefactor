@@ -39,6 +39,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().MoveByDependencies(ws, types.MoveByDependenciesRequest{
 			Workspace:    ws.RootPath,
 			MoveSharedTo: in.MoveSharedTo,
@@ -49,8 +50,10 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		if in.AnalyzeOnly {
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"description":    "dependency analysis",
 				"affected_files": plan.AffectedFiles,
@@ -58,10 +61,12 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 				"impact":         plan.Impact,
 			}), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "move by dependencies", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -76,6 +81,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().OrganizeByLayers(ws, types.OrganizeByLayersRequest{
 			Workspace:           ws.RootPath,
 			DomainLayer:         in.DomainLayer,
@@ -87,10 +93,12 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "organize by layers", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -105,6 +113,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		out := map[string]any{
 			"cycles_found": len(report.Cycles),
 			"cycles":       report.Cycles,
@@ -113,6 +122,7 @@ func registerDependencyTools(s *mcpsdk.Server, state *MCPServer) {
 		if len(report.Configs) > 1 {
 			out["build_configs"] = report.Configs
 		}
+
 		return textResult(out), nil, nil
 	})
 }

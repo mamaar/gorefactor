@@ -38,8 +38,10 @@ func (p *renameFieldPlanner) linkedOp(ws *types.Workspace, idx *analysis.Referen
 	if pkg == nil || key.Recv == "" || key.Name != p.req.FieldName {
 		return nil
 	}
+
 	req := p.req
 	req.TypeName, req.PackagePath = key.Recv, pkg.Path
+
 	return p.operation(req, idx)
 }
 
@@ -48,6 +50,7 @@ func (p *renameFieldPlanner) operation(req types.RenameFieldRequest, idx *analys
 	if p.engine.config != nil {
 		op.AllowBreaking = p.engine.config.AllowBreaking
 	}
+
 	return op
 }
 
@@ -57,12 +60,15 @@ func (op *RenameFieldOperation) validateIn(ws *types.Workspace) (types.SymbolKey
 	if err != nil {
 		return nil, err
 	}
+
 	pkg, err := op.findOwningPackage(ws)
 	if err != nil {
 		return nil, err
 	}
+
 	keys := make(types.SymbolKeySet)
 	addSymbolKey(keys, op.fieldSymbol(pkg))
+
 	return keys, nil
 }
 
@@ -77,21 +83,26 @@ func (p *renameFieldPlanner) refuseIn(v *analysis.View, renamed types.SymbolKeyS
 // could use one of them. kind is "field" or "method".
 func refuseUnresolvedMembers(v *analysis.View, renamed types.SymbolKeySet, kind, typeName, name string) error {
 	var blockers []types.Blocker
+
 	for _, m := range unresolvedMentions(v, map[string]bool{name: true}) {
 		for key := range renamed {
 			sym := symbolForKey(v.Workspace, key)
 			if sym == nil || !mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(sym.File)) {
 				continue
 			}
+
 			b := m.blocker()
 			b.Configs = []string{v.Config.String()}
 			blockers = append(blockers, b)
+
 			break
 		}
 	}
+
 	if len(blockers) == 0 {
 		return nil
 	}
+
 	return &types.RefactorError{
 		Type: types.InvalidOperation,
 		Message: fmt.Sprintf("cannot rename %s %s.%s: %d use(s) could not be resolved because their files have type errors, so renaming could leave them uncompilable; fix the errors and re-run:%s",

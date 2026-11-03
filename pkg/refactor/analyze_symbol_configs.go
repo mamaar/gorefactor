@@ -46,6 +46,7 @@ func (e *DefaultEngine) AnalyzeSymbolAcrossConfigs(name, pkg string) (*SymbolRep
 		refs:  make(map[symbolRefSite]*types.Reference),
 		dirs:  make(map[string]bool),
 	}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("analyze symbol across configs: %w", err)
@@ -55,11 +56,13 @@ func (e *DefaultEngine) AnalyzeSymbolAcrossConfigs(name, pkg string) (*SymbolRep
 	out := &SymbolReport{Configs: make([]string, len(views))}
 	for i, v := range views {
 		out.Configs[i] = v.Config.String()
+
 		err := run.visit(e, v, out)
 		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
+
 	if out.Symbol == nil {
 		return nil, fmt.Errorf("symbol %s not found", name)
 	}
@@ -68,8 +71,10 @@ func (e *DefaultEngine) AnalyzeSymbolAcrossConfigs(name, pkg string) (*SymbolRep
 		if len(d.Configs) == len(views) {
 			d.Configs = nil
 		}
+
 		out.Declarations = append(out.Declarations, *d)
 	}
+
 	slices.SortFunc(out.Declarations, func(a, b SymbolDeclaration) int {
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Column, b.Column))
 	})
@@ -78,6 +83,7 @@ func (e *DefaultEngine) AnalyzeSymbolAcrossConfigs(name, pkg string) (*SymbolRep
 		return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Column, b.Column))
 	})
 	out.Unchecked = analysis.UncheckedFiles(views, slices.Sorted(maps.Keys(run.dirs)))
+
 	return out, nil
 }
 
@@ -97,20 +103,26 @@ type symbolRun struct {
 
 func (r *symbolRun) visit(e *DefaultEngine, v *analysis.View, out *SymbolReport) error {
 	defer r.planned(v, nil)
+
 	symbol, pkgPath := r.lookup(v.Workspace)
 	if symbol == nil {
 		return nil
 	}
+
 	r.pkgPath = pkgPath
+
 	if out.Symbol == nil {
 		out.Symbol = symbol
 	}
+
 	site := declSite{symbol.File, symbol.Position}
+
 	d := r.decls[site]
 	if d == nil {
 		d = &SymbolDeclaration{File: symbol.File, Line: symbol.Line, Column: symbol.Column}
 		r.decls[site] = d
 	}
+
 	d.Configs = append(d.Configs, v.Config.String())
 	r.dirs[filepath.Dir(symbol.File)] = true
 
@@ -118,10 +130,12 @@ func (r *symbolRun) visit(e *DefaultEngine, v *analysis.View, out *SymbolReport)
 	if err != nil {
 		return fmt.Errorf("visit: %w", err)
 	}
+
 	for _, ref := range refs {
 		r.refs[symbolRefSite{ref.File, ref.Line, ref.Column}] = ref
 		r.dirs[filepath.Dir(ref.File)] = true
 	}
+
 	return nil
 }
 
@@ -133,15 +147,18 @@ func (r *symbolRun) lookup(ws *types.Workspace) (*types.Symbol, string) {
 		path := types.ResolvePackagePath(ws, r.pkg)
 		return symbolIn(ws.Packages[path], r.name), path
 	}
+
 	for _, path := range slices.Sorted(maps.Keys(ws.Packages)) {
 		if r.pkgPath != "" && path != r.pkgPath {
 			continue
 		}
+
 		s := symbolIn(ws.Packages[path], r.name)
 		if s != nil {
 			return s, path
 		}
 	}
+
 	return nil, ""
 }
 
@@ -149,5 +166,6 @@ func symbolIn(pkg *types.Package, name string) *types.Symbol {
 	if pkg == nil || pkg.Symbols == nil {
 		return nil
 	}
+
 	return pkg.Symbols.FindSymbol(name)
 }

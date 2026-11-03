@@ -68,6 +68,7 @@ func TestChangeSignatureOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspaceForNewOps()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ChangeSignatureOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -83,6 +84,7 @@ func TestChangeSignatureOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expected := "Change signature of function TestFunction (scope: workspace)"
 	if desc != expected {
 		t.Errorf("Expected description %q, got %q", expected, desc)
@@ -125,6 +127,7 @@ func TestSafeDeleteOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspaceForNewOps()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("SafeDeleteOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -147,6 +150,7 @@ func UseGreet() string {
 	return Greet() + Greet()
 }
 `
+
 	astFile, err := parser.ParseFile(fset, "greeter.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse fixture source: %v", err)
@@ -161,6 +165,7 @@ func UseGreet() string {
 	// Locate the real declaration position of Greet so the symbol table
 	// matches what FindReferences will see when it walks the AST.
 	var greetDecl *ast.FuncDecl
+
 	for _, decl := range astFile.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if ok && fn.Name.Name == "Greet" {
@@ -168,6 +173,7 @@ func UseGreet() string {
 			break
 		}
 	}
+
 	if greetDecl == nil {
 		t.Fatal("fixture is missing a Greet function declaration")
 	}
@@ -215,6 +221,7 @@ func UseGreet() string {
 		if ref.File != "greeter.go" {
 			t.Errorf("expected reference File %q, got %q", "greeter.go", ref.File)
 		}
+
 		if ref.Line <= 0 {
 			t.Errorf("expected positive Line, got %d", ref.Line)
 		}
@@ -231,6 +238,7 @@ func Unused() string {
 	return "hi"
 }
 `
+
 	astFile, err := parser.ParseFile(fset, "greeter.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse fixture source: %v", err)
@@ -243,6 +251,7 @@ func Unused() string {
 	}
 
 	var unusedDecl *ast.FuncDecl
+
 	for _, decl := range astFile.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if ok && fn.Name.Name == "Unused" {
@@ -250,6 +259,7 @@ func Unused() string {
 			break
 		}
 	}
+
 	if unusedDecl == nil {
 		t.Fatal("fixture is missing an Unused function declaration")
 	}
@@ -288,9 +298,11 @@ func Unused() string {
 	if err != nil {
 		t.Fatalf("BlockingReferences() returned error: %v", err)
 	}
+
 	if blocking == nil {
 		t.Error("expected non-nil empty slice, got nil")
 	}
+
 	if len(blocking) != 0 {
 		t.Errorf("expected 0 blocking references, got %d: %+v", len(blocking), blocking)
 	}
@@ -305,6 +317,7 @@ func TestSafeDeleteOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expected := "Safe delete TestSymbol from test.go (scope: workspace) (forced)"
 	if desc != expected {
 		t.Errorf("Expected description %q, got %q", expected, desc)
@@ -437,6 +450,7 @@ func (t *TestStruct) TestMethod() {
 func extractConstantFixture(t *testing.T, files map[string]string) (*DefaultEngine, *types.Workspace, string) {
 	t.Helper()
 	dir := t.TempDir()
+
 	files["go.mod"] = "module example.com/ec\n\ngo 1.21\n"
 	for rel, content := range files {
 		err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644)
@@ -444,27 +458,34 @@ func extractConstantFixture(t *testing.T, files map[string]string) (*DefaultEngi
 			t.Fatal(err)
 		}
 	}
+
 	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
 	}
+
 	return engine, ws, dir
 }
 
 // extractConstantAt extracts the first occurrence of needle in file.
 func extractConstantAt(t *testing.T, e *DefaultEngine, ws *types.Workspace, dir, file, needle, name string) (*types.RefactoringPlan, error) {
 	t.Helper()
+
 	src, err := os.ReadFile(filepath.Join(dir, file))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	off := strings.Index(string(src), needle)
 	if off < 0 {
 		t.Fatalf("%q not in %s", needle, file)
 	}
+
 	line := 1 + strings.Count(string(src[:off]), "\n")
 	col := off - strings.LastIndex(string(src[:off]), "\n")
+
 	return e.ExtractConstant(ws, types.ExtractConstantRequest{
 		SourceFile: filepath.Join(dir, file), Line: line, Column: col, ConstantName: name,
 	})
@@ -472,19 +493,24 @@ func extractConstantAt(t *testing.T, e *DefaultEngine, ws *types.Workspace, dir,
 
 func applyExtractConstant(t *testing.T, e *DefaultEngine, ws *types.Workspace, dir, file, needle, name string) (*types.RefactoringPlan, map[string]string) {
 	t.Helper()
+
 	plan, err := extractConstantAt(t, e, ws, dir, file, needle, name)
 	if err != nil {
 		t.Fatalf("ExtractConstant: %v", err)
 	}
+
 	if err := e.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	out := map[string]string{}
+
 	entries, _ := os.ReadDir(dir)
 	for _, ent := range entries {
 		b, _ := os.ReadFile(filepath.Join(dir, ent.Name()))
 		out[ent.Name()] = string(b)
 	}
+
 	return plan, out
 }
 
@@ -503,15 +529,19 @@ func TestExtractConstant_ReplacesEqualLiteralsInFilesAndInPackageTests(t *testin
 			t.Errorf("%s still has the literal:\n%s", f, out[f])
 		}
 	}
+
 	if !strings.Contains(out["a.go"], "const Red = \"red\"") || !strings.Contains(out["a.go"], "return Red") {
 		t.Errorf("a.go:\n%s", out["a.go"])
 	}
+
 	if !strings.Contains(out["a_test.go"], "A() != Red") {
 		t.Errorf("a_test.go:\n%s", out["a_test.go"])
 	}
+
 	if !strings.Contains(out["ext_test.go"], `"red"`) {
 		t.Errorf("external test file was edited:\n%s", out["ext_test.go"])
 	}
+
 	if !strings.Contains(out["keep.go"], `"blue"`) {
 		t.Errorf("unequal literal was edited:\n%s", out["keep.go"])
 	}
@@ -521,10 +551,12 @@ func TestExtractConstant_LeavesImportPathsAndStructTagsAlone(t *testing.T) {
 	e, ws, dir := extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\nimport \"strings\"\n\ntype T struct {\n\tF string `json:\"f\"`\n}\n\nvar _ = strings.ToUpper\n\nvar S = \"strings\"\nvar Tag = \"json:\\\"f\\\"\"\n",
 	})
+
 	plan, out := applyExtractConstant(t, e, ws, dir, "a.go", "\"strings\"\nvar Tag", "Pkg")
 	if !strings.Contains(out["a.go"], "\t\"strings\"\n)") || !strings.Contains(out["a.go"], "var S = Pkg") {
 		t.Errorf("import path rewritten or literal kept:\n%s", out["a.go"])
 	}
+
 	if len(plan.Changes) != 2 {
 		t.Errorf("want insertion + 1 replacement, got %d changes", len(plan.Changes))
 	}
@@ -532,6 +564,7 @@ func TestExtractConstant_LeavesImportPathsAndStructTagsAlone(t *testing.T) {
 	e, ws, dir = extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\ntype T struct {\n\tF string `json:\"f\"`\n}\n\nvar Tag = \"json:\\\"f\\\"\"\n",
 	})
+
 	_, out = applyExtractConstant(t, e, ws, dir, "a.go", `"json:`, "TagText")
 	if !strings.Contains(out["a.go"], "`json:\"f\"`") || !strings.Contains(out["a.go"], "var Tag = TagText") {
 		t.Errorf("struct tag rewritten or literal kept:\n%s", out["a.go"])
@@ -540,6 +573,7 @@ func TestExtractConstant_LeavesImportPathsAndStructTagsAlone(t *testing.T) {
 	e, ws, dir = extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\ntype T struct {\n\tF string `json:\"f\"`\n}\n",
 	})
+
 	_, err := extractConstantAt(t, e, ws, dir, "a.go", "`json:", "Nope")
 	if err == nil || !strings.Contains(err.Error(), "struct tag") {
 		t.Errorf("selecting a struct tag: got %v", err)
@@ -550,10 +584,12 @@ func TestExtractConstant_UntypedConstKeepsNamedTypesCompiling(t *testing.T) {
 	e, ws, dir := extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\ntype Color string\n\nvar c Color = \"red\"\nvar s string = \"red\"\n",
 	})
+
 	_, out := applyExtractConstant(t, e, ws, dir, "a.go", `"red"`, "Red")
 	if !strings.Contains(out["a.go"], "const Red = \"red\"") {
 		t.Errorf("want untyped const:\n%s", out["a.go"])
 	}
+
 	if !strings.Contains(out["a.go"], "var c Color = Red") || !strings.Contains(out["a.go"], "var s string = Red") {
 		t.Errorf("uses not replaced:\n%s", out["a.go"])
 	}
@@ -563,6 +599,7 @@ func TestExtractConstant_MatchesByKindAndValue(t *testing.T) {
 	e, ws, dir := extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\nvar A = 16\nvar B = 0x10\nvar C = 1\nvar D = 1.0\nvar E = \"a\"\nvar F = `a`\nvar G = 'a'\n",
 	})
+
 	_, out := applyExtractConstant(t, e, ws, dir, "a.go", "16", "Sixteen")
 	if !strings.Contains(out["a.go"], "var B = Sixteen") {
 		t.Errorf("0x10 not matched with 16:\n%s", out["a.go"])
@@ -571,6 +608,7 @@ func TestExtractConstant_MatchesByKindAndValue(t *testing.T) {
 	e, ws, dir = extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\nvar C = 1\nvar D = 1.0\nvar E = \"a\"\nvar F = `a`\nvar G = 'a'\n",
 	})
+
 	_, out = applyExtractConstant(t, e, ws, dir, "a.go", "1\n", "One")
 	if !strings.Contains(out["a.go"], "var D = 1.0") {
 		t.Errorf("1.0 matched with 1:\n%s", out["a.go"])
@@ -579,6 +617,7 @@ func TestExtractConstant_MatchesByKindAndValue(t *testing.T) {
 	e, ws, dir = extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\nvar E = \"a\"\nvar F = `a`\nvar G = 'a'\n",
 	})
+
 	_, out = applyExtractConstant(t, e, ws, dir, "a.go", `"a"`, "A1")
 	if !strings.Contains(out["a.go"], "var F = A1") || !strings.Contains(out["a.go"], "var G = 'a'") {
 		t.Errorf("string literals mismatch:\n%s", out["a.go"])
@@ -589,10 +628,12 @@ func TestExtractConstant_ShadowedOccurrenceIsSkippedAndReported(t *testing.T) {
 	e, ws, dir := extractConstantFixture(t, map[string]string{
 		"a.go": "package p\n\nvar A = \"red\"\n\nfunc F() string {\n\tRed := 1\n\t_ = Red\n\treturn \"red\"\n}\n",
 	})
+
 	plan, out := applyExtractConstant(t, e, ws, dir, "a.go", `"red"`, "Red")
 	if !strings.Contains(out["a.go"], "return \"red\"") || !strings.Contains(out["a.go"], "var A = Red") {
 		t.Errorf("a.go:\n%s", out["a.go"])
 	}
+
 	if len(plan.SkippedSites) != 1 || plan.SkippedSites[0].Line != 8 {
 		t.Errorf("skipped sites: %+v", plan.SkippedSites)
 	}
@@ -604,15 +645,18 @@ func TestExtractConstant_GeneratedFiles(t *testing.T) {
 		"a.go":   "package p\n\nvar A = \"red\"\n",
 		"gen.go": gen,
 	})
+
 	plan, out := applyExtractConstant(t, e, ws, dir, "a.go", `"red"`, "Red")
 	if out["gen.go"] != gen {
 		t.Errorf("generated file edited:\n%s", out["gen.go"])
 	}
+
 	if len(plan.SkippedSites) != 1 || !strings.Contains(plan.SkippedSites[0].File, "gen.go") {
 		t.Errorf("skipped sites: %+v", plan.SkippedSites)
 	}
 
 	e, ws, dir = extractConstantFixture(t, map[string]string{"gen.go": gen})
+
 	_, err := extractConstantAt(t, e, ws, dir, "gen.go", `"red"`, "Red")
 	if err == nil || !strings.Contains(err.Error(), "generated") {
 		t.Errorf("generated source file: got %v", err)
@@ -668,6 +712,7 @@ func TestExtractConstant_RefusesNameConflictsWritingNothing(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, tc.files)
+
 			_, err := extractConstantAt(t, e, ws, dir, "a.go", tc.pick, tc.cname)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want error containing %q, got %v", tc.want, err)
@@ -684,10 +729,12 @@ func TestExtractConstant_DoesNotMatchLiteralsThatConvertToTheSameValue(t *testin
 	for name, src := range cases {
 		t.Run(name, func(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, map[string]string{"a.go": src})
+
 			sel := "0.1"
 			if strings.Contains(src, "16777217") {
 				sel = "16777217"
 			}
+
 			plan, out := applyExtractConstant(t, e, ws, dir, "a.go", sel, "X")
 			if len(plan.Changes) != 2 || !strings.Contains(out["a.go"], "var B float64 = 0.1") && !strings.Contains(out["a.go"], "var B float64 = 16777216") {
 				t.Errorf("B was rewritten:\n%s", out["a.go"])
@@ -700,6 +747,7 @@ func TestExtractConstant_RefusesPredeclaredNames(t *testing.T) {
 	for _, name := range []string{"iota", "len", "string", "nil", "init", "true"} {
 		t.Run(name, func(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, map[string]string{"a.go": "package p\n\nvar A = \"red\"\n"})
+
 			_, err := extractConstantAt(t, e, ws, dir, "a.go", `"red"`, name)
 			if err == nil {
 				t.Fatal("want a refusal")
@@ -739,6 +787,7 @@ func TestExtractConstant_DeclaresInAnUnconstrainedProductionFile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, tc.files)
+
 			_, out := applyExtractConstant(t, e, ws, dir, tc.source, `"red"`, "Red")
 			for name, content := range out {
 				has := strings.Contains(content, "const Red")
@@ -746,8 +795,10 @@ func TestExtractConstant_DeclaresInAnUnconstrainedProductionFile(t *testing.T) {
 					t.Errorf("const Red in %s = %v:\n%s", name, has, content)
 				}
 			}
+
 			build := exec.Command("go", "build", "./...")
 			build.Dir = dir
+
 			b, err := build.CombinedOutput()
 			if err != nil {
 				t.Errorf("go build: %v\n%s", err, b)
@@ -759,6 +810,7 @@ func TestExtractConstant_DeclaresInAnUnconstrainedProductionFile(t *testing.T) {
 		e, ws, dir := extractConstantFixture(t, map[string]string{
 			"a_test.go": "package p\n\nvar T = \"red\"\n",
 		})
+
 		_, err := extractConstantAt(t, e, ws, dir, "a_test.go", `"red"`, "Red")
 		if err == nil {
 			t.Fatal("want a refusal")
@@ -784,13 +836,16 @@ func TestExtractConstant_RefusesNamesThatCollideWithImportsOfAnyFile(t *testing.
 	for name, files := range cases {
 		t.Run(name, func(t *testing.T) {
 			cname := "strings"
+
 			switch {
 			case strings.HasPrefix(name, "alias"):
 				cname = "Red"
 			case strings.HasPrefix(name, "dot"):
 				cname = "ToUpper"
 			}
+
 			e, ws, dir := extractConstantFixture(t, files)
+
 			_, err := extractConstantAt(t, e, ws, dir, "a.go", `"red"`, cname)
 			if err == nil {
 				t.Fatal("want a refusal")
@@ -807,10 +862,12 @@ func TestExtractConstant_KeepsTrailingCommentsOnTheInsertionLine(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, map[string]string{"a.go": src})
 			_, out := applyExtractConstant(t, e, ws, dir, "a.go", `"red"`, "Red")
+
 			got := out["a.go"]
 			if !strings.Contains(got, "used below\n") && !strings.Contains(got, `import "example.com/ec"`+"\n") {
 				t.Errorf("comment detached:\n%s", got)
 			}
+
 			idx := strings.Index(got, "const Red")
 			if strings.Contains(got[idx:], "// used below") || strings.Contains(got[idx:], "// import") {
 				t.Errorf("comment moved after the const:\n%s", got)
@@ -821,6 +878,7 @@ func TestExtractConstant_KeepsTrailingCommentsOnTheInsertionLine(t *testing.T) {
 
 func TestExtractConstant_RefusesColumnPastEndOfLine(t *testing.T) {
 	e, ws, dir := extractConstantFixture(t, map[string]string{"a.go": "package p\n\nvar A = 1\nvar B = \"red\"\n"})
+
 	_, err := e.ExtractConstant(ws, types.ExtractConstantRequest{
 		SourceFile: filepath.Join(dir, "a.go"), Line: 3, Column: 20, ConstantName: "Red",
 	})

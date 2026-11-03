@@ -36,6 +36,7 @@ var knownTags = func() map[string]bool {
 	m := setOf("unix", "cgo", "gc", "gccgo")
 	maps.Copy(m, knownOS)
 	maps.Copy(m, knownArch)
+
 	return m
 }()
 
@@ -50,10 +51,12 @@ func ComputeCovering(tree *SourceTree, primary BuildConfig) Covering {
 	for _, dir := range tree.Dirs() {
 		files = append(files, tree.Dir(dir)...)
 	}
+
 	slices.SortFunc(files, compareSourcePath)
 
 	var uncovered []UncoveredFile
 	var universe, pending []*SourceFile
+
 	for _, f := range files {
 		switch {
 		case f.Err != nil:
@@ -66,18 +69,22 @@ func ComputeCovering(tree *SourceTree, primary BuildConfig) Covering {
 	}
 
 	var reqs []requirement
+
 	for _, f := range pending {
 		cfg, u := requirementFor(f, primary)
 		if u != nil {
 			uncovered = append(uncovered, *u)
 			continue
 		}
+
 		reqs = append(reqs, requirement{cfg: cfg, file: f})
 		universe = append(universe, f)
 	}
+
 	slices.SortFunc(uncovered, compareUncovered)
 
 	configs := selectConfigs(mergeRequirements(reqs), universe, primary)
+
 	return Covering{Configs: configs, Files: exclusiveCounts(configs, universe), Uncovered: uncovered}
 }
 
@@ -95,12 +102,15 @@ type requirement struct {
 // the first configuration that includes f. A nil config comes with the reason.
 func requirementFor(f *SourceFile, primary BuildConfig) (BuildConfig, *UncoveredFile) {
 	expr := fileConstraint(f)
+
 	u := &UncoveredFile{Path: f.Path}
 	if expr != nil {
 		u.Constraint = expr.String()
 	}
+
 	atoms := positiveCustomTags(expr)
 	needsIgnore := slices.Contains(atoms, "ignore")
+
 	atoms = slices.DeleteFunc(atoms, isIgnoreTag)
 	if len(atoms) > maxCustomTags {
 		u.Reason = "constraint too complex"
@@ -108,6 +118,7 @@ func requirementFor(f *SourceFile, primary BuildConfig) (BuildConfig, *Uncovered
 	}
 
 	subsets := subsetsBySize(atoms)
+
 	for _, port := range portsFor(primary) {
 		for _, cgo := range []bool{primary.Cgo, !primary.Cgo} {
 			for _, subset := range subsets {
@@ -118,10 +129,12 @@ func requirementFor(f *SourceFile, primary BuildConfig) (BuildConfig, *Uncovered
 			}
 		}
 	}
+
 	u.Reason = "unsatisfiable build constraint"
 	if needsIgnore {
 		u.Reason = ignoreReason
 	}
+
 	return BuildConfig{}, u
 }
 
@@ -136,6 +149,7 @@ func portsFor(primary BuildConfig) [][2]string {
 			ports = append(ports, p)
 		}
 	}
+
 	return ports
 }
 
@@ -146,10 +160,12 @@ func fileConstraint(f *SourceFile) constraint.Expr {
 		return nil
 	}
 	var plus constraint.Expr
+
 	for _, group := range f.AST.Comments {
 		if group.End() >= f.AST.Package {
 			break
 		}
+
 		for _, c := range group.List {
 			switch {
 			case constraint.IsGoBuild(c.Text):
@@ -165,6 +181,7 @@ func fileConstraint(f *SourceFile) constraint.Expr {
 			}
 		}
 	}
+
 	return plus
 }
 
@@ -172,6 +189,7 @@ func andExpr(a, b constraint.Expr) constraint.Expr {
 	if a == nil {
 		return b
 	}
+
 	return &constraint.AndExpr{X: a, Y: b}
 }
 
@@ -180,11 +198,14 @@ func andExpr(a, b constraint.Expr) constraint.Expr {
 func positiveCustomTags(expr constraint.Expr) []string {
 	set := map[string]bool{}
 	collectPositiveTags(expr, true, set)
+
 	tags := make([]string, 0, len(set))
 	for tag := range set {
 		tags = append(tags, tag)
 	}
+
 	slices.Sort(tags)
+
 	return tags
 }
 
@@ -212,6 +233,7 @@ func subsetsBySize(atoms []string) [][]string {
 	for size := 0; size <= len(atoms); size++ {
 		out = appendCombinations(out, atoms, size, nil)
 	}
+
 	return out
 }
 
@@ -219,9 +241,11 @@ func appendCombinations(out [][]string, atoms []string, size int, prefix []strin
 	if size == 0 {
 		return append(out, slices.Clone(prefix))
 	}
+
 	for i := 0; i+size <= len(atoms); i++ {
 		out = appendCombinations(out, atoms[i+1:], size-1, append(prefix, atoms[i]))
 	}
+
 	return out
 }
 
@@ -240,10 +264,13 @@ func mergeRequirements(reqs []requirement) []*mergedConfig {
 		if m != nil {
 			m.cfg = unionTags(m.cfg, r.cfg)
 			m.files = append(m.files, r.file)
+
 			continue
 		}
+
 		merged = append(merged, &mergedConfig{cfg: r.cfg, files: []*SourceFile{r.file}})
 	}
+
 	return merged
 }
 
@@ -252,11 +279,13 @@ func firstFit(merged []*mergedConfig, r requirement) *mergedConfig {
 		if m.cfg.GOOS != r.cfg.GOOS || m.cfg.GOARCH != r.cfg.GOARCH || m.cfg.Cgo != r.cfg.Cgo {
 			continue
 		}
+
 		union := unionTags(m.cfg, r.cfg)
 		if union.MatchesFile(r.file) && matchesAll(union, m.files) {
 			return m
 		}
 	}
+
 	return nil
 }
 
@@ -275,31 +304,39 @@ func (c BuildConfig) notMatching(f *SourceFile) bool { return !c.MatchesFile(f) 
 func selectConfigs(candidates []*mergedConfig, universe []*SourceFile, primary BuildConfig) []BuildConfig {
 	remaining := slices.DeleteFunc(slices.Clone(universe), primary.MatchesFile)
 	var chosen []BuildConfig
+
 	for len(remaining) > 0 {
 		best, bestCount := BuildConfig{}, 0
+
 		for _, m := range candidates {
 			count := countMatches(m.cfg, remaining)
 			if count > bestCount || (count == bestCount && count > 0 && lessConfig(m.cfg, best, primary)) {
 				best, bestCount = m.cfg, count
 			}
 		}
+
 		if bestCount == 0 {
 			break
 		}
+
 		chosen = append(chosen, best)
 		remaining = slices.DeleteFunc(remaining, best.MatchesFile)
 	}
+
 	slices.SortFunc(chosen, compareConfigKey)
+
 	return append([]BuildConfig{primary}, chosen...)
 }
 
 func countMatches(cfg BuildConfig, files []*SourceFile) int {
 	n := 0
+
 	for _, f := range files {
 		if cfg.MatchesFile(f) {
 			n++
 		}
 	}
+
 	return n
 }
 
@@ -309,6 +346,7 @@ func lessConfig(a, b, primary BuildConfig) bool {
 	if da != db {
 		return da < db
 	}
+
 	return a.Key() < b.Key()
 }
 
@@ -317,17 +355,21 @@ func deltas(c, primary BuildConfig) int {
 	if c.GOOS != primary.GOOS {
 		n++
 	}
+
 	if c.GOARCH != primary.GOARCH {
 		n++
 	}
+
 	if c.Cgo != primary.Cgo {
 		n++
 	}
+
 	for _, tag := range c.Tags {
 		if !slices.Contains(primary.Tags, tag) {
 			n++
 		}
 	}
+
 	return n
 }
 
@@ -347,15 +389,18 @@ func exclusiveCounts(configs []BuildConfig, universe []*SourceFile) []int {
 			counts[matching[0]]++
 		}
 	}
+
 	return counts
 }
 
 func matchingIndexes(configs []BuildConfig, f *SourceFile) []int {
 	var out []int
+
 	for i, c := range configs {
 		if c.MatchesFile(f) {
 			out = append(out, i)
 		}
 	}
+
 	return out
 }

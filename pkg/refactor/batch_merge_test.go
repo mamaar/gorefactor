@@ -21,9 +21,11 @@ func TestMergeStepPlans_ConcatenatesChangesInStepOrderAndDedupesFiles(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got.Changes) != 3 || got.Changes[2].NewText != "y" {
 		t.Errorf("changes = %+v", got.Changes)
 	}
+
 	if len(got.AffectedFiles) != 2 {
 		t.Errorf("affected files = %v, want a.go and b.go once", got.AffectedFiles)
 	}
@@ -41,6 +43,7 @@ func TestMergeStepPlans_NamesStepsWhoseChangesOverlap(t *testing.T) {
 
 func TestMergeStepPlans_RejectsTheSameEditFromTwoSteps(t *testing.T) {
 	c := types.Change{File: "a.go", Start: 3, End: 3, NewText: "x"}
+
 	_, err := MergeStepPlans([]*types.RefactoringPlan{stepPlan([]string{"a.go"}, c), stepPlan([]string{"a.go"}, c)})
 	if err == nil {
 		t.Fatal("want a conflict for the same insertion from two steps")
@@ -59,6 +62,7 @@ func TestMergeStepPlans_CarriesCoverageAndSkippedSitesWithoutDuplicates(t *testi
 			TypeErrors: []types.PackageTypeError{typeErr},
 		}
 		p.SkippedSites = []types.SkippedSite{site}
+
 		return p
 	}
 
@@ -66,6 +70,7 @@ func TestMergeStepPlans_CarriesCoverageAndSkippedSitesWithoutDuplicates(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got.Coverage.Configs) != 2 || len(got.Coverage.Uncovered) != 1 ||
 		len(got.Coverage.TypeErrors) != 1 || len(got.SkippedSites) != 1 {
 		t.Errorf("coverage = %+v, skipped = %v", got.Coverage, got.SkippedSites)

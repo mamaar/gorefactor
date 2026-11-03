@@ -41,6 +41,7 @@ func TestProcess(t *testing.T) {
 	})
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -55,6 +56,7 @@ func TestProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
@@ -63,6 +65,7 @@ func TestProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading foo.go: %v", err)
 	}
+
 	if !strings.Contains(string(declContent), "func Process(ctx context.Context, name string) string") {
 		t.Errorf("expected Process to gain a ctx context.Context parameter, got:\n%s", declContent)
 	}
@@ -71,6 +74,7 @@ func TestProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading foo_test.go: %v", err)
 	}
+
 	got := string(testContent)
 	if !strings.Contains(got, `Process(t.Context(), "x")`) {
 		t.Errorf("expected the _test.go call site to be rewritten with t.Context(), got:\n%s", got)
@@ -82,6 +86,7 @@ func TestProcess(t *testing.T) {
 // does not resolve.
 func testFilesExcludedWorkspace(t *testing.T) string {
 	t.Helper()
+
 	return writeInlineWorkspace(t, map[string]string{
 		"foo/foo.go": `package foo
 
@@ -114,6 +119,7 @@ func TestBad(t *testing.T) {
 // type-checker cannot shed within its pass limit.
 func unattributedTestsWorkspace(t *testing.T) string {
 	t.Helper()
+
 	files := map[string]string{
 		"foo/foo.go":      "package foo\n\nfunc Process(name string) string { return name }\n",
 		"foo/foo_test.go": "package foo\n\nimport \"testing\"\n\nfunc TestProcess(t *testing.T) {\n\tProcess(\"x\")\n}\n",
@@ -122,6 +128,7 @@ func unattributedTestsWorkspace(t *testing.T) string {
 	for i := 1; i <= 4; i++ {
 		files[fmt.Sprintf("foo/t%d_test.go", i)] = fmt.Sprintf("package foo\n\nfunc h%d() { h%d() }\n", i, i-1)
 	}
+
 	return writeInlineWorkspace(t, files)
 }
 
@@ -146,25 +153,31 @@ type planResultJSON struct {
 
 func addContextParameter(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
+
 	args["function_name"] = "Process"
 	args["source_file"] = "foo/foo.go"
+
 	result, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	return result
 }
 
 func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSON {
 	t.Helper()
+
 	if result.IsError {
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
 	var out planResultJSON
+
 	err := json.Unmarshal([]byte(errText(result)), &out)
 	if err != nil {
 		t.Fatalf("decode result: %v\n%s", err, errText(result))
 	}
+
 	return out
 }
 
@@ -172,6 +185,7 @@ func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSO
 // path of add_context_parameter does not type-check by itself.
 func typeCheckFoo(t *testing.T, sess *mcptest.Session) {
 	t.Helper()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "detect_if_init_assignments",
 		Arguments: map[string]any{"package": "example.com/threadmcp/foo"},
@@ -179,6 +193,7 @@ func typeCheckFoo(t *testing.T, sess *mcptest.Session) {
 	if err != nil {
 		t.Fatalf("CallTool detect_if_init_assignments: %v", err)
 	}
+
 	if res.IsError {
 		t.Fatalf("detect_if_init_assignments returned error: %s", errText(res))
 	}
@@ -186,9 +201,11 @@ func typeCheckFoo(t *testing.T, sess *mcptest.Session) {
 
 func assertBadTestFileUncovered(t *testing.T, out planResultJSON) {
 	t.Helper()
+
 	if len(out.UncoveredFiles) != 1 {
 		t.Fatalf("uncovered_files = %+v, want foo/bad_test.go", out.UncoveredFiles)
 	}
+
 	u := out.UncoveredFiles[0]
 	if u.File != "foo/bad_test.go" || len(u.Configs) != 1 || !strings.Contains(u.Reason, "could not import") {
 		t.Errorf("uncovered file = %+v, want foo/bad_test.go under one configuration with the import error", u)
@@ -197,10 +214,12 @@ func assertBadTestFileUncovered(t *testing.T, out planResultJSON) {
 
 func assertUnchanged(t *testing.T, dir, rel string) {
 	t.Helper()
+
 	content, err := os.ReadFile(filepath.Join(dir, rel))
 	if err != nil {
 		t.Fatalf("reading %s: %v", rel, err)
 	}
+
 	if strings.Contains(string(content), "context") {
 		t.Errorf("%s was modified:\n%s", rel, content)
 	}
@@ -208,10 +227,12 @@ func assertUnchanged(t *testing.T, dir, rel string) {
 
 func assertFileContains(t *testing.T, dir, rel, want string) {
 	t.Helper()
+
 	content, err := os.ReadFile(filepath.Join(dir, rel))
 	if err != nil {
 		t.Fatalf("reading %s: %v", rel, err)
 	}
+
 	if !strings.Contains(string(content), want) {
 		t.Errorf("%s does not contain %q:\n%s", rel, want, content)
 	}
@@ -219,6 +240,7 @@ func assertFileContains(t *testing.T, dir, rel, want string) {
 
 func TestAddContextParameter_Thread_RewritesGoodTestFileAndReportsExcludedOne(t *testing.T) {
 	dir := testFilesExcludedWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -228,6 +250,7 @@ func TestAddContextParameter_Thread_RewritesGoodTestFileAndReportsExcludedOne(t 
 	assertFileContains(t, dir, "foo/foo_test.go", `Process(t.Context(), "x")`)
 	assertUnchanged(t, dir, "foo/bad_test.go")
 	assertBadTestFileUncovered(t, out)
+
 	if len(out.SkippedSites) != 1 || !strings.HasSuffix(out.SkippedSites[0].File, "foo/bad_test.go") || out.SkippedSites[0].Line != 10 {
 		t.Errorf("skipped_sites = %+v, want the Process call at bad_test.go:10", out.SkippedSites)
 	}
@@ -235,6 +258,7 @@ func TestAddContextParameter_Thread_RewritesGoodTestFileAndReportsExcludedOne(t 
 
 func TestAddContextParameter_Thread_DryRunReportsTheSameUncoveredFilesAsApply(t *testing.T) {
 	dir := testFilesExcludedWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -242,13 +266,16 @@ func TestAddContextParameter_Thread_DryRunReportsTheSameUncoveredFilesAsApply(t 
 	if !preview.DryRun {
 		t.Fatal("dry_run not reported")
 	}
+
 	assertUnchanged(t, dir, "foo/foo.go")
 	applied := decodePlanResult(t, addContextParameter(t, sess, map[string]any{"thread": true}))
 
 	assertBadTestFileUncovered(t, preview)
+
 	if !reflect.DeepEqual(preview.UncoveredFiles, applied.UncoveredFiles) {
 		t.Errorf("dry run uncovered_files = %+v, apply = %+v", preview.UncoveredFiles, applied.UncoveredFiles)
 	}
+
 	if !reflect.DeepEqual(preview.SkippedSites, applied.SkippedSites) {
 		t.Errorf("dry run skipped_sites = %+v, apply = %+v", preview.SkippedSites, applied.SkippedSites)
 	}
@@ -256,8 +283,10 @@ func TestAddContextParameter_Thread_DryRunReportsTheSameUncoveredFilesAsApply(t 
 
 func TestAddContextParameter_NoThread_RewritesGoodTestFileAndReportsExcludedOne(t *testing.T) {
 	dir := testFilesExcludedWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	typeCheckFoo(t, sess)
 
 	out := decodePlanResult(t, addContextParameter(t, sess, map[string]any{}))
@@ -269,6 +298,7 @@ func TestAddContextParameter_NoThread_RewritesGoodTestFileAndReportsExcludedOne(
 
 func TestAddContextParameter_Thread_AbortsWhenTestFilesAreUnattributed(t *testing.T) {
 	dir := unattributedTestsWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -277,17 +307,21 @@ func TestAddContextParameter_Thread_AbortsWhenTestFilesAreUnattributed(t *testin
 	if !result.IsError {
 		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
+
 	msg := errText(result)
 	if !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
 		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
+
 	assertUnchanged(t, dir, "foo/foo.go")
 }
 
 func TestAddContextParameter_NoThread_AbortsWhenTestFilesAreUnattributed(t *testing.T) {
 	dir := unattributedTestsWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	typeCheckFoo(t, sess)
 
 	result := addContextParameter(t, sess, map[string]any{})
@@ -295,10 +329,12 @@ func TestAddContextParameter_NoThread_AbortsWhenTestFilesAreUnattributed(t *test
 	if !result.IsError {
 		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
+
 	msg := errText(result)
 	if !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
 		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
+
 	assertUnchanged(t, dir, "foo/foo.go")
 }
 
@@ -414,6 +450,7 @@ func Run(e *Entry) {
 	})
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -428,6 +465,7 @@ func Run(e *Entry) {
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
@@ -436,6 +474,7 @@ func Run(e *Entry) {
 	if err != nil {
 		t.Fatalf("reading dep.go: %v", err)
 	}
+
 	if !strings.Contains(string(declContent), "func Seed(ctx context.Context, name string) string") {
 		t.Errorf("expected Seed to gain a ctx context.Context parameter, got:\n%s", declContent)
 	}
@@ -444,6 +483,7 @@ func Run(e *Entry) {
 	if err != nil {
 		t.Fatalf("reading dep_test.go: %v", err)
 	}
+
 	got := string(testContent)
 	if !strings.Contains(got, `Seed(t.Context(), "x")`) {
 		t.Errorf("expected the _test.go call site to be rewritten with t.Context(), got:\n%s", got)
@@ -459,6 +499,7 @@ func Run(e *Entry) {
 		if err != nil {
 			t.Fatalf("reading %s: %v", untouched, err)
 		}
+
 		if strings.Contains(string(content), "context.Context") {
 			t.Errorf("expected %s to be untouched, got:\n%s", untouched, content)
 		}

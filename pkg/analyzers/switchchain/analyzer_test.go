@@ -19,6 +19,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -55,6 +56,7 @@ func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 // that exercise those guards must use this helper instead.
 func createTypeCheckedWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -100,14 +102,17 @@ func createTypeCheckedWorkspace(t *testing.T, src string) *types.Workspace {
 func onlyEdit(t *testing.T, diags []analysis.Diagnostic) analysis.TextEdit {
 	t.Helper()
 	var found []analysis.TextEdit
+
 	for _, d := range diags {
 		for _, fix := range d.SuggestedFixes {
 			found = append(found, fix.TextEdits...)
 		}
 	}
+
 	if len(found) != 1 {
 		t.Fatalf("expected exactly 1 suggested text edit, got %d", len(found))
 	}
+
 	return found[0]
 }
 
@@ -119,6 +124,7 @@ func soleFileContent(ws *types.Workspace) []byte {
 			return f.OriginalContent
 		}
 	}
+
 	return nil
 }
 
@@ -134,6 +140,7 @@ func soleFileContent(ws *types.Workspace) []byte {
 // reason.
 func assertGofmtStable(t *testing.T, ws *types.Workspace, edit analysis.TextEdit) {
 	t.Helper()
+
 	content := soleFileContent(ws)
 	startOff := ws.FileSet.Position(edit.Pos).Offset
 	endOff := ws.FileSet.Position(edit.End).Offset
@@ -147,6 +154,7 @@ func assertGofmtStable(t *testing.T, ws *types.Workspace, edit analysis.TextEdit
 	if err != nil {
 		t.Fatalf("spliced file does not parse: %v\n%s", err, spliced)
 	}
+
 	if string(gofmted) != string(spliced) {
 		t.Errorf("rendered switch is not gofmt-stable\ngot:\n%s\ngofmt wants:\n%s", spliced, gofmted)
 	}
@@ -307,6 +315,7 @@ func TestSuccessfulConversions(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := createTestWorkspace(t, tc.src)
 			a := switchchain.NewAnalyzer(tc.opts...)
+
 			rr, err := analyzers.Run(ws, a, "")
 			if err != nil {
 				t.Fatal(err)
@@ -316,32 +325,41 @@ func TestSuccessfulConversions(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected []*switchchain.Result, got %T", rr.Result)
 			}
+
 			if len(results) != 1 {
 				t.Fatalf("expected 1 result, got %d", len(results))
 			}
+
 			r := results[0]
 
 			if !r.Fixable {
 				t.Fatalf("expected a fixable chain, reason: %s", r.Reason)
 			}
+
 			if r.Reason != "" {
 				t.Errorf("a fixable result should carry no reason, got %q", r.Reason)
 			}
+
 			if r.Kind != tc.wantKind {
 				t.Errorf("Kind = %q, want %q", r.Kind, tc.wantKind)
 			}
+
 			if r.Tag != tc.wantTag {
 				t.Errorf("Tag = %q, want %q", r.Tag, tc.wantTag)
 			}
+
 			if r.Branches != tc.wantBranches {
 				t.Errorf("Branches = %d, want %d", r.Branches, tc.wantBranches)
 			}
+
 			if r.HasDefault != tc.wantHasDefault {
 				t.Errorf("HasDefault = %v, want %v", r.HasDefault, tc.wantHasDefault)
 			}
+
 			if len(r.Cases) != len(tc.wantCases) {
 				t.Fatalf("Cases = %v, want %v", r.Cases, tc.wantCases)
 			}
+
 			for i, want := range tc.wantCases {
 				if r.Cases[i] != want {
 					t.Errorf("Cases[%d] = %q, want %q", i, r.Cases[i], want)
@@ -349,10 +367,12 @@ func TestSuccessfulConversions(t *testing.T) {
 			}
 
 			edit := onlyEdit(t, rr.Diagnostics)
+
 			got := string(edit.NewText)
 			if got != tc.wantText {
 				t.Errorf("rendered text mismatch\ngot:\n%s\nwant:\n%s", got, tc.wantText)
 			}
+
 			assertGofmtStable(t, ws, edit)
 		})
 	}
@@ -381,6 +401,7 @@ func classify(code int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -390,6 +411,7 @@ func classify(code int) string {
 	if len(results) != 0 {
 		t.Fatalf("expected the chain to be silently deferred to the flattener, got %d results", len(results))
 	}
+
 	if len(rr.Diagnostics) != 0 {
 		t.Fatalf("expected no diagnostics for a deferred chain, got %d", len(rr.Diagnostics))
 	}
@@ -417,6 +439,7 @@ func classify() string {
 func code() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -426,16 +449,19 @@ func code() int { return 0 }
 	if len(results) != 1 {
 		t.Fatalf("expected the chain to be reported once the first link has an init, got %d results", len(results))
 	}
+
 	if !results[0].Fixable {
 		t.Fatalf("expected the chain to be fixable, reason: %s", results[0].Reason)
 	}
 
 	edit := onlyEdit(t, rr.Diagnostics)
 	want := "switch c := code(); c {\n\tcase 200:\n\t\treturn \"ok\"\n\tcase 404:\n\t\treturn \"not found\"\n\tdefault:\n\t\treturn \"error\"\n\t}"
+
 	got := string(edit.NewText)
 	if got != want {
 		t.Errorf("rendered text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
+
 	assertGofmtStable(t, ws, edit)
 }
 
@@ -802,11 +828,13 @@ func f(x any) any { return x }
 			if len(results) != 1 {
 				t.Fatalf("expected 1 result, got %d", len(results))
 			}
+
 			r := results[0]
 
 			if r.Fixable {
 				t.Error("expected the chain to be refused")
 			}
+
 			if r.Reason != tc.wantReason {
 				t.Errorf("Reason = %q, want %q", r.Reason, tc.wantReason)
 			}
@@ -842,6 +870,7 @@ func classify(code int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -870,6 +899,7 @@ func classify(code int) string {
 `
 	ws := createTestWorkspace(t, src)
 	a := switchchain.NewAnalyzer(switchchain.WithMinBranches(2))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -879,9 +909,11 @@ func classify(code int) string {
 	if len(results) != 1 {
 		t.Fatalf("expected the 2-branch chain to be reported with WithMinBranches(2), got %d results", len(results))
 	}
+
 	if !results[0].Fixable {
 		t.Fatalf("expected the chain to be fixable, reason: %s", results[0].Reason)
 	}
+
 	if results[0].Branches != 2 {
 		t.Errorf("Branches = %d, want 2", results[0].Branches)
 	}
@@ -918,6 +950,7 @@ func tagless(score int) string {
 `
 	ws := createTestWorkspace(t, src)
 	a := switchchain.NewAnalyzer(switchchain.WithKinds(switchchain.KindTagged))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -927,9 +960,11 @@ func tagless(score int) string {
 	if len(results) != 1 {
 		t.Fatalf("expected only the tagged chain to be reported, got %d results", len(results))
 	}
+
 	if results[0].Kind != switchchain.KindTagged {
 		t.Errorf("Kind = %q, want %q", results[0].Kind, switchchain.KindTagged)
 	}
+
 	if results[0].Function != "tagged" {
 		t.Errorf("Function = %q, want %q", results[0].Function, "tagged")
 	}
@@ -964,6 +999,7 @@ func classify(a, b int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -975,21 +1011,25 @@ func classify(a, b int) string {
 	}
 
 	var edits []analysis.TextEdit
+
 	for _, d := range rr.Diagnostics {
 		for _, fix := range d.SuggestedFixes {
 			edits = append(edits, fix.TextEdits...)
 		}
 	}
+
 	if len(edits) != 1 {
 		t.Fatalf("expected exactly 1 text edit, got %d", len(edits))
 	}
 
 	edit := edits[0]
 	want := "switch a {\n\tcase 1:\n\t\tif b == 1 {\n\t\t\tout = \"a1b1\"\n\t\t} else if b == 2 {\n\t\t\tout = \"a1b2\"\n\t\t} else {\n\t\t\tout = \"a1other\"\n\t\t}\n\tcase 2:\n\t\tout = \"a2\"\n\tdefault:\n\t\tout = \"aother\"\n\t}"
+
 	got := string(edit.NewText)
 	if got != want {
 		t.Errorf("rendered text mismatch (inner chain should survive verbatim)\ngot:\n%s\nwant:\n%s", got, want)
 	}
+
 	assertGofmtStable(t, ws, edit)
 }
 
@@ -1015,6 +1055,7 @@ func makeFn() func(int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1024,9 +1065,11 @@ func makeFn() func(int) string {
 	if len(results) != 1 {
 		t.Fatalf("expected the chain inside the function literal to be found, got %d results", len(results))
 	}
+
 	if !strings.HasSuffix(results[0].Function, ".func") {
 		t.Errorf("Function = %q, want it to end in \".func\"", results[0].Function)
 	}
+
 	if !results[0].Fixable {
 		t.Fatalf("expected the chain to be fixable, reason: %s", results[0].Reason)
 	}
@@ -1069,6 +1112,7 @@ func mixed(a int, items []int) (string, string) {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, switchchain.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1078,27 +1122,33 @@ func mixed(a int, items []int) (string, string) {
 	if len(results) != 2 {
 		t.Fatalf("expected 2 results, got %d", len(results))
 	}
+
 	if len(rr.Diagnostics) != len(results) {
 		t.Fatalf("expected 1 diagnostic per result, got %d diagnostics for %d results", len(rr.Diagnostics), len(results))
 	}
 
 	fixableCount := 0
 	fixCount := 0
+
 	for i, r := range results {
 		hasFix := len(rr.Diagnostics[i].SuggestedFixes) != 0
 		if hasFix != r.Fixable {
 			t.Errorf("result %d: Fixable = %v but diagnostic carries a fix = %v (out of lockstep)", i, r.Fixable, hasFix)
 		}
+
 		if r.Fixable {
 			fixableCount++
 		}
+
 		if hasFix {
 			fixCount++
 		}
 	}
+
 	if fixableCount != fixCount {
 		t.Errorf("fixable results = %d, diagnostics with a fix = %d, want equal", fixableCount, fixCount)
 	}
+
 	if fixableCount != 1 {
 		t.Fatalf("expected exactly 1 fixable result in this fixture, got %d", fixableCount)
 	}

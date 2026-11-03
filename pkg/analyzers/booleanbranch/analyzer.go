@@ -41,6 +41,7 @@ func CollectFixResults(results []*Result) []*FixResult {
 			SwitchCases:     r.switchCases,
 		})
 	}
+
 	return out
 }
 
@@ -125,6 +126,7 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte, cfg *confi
 		if !ok || funcDecl.Body == nil {
 			continue
 		}
+
 		results = append(results, analyzeFunction(pass, funcDecl, content, cfg)...)
 	}
 
@@ -148,6 +150,7 @@ func analyzeFunction(pass *analysis.Pass, fn *ast.FuncDecl, content []byte, cfg 
 		}
 
 		varNames := make([]string, len(group))
+
 		varSet := make(map[string]bool, len(group))
 		for i, ba := range group {
 			varNames[i] = ba.varName
@@ -172,6 +175,7 @@ func analyzeFunction(pass *analysis.Pass, fn *ast.FuncDecl, content []byte, cfg 
 		// Attempt to build SuggestedFixes using detailed assign info.
 		if len(content) > 0 {
 			detailedAssigns := collectDetailedAssigns(pass.Fset, fn.Body, content)
+
 			detailedGroups := make(map[string][]boolAssignDetail)
 			for _, da := range detailedAssigns {
 				detailedGroups[da.sourceExpr] = append(detailedGroups[da.sourceExpr], da)
@@ -180,6 +184,7 @@ func analyzeFunction(pass *analysis.Pass, fn *ast.FuncDecl, content []byte, cfg 
 			detailedGroup, ok := detailedGroups[sourceExpr]
 			if ok && len(detailedGroup) >= cfg.minBranches {
 				varToDetail := make(map[string]boolAssignDetail, len(detailedGroup))
+
 				detailVarSet := make(map[string]bool, len(detailedGroup))
 				for _, da := range detailedGroup {
 					varToDetail[da.varName] = da
@@ -222,9 +227,11 @@ func collectBoolAssigns(fset *token.FileSet, body *ast.BlockStmt, content []byte
 		if !ok {
 			return true
 		}
+
 		if assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN {
 			return true
 		}
+
 		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			return true
 		}
@@ -238,6 +245,7 @@ func collectBoolAssigns(fset *token.FileSet, body *ast.BlockStmt, content []byte
 		if !ok {
 			return true
 		}
+
 		if binExpr.Op != token.EQL && binExpr.Op != token.NEQ {
 			return true
 		}
@@ -268,9 +276,11 @@ func collectDetailedAssigns(fset *token.FileSet, body *ast.BlockStmt, content []
 		if !ok {
 			return true
 		}
+
 		if assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN {
 			return true
 		}
+
 		if len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
 			return true
 		}
@@ -284,6 +294,7 @@ func collectDetailedAssigns(fset *token.FileSet, body *ast.BlockStmt, content []
 		if !ok {
 			return true
 		}
+
 		if binExpr.Op != token.EQL && binExpr.Op != token.NEQ {
 			return true
 		}
@@ -298,6 +309,7 @@ func collectDetailedAssigns(fset *token.FileSet, body *ast.BlockStmt, content []
 			negated:    binExpr.Op == token.NEQ,
 			assignNode: assign,
 		})
+
 		return true
 	})
 
@@ -308,20 +320,25 @@ func collectDetailedAssigns(fset *token.FileSet, body *ast.BlockStmt, content []
 // conditions in if statements within the block.
 func usedInBranching(body *ast.BlockStmt, varSet map[string]bool) bool {
 	found := false
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		if found {
 			return false
 		}
+
 		ifStmt, ok := n.(*ast.IfStmt)
 		if !ok {
 			return true
 		}
+
 		if condUsesVar(ifStmt.Cond, varSet) {
 			found = true
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -330,6 +347,7 @@ func condUsesVar(expr ast.Expr, varSet map[string]bool) bool {
 	if expr == nil {
 		return false
 	}
+
 	switch e := expr.(type) {
 	case *ast.Ident:
 		return varSet[e.Name]
@@ -340,6 +358,7 @@ func condUsesVar(expr ast.Expr, varSet map[string]bool) bool {
 	case *ast.ParenExpr:
 		return condUsesVar(e.X, varSet)
 	}
+
 	return false
 }
 
@@ -348,31 +367,38 @@ func condUsesVar(expr ast.Expr, varSet map[string]bool) bool {
 // this preserves intervening statements and comments.
 func findIfChains(body *ast.BlockStmt, varSet map[string]bool) []*ast.IfStmt {
 	children := make(map[*ast.IfStmt]bool)
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		ifStmt, ok := n.(*ast.IfStmt)
 		if !ok {
 			return true
 		}
+
 		if condDirectlyUsesVar(ifStmt.Cond, varSet) {
 			child, ok := ifStmt.Else.(*ast.IfStmt)
 			if ok && condDirectlyUsesVar(child.Cond, varSet) {
 				children[child] = true
 			}
 		}
+
 		return true
 	})
 
 	var roots []*ast.IfStmt
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		ifStmt, ok := n.(*ast.IfStmt)
 		if !ok {
 			return true
 		}
+
 		if condDirectlyUsesVar(ifStmt.Cond, varSet) && !children[ifStmt] {
 			roots = append(roots, ifStmt)
 		}
+
 		return true
 	})
+
 	return roots
 }
 
@@ -381,10 +407,12 @@ func condDirectlyUsesVar(expr ast.Expr, varSet map[string]bool) bool {
 	if expr == nil {
 		return false
 	}
+
 	ident, ok := expr.(*ast.Ident)
 	if !ok {
 		return false
 	}
+
 	return varSet[ident.Name]
 }
 
@@ -413,6 +441,7 @@ func extractCases(ifStmt *ast.IfStmt, varToDetail map[string]boolAssignDetail) [
 		if current.Else == nil {
 			break
 		}
+
 		switch e := current.Else.(type) {
 		case *ast.IfStmt:
 			current = e
@@ -448,11 +477,13 @@ func buildSuggestedFixes(
 	var edits []analysis.TextEdit
 	convertedConditions := make(map[token.Pos]bool)
 	totalCases := 0
+
 	for _, chain := range chains {
 		cases := extractCases(chain, detailsByName(assigns))
 		if len(cases) == 0 {
 			continue
 		}
+
 		for current := chain; current != nil; {
 			convertedConditions[current.Cond.Pos()] = true
 			next, _ := current.Else.(*ast.IfStmt)
@@ -461,6 +492,7 @@ func buildSuggestedFixes(
 
 		start := fset.Position(chain.Pos()).Offset
 		endPos := endOfIfChain(chain)
+
 		end := fset.Position(endPos).Offset
 		if start < 0 || end > len(content) || start >= end {
 			return nil, nil, 0
@@ -478,22 +510,27 @@ func buildSuggestedFixes(
 	// Refuse a partial rewrite: leaving any derived boolean in an unsupported
 	// branch condition would make the detector/fixer disagreement persist.
 	branchUses := 0
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		ifStmt, ok := n.(*ast.IfStmt)
 		if ok && condUsesVar(ifStmt.Cond, namesOf(assigns)) {
 			branchUses++
 		}
+
 		return true
 	})
+
 	if branchUses != len(convertedConditions) || totalCases == 0 {
 		return nil, nil, 0
 	}
 
 	var removed []string
+
 	for _, ba := range assigns {
 		if usedOutsideConditions(body, ba, convertedConditions) {
 			continue
 		}
+
 		startOffset := fset.Position(ba.assignNode.Pos()).Offset
 		endOffset := fset.Position(ba.assignNode.End()).Offset
 
@@ -501,10 +538,12 @@ func buildSuggestedFixes(
 		for lineStart > 0 && content[lineStart-1] != '\n' {
 			lineStart--
 		}
+
 		lineEnd := endOffset
 		for lineEnd < len(content) && content[lineEnd] != '\n' {
 			lineEnd++
 		}
+
 		if lineEnd < len(content) {
 			lineEnd++ // include the newline
 		}
@@ -534,6 +573,7 @@ func detailsByName(assigns []boolAssignDetail) map[string]boolAssignDetail {
 	for _, assign := range assigns {
 		out[assign.varName] = assign
 	}
+
 	return out
 }
 
@@ -542,44 +582,55 @@ func namesOf(assigns []boolAssignDetail) map[string]bool {
 	for _, assign := range assigns {
 		out[assign.varName] = true
 	}
+
 	return out
 }
 
 func usedOutsideConditions(body *ast.BlockStmt, assign boolAssignDetail, converted map[token.Pos]bool) bool {
 	used := false
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		if used {
 			return false
 		}
+
 		ident, ok := n.(*ast.Ident)
 		if !ok || ident.Name != assign.varName || ident.Pos() == assign.assignNode.Lhs[0].Pos() {
 			return true
 		}
+
 		for condPos := range converted {
 			ifStmt := findIfAt(body, condPos)
 			if ifStmt != nil && ident.Pos() >= ifStmt.Cond.Pos() && ident.Pos() < ifStmt.Cond.End() {
 				return true
 			}
 		}
+
 		used = true
+
 		return false
 	})
+
 	return used
 }
 
 func findIfAt(body *ast.BlockStmt, condPos token.Pos) *ast.IfStmt {
 	var found *ast.IfStmt
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		if found != nil {
 			return false
 		}
+
 		ifStmt, ok := n.(*ast.IfStmt)
 		if ok && ifStmt.Cond.Pos() == condPos {
 			found = ifStmt
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -588,12 +639,14 @@ func endOfIfChain(ifStmt *ast.IfStmt) token.Pos {
 	if ifStmt.Else == nil {
 		return ifStmt.End()
 	}
+
 	switch e := ifStmt.Else.(type) {
 	case *ast.IfStmt:
 		return endOfIfChain(e)
 	case *ast.BlockStmt:
 		return e.End()
 	}
+
 	return ifStmt.End()
 }
 
@@ -631,10 +684,13 @@ func exprText(fset *token.FileSet, content []byte, expr ast.Expr) string {
 	if len(content) == 0 {
 		return ""
 	}
+
 	start := fset.Position(expr.Pos()).Offset
+
 	end := fset.Position(expr.End()).Offset
 	if start < 0 || end < 0 || start >= len(content) || end > len(content) || start >= end {
 		return ""
 	}
+
 	return string(content[start:end])
 }

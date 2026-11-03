@@ -15,12 +15,15 @@ import (
 func run(t *testing.T, src string) []*nilreceiver.Result {
 	t.Helper()
 	ws, _ := workspace(t, src)
+
 	return analyze(t, ws)
 }
 
 func workspace(t *testing.T, src string) (*types.Workspace, *types.Package) {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "testpkg.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -40,19 +43,23 @@ func workspace(t *testing.T, src string) (*types.Workspace, *types.Package) {
 		TypesInfo:  info,
 	}
 	file.Package = pkg
+
 	return &types.Workspace{Packages: map[string]*types.Package{"test/testpkg": pkg}, FileSet: fset}, pkg
 }
 
 func analyze(t *testing.T, ws *types.Workspace) []*nilreceiver.Result {
 	t.Helper()
+
 	rr, err := analyzers.Run(ws, nilreceiver.Analyzer, "")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
+
 	results, ok := rr.Result.([]*nilreceiver.Result)
 	if !ok {
 		t.Fatalf("unexpected result type %T", rr.Result)
 	}
+
 	return results
 }
 
@@ -71,13 +78,16 @@ func (r *T) M() int {
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
+
 	got := results[0]
 	if got.Function != "T.M" || got.Receiver != "r" || got.ReceiverType != "*T" {
 		t.Errorf("identity = %q %q %q", got.Function, got.Receiver, got.ReceiverType)
 	}
+
 	if !got.FirstStatement {
 		t.Error("FirstStatement = false, want true")
 	}
+
 	if got.Line != 6 || got.Code != "if r == nil {" {
 		t.Errorf("site = %d %q", got.Line, got.Code)
 	}
@@ -113,14 +123,17 @@ func (r *T) InClosure() func() bool {
 	return func() bool { return r == nil }
 }
 `)
+
 	want := []string{"T.NotEqual", "T.Reversed", "T.Compound", "T.InClosure"}
 	if len(results) != len(want) {
 		t.Fatalf("got %d results, want %d", len(results), len(want))
 	}
+
 	for i, r := range results {
 		if r.Function != want[i] {
 			t.Errorf("results[%d] = %s, want %s", i, r.Function, want[i])
 		}
+
 		if r.FirstStatement {
 			t.Errorf("%s: FirstStatement = true", r.Function)
 		}
@@ -183,9 +196,11 @@ func (b *Box[V]) Empty() bool { return b == nil }
 	if len(results) != 2 {
 		t.Fatalf("got %d results, want 2", len(results))
 	}
+
 	if results[0].Function != "M.Empty" || results[0].ReceiverType != "M" {
 		t.Errorf("map receiver = %q %q", results[0].Function, results[0].ReceiverType)
 	}
+
 	if results[1].Function != "Box.Empty" || results[1].ReceiverType != "*Box[V]" {
 		t.Errorf("generic receiver = %q %q", results[1].Function, results[1].ReceiverType)
 	}
@@ -199,6 +214,7 @@ type T struct{}
 func (r *T) M() bool { return r == nil }
 `)
 	pkg.TypesInfo = nil
+
 	results := analyze(t, ws)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))

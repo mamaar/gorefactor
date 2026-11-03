@@ -17,21 +17,26 @@ const (
 func typedUnusedFacts(t *testing.T, files map[string]string, includeExported bool) map[string]unusedFact {
 	t.Helper()
 	set, _ := loadSet(t, files)
+
 	v := set.Primary()
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
 	}
+
 	idx, err := v.ReferenceIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	a := NewUnusedAnalyzer(v.Workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	a.SetIncludeExported(includeExported)
 	a.SetIndex(idx)
+
 	unused, err := a.FindUnusedSymbols()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return unusedFacts(unused)
 }
 
@@ -40,20 +45,24 @@ func untypedUnusedFacts(t *testing.T, files map[string]string) map[string]unused
 	t.Helper()
 	ws := parsedGraphWorkspace(t, files)
 	a := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	unused, err := a.FindUnusedSymbols()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return unusedFacts(unused)
 }
 
 func assertReported(t *testing.T, facts map[string]unusedFact, key, reason string) {
 	t.Helper()
+
 	got, ok := facts[key]
 	if !ok {
 		t.Errorf("%s not reported; got %v", key, facts)
 		return
 	}
+
 	if reason != "" && got.Reason != reason {
 		t.Errorf("%s reason = %q, want %q", key, got.Reason, reason)
 	}
@@ -61,6 +70,7 @@ func assertReported(t *testing.T, facts map[string]unusedFact, key, reason strin
 
 func assertNotReported(t *testing.T, facts map[string]unusedFact, keys ...string) {
 	t.Helper()
+
 	for _, key := range keys {
 		f, ok := facts[key]
 		if ok {
@@ -71,11 +81,13 @@ func assertNotReported(t *testing.T, facts map[string]unusedFact, keys ...string
 
 func assertSafe(t *testing.T, facts map[string]unusedFact, key string, want bool) {
 	t.Helper()
+
 	f, ok := facts[key]
 	if !ok {
 		t.Errorf("%s not reported; got %v", key, facts)
 		return
 	}
+
 	if f.SafeToDelete != want {
 		t.Errorf("%s SafeToDelete = %v, want %v", key, f.SafeToDelete, want)
 	}
@@ -290,9 +302,11 @@ func TestDoAgsRequest(t *testing.T) { _ = DoAgsRequest(stub{}) }
 	}, true)
 
 	assertReported(t, facts, "ags.go:DoAgsRequest", reasonTests)
+
 	for _, key := range []string{"DefaultDoAgsRequester", "NewDoAgsRequester", "doAgsRequester", "Do", "AgsResponse"} {
 		assertReported(t, facts, "ags.go:"+key, reasonUnusedCode)
 	}
+
 	assertNotReported(t, facts, "ags.go:DoRequest")
 }
 
@@ -313,6 +327,7 @@ func TestFindUnusedSymbols_TypeUsedOnlyByEmbeddingIsNotReported(t *testing.T) {
 		facts := typedUnusedFacts(t, files, includeExported)
 		assertNotReported(t, facts, "a.go:base", "a.go:Close", "a.go:leaf")
 	}
+
 	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": embeddingSource}), "a.go:base", "a.go:leaf")
 }
 
@@ -394,6 +409,7 @@ func TestFindUnusedSymbols_AliasNamedOnlyByDeadMethodReceiverIsReported(t *testi
 // foo and bar, named only by an interface written in use, keep leaf alive.
 func assertMethodThroughInterfaceLiteralIsLive(t *testing.T, use string) {
 	t.Helper()
+
 	src := "package p\n\ntype T struct{}\n\nfunc (T) foo() { leaf() }\n\nfunc (T) bar() { leaf() }\n\nfunc leaf() {}\n\n" + use
 	assertNotReported(t, typedUnusedFacts(t, map[string]string{"p/a.go": src}, false), "a.go:foo", "a.go:bar", "a.go:leaf")
 	assertNotReported(t, untypedUnusedFacts(t, map[string]string{"a.go": src}), "a.go:foo", "a.go:bar", "a.go:leaf")

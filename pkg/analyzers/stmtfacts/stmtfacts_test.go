@@ -17,6 +17,7 @@ func parseBody(t *testing.T, src string) (ast.Stmt, *types.Info) {
 	t.Helper()
 
 	fset := token.NewFileSet()
+
 	file, err := parser.ParseFile(fset, "x.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -40,13 +41,16 @@ func parseBody(t *testing.T, src string) (ast.Stmt, *types.Info) {
 		if !ok || fn.Name.Name != "f" || fn.Body == nil {
 			continue
 		}
+
 		if len(fn.Body.List) == 0 {
 			t.Fatal("function f has an empty body")
 		}
+
 		return fn.Body.List[len(fn.Body.List)-1], info
 	}
 
 	t.Fatal("no function named f")
+
 	return nil, nil
 }
 
@@ -380,6 +384,7 @@ func f(a int) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt, info := parseBody(t, tt.src)
+
 			got := stmtfacts.Terminates(info, stmt)
 			if got != tt.want {
 				t.Errorf("Terminates() = %v, want %v", got, tt.want)
@@ -411,6 +416,7 @@ func f(a bool) {
 	if !ok {
 		t.Fatalf("expected the last statement to be a for loop, got %T", stmt)
 	}
+
 	ifStmt, ok := loop.Body.List[0].(*ast.IfStmt)
 	if !ok {
 		t.Fatalf("expected an if statement in the loop body, got %T", loop.Body.List[0])
@@ -419,6 +425,7 @@ func f(a bool) {
 	if !stmtfacts.Terminates(info, ifStmt.Body.List[0]) {
 		t.Error("Terminates(break) = false, want true")
 	}
+
 	elseBlock := ifStmt.Else.(*ast.BlockStmt)
 	if !stmtfacts.Terminates(info, elseBlock.List[0]) {
 		t.Error("Terminates(continue) = false, want true")
@@ -445,6 +452,7 @@ func f(a bool) int {
 	}
 }
 `
+
 	stmt, _ := parseBody(t, src)
 	if !stmtfacts.Terminates(nil, stmt) {
 		t.Error("Terminates(nil, ...) = false, want true for an if-else where both arms return")
@@ -470,10 +478,12 @@ func f() {
 }
 `
 	fset := token.NewFileSet()
+
 	file, err := parser.ParseFile(fset, "x.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+
 	fn := file.Decls[0].(*ast.FuncDecl)
 
 	got := stmtfacts.DeclaredNames(fn.Body.List)
@@ -502,12 +512,14 @@ func (r *T) f(a, b int) (res error) {
 }
 `
 	fset := token.NewFileSet()
+
 	file, err := parser.ParseFile(fset, "x.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 
 	var fn *ast.FuncDecl
+
 	for _, decl := range file.Decls {
 		d, ok := decl.(*ast.FuncDecl)
 		if ok && d.Name.Name == "f" {
@@ -532,6 +544,7 @@ func TestFirstClash(t *testing.T) {
 	if got != "q" {
 		t.Errorf("FirstClash() = %q, want %q", got, "q")
 	}
+
 	got = stmtfacts.FirstClash(map[string]bool{"a": true}, dest)
 	if got != "" {
 		t.Errorf("FirstClash() = %q, want %q for disjoint sets", got, "")
@@ -561,6 +574,7 @@ func TestReferencesAny(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
+
 			got := stmtfacts.ReferencesAny(expr, map[string]bool{"ok": true})
 			if got != tt.want {
 				t.Errorf("ReferencesAny(%q) = %v, want %v", tt.expr, got, tt.want)
@@ -585,17 +599,20 @@ func TestProvablyNonNil(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "package p\nfunc f(err error) error {\n" + tc.body + "\nreturn nil\n}\n"
+
 			file, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
 			var stack, found []ast.Node
 			var ret *ast.ReturnStmt
+
 			ast.Inspect(file, func(n ast.Node) bool {
 				if n == nil {
 					stack = stack[:len(stack)-1]
 					return true
 				}
+
 				stack = append(stack, n)
 				// The innermost return of the guarded branch is the one
 				// asked about; the trailing `return nil` is not.
@@ -606,11 +623,14 @@ func TestProvablyNonNil(t *testing.T) {
 						ret, found = r, append([]ast.Node(nil), stack...)
 					}
 				}
+
 				return true
 			})
+
 			if ret == nil {
 				t.Fatal("no return of err in the fixture")
 			}
+
 			got := stmtfacts.ProvablyNonNil(found, ret, "err")
 			if got != tc.want {
 				t.Errorf("ProvablyNonNil = %v, want %v", got, tc.want)

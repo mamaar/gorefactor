@@ -14,10 +14,13 @@ const foldF = "package p\n\nfunc f() (int, error) { return 1, nil }\n\nfunc g() 
 func removeErrorFolds(t *testing.T, use string) string {
 	t.Helper()
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": foldF, "p/use.go": use})
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
 	goVets(t, dir, "")
+
 	return dir
 }
 
@@ -96,6 +99,7 @@ func TestChangeSignature_RemoveReturnFoldsDeadErrorChecks(t *testing.T) {
 			for _, w := range c.want {
 				assertFileContains(t, dir, "p/use.go", w)
 			}
+
 			for _, o := range c.omit {
 				assertFileOmits(t, dir, "p/use.go", o)
 			}
@@ -107,6 +111,7 @@ func TestChangeSignature_RemoveReturnFoldsInitStatementWithNothingLeft(t *testin
 	f := "package p\n\nfunc f() error { return nil }\n"
 	use := "package p\n\nfunc Use() {\n\tif err := f(); err != nil {\n\t\tprintln(err.Error())\n\t}\n\tprintln(1)\n}\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -144,6 +149,7 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 	for name, use := range cases {
 		t.Run(name, func(t *testing.T) {
 			dir := writeInlineWorkspace(t, map[string]string{"p/f.go": foldF, "p/use.go": use})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -152,6 +158,7 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 			if !res.IsError || !strings.Contains(errText(res), "use.go:") {
 				t.Errorf("want a refusal naming use.go, got IsError=%v %q", res.IsError, errText(res))
 			}
+
 			assertFileUnchanged(t, dir, "p/f.go", foldF)
 			assertFileUnchanged(t, dir, "p/use.go", use)
 		})

@@ -103,6 +103,7 @@ func TestUsesBoth(t *testing.T) {
 `)
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -117,6 +118,7 @@ func TestUsesBoth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool transport error: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
 	}
@@ -127,12 +129,15 @@ func TestUsesBoth(t *testing.T) {
 	if !strings.Contains(callerContent, `"reprotest/test/skip"`) {
 		t.Errorf("expected caller_test.go to import the destination package, got:\n%s", callerContent)
 	}
+
 	if !strings.Contains(callerContent, `"reprotest/test"`) {
 		t.Errorf("expected caller_test.go to retain the source package import (still uses test.Other), got:\n%s", callerContent)
 	}
+
 	if !strings.Contains(callerContent, "skip.RequireBinary(") {
 		t.Errorf("expected caller_test.go's call to be rewritten to skip.RequireBinary, got:\n%s", callerContent)
 	}
+
 	if !strings.Contains(callerContent, "test.Other()") {
 		t.Errorf("expected caller_test.go's unrelated test.Other() call to be left alone, got:\n%s", callerContent)
 	}
@@ -148,6 +153,7 @@ func TestUsesBoth(t *testing.T) {
 	// compiled by `go build`, only by `go vet`/`go test`, so the missing
 	// import was invisible to `go build ./...` and only surfaced here.
 	cmd := exec.Command("go", "vet", "./...")
+
 	cmd.Dir = tmpDir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("fixture module does not vet clean after the move (this is the actual bug):\n%s", out)

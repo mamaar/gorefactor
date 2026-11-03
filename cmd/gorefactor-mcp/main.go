@@ -18,6 +18,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to open log file: %v", err)
 	}
+
 	logger := slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -33,10 +34,13 @@ func main() {
 	internalmcp.RegisterAllTools(s, state)
 
 	logger.Info("MCP server ready")
+
 	err = s.Run(context.Background(), &mcpsdk.StdioTransport{})
+
 	logger.Info("MCP server shutting down")
 	state.Close()
 	_ = logFile.Close()
+
 	if err != nil {
 		log.Fatal(err)
 	}

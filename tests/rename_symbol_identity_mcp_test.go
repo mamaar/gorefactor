@@ -18,6 +18,7 @@ func TestRenameSymbol_WithPackageLeavesOtherObjectsOfTheSameNameAlone(t *testing
 		"c/c.go": cSrc,
 		"d/d.go": "package d\n\nimport (\n\t\"example.com/threadmcp/a\"\n\t\"example.com/threadmcp/c\"\n)\n\nfunc Use() { a.Run(); c.Run(); run := func() {}; run() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -34,6 +35,7 @@ func TestRenameSymbol_WithPackageLeavesOtherObjectsOfTheSameNameAlone(t *testing
 func TestRenameSymbol_WithPackageLeavesSameNamedMethodAndLocalAlone(t *testing.T) {
 	const src = "package a\n\ntype T struct{}\n\nfunc (T) Run() {}\n\nfunc Run() {}\n\nfunc Use(t T) { t.Run(); Run() }\n\nfunc Local() { Run := 1; _ = Run }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"a/a.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

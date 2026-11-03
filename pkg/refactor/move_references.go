@@ -27,6 +27,7 @@ type referenceFileEdit struct {
 
 func groupReferencesByFile(refs []*types.Reference) []fileReferences {
 	var groups []fileReferences
+
 	index := make(map[string]int)
 	for _, ref := range refs {
 		i, ok := index[ref.File]
@@ -35,8 +36,10 @@ func groupReferencesByFile(refs []*types.Reference) []fileReferences {
 			index[ref.File] = i
 			groups = append(groups, fileReferences{file: ref.File})
 		}
+
 		groups[i].refs = append(groups[i].refs, ref)
 	}
+
 	return groups
 }
 
@@ -44,6 +47,7 @@ func importSpecText(alias, path string) string {
 	if alias != "" {
 		return fmt.Sprintf("%s %q", alias, path)
 	}
+
 	return fmt.Sprintf("%q", path)
 }
 
@@ -68,12 +72,14 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 	}
 
 	dropped := slices.Clone(unused)
+
 	for _, src := range sources {
 		spec := unusedSourceImport(file, src.refs, src.importPath, src.name)
 		if spec != nil && !slices.Contains(dropped, spec) {
 			dropped = append(dropped, spec)
 		}
 	}
+
 	removeDropped := func(specs []*ast.ImportSpec) []types.Change {
 		return removeImportSpecs(ws, file, specs)
 	}
@@ -82,10 +88,12 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 		if strings.Trim(imp.Path.Value, `"`) != targetImportPath {
 			continue
 		}
+
 		qualifier := targetName
 		if imp.Name != nil {
 			qualifier, _ = importLocalName(imp)
 		}
+
 		if qualifier == "" {
 			continue
 		}
@@ -94,6 +102,7 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 	}
 
 	alias := chooseImportName(ws, file, dropped, targetImportPath, targetName, nil)
+
 	explicit := ""
 	if alias != lastPathComponent(targetImportPath) {
 		explicit = alias
@@ -108,6 +117,7 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 			edit.importChanges = []types.Change{*change}
 		}
 	}
+
 	return edit
 }
 
@@ -120,24 +130,31 @@ func unusedSourceImport(file *types.File, refs []*types.Reference, sourceImportP
 		if strings.Trim(imp.Path.Value, `"`) != sourceImportPath {
 			continue
 		}
+
 		name := sourceName
 		if imp.Name != nil {
 			name = imp.Name.Name
 		}
+
 		if name == "_" || name == "." {
 			continue
 		}
+
 		moved := 0
+
 		for _, ref := range refs {
 			if qualifierBefore(file.OriginalContent, ref.Offset) == name {
 				moved++
 			}
 		}
+
 		if moved > 0 && moved == countQualifierUses(file.AST, name) {
 			return imp
 		}
+
 		return nil
 	}
+
 	return nil
 }
 
@@ -147,15 +164,18 @@ func qualifierBefore(content []byte, offset int) string {
 	if offset < 2 || offset > len(content) || content[offset-1] != '.' {
 		return ""
 	}
+
 	start := offset - 1
 	for start > 0 && (isIdentChar(content[start-1])) {
 		start--
 	}
+
 	return string(content[start : offset-1])
 }
 
 func countQualifierUses(f *ast.File, name string) int {
 	n := 0
+
 	ast.Inspect(f, func(node ast.Node) bool {
 		sel, ok := node.(*ast.SelectorExpr)
 		if ok {
@@ -164,8 +184,10 @@ func countQualifierUses(f *ast.File, name string) int {
 				n++
 			}
 		}
+
 		return true
 	})
+
 	return n
 }
 
@@ -179,16 +201,19 @@ func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 
 	segments := strings.Split(targetImportPath, "/")
 	candidates := []string{targetName}
+
 	suffix := targetName
 	for i := len(segments) - 2; i >= 0; i-- {
 		suffix = sanitizeIdent(segments[i]) + suffix
 		candidates = append(candidates, suffix)
 	}
+
 	for _, c := range candidates {
 		if isValidGoIdentifier(c) && !taken[c] {
 			return c
 		}
 	}
+
 	for n := 2; ; n++ {
 		c := fmt.Sprintf("%s%d", targetName, n)
 		if !taken[c] {
@@ -199,11 +224,13 @@ func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 
 func sanitizeIdent(s string) string {
 	var b strings.Builder
-	for i := 0; i < len(s); i++ {
+
+	for i := range len(s) {
 		if isIdentChar(s[i]) {
 			b.WriteByte(s[i])
 		}
 	}
+
 	return b.String()
 }
 
@@ -214,24 +241,29 @@ func sanitizeIdent(s string) string {
 func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.ImportSpec) map[string]bool {
 	taken := make(map[string]bool)
 	dropNames := make(map[string]bool)
+
 	for _, spec := range dropped {
 		name, _ := importLocalName(spec)
 		if name != "" {
 			dropNames[name] = true
 		}
 	}
+
 	if file.AST == nil {
 		return taken
 	}
+
 	for _, imp := range file.AST.Imports {
 		if slices.Contains(dropped, imp) {
 			continue
 		}
+
 		name, _ := importLocalName(imp)
 		if name != "" {
 			taken[name] = true
 		}
 	}
+
 	pkg := findPackageForFile(ws, file.Path)
 	if pkg != nil && pkg.Symbols != nil {
 		for _, group := range []map[string]*types.Symbol{pkg.Symbols.Types, pkg.Symbols.Functions, pkg.Symbols.Variables, pkg.Symbols.Constants} {
@@ -240,6 +272,7 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 			}
 		}
 	}
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.ImportSpec:
@@ -257,15 +290,19 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 					if ok {
 						taken[id.Name] = true
 					}
+
 					return true
 				})
 			}
+
 			return false
 		case *ast.Ident:
 			taken[node.Name] = true
 		}
+
 		return true
 	})
+
 	return taken
 }
 
@@ -274,10 +311,12 @@ func replaceImportSpec(ws *types.Workspace, file *types.File, spec *ast.ImportSp
 	content := file.OriginalContent
 	start, end := lineRange(ws, content, spec.Pos())
 	old := string(content[start:end])
+
 	text := "\t" + importSpecText(alias, path) + "\n"
 	if strings.HasPrefix(strings.TrimSpace(old), "import ") {
 		text = "import " + importSpecText(alias, path) + "\n"
 	}
+
 	return types.Change{
 		File:        file.Path,
 		Start:       start,
@@ -293,6 +332,7 @@ func removeImportSpec(ws *types.Workspace, file *types.File, spec *ast.ImportSpe
 	content := file.OriginalContent
 	start, end := lineRange(ws, content, spec.Pos())
 	path := strings.Trim(spec.Path.Value, `"`)
+
 	return types.Change{
 		File:        file.Path,
 		Start:       start,
@@ -309,24 +349,29 @@ func removeImportSpecs(ws *types.Workspace, file *types.File, specs []*ast.Impor
 		return nil
 	}
 	var changes []types.Change
+
 	for _, decl := range file.AST.Decls {
 		gen, ok := decl.(*ast.GenDecl)
 		if !ok || gen.Tok != token.IMPORT {
 			continue
 		}
 		var mine []*ast.ImportSpec
+
 		for _, s := range gen.Specs {
 			spec := s.(*ast.ImportSpec)
 			if slices.Contains(specs, spec) {
 				mine = append(mine, spec)
 			}
 		}
+
 		if len(mine) < len(gen.Specs) {
 			for _, spec := range mine {
 				changes = append(changes, removeImportSpec(ws, file, spec))
 			}
+
 			continue
 		}
+
 		start, _ := lineRange(ws, file.OriginalContent, gen.Pos())
 		_, end := lineRange(ws, file.OriginalContent, gen.End()-1)
 		// Of the blank lines around the declaration, keep one.
@@ -334,10 +379,12 @@ func removeImportSpecs(ws *types.Workspace, file *types.File, specs []*ast.Impor
 		if start >= 2 && content[start-2] == '\n' && end < len(content) && content[end] == '\n' {
 			end++
 		}
+
 		paths := make([]string, len(mine))
 		for i, spec := range mine {
 			paths[i] = spec.Path.Value
 		}
+
 		changes = append(changes, types.Change{
 			File:        file.Path,
 			Start:       start,
@@ -346,5 +393,6 @@ func removeImportSpecs(ws *types.Workspace, file *types.File, specs []*ast.Impor
 			Description: fmt.Sprintf("Remove now-unused import %s from %s", strings.Join(paths, ", "), file.Path),
 		})
 	}
+
 	return changes
 }

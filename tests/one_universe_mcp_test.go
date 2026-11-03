@@ -12,6 +12,7 @@ import (
 func oneUniverseWorkspace(t *testing.T) string {
 	t.Helper()
 	const mod = "example.com/threadmcp/"
+
 	return writeInlineWorkspace(t, map[string]string{
 		"common/common.go":      "package common\n\ntype GBNR struct{ N int }\n",
 		"common/common_test.go": "package common\n\nimport \"" + mod + "x\"\n\nvar _ = x.X\n",
@@ -25,8 +26,10 @@ func oneUniverseWorkspace(t *testing.T) string {
 
 func TestRenameMethod_SecondAppliedRenameReportsNoTypeErrors(t *testing.T) {
 	dir := oneUniverseWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	args := map[string]any{"type_name": "Planner", "method_name": "First", "new_method_name": "Primary", "package_path": "example.com/threadmcp/planner", "dry_run": false}
 	first := callJSON(t, sess, "rename_method", args)
 
@@ -39,6 +42,7 @@ func TestRenameMethod_SecondAppliedRenameReportsNoTypeErrors(t *testing.T) {
 			t.Errorf("%s rename reports type_errors of a workspace that compiles: %v", name, errs)
 		}
 	}
+
 	assertFileContains(t, dir, "app/app.go", "planner.Planner{}.Primary() + planner.Planner{}.Secondary()")
 	goVets(t, dir, "")
 }

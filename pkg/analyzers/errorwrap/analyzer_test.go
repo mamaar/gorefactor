@@ -12,6 +12,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -52,6 +53,7 @@ func foo() error {
 func bar() error { return nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, errorwrap.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +63,7 @@ func bar() error { return nil }
 	if !ok {
 		t.Fatalf("Expected []*errorwrap.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
@@ -69,9 +72,11 @@ func bar() error { return nil }
 	if v.ViolationType != errorwrap.BareReturn {
 		t.Errorf("Expected violation type %q, got %q", errorwrap.BareReturn, v.ViolationType)
 	}
+
 	if v.Function != "foo" {
 		t.Errorf("Expected function 'foo', got %q", v.Function)
 	}
+
 	if v.Severity != string(errorwrap.SeverityCritical) {
 		t.Errorf("Expected severity %q, got %q", errorwrap.SeverityCritical, v.Severity)
 	}
@@ -90,6 +95,7 @@ func foo() error {
 func bar() error { return nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, errorwrap.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +105,7 @@ func bar() error { return nil }
 	if !ok {
 		t.Fatalf("Expected []*errorwrap.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
@@ -107,6 +114,7 @@ func bar() error { return nil }
 	if v.ViolationType != errorwrap.FormatVerbV {
 		t.Errorf("Expected violation type %q, got %q", errorwrap.FormatVerbV, v.ViolationType)
 	}
+
 	if v.Function != "foo" {
 		t.Errorf("Expected function 'foo', got %q", v.Function)
 	}
@@ -139,12 +147,14 @@ func bar() error { return nil }
 	if !ok {
 		t.Fatalf("Expected []*errorwrap.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations with SeverityCritical filter, got %d", len(results))
 	}
 
 	// Now use a Warning-level analyzer — should detect the NoContext violation.
 	warnAnalyzer := errorwrap.NewAnalyzer(errorwrap.WithSeverity(errorwrap.SeverityWarning))
+
 	rr2, err := analyzers.Run(ws, warnAnalyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -154,9 +164,11 @@ func bar() error { return nil }
 	if !ok {
 		t.Fatalf("Expected []*errorwrap.Result, got %T", rr2.Result)
 	}
+
 	if len(results2) != 1 {
 		t.Fatalf("Expected 1 NoContext violation with SeverityWarning, got %d", len(results2))
 	}
+
 	if results2[0].ViolationType != errorwrap.NoContext {
 		t.Errorf("Expected violation type %q, got %q", errorwrap.NoContext, results2[0].ViolationType)
 	}
@@ -164,14 +176,17 @@ func bar() error { return nil }
 
 func runResults(t *testing.T, src string, opts ...errorwrap.Option) ([]*errorwrap.Result, int) {
 	t.Helper()
+
 	rr, err := analyzers.Run(createTestWorkspace(t, src), errorwrap.NewAnalyzer(opts...), "")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	fixes := 0
 	for _, d := range rr.Diagnostics {
 		fixes += len(d.SuggestedFixes)
 	}
+
 	return rr.Result.([]*errorwrap.Result), fixes
 }
 
@@ -286,16 +301,19 @@ func bar() error { return nil }
 `
 	results, fixes := runResults(t, src, errorwrap.WithExcludedFunctions("plain", "T.method", "withLiteral"))
 	skipped := map[string]string{}
+
 	for _, r := range results {
 		if r.Skipped {
 			skipped[r.Function] = r.SkipReason
 		}
 	}
+
 	for _, name := range []string{"plain", "method", "withLiteral"} {
 		if skipped[name] != "excluded" {
 			t.Errorf("%s: skip reason %q, want excluded (all: %v)", name, skipped[name], skipped)
 		}
 	}
+
 	if len(skipped) != 3 {
 		t.Errorf("only the three excluded functions should be skipped, got %v", skipped)
 	}

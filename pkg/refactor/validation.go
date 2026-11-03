@@ -70,6 +70,7 @@ func (v *Validator) ValidatePlanWithConfig(plan *refactorTypes.RefactoringPlan, 
 	if plan.Impact == nil {
 		plan.Impact = &refactorTypes.ImpactAnalysis{}
 	}
+
 	plan.Impact.PotentialIssues = append(plan.Impact.PotentialIssues, allIssues...)
 
 	return nil
@@ -129,6 +130,7 @@ func (v *Validator) validateChanges(changes []refactorTypes.Change) []refactorTy
 				if !v.changesOverlap(change1, change2) {
 					continue
 				}
+
 				issues = append(issues, refactorTypes.Issue{
 					Type:        refactorTypes.IssueNameConflict,
 					Description: fmt.Sprintf("overlapping changes detected in file %s", fileName),
@@ -144,6 +146,7 @@ func (v *Validator) validateChanges(changes []refactorTypes.Change) []refactorTy
 		if change.Start >= 0 && change.End >= change.Start {
 			continue
 		}
+
 		issues = append(issues, refactorTypes.Issue{
 			Type:        refactorTypes.IssueCompilationError,
 			Description: fmt.Sprintf("invalid change bounds: start=%d, end=%d", change.Start, change.End),
@@ -174,6 +177,7 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 		// - Call argument changes (just expressions)
 		// - Import additions (just import path strings)
 		desc := change.Description
+
 		isFragment := strings.Contains(desc, "interface method") ||
 			strings.Contains(desc, "parameters") ||
 			strings.Contains(desc, "parameter") ||
@@ -187,10 +191,12 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 		if isFragment {
 			continue
 		}
+
 		err := v.validateGoSyntax(change.NewText)
 		if err == nil {
 			continue
 		}
+
 		issues = append(issues, refactorTypes.Issue{
 			Type:        refactorTypes.IssueCompilationError,
 			Description: fmt.Sprintf("syntax error in new text: %v", err),
@@ -243,6 +249,7 @@ func (v *Validator) validateGoSyntax(code string) error {
 
 	// Try as a statement inside a function
 	src := fmt.Sprintf("package main\nfunc main() {\n%s\n}", code)
+
 	_, err = parser.ParseFile(token.NewFileSet(), "", src, 0)
 	if err == nil {
 		return nil
@@ -250,6 +257,7 @@ func (v *Validator) validateGoSyntax(code string) error {
 
 	// Try as a complete file content (for imports, function declarations, etc.)
 	src = fmt.Sprintf("package main\n%s", code)
+
 	_, err = parser.ParseFile(token.NewFileSet(), "", src, 0)
 	if err == nil {
 		return nil
@@ -270,10 +278,12 @@ func (v *Validator) changesOverlap(change1, change2 refactorTypes.Change) bool {
 
 func (v *Validator) filterCriticalIssues(issues []refactorTypes.Issue) []refactorTypes.Issue {
 	var critical []refactorTypes.Issue
+
 	for _, issue := range issues {
 		if issue.Severity == refactorTypes.Error {
 			critical = append(critical, issue)
 		}
 	}
+
 	return critical
 }

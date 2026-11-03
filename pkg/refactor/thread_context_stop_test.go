@@ -28,10 +28,12 @@ func TestThreadContext_StopDoesNotGainAndPassesTODO(t *testing.T) {
 	plan := threadPlanStopping(t, map[string]string{"p/p.go": stopChain}, "p/p.go", "leaf",
 		stopSet(stopKey("", "mid")))
 	assertNames(t, gainingNames(plan), []string{"leaf"}, "Funcs")
+
 	got := argIn(t, plan, "mid")
 	if got != "context.TODO()" {
 		t.Errorf("stop passes %q", got)
 	}
+
 	if len(plan.Stops) != 1 {
 		t.Errorf("Stops = %d, want 1", len(plan.Stops))
 	}
@@ -52,10 +54,12 @@ func mid() {
 `}, "p/p.go", "leaf", stopSet(stopKey("", "mid")))
 	assertNames(t, gainingNames(plan), []string{"leaf"}, "Funcs")
 	assertNames(t, fakeNames(plan), nil, "Fake")
+
 	got := argIn(t, plan, "mid")
 	if got != "ctx" {
 		t.Errorf("stop passes %q", got)
 	}
+
 	if len(plan.Stops) != 1 {
 		t.Errorf("Stops = %d, want 1", len(plan.Stops))
 	}
@@ -99,6 +103,7 @@ func work() {}
 func useI(s Store) { s.Save(1) }
 `}, "p/p.go", "work", stopSet(stopKey("A", "Save")))
 	assertNames(t, gainingLabels(plan), []string{"work"}, "Funcs")
+
 	got := argIn(t, plan, "Save")
 	if got != "context.TODO()" {
 		t.Errorf("stopped method passes %q", got)
@@ -127,10 +132,12 @@ func TestThreadContext_UnreachedStopIsSilent(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{"p/p.go": stopChain + "\nfunc unrelated() {}\n"})
 	op := &ThreadContextOperation{FunctionName: "leaf", SourceFile: "p/p.go",
 		StopAt: stopSet(stopKey("", "unrelated"), stopKey("", "nonexistent"))}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(plan.SkippedSites) != 0 || len(op.plan.Stops) != 0 {
 		t.Errorf("unreached stop reported: %v", plan.SkippedSites)
 	}
@@ -140,13 +147,16 @@ func TestThreadContext_StopReportedAsSkippedSite(t *testing.T) {
 	ws := buildScopeWorkspace(t, map[string]string{"p/p.go": stopChain})
 	op := &ThreadContextOperation{FunctionName: "leaf", SourceFile: "p/p.go",
 		StopAt: stopSet(stopKey("", "mid"))}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(plan.SkippedSites) != 1 {
 		t.Fatalf("SkippedSites = %v", plan.SkippedSites)
 	}
+
 	s := plan.SkippedSites[0]
 	if !strings.HasSuffix(s.File, "p.go") || s.Line != 5 || s.Snippet != "mid" || !strings.HasPrefix(s.Reason, "stop_at:") {
 		t.Errorf("site = %+v", s)
@@ -164,10 +174,12 @@ func mid(ctx context.Context) { leaf() }
 `})
 	op := &ThreadContextOperation{FunctionName: "leaf", SourceFile: "p/p.go",
 		StopAt: stopSet(stopKey("", "mid"))}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(plan.SkippedSites) != 0 {
 		t.Errorf("SkippedSites = %v", plan.SkippedSites)
 	}

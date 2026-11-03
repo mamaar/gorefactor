@@ -153,6 +153,7 @@ func (ws *Workspace) FindFile(path string) (*File, *Package, error) {
 		pkg  *Package
 	}
 	var named []hit
+
 	for _, dir := range slices.Sorted(maps.Keys(ws.Packages)) {
 		pkg := ws.Packages[dir]
 		for _, files := range []map[string]*File{pkg.Files, pkg.TestFiles} {
@@ -163,6 +164,7 @@ func (ws *Workspace) FindFile(path string) (*File, *Package, error) {
 			}
 		}
 	}
+
 	for _, match := range exact {
 		for _, dir := range slices.Sorted(maps.Keys(ws.Packages)) {
 			pkg := ws.Packages[dir]
@@ -175,17 +177,21 @@ func (ws *Workspace) FindFile(path string) (*File, *Package, error) {
 			}
 		}
 	}
+
 	switch len(named) {
 	case 0:
 		return nil, nil, ErrFileNotFound
 	case 1:
 		return named[0].file, named[0].pkg, nil
 	}
+
 	paths := make([]string, len(named))
 	for i, h := range named {
 		paths[i] = h.file.Path
 	}
+
 	slices.Sort(paths)
+
 	return nil, nil, &RefactorError{
 		Type:    InvalidOperation,
 		Message: fmt.Sprintf("ambiguous source file %s: matches %s; pass a full path", path, strings.Join(paths, ", ")),

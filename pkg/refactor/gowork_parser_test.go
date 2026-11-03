@@ -149,6 +149,7 @@ use (
 	./moduleB
 )
 `
+
 	err := os.WriteFile(filepath.Join(tmpDir, "go.work"), []byte(goWork), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +160,7 @@ use (
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	err = os.WriteFile(filepath.Join(tmpDir, "moduleA", "go.mod"), []byte("module github.com/test/moduleA\n\ngo 1.21\n"), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -169,6 +171,7 @@ use (
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	err = os.WriteFile(filepath.Join(tmpDir, "moduleB", "go.mod"), []byte("module github.com/test/moduleB\n\ngo 1.21\n"), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -200,6 +203,7 @@ func TestDiscoverWorkspaceModules_NoGoWork(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if modules != nil {
 		t.Errorf("expected nil modules when no go.work, got %v", modules)
 	}
@@ -212,6 +216,7 @@ func TestDiscoverWorkspaceModules_MissingGoMod(t *testing.T) {
 
 use ./nomod
 `
+
 	err := os.WriteFile(filepath.Join(tmpDir, "go.work"), []byte(goWork), 0644)
 	if err != nil {
 		t.Fatal(err)

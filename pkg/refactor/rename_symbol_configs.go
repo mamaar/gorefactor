@@ -21,9 +21,11 @@ func (p *renameSymbolPlanner) planIn(v *analysis.View, linked types.SymbolKeySet
 	if err != nil {
 		return configResult{}, err
 	}
+
 	if isMethod {
 		return planRenameView(&p.viewIndexes, &renameMethodPlanner{req: req}, v, linked)
 	}
+
 	return planRenameView(&p.viewIndexes, p, v, linked)
 }
 
@@ -35,24 +37,30 @@ func (p *renameSymbolPlanner) methodRequestIn(ws *types.Workspace) (types.Rename
 	if dotted {
 		return types.RenameMethodRequest{TypeName: typeName, MethodName: method, NewMethodName: p.req.NewName, PackagePath: p.req.Package}, true, nil
 	}
+
 	op := &RenameSymbolOperation{Request: p.req}
 	targets, _ := op.findTargetSymbols(ws, quietResolver(ws))
 	methods := 0
+
 	for _, t := range targets {
 		if t.Kind == types.MethodSymbol {
 			methods++
 		}
 	}
+
 	if methods == 0 {
 		return types.RenameMethodRequest{}, false, nil
 	}
+
 	if len(targets) != 1 {
 		return types.RenameMethodRequest{}, false, fmt.Errorf("rename operation validation failed: %s names a method and %d other symbols; name the method as Type.Method", p.req.SymbolName, len(targets)-1)
 	}
+
 	key, ok := symbolKeyOf(targets[0])
 	if !ok {
 		return types.RenameMethodRequest{}, false, fmt.Errorf("rename operation validation failed: cannot resolve the receiver of method %s", p.req.SymbolName)
 	}
+
 	return types.RenameMethodRequest{TypeName: key.Recv, MethodName: key.Name, NewMethodName: p.req.NewName, PackagePath: key.PkgPath}, true, nil
 }
 
@@ -63,21 +71,26 @@ func (p *renameSymbolPlanner) oldName() string { return p.req.SymbolName }
 func (p *renameSymbolPlanner) planWorkspace(ws *types.Workspace, _ *analysis.ReferenceIndex, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
 	op := &RenameSymbolOperation{Request: p.req}
 	resolver := quietResolver(ws)
+
 	targets, notFound := op.findTargetSymbols(ws, resolver)
 	if notFound != nil && !isSymbolNotFound(notFound) {
 		return nil, nil, notFound
 	}
+
 	targets = withLinkedSymbols(ws, targets, linked)
 	if len(targets) == 0 {
 		return nil, nil, fmt.Errorf("rename operation validation failed: %w", notFound)
 	}
+
 	err := op.validateTargets(ws, targets)
 	if err != nil {
 		return nil, nil, fmt.Errorf("rename operation validation failed: %w", err)
 	}
+
 	plan, err := op.planSymbols(ws, resolver, targets)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to generate rename plan: %w", err)
 	}
+
 	return keysOf(targets), plan, nil
 }

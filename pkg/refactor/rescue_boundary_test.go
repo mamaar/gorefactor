@@ -19,22 +19,28 @@ func loadRescuedInterface(t *testing.T) (*DefaultEngine, string) {
 // loadRescuedInterfaceWith is loadRescuedInterface with variant applied to every file.
 func loadRescuedInterfaceWith(t *testing.T, variant *strings.Replacer) (*DefaultEngine, string) {
 	t.Helper()
+
 	files := rescuedInterfaceFiles()
+
 	files["app/fresh.go"] = "package app\n\nimport \"example.com/threadtest/common\"\n\nfunc Fresh() common.Opts { return common.Opts{Refresh: true} }\n"
 	for rel, src := range files {
 		files[rel] = variant.Replace(src)
 	}
+
 	eng, dir := loadConfigsEngine(t, files)
 	v := eng.WorkspaceSet().Primary()
 	v.Parser.EnsureTypeChecked(v.Workspace, v.Workspace.Packages[dir+"/common"])
+
 	return eng, dir
 }
 
 func applyPlan(t *testing.T, eng *DefaultEngine, plan *types.RefactoringPlan, err error) {
 	t.Helper()
+
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
@@ -75,6 +81,7 @@ func TestSafeDelete_ReferencesInImportersOfProductionOnlyCopyBlock(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(blockers) != 0 {
 		t.Fatalf("Direct has no references, got %+v", blockers)
 	}
@@ -84,12 +91,16 @@ func TestSafeDelete_ReferencesInImportersOfProductionOnlyCopyBlock(t *testing.T)
 		t.Fatal(err)
 	}
 	var files []string
+
 	for _, b := range blockers {
 		rel, _ := filepath.Rel(dir, b.File)
 		files = append(files, filepath.ToSlash(rel))
 	}
+
 	slices.Sort(files)
+
 	want := []string{"app/app.go", "common/common.go", "common/common_test.go", "helper/helper_test.go"}
+
 	got := slices.Compact(files)
 	if !slices.Equal(got, want) {
 		t.Errorf("blocking files = %v, want %v", got, want)
@@ -136,6 +147,7 @@ func TestChangeSignature_RefusesPackageLocalTypeWrittenUnqualifiedIntoImplementa
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err == nil || !strings.Contains(err.Error(), "undefined: Opts") {
 		t.Errorf("ExecutePlan error = %v, want the type check's undefined: Opts", err)
 	}

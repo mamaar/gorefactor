@@ -16,10 +16,12 @@ import (
 func findCallSiteIdentPos(astFile *ast.File, name string, nth int) token.Pos {
 	count := 0
 	var result token.Pos
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		if result.IsValid() {
 			return false
 		}
+
 		sel, ok := n.(*ast.SelectorExpr)
 		if ok && sel.Sel.Name == name {
 			count++
@@ -28,8 +30,10 @@ func findCallSiteIdentPos(astFile *ast.File, name string, nth int) token.Pos {
 				return false
 			}
 		}
+
 		return true
 	})
+
 	return result
 }
 
@@ -47,6 +51,7 @@ func (s *Server) Handle(k int) {
 func (s *Server) Process(k int) {}
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "server.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -97,6 +102,7 @@ func (s *Server) Process(k int) {}
 	if len(changes) == 0 {
 		t.Fatal("expected at least 1 change, got 0")
 	}
+
 	if len(changes) != 1 {
 		t.Fatalf("expected exactly 1 change, got %d", len(changes))
 	}
@@ -141,6 +147,7 @@ func (s *Server) Process(k int, msg string) (string, error) {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "server.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -229,6 +236,7 @@ func (s *Server) Handle() {
 func (s *Server) Execute(name string, fn func(int) bool) {}
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "server.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)

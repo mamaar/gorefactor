@@ -61,10 +61,12 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		created[c.pkg] = true
 		return prog.CreatePackage(c.pkg, c.files, c.info, importable)
 	}
+
 	testPkgs, err = ua.createSSAPackages(entry, includeTests, sc, ssaPkgs, create, testPkgs)
 	if err != nil {
 		return nil, fmt.Errorf("build liveness: %w", err)
 	}
+
 	external := createImports(prog, created)
 	prog.Build()
 
@@ -72,26 +74,33 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	if mainFn == nil {
 		return nil, fmt.Errorf("entry package %s has no func main", entry.Path)
 	}
+
 	roots := entryRoots(mainFn, ua, entry, includeTests, ssaPkgs, testPkgs)
 
 	names := externalMethodNames(external)
+
 	rootSet := make(map[*ssa.Function]bool)
 	for _, r := range roots {
 		rootSet[r] = true
 	}
+
 	scans := make(scanCache)
 	takenOnly := make(map[*ssa.Function]bool) // roots added because a function takes them as a value
+
 	for {
 		res := rta.Analyze(roots, true)
 		live = newLiveness(res.CallGraph, roots, takenOnly, scans)
+
 		added, addedTaken := discoverRoots(rootSet, live, scans, prog, names)
 		if len(added)+len(addedTaken) == 0 {
 			live.bodiless = sc.bodiless
 			return live, nil
 		}
+
 		for _, fn := range addedTaken {
 			takenOnly[fn] = true
 		}
+
 		added = append(added, addedTaken...)
 		slices.SortFunc(added, func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
 		roots = append(roots, added...)
@@ -107,14 +116,17 @@ func discoverRoots(rootSet map[*ssa.Function]bool, live *liveness, scans scanCac
 		}
 	}
 	var converted typeutil.Map
+
 	for n := range live.pred {
 		if n.Func == nil {
 			continue
 		}
+
 		for _, T := range scans.of(n.Func).converted {
 			addReflected(&converted, T)
 		}
 	}
+
 	for _, T := range converted.Keys() {
 		mset := prog.MethodSets.MethodSet(T)
 		for method := range mset.Methods() {
@@ -123,14 +135,17 @@ func discoverRoots(rootSet map[*ssa.Function]bool, live *liveness, scans scanCac
 			}
 		}
 	}
+
 	for n := range live.pred {
 		if n.Func == nil {
 			continue
 		}
+
 		for _, fn := range scans.of(n.Func).taken {
 			addRoot(fn, &addedTaken)
 		}
 	}
+
 	return added, addedTaken
 }
 
@@ -140,25 +155,32 @@ func (ua *UnusedAnalyzer) createSSAPackages(entry *types.Package, includeTests b
 		if err != nil {
 			return testPkgs, fmt.Errorf("build liveness: %w", err)
 		}
+
 		if pkg == entry && c.bodiless != "" {
 			return testPkgs, &EntryBodilessError{Package: entry.ImportPath, Reason: c.bodiless}
 		}
+
 		ssaPkgs[pkg] = create(c, true)
+
 		if !includeTests {
 			continue
 		}
+
 		t := sc.withTests(pkg)
 		if t != nil {
 			testPkgs = append(testPkgs, create(t, false))
 		}
+
 		x, rebuilt := sc.externalTests(pkg)
 		if x != nil {
 			testPkgs = append(testPkgs, create(x, false))
 		}
+
 		for _, r := range rebuilt {
 			create(r, false)
 		}
 	}
+
 	return testPkgs, nil
 }
 
@@ -167,11 +189,14 @@ func entryRoots(mainFn *ssa.Function, ua *UnusedAnalyzer, entry *types.Package, 
 	for pkg := range ua.importClosure(entry, includeTests) {
 		roots = append(roots, ssaPkgs[pkg].Func("init"))
 	}
+
 	for _, sp := range testPkgs {
 		roots = append(roots, sp.Func("init"))
 		roots = append(roots, testFuncs(sp)...)
 	}
+
 	slices.SortFunc(roots[1:], func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
+
 	return roots
 }
 
@@ -180,11 +205,13 @@ func entryRoots(mainFn *ssa.Function, ua *UnusedAnalyzer, entry *types.Package, 
 func createImports(prog *ssa.Program, created map[*gotypes.Package]bool) []*gotypes.Package {
 	var external []*gotypes.Package
 	var walk func(p *gotypes.Package)
+
 	walk = func(p *gotypes.Package) {
 		for _, imp := range p.Imports() {
 			if created[imp] {
 				continue
 			}
+
 			created[imp] = true
 			prog.CreatePackage(imp, nil, nil, prog.ImportedPackage(imp.Path()) == nil)
 			external = append(external, imp)
@@ -194,6 +221,7 @@ func createImports(prog *ssa.Program, created map[*gotypes.Package]bool) []*goty
 	for _, sp := range prog.AllPackages() {
 		walk(sp.Pkg)
 	}
+
 	return external
 }
 
@@ -202,12 +230,14 @@ func createImports(prog *ssa.Program, created map[*gotypes.Package]bool) []*goty
 // workspace has no SSA bodies, so it may call any method by such a name.
 func externalMethodNames(external []*gotypes.Package) map[string]bool {
 	names := map[string]bool{"Error": true, "Is": true, "As": true, "Unwrap": true}
+
 	for _, p := range external {
 		for _, name := range p.Scope().Names() {
 			tn, ok := p.Scope().Lookup(name).(*gotypes.TypeName)
 			if !ok {
 				continue
 			}
+
 			if iface, ok := tn.Type().Underlying().(*gotypes.Interface); ok {
 				for m := range iface.Methods() {
 					names[m.Name()] = true
@@ -215,6 +245,7 @@ func externalMethodNames(external []*gotypes.Package) map[string]bool {
 			}
 		}
 	}
+
 	return names
 }
 
@@ -226,14 +257,18 @@ func addReflected(set *typeutil.Map, t gotypes.Type) {
 	if set.At(t) != nil {
 		return
 	}
+
 	set.Set(t, true)
+
 	switch u := t.Underlying().(type) {
 	case *gotypes.Struct:
 		for f := range u.Fields() {
 			if !f.Exported() && !f.Embedded() {
 				continue
 			}
+
 			addReflected(set, f.Type())
+
 			_, isIface := f.Type().Underlying().(*gotypes.Interface)
 			if !isIface {
 				addReflected(set, gotypes.NewPointer(f.Type()))
@@ -255,11 +290,13 @@ func addReflected(set *typeutil.Map, t gotypes.Type) {
 // declared in test files.
 func testFuncs(sp *ssa.Package) []*ssa.Function {
 	var fns []*ssa.Function
+
 	for _, m := range sp.Members {
 		fn, ok := m.(*ssa.Function)
 		if !ok || !strings.HasSuffix(sp.Prog.Fset.Position(fn.Pos()).Filename, "_test.go") {
 			continue
 		}
+
 		for _, prefix := range []string{"Test", "Benchmark", "Fuzz", "Example"} {
 			if strings.HasPrefix(fn.Name(), prefix) {
 				fns = append(fns, fn)
@@ -267,6 +304,7 @@ func testFuncs(sp *ssa.Package) []*ssa.Function {
 			}
 		}
 	}
+
 	return fns
 }
 
@@ -275,6 +313,7 @@ func testFuncs(sp *ssa.Package) []*ssa.Function {
 func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.Function]bool, scans scanCache) *liveness {
 	l := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), graph: cg, scans: scans}
 	var queue []*callgraph.Node
+
 	for _, r := range roots {
 		n := cg.CreateNode(r)
 		if !takenOnly[r] && !slices.Contains(queue, n) {
@@ -282,7 +321,9 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.
 			queue = append(queue, n)
 		}
 	}
+
 	l.search(queue)
+
 	return l
 }
 
@@ -299,11 +340,14 @@ func (l *liveness) within(key types.SymbolKey) *liveness {
 		if w == nil {
 			return nil
 		}
+
 		grew := false
+
 		for n := range w.pred {
 			if n.Func == nil {
 				continue
 			}
+
 			for _, fn := range l.scans.of(n.Func).taken {
 				if !taken[fn] {
 					taken[fn] = true
@@ -311,6 +355,7 @@ func (l *liveness) within(key types.SymbolKey) *liveness {
 				}
 			}
 		}
+
 		if !grew {
 			return w
 		}
@@ -320,10 +365,12 @@ func (l *liveness) within(key types.SymbolKey) *liveness {
 func (l *liveness) searchWithin(key types.SymbolKey, taken map[*ssa.Function]bool) *liveness {
 	w := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), bodiless: l.bodiless, graph: l.graph, scans: l.scans, takenHere: taken}
 	var queue []*callgraph.Node
+
 	for n := range l.pred {
 		if n.Func == nil || n.Func.Parent() != nil || n.Func.Synthetic != "" {
 			continue
 		}
+
 		fn, ok := n.Func.Object().(*gotypes.Func)
 		if ok {
 			k, ok := types.SymbolKeyOf(fn)
@@ -333,10 +380,13 @@ func (l *liveness) searchWithin(key types.SymbolKey, taken map[*ssa.Function]boo
 			}
 		}
 	}
+
 	if len(queue) == 0 {
 		return nil
 	}
+
 	w.search(queue)
+
 	return w
 }
 
@@ -345,7 +395,9 @@ func isFuncValueCall(e *callgraph.Edge) bool {
 	if e.Site == nil || e.Callee.Func == nil {
 		return false
 	}
+
 	c := e.Site.Common()
+
 	return !c.IsInvoke() && c.StaticCallee() == nil
 }
 
@@ -354,22 +406,28 @@ func isFuncValueCall(e *callgraph.Edge) bool {
 func (l *liveness) search(queue []*callgraph.Node) {
 	cg, scans := l.graph, l.scans
 	seenDecl := make(map[token.Pos]bool)
+
 	for len(queue) > 0 {
 		n := queue[0]
 		queue = queue[1:]
+
 		l.index(n, seenDecl)
+
 		next := make([]*callgraph.Node, 0, len(n.Out))
 		for _, e := range n.Out {
 			if l.takenHere != nil && isFuncValueCall(e) && !l.takenHere[e.Callee.Func] && !l.takenHere[e.Callee.Func.Origin()] {
 				continue
 			}
+
 			next = append(next, e.Callee)
 		}
+
 		if n.Func != nil {
 			for _, fn := range scans.of(n.Func).taken {
 				next = append(next, cg.CreateNode(fn))
 			}
 		}
+
 		for _, c := range next {
 			_, seen := l.pred[c]
 			if !seen {
@@ -378,6 +436,7 @@ func (l *liveness) search(queue []*callgraph.Node) {
 			}
 		}
 	}
+
 	slices.SortFunc(l.decls, func(a, b liveDecl) int { return int(a.pos - b.pos) })
 }
 
@@ -395,17 +454,21 @@ func (c scanCache) of(fn *ssa.Function) *funcScan {
 	if sc != nil {
 		return sc
 	}
+
 	sc = &funcScan{}
 	c[fn] = sc
 	var ops []*ssa.Value
+
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
 			mi, ok := instr.(*ssa.MakeInterface)
 			if ok {
 				sc.converted = append(sc.converted, mi.X.Type())
 			}
+
 			ops = instr.Operands(ops[:0])
 			call, _ := instr.(ssa.CallInstruction)
+
 			for _, op := range ops {
 				f, ok := (*op).(*ssa.Function)
 				if ok && (call == nil || op != &call.Common().Value) {
@@ -414,6 +477,7 @@ func (c scanCache) of(fn *ssa.Function) *funcScan {
 			}
 		}
 	}
+
 	return sc
 }
 
@@ -423,13 +487,16 @@ func (l *liveness) index(n *callgraph.Node, seen map[token.Pos]bool) {
 	if n.Func == nil {
 		return
 	}
+
 	top := topFunc(n.Func)
 	if top.Synthetic == "package initializer" && top.Pkg != nil {
 		if l.inits[top.Pkg.Pkg.Path()] == nil {
 			l.inits[top.Pkg.Pkg.Path()] = n
 		}
+
 		return
 	}
+
 	decl, ok := top.Syntax().(*ast.FuncDecl)
 	if ok && !seen[decl.Pos()] {
 		seen[decl.Pos()] = true
@@ -445,9 +512,11 @@ func topFunc(fn *ssa.Function) *ssa.Function {
 		if o != nil {
 			fn = o
 		}
+
 		if fn.Parent() == nil {
 			return fn
 		}
+
 		fn = fn.Parent()
 	}
 }
@@ -457,27 +526,33 @@ func topFunc(fn *ssa.Function) *ssa.Function {
 // initializer is reachable when its package initializer is.
 func (l *liveness) pathTo(owner *usageNode, pos token.Pos) []string {
 	var node *callgraph.Node
+
 	i, found := slices.BinarySearchFunc(l.decls, pos, func(d liveDecl, p token.Pos) int { return int(d.pos - p) })
 	if !found {
 		i--
 	}
+
 	switch {
 	case i >= 0 && pos < l.decls[i].end:
 		node = l.decls[i].node
 	case isVarOwner(owner):
 		node = l.inits[owner.pkg.ImportPath]
 	}
+
 	if node == nil {
 		return nil
 	}
 	var path []string
+
 	for ; node != nil; node = l.pred[node] {
 		label := declLabel(node.Func)
 		if label != "" && (len(path) == 0 || path[len(path)-1] != label) {
 			path = append(path, label)
 		}
 	}
+
 	slices.Reverse(path)
+
 	return path
 }
 
@@ -487,9 +562,11 @@ func isVarOwner(n *usageNode) bool {
 	if n.pkg == nil {
 		return false
 	}
+
 	if n.symbol == nil {
 		return n.name != "init" && n.name != "_"
 	}
+
 	return n.symbol.Kind == types.VariableSymbol
 }
 
@@ -499,24 +576,29 @@ func declLabel(fn *ssa.Function) string {
 	if fn == nil {
 		return ""
 	}
+
 	top := topFunc(fn)
 	if top.Pkg == nil {
 		return ""
 	}
+
 	pkg := top.Pkg.Pkg.Name()
 	if top.Synthetic == "package initializer" {
 		return pkg + ".init"
 	}
+
 	decl, ok := top.Syntax().(*ast.FuncDecl)
 	if !ok {
 		return ""
 	}
+
 	if decl.Recv != nil && len(decl.Recv.List) == 1 {
 		recv := recvTypeName(decl.Recv.List[0].Type)
 		if recv != "" {
 			return pkg + "." + recv + "." + decl.Name.Name
 		}
 	}
+
 	return pkg + "." + decl.Name.Name
 }
 

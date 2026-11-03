@@ -51,6 +51,7 @@ func NewSourceTree(fset *token.FileSet) *SourceTree {
 func (t *SourceTree) Dir(dir string) []*SourceFile {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+
 	return t.byDir[absDir(dir)]
 }
 
@@ -58,6 +59,7 @@ func (t *SourceTree) Dir(dir string) []*SourceFile {
 func (t *SourceTree) File(path string) *SourceFile {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+
 	return t.byPath[absDir(path)]
 }
 
@@ -65,18 +67,23 @@ func (t *SourceTree) File(path string) *SourceFile {
 func (t *SourceTree) Dirs() []string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+
 	dirs := make([]string, 0, len(t.byDir))
 	for dir := range t.byDir {
 		dirs = append(dirs, dir)
 	}
+
 	slices.Sort(dirs)
+
 	return dirs
 }
 
 func (t *SourceTree) loaded(dir string) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+
 	_, ok := t.byDir[dir]
+
 	return ok
 }
 
@@ -87,29 +94,35 @@ func (t *SourceTree) AddDir(dir string) error {
 	if t.loaded(dir) {
 		return nil
 	}
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return fmt.Errorf("add dir: %w", err)
 	}
 
 	var files []*SourceFile
+
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
 			continue
 		}
+
 		files = append(files, t.readFile(dir, entry.Name()))
 	}
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	_, ok := t.byDir[dir]
 	if ok {
 		return nil
 	}
+
 	t.byDir[dir] = files
 	for _, f := range files {
 		t.byPath[f.Path] = f
 	}
+
 	return nil
 }
 
@@ -121,14 +134,18 @@ func (t *SourceTree) Replace(path string) (*SourceFile, error) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	files := slices.Clone(t.byDir[fresh.Dir])
+
 	i, ok := slices.BinarySearchFunc(files, name, compareFileName)
 	if !ok {
 		return nil, fmt.Errorf("source file not recorded: %s", path)
 	}
+
 	files[i] = fresh
 	t.byDir[fresh.Dir] = files
 	t.byPath[path] = fresh
+
 	return fresh, nil
 }
 
@@ -141,16 +158,20 @@ func (t *SourceTree) Add(path string) (*SourceFile, error) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	files, loaded := t.byDir[fresh.Dir]
 	if !loaded {
 		return nil, fmt.Errorf("directory not loaded: %s", fresh.Dir)
 	}
+
 	i, found := slices.BinarySearchFunc(files, name, compareFileName)
 	if found {
 		return nil, fmt.Errorf("source file already recorded: %s", path)
 	}
+
 	t.byDir[fresh.Dir] = slices.Insert(slices.Clone(files), i, fresh)
 	t.byPath[path] = fresh
+
 	return fresh, nil
 }
 
@@ -160,16 +181,20 @@ func (t *SourceTree) Remove(path string) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
+
 	f := t.byPath[path]
 	if f == nil {
 		return
 	}
+
 	delete(t.byPath, path)
 	files := slices.Clone(t.byDir[f.Dir])
+
 	i, ok := slices.BinarySearchFunc(files, f.Name, compareFileName)
 	if ok {
 		files = slices.Delete(files, i, i+1)
 	}
+
 	t.byDir[f.Dir] = files
 }
 
@@ -177,12 +202,15 @@ func compareFileName(f *SourceFile, name string) int { return strings.Compare(f.
 
 func (t *SourceTree) readFile(dir, name string) *SourceFile {
 	f := &SourceFile{Path: filepath.Join(dir, name), Dir: dir, Name: name}
+
 	f.Content, f.Err = os.ReadFile(f.Path)
 	if f.Err != nil {
 		return f
 	}
+
 	f.AST, f.Err = parser.ParseFile(t.fset, f.Path, f.Content, parser.ParseComments)
 	f.Generated = f.AST != nil && ast.IsGenerated(f.AST)
+
 	return f
 }
 
@@ -190,6 +218,7 @@ func (t *SourceTree) readFile(dir, name string) *SourceFile {
 // directory it finds in parallel.
 func (t *SourceTree) Load(root string) error {
 	w := &treeWalker{root: root}
+
 	err := filepath.WalkDir(root, w.visit)
 	if err != nil {
 		return fmt.Errorf("load: %w", err)
@@ -199,13 +228,16 @@ func (t *SourceTree) Load(root string) error {
 	for _, dir := range w.dirs {
 		l.dirs <- dir
 	}
+
 	close(l.dirs)
 
 	var wg sync.WaitGroup
 	for range workerCount(len(w.dirs)) {
 		wg.Go(l.work)
 	}
+
 	wg.Wait()
+
 	return l.err
 }
 
@@ -218,13 +250,17 @@ func (w *treeWalker) visit(path string, d fs.DirEntry, err error) error {
 	if err != nil {
 		return err
 	}
+
 	if !d.IsDir() {
 		return nil
 	}
+
 	if InSkippedDir(w.root, path) {
 		return filepath.SkipDir
 	}
+
 	w.dirs = append(w.dirs, path)
+
 	return nil
 }
 
@@ -236,14 +272,17 @@ func InSkippedDir(root, dir string) bool {
 	if err != nil || rel == "." {
 		return false
 	}
-	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+
+	for name := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		if name == ".." {
 			return false
 		}
+
 		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "vendor" || name == "testdata" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -261,6 +300,7 @@ func (l *treeLoader) work() {
 		if err == nil {
 			continue
 		}
+
 		l.mu.Lock()
 		if l.err == nil {
 			l.err = fmt.Errorf("load %s: %w", dir, err)
@@ -274,6 +314,7 @@ func absDir(path string) string {
 	if err == nil {
 		return abs
 	}
+
 	return filepath.Clean(path)
 }
 
@@ -282,5 +323,6 @@ func workerCount(jobs int) int {
 	if n < jobs {
 		return n
 	}
+
 	return jobs
 }

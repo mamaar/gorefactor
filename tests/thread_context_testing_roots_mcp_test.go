@@ -18,12 +18,15 @@ func threadVetted(t *testing.T, body string) string {
 		"p/lib.go":    threadSeedLib,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\n" + body + "\n",
 	})
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	callJSON(t, sess, "add_context_parameter", map[string]any{
 		"function_name": "Seed", "source_file": "p/lib.go", "thread": true,
 	})
 	goVets(t, dir, "")
+
 	return fileText(t, dir, "p/x_test.go")
 }
 
@@ -97,6 +100,7 @@ func TestAddContextParameter_ThreadTestingRootsVetClean(t *testing.T) {
 					t.Errorf("missing %q:\n%s", w, got)
 				}
 			}
+
 			for _, w := range tc.notWant {
 				if strings.Contains(got, w) {
 					t.Errorf("unexpected %q:\n%s", w, got)

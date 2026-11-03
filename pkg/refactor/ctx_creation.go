@@ -31,6 +31,7 @@ func RemoveInternalCtxCreation(ws *pkgtypes.Workspace, sourceFilePath string, fu
 	var funcDecl *ast.FuncDecl
 	targetName := funcName
 	var receiverType string
+
 	before, after, ok := strings.Cut(funcName, ".")
 	if ok {
 		receiverType = before
@@ -42,6 +43,7 @@ func RemoveInternalCtxCreation(ws *pkgtypes.Workspace, sourceFilePath string, fu
 		if !ok {
 			return true
 		}
+
 		if fd.Name == nil || fd.Name.Name != targetName {
 			return true
 		}
@@ -50,13 +52,17 @@ func RemoveInternalCtxCreation(ws *pkgtypes.Workspace, sourceFilePath string, fu
 			if fd.Recv == nil || len(fd.Recv.List) == 0 {
 				return true
 			}
+
 			if !analysis.MatchesReceiverType(fd.Recv.List[0].Type, receiverType) {
 				return true
 			}
 		}
+
 		funcDecl = fd
+
 		return false
 	})
+
 	if funcDecl == nil || funcDecl.Body == nil {
 		return nil
 	}
@@ -75,6 +81,7 @@ func RemoveInternalCtxCreation(ws *pkgtypes.Workspace, sourceFilePath string, fu
 		if assignStmt.Tok != token.DEFINE {
 			continue
 		}
+
 		if len(assignStmt.Lhs) != 1 || len(assignStmt.Rhs) != 1 {
 			continue
 		}
@@ -112,6 +119,7 @@ func ctxAssignDeletionChange(filePath string, content []byte, start, end int, la
 	if end < len(content) && content[end] == '\n' {
 		end++
 	}
+
 	return pkgtypes.Change{
 		File:        filePath,
 		Start:       start,
@@ -128,16 +136,20 @@ func isRootContextCall(expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
+
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
+
 	pkg, ok := sel.X.(*ast.Ident)
 	if !ok {
 		return false
 	}
+
 	if pkg.Name != "context" {
 		return false
 	}
+
 	return sel.Sel.Name == "Background" || sel.Sel.Name == "TODO"
 }

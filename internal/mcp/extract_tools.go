@@ -65,6 +65,7 @@ func resolveFile(ws *types.Workspace, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
+
 	return filepath.Join(ws.RootPath, path)
 }
 
@@ -80,6 +81,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().ExtractMethod(ws, types.ExtractMethodRequest{
 			SourceFile:    resolveFile(ws, in.SourceFile),
 			StartLine:     in.StartLine,
@@ -96,6 +98,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -110,6 +113,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().ExtractFunction(ws, types.ExtractFunctionRequest{
 			SourceFile:      resolveFile(ws, in.SourceFile),
 			StartLine:       in.StartLine,
@@ -120,10 +124,12 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "extract function "+in.NewFunctionName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -138,10 +144,12 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		tgt := in.TargetPackage
 		if tgt != "" {
 			tgt = types.ResolvePackagePath(ws, tgt)
 		}
+
 		plan, err := state.GetEngine().ExtractInterface(ws, types.ExtractInterfaceRequest{
 			SourceStruct:  in.SourceStruct,
 			InterfaceName: in.InterfaceName,
@@ -152,10 +160,12 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "extract interface "+in.InterfaceName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -170,6 +180,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().ExtractVariable(ws, types.ExtractVariableRequest{
 			SourceFile:   in.SourceFile,
 			StartLine:    in.StartLine,
@@ -181,10 +192,12 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "extract variable "+in.VariableName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -199,6 +212,7 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().ExtractConstant(ws, types.ExtractConstantRequest{
 			SourceFile:   resolveFile(ws, in.SourceFile),
 			Line:         in.Line,
@@ -209,10 +223,12 @@ func registerExtractTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "extract constant "+in.ConstantName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }

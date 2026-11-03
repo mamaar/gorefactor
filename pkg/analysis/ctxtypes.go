@@ -13,20 +13,24 @@ func namedOf(t gotypes.Type) (named *gotypes.Named, pkgPath, name string, ok boo
 	if t == nil {
 		return nil, "", "", false
 	}
+
 	named, ok = gotypes.Unalias(t).(*gotypes.Named)
 	if !ok {
 		return nil, "", "", false
 	}
+
 	obj := named.Obj()
 	if obj == nil {
 		return named, "", "", false
 	}
+
 	pkg := obj.Pkg()
 	if pkg == nil {
 		// Universe scope (error, any, comparable, ...) has no package;
 		// treat as "does not match any concrete package type".
 		return named, "", obj.Name(), false
 	}
+
 	return named, pkg.Path(), obj.Name(), true
 }
 
@@ -38,6 +42,7 @@ func isNamed(t gotypes.Type, wantPkgPath, wantName string) bool {
 	if !ok {
 		return false
 	}
+
 	return pkgPath == wantPkgPath && name == wantName
 }
 
@@ -47,10 +52,12 @@ func isPointerToNamed(t gotypes.Type, wantPkgPath, wantName string) bool {
 	if t == nil {
 		return false
 	}
+
 	ptr, ok := gotypes.Unalias(t).(*gotypes.Pointer)
 	if !ok {
 		return false
 	}
+
 	return isNamed(ptr.Elem(), wantPkgPath, wantName)
 }
 

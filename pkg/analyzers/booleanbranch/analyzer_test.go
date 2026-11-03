@@ -15,6 +15,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -58,6 +59,7 @@ func doA() {}
 func doB() {}
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, booleanbranch.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +69,7 @@ func doB() {}
 	if !ok {
 		t.Fatalf("Expected []*booleanbranch.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
@@ -75,9 +78,11 @@ func doB() {}
 	if v.Function != "foo" {
 		t.Errorf("Expected function 'foo', got %q", v.Function)
 	}
+
 	if v.BranchCount < 2 {
 		t.Errorf("Expected BranchCount >= 2, got %d", v.BranchCount)
 	}
+
 	if v.SourceVariable != "x" {
 		t.Errorf("Expected SourceVariable 'x', got %q", v.SourceVariable)
 	}
@@ -98,6 +103,7 @@ func foo(x string) {
 func doA() {}
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, booleanbranch.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +113,7 @@ func doA() {}
 	if !ok {
 		t.Fatalf("Expected []*booleanbranch.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations for single boolean branch, got %d", len(results))
 	}
@@ -136,6 +143,7 @@ func doB() {}
 func doC() {}
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, booleanbranch.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -145,9 +153,11 @@ func doC() {}
 	if !ok {
 		t.Fatalf("Expected []*booleanbranch.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation (only the 'x' group), got %d", len(results))
 	}
+
 	if results[0].SourceVariable != "x" {
 		t.Errorf("Expected SourceVariable 'x', got %q", results[0].SourceVariable)
 	}
@@ -175,34 +185,42 @@ func parse(matches []string) bool {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, booleanbranch.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 	if len(changes) != 3 {
 		t.Fatalf("expected one removal and two switch replacements, got %d", len(changes))
 	}
 
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Start > changes[j].Start })
+
 	fixed := src
 	for _, change := range changes {
 		fixed = fixed[:change.Start] + change.NewText + fixed[change.End:]
 	}
+
 	formatted, err := format.Source([]byte(fixed))
 	if err != nil {
 		t.Fatalf("fix does not produce valid Go: %v\n%s", err, fixed)
 	}
+
 	got := string(formatted)
 	if strings.Contains(got, "isRepeated :=") {
 		t.Errorf("branch-only boolean was not removed:\n%s", got)
 	}
+
 	if !strings.Contains(got, `hasPresence := matches[1] == "optional"`) {
 		t.Errorf("boolean used as data should remain:\n%s", got)
 	}
+
 	if strings.Count(got, "switch matches[1]") != 2 {
 		t.Errorf("expected both independent branches to become switches:\n%s", got)
 	}
+
 	if !strings.Contains(got, "\t\t// repeated values use a collection shape") {
 		t.Errorf("intervening comment was not preserved:\n%s", got)
 	}

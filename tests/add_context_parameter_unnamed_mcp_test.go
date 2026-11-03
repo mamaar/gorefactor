@@ -15,6 +15,7 @@ func TestAddContextParameter_Thread_UnnamedParametersOfInterfaceImplementation(t
 			"func leaf(s string) (int, error) { return 0, nil }\n\ntype real struct{}\n\n" +
 			"func (real) Find(s string) (int, error) { return leaf(s) }\n\nfunc Use(s Searcher) { s.Find(\"x\") }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

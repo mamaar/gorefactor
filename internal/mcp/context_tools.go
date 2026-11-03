@@ -71,6 +71,7 @@ Set thread: true to thread a real context.Context transitively through every cal
 		state.RLock()
 		plan, desc, err := planAddContextParameter(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -79,6 +80,7 @@ Set thread: true to thread a real context.Context transitively through every cal
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }
@@ -90,6 +92,7 @@ func planAddContextParameter(state *MCPServer, in AddContextParameterInput) (*pk
 	if err != nil {
 		return nil, "", err
 	}
+
 	sourceFile := resolveFile(ws, in.SourceFile)
 	if in.Thread {
 		plan, err := state.GetEngine().ThreadContextAcrossConfigs(pkgtypes.ThreadContextRequest{
@@ -100,13 +103,16 @@ func planAddContextParameter(state *MCPServer, in AddContextParameterInput) (*pk
 			CallSitesOf:    in.CallSitesOf,
 			WithinFunction: in.Within,
 		})
+
 		return plan, fmt.Sprintf("thread context through: %s", cmp.Or(in.FunctionName, "call sites of "+strings.Join(in.CallSitesOf, ", "))), err
 	}
+
 	plan, err := state.GetEngine().AddContextParameterAcrossConfigs(pkgtypes.AddContextParameterRequest{
 		FunctionName: in.FunctionName,
 		SourceFile:   sourceFile,
 		DefaultValue: in.DefaultValue,
 		Propagate:    in.Propagate,
 	})
+
 	return plan, fmt.Sprintf("add context parameter: %s", in.FunctionName), err
 }

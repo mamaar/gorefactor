@@ -58,12 +58,15 @@ func (w *Watcher) addDirs() error {
 		if err != nil {
 			return fmt.Errorf("add dirs: %w", err)
 		}
+
 		if !d.IsDir() {
 			return nil
 		}
+
 		if analysis.InSkippedDir(w.rootPath, path) {
 			return filepath.SkipDir
 		}
+
 		return w.fsw.Add(path)
 	})
 }
@@ -86,8 +89,10 @@ func (w *Watcher) Run(ctx context.Context, out chan<- []ChangeEvent) error {
 			if !ok {
 				return nil
 			}
+
 			if w.accept(ev) {
 				pending[ev.Name] = ev.Op
+
 				timer.Reset(w.debounce)
 			}
 			// When a new directory is created, start watching it.
@@ -99,16 +104,19 @@ func (w *Watcher) Run(ctx context.Context, out chan<- []ChangeEvent) error {
 			if !ok {
 				return nil
 			}
+
 			w.logger.Error("fsnotify error", "err", err)
 
 		case <-timer.C:
 			if len(pending) == 0 {
 				continue
 			}
+
 			batch := make([]ChangeEvent, 0, len(pending))
 			for p, op := range pending {
 				batch = append(batch, ChangeEvent{Path: p, Op: op})
 			}
+
 			pending = make(map[string]fsnotify.Op)
 
 			select {
@@ -130,6 +138,7 @@ func (w *Watcher) accept(ev fsnotify.Event) bool {
 	if !strings.HasSuffix(ev.Name, ".go") {
 		return false
 	}
+
 	return ev.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) != 0
 }
 

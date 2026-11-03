@@ -18,16 +18,19 @@ const (
 
 func renameField(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "rename_field", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	return res
 }
 
 func renameTAToB(extra map[string]any) map[string]any {
 	args := map[string]any{"type_name": "T", "field_name": "A", "new_field_name": "B"}
 	maps.Copy(args, extra)
+
 	return args
 }
 
@@ -37,6 +40,7 @@ func TestRenameField_RenamesKeyedLiteralInTaggedTestFile(t *testing.T) {
 		"p/use.go":           "package p\n\nfunc Use() T { return T{A: 1} }\n",
 		"p/use_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestTagx(t *testing.T) { _ = T{A: 2} }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -54,6 +58,7 @@ func TestRenameField_SiblingStructDeclarationsBothRenamedAndSharedUseOnce(t *tes
 		"p/t_tagx.go":    fieldTTagx,
 		"p/use.go":       "package p\n\nfunc Use(t T) int { return t.A }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -63,16 +68,19 @@ func TestRenameField_SiblingStructDeclarationsBothRenamedAndSharedUseOnce(t *tes
 	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
+
 	for _, f := range []string{"p/t_default.go", "p/t_tagx.go"} {
 		got := fileText(t, dir, f)
 		if strings.Count(got, "type T struct{ B int }") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	got := fileText(t, dir, "p/use.go")
 	if strings.Count(got, "t.B") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -82,6 +90,7 @@ func TestRenameField_FindsTypeDeclaredOnlyUnderTag(t *testing.T) {
 		"p/use_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use() T { return T{A: 1} }\n",
 		"p/plain.go":    "package p\n\nfunc plain() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -95,6 +104,7 @@ func TestRenameField_FindsTypeDeclaredOnlyUnderTag(t *testing.T) {
 
 func TestRenameField_MissingTypeErrorTextIsUnchanged(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": "package p\n\ntype T struct{ A int }\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -108,6 +118,7 @@ func TestRenameField_MissingTypeErrorTextIsUnchanged(t *testing.T) {
 
 func TestRenameField_MissingFieldErrorTextIsUnchanged(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/t.go": "package p\n\ntype T struct{ A int }\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -125,6 +136,7 @@ func TestRenameField_ReportsBrokenTaggedTestFileAsUncovered(t *testing.T) {
 		"p/t_tagx.go":        fieldTTagx,
 		"p/bad_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport (\n\t\"testing\"\n\n\t_ \"example.com/this-module-does-not-exist/thirdparty\"\n)\n\nfunc TestBad(t *testing.T) {\n\t_ = T{A: 3}\n}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -142,11 +154,13 @@ func TestRenameField_SingleConfigOmitsBuildConfigs(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/t.go": "package p\n\ntype T struct{ A int }\n\nfunc Use(t T) int { return t.A }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	for _, dryRun := range []bool{true, false} {
 		out := callJSON(t, sess, "rename_field", renameTAToB(map[string]any{"dry_run": dryRun}))
+
 		_, ok := out["build_configs"]
 		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])

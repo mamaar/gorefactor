@@ -18,6 +18,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -52,6 +53,7 @@ func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 // that guard must use this helper instead.
 func createTypeCheckedWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -116,6 +118,7 @@ func foo(x, y bool) error {
 		deepifelse.WithMaxNesting(1),
 		deepifelse.WithMinElseLines(1),
 	)
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +128,7 @@ func foo(x, y bool) error {
 	if !ok {
 		t.Fatalf("Expected []*deepifelse.Result, got %T", rr.Result)
 	}
+
 	if len(results) == 0 {
 		t.Fatal("Expected at least 1 violation for deeply nested if-else, got 0")
 	}
@@ -133,6 +137,7 @@ func foo(x, y bool) error {
 	if v.Function != "foo" {
 		t.Errorf("Expected function 'foo', got %q", v.Function)
 	}
+
 	if v.NestingDepth < 2 {
 		t.Errorf("Expected NestingDepth >= 2, got %d", v.NestingDepth)
 	}
@@ -151,6 +156,7 @@ func foo(x bool) error {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -160,6 +166,7 @@ func foo(x bool) error {
 	if !ok {
 		t.Fatalf("Expected []*deepifelse.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations for shallow if (no else), got %d", len(results))
 	}
@@ -192,6 +199,7 @@ func process(a, b, c bool) error {
 		deepifelse.WithMaxNesting(1),
 		deepifelse.WithMinElseLines(1),
 	)
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -201,6 +209,7 @@ func process(a, b, c bool) error {
 	if !ok {
 		t.Fatalf("Expected []*deepifelse.Result, got %T", rr.Result)
 	}
+
 	if len(results) == 0 {
 		t.Fatal("Expected at least 1 violation")
 	}
@@ -209,6 +218,7 @@ func process(a, b, c bool) error {
 	if v.NestingDepth < 3 {
 		t.Errorf("Expected NestingDepth >= 3, got %d", v.NestingDepth)
 	}
+
 	if v.ComplexityReductionPercent <= 0 {
 		t.Errorf("Expected ComplexityReductionPercent > 0, got %d", v.ComplexityReductionPercent)
 	}
@@ -237,6 +247,7 @@ func process(x int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -251,9 +262,11 @@ func process(x int) string {
 	if !got.Fixable {
 		t.Fatalf("expected a fixable chain, reason: %s", got.Reason)
 	}
+
 	if got.EarlyReturns != 3 {
 		t.Errorf("EarlyReturns = %d, want 3 (one guard per else branch)", got.EarlyReturns)
 	}
+
 	if got.Reason != "" {
 		t.Errorf("a fixable finding should carry no reason, got %q", got.Reason)
 	}
@@ -286,6 +299,7 @@ func categorize(x int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -295,12 +309,15 @@ func categorize(x int) string {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	if !results[0].Fixable {
 		t.Fatalf("expected the else-if chain to be fixable, reason: %s", results[0].Reason)
 	}
+
 	if results[0].Reason != "" {
 		t.Errorf("a fully flattened chain should carry no reason, got %q", results[0].Reason)
 	}
+
 	if results[0].EarlyReturns != 4 {
 		t.Errorf("EarlyReturns = %d, want 4", results[0].EarlyReturns)
 	}
@@ -319,6 +336,7 @@ func categorize(x int) string {
 		return "zero"
 	}
 	return "positive"`
+
 	got := string(fix)
 	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
@@ -350,6 +368,7 @@ func classify(a bool, x int) string {
 `
 	ws := createTestWorkspace(t, src)
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(1), deepifelse.WithMinElseLines(1))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -359,9 +378,11 @@ func classify(a bool, x int) string {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	if !results[0].Fixable {
 		t.Fatalf("expected classify to be fixable, reason: %s", results[0].Reason)
 	}
+
 	if results[0].Reason != "" {
 		t.Errorf("a fully flattened chain should carry no reason, got %q", results[0].Reason)
 	}
@@ -377,6 +398,7 @@ func classify(a bool, x int) string {
 		return "zero"
 	}
 	return "other"`
+
 	got := string(fix)
 	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
@@ -405,6 +427,7 @@ func find(a bool, m map[string]int, x string) int {
 `
 	ws := createTestWorkspace(t, src)
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(1), deepifelse.WithMinElseLines(1))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -414,10 +437,12 @@ func find(a bool, m map[string]int, x string) int {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	v := results[0]
 	if !v.Fixable {
 		t.Fatalf("expected find to be (partially) fixable, reason: %s", v.Reason)
 	}
+
 	if v.Reason == "" || !strings.Contains(v.Reason, "fix_if_init_assignments") {
 		t.Errorf("Reason = %q, want it to name fix_if_init_assignments", v.Reason)
 	}
@@ -430,10 +455,12 @@ func find(a bool, m map[string]int, x string) int {
 		return k
 	}
 	return -2`
+
 	got := string(fix)
 	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
+
 	if strings.Contains(string(fix), "!") {
 		t.Errorf("the if-init link must not be inverted, got:\n%s", fix)
 	}
@@ -459,6 +486,7 @@ func find(m map[string]int, x string) int {
 `
 	ws := createTestWorkspace(t, src)
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(1), deepifelse.WithMinElseLines(1))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -468,13 +496,16 @@ func find(m map[string]int, x string) int {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	v := results[0]
 	if v.Fixable {
 		t.Error("expected the chain to be refused: eliding past the init would change what `k > 10` reads")
 	}
+
 	if v.Reason == "" || !strings.Contains(v.Reason, "fix_if_init_assignments") {
 		t.Errorf("Reason = %q, want it to name fix_if_init_assignments", v.Reason)
 	}
+
 	if v.EarlyReturns != 0 {
 		t.Errorf("EarlyReturns = %d, want 0 for an unfixable finding", v.EarlyReturns)
 	}
@@ -505,6 +536,7 @@ func lookup(x int) int {
 `
 	ws := createTestWorkspace(t, src)
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(0), deepifelse.WithMinElseLines(0))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -514,10 +546,12 @@ func lookup(x int) int {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	v := results[0]
 	if v.Fixable {
 		t.Error("expected the redeclaration hazard to block the rewrite entirely")
 	}
+
 	want := `dedenting the branch would redeclare "result" in the enclosing scope`
 	if v.Reason != want {
 		t.Errorf("Reason = %q, want %q", v.Reason, want)
@@ -557,6 +591,7 @@ func process(x int) string {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, deepifelse.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -576,6 +611,7 @@ func process(x int) string {
 	}
 	// odd branch comment
 	return "odd"`
+
 	got := string(fix)
 	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
@@ -603,6 +639,7 @@ func TestDeepIfElse_MultiLineRawStringLiteralRefused(t *testing.T) {
 
 	ws := createTestWorkspace(t, src)
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(1), deepifelse.WithMinElseLines(1))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -612,10 +649,12 @@ func TestDeepIfElse_MultiLineRawStringLiteralRefused(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	v := results[0]
 	if v.Fixable {
 		t.Error("expected a chain spanning a multi-line raw string literal to be refused")
 	}
+
 	want := "the chain contains a multi-line raw string literal, whose indentation is part of its value"
 	if v.Reason != want {
 		t.Errorf("Reason = %q, want %q", v.Reason, want)
@@ -650,6 +689,7 @@ func compare(x, y float64) string {
 `
 	ws := createTypeCheckedWorkspace(t, src)
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(0), deepifelse.WithMinElseLines(0))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatal(err)
@@ -659,6 +699,7 @@ func compare(x, y float64) string {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d", len(results))
 	}
+
 	if !results[0].Fixable {
 		t.Fatalf("expected compare to be fixable, reason: %s", results[0].Reason)
 	}
@@ -669,6 +710,7 @@ func compare(x, y float64) string {
 	}
 	result := "small"
 	return result`
+
 	got := string(fix)
 	if got != want {
 		t.Errorf("suggested fix text mismatch (float condition should keep its blanket !, not flip to >=)\ngot:\n%s\nwant:\n%s", got, want)
@@ -680,6 +722,7 @@ func compare(x, y float64) string {
 func onlySuggestedFix(t *testing.T, diags []analysis.Diagnostic) []byte {
 	t.Helper()
 	var found [][]byte
+
 	for _, d := range diags {
 		for _, fix := range d.SuggestedFixes {
 			for _, edit := range fix.TextEdits {
@@ -687,8 +730,10 @@ func onlySuggestedFix(t *testing.T, diags []analysis.Diagnostic) []byte {
 			}
 		}
 	}
+
 	if len(found) != 1 {
 		t.Fatalf("expected exactly 1 suggested text edit, got %d", len(found))
 	}
+
 	return found[0]
 }

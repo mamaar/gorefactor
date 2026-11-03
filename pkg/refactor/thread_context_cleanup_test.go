@@ -28,6 +28,7 @@ func teardown(t *testing.T) { Seed() }`), "p/lib.go", "Seed")
 			t.Errorf("rendered output missing %q:\n%s", want, got)
 		}
 	}
+
 	if strings.Contains(got, "t.Context()") {
 		t.Errorf("nothing in a cleanup path may use t.Context():\n%s", got)
 	}
@@ -41,6 +42,7 @@ func TestThreadContext_HelperCalledFromCleanupAndDirectlyIsClimbed(t *testing.T)
 
 func teardown(t *testing.T) { Seed() }`), "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed", "teardown"}, "Funcs")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	for _, want := range []string{"teardown(context.TODO(), t)", "teardown(t.Context(), t)"} {
 		if strings.Count(got, want) != 1 {
@@ -59,6 +61,7 @@ func TestThreadContext_CleanupReceiverTypes(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ws, plan := buildThreadPlanWithWorkspace(t, cleanupFile(body), "p/lib.go", "Seed")
 			assertCallersPass(t, plan, "teardown", "ctx")
+
 			got := renderedFile(t, ws, plan, "p/x_test.go")
 			if !strings.Contains(got, "(context.TODO(), ") || strings.Contains(got, "Context()") {
 				t.Errorf("cleanup closure must pass context.TODO():\n%s", got)
@@ -99,6 +102,7 @@ func TestThreadContext_SeedDirectlyInCleanupClosureUsesTODO(t *testing.T) {
 	ws, plan := buildThreadPlanWithWorkspace(t, cleanupFile(`func TestX(t *testing.T) {
 	t.Cleanup(func() { Seed() })
 }`), "p/lib.go", "Seed")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if !strings.Contains(got, "Seed(context.TODO())") || strings.Contains(got, "t.Context()") {
 		t.Errorf("expected context.TODO():\n%s", got)
@@ -111,6 +115,7 @@ func TestThreadContext_TestingClosureInsideCleanupUsesTODO(t *testing.T) {
 		t.Run("a", func(t *testing.T) { Seed() })
 	})
 }`), "p/lib.go", "Seed")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if !strings.Contains(got, "Seed(context.TODO())") || strings.Contains(got, "t.Context()") {
 		t.Errorf("expected context.TODO():\n%s", got)

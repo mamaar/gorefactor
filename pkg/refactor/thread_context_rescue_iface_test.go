@@ -99,6 +99,7 @@ func TestThreadContext_InterfaceOfPackageSeenThroughProductionOnlyCopy(t *testin
 			for rel, src := range files {
 				files[rel] = variant.Replace(src)
 			}
+
 			eng, dir := loadConfigsEngine(t, files)
 			v := eng.WorkspaceSet().Primary()
 			v.Parser.EnsureTypeChecked(v.Workspace, v.Workspace.Packages[dir+"/common"])
@@ -130,6 +131,7 @@ func TestThreadContext_InterfaceOfPackageSeenThroughProductionOnlyCopy(t *testin
 					assertOnce(t, dir, rel, variant.Replace(want))
 				}
 			}
+
 			vetBuilds(t, dir, linuxBuild)
 		})
 	}

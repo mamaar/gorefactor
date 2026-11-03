@@ -41,11 +41,13 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 	for _, ev := range events {
 		action := actionName(ev.Op)
 		src, err := u.set.SyncSource(ev.Path)
+
 		absent := errors.Is(err, analysis.ErrSkippedSource) || errors.Is(err, analysis.ErrSourceRemoved)
 		if err != nil && !absent {
 			u.logger.Error(action+": source sync failed", "file", ev.Path, "err", err)
 			continue
 		}
+
 		changes = append(changes, syncedChange{dir: filepath.Dir(ev.Path), path: ev.Path, action: action, present: src != nil})
 	}
 
@@ -55,9 +57,11 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 		// Importers are found before and after the change: a removed package
 		// is only in the first graph, a created one only in the second.
 		v.Parser.InvalidateImporters(v.Workspace, dirs)
+
 		for _, c := range changes {
 			u.handleChange(v, c)
 		}
+
 		v.Parser.InvalidateImporters(v.Workspace, dirs)
 		u.invalidateImporterCaches(v, dirs)
 		v.InvalidateReferenceIndex()
@@ -78,6 +82,7 @@ func changedDirs(changes []syncedChange) []string {
 			dirs = append(dirs, c.dir)
 		}
 	}
+
 	return dirs
 }
 
@@ -111,26 +116,31 @@ func (u *WorkspaceUpdater) handleChange(v *analysis.View, c syncedChange) {
 		if c.present {
 			u.createPackage(v, c.dir, start)
 		}
+
 		return
 	}
 
 	if !v.Parser.ProjectFile(pkg, c.path) {
 		return
 	}
+
 	v.Resolver.InvalidateCacheForFile(c.path)
 
 	if len(pkg.Files) == 0 && len(pkg.TestFiles) == 0 {
 		u.removePackage(v, pkg, start)
 		return
 	}
+
 	u.rebuildPackage(v, pkg, c, start)
 }
 
 func (u *WorkspaceUpdater) removePackage(v *analysis.View, pkg *types.Package, start time.Time) {
 	delete(v.Workspace.Packages, pkg.Path)
+
 	if pkg.ImportPath != "" {
 		delete(v.Workspace.ImportToPath, pkg.ImportPath)
 	}
+
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
 	_ = v.Analyzer.BuildDependencyGraph()
@@ -174,12 +184,14 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 	if errors.Is(err, analysis.ErrNoPackage) {
 		return
 	}
+
 	if err != nil {
 		u.logger.Error("create: package parse failed", "dir", dir, "err", err)
 		return
 	}
 
 	pkg.ImportPath = analysis.ComputeImportPath(v.Workspace, dir)
+
 	v.Workspace.Packages[pkg.Path] = pkg
 	if pkg.ImportPath != "" {
 		v.Workspace.ImportToPath[pkg.ImportPath] = pkg.Path
@@ -187,10 +199,12 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
+
 	_, err = v.Resolver.BuildSymbolTable(pkg)
 	if err != nil {
 		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)
 	}
+
 	_ = v.Analyzer.BuildDependencyGraph()
 	u.logger.Info("create: new package",
 		"dir", dir,
@@ -207,6 +221,7 @@ func findPackageByDir(ws *types.Workspace, dir string) *types.Package {
 			return pkg
 		}
 	}
+
 	return nil
 }
 
@@ -215,9 +230,11 @@ func countSymbols(st *types.SymbolTable) int {
 	if st == nil {
 		return 0
 	}
+
 	n := len(st.Functions) + len(st.Types) + len(st.Variables) + len(st.Constants)
 	for _, ms := range st.Methods {
 		n += len(ms)
 	}
+
 	return n
 }

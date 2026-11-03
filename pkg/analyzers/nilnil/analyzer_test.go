@@ -16,12 +16,15 @@ import (
 func run(t *testing.T, src string) []*nilnil.Result {
 	t.Helper()
 	ws, _ := workspace(t, src)
+
 	return analyze(t, ws)
 }
 
 func workspace(t *testing.T, src string) (*types.Workspace, *types.Package) {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "testpkg.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -45,22 +48,27 @@ func workspace(t *testing.T, src string) (*types.Workspace, *types.Package) {
 		TypesInfo:  info,
 	}
 	file.Package = pkg
+
 	return &types.Workspace{Packages: map[string]*types.Package{"test/testpkg": pkg}, FileSet: fset}, pkg
 }
 
 func analyze(t *testing.T, ws *types.Workspace) []*nilnil.Result {
 	t.Helper()
+
 	rr, err := analyzers.Run(ws, nilnil.Analyzer, "")
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
+
 	if rr.Result == nil {
 		return nil
 	}
+
 	results, ok := rr.Result.([]*nilnil.Result)
 	if !ok {
 		t.Fatalf("unexpected result type %T", rr.Result)
 	}
+
 	return results
 }
 
@@ -79,13 +87,16 @@ func (r *T) Find(id int) (*T, error) {
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))
 	}
+
 	got := results[0]
 	if got.Function != "T.Find" || got.InClosure {
 		t.Errorf("function = %q in_closure = %v", got.Function, got.InClosure)
 	}
+
 	if !reflect.DeepEqual(got.ResultTypes, []string{"*T"}) {
 		t.Errorf("result types = %v", got.ResultTypes)
 	}
+
 	if got.Line != 7 || got.Code != "return nil, nil" {
 		t.Errorf("site = %d %q", got.Line, got.Code)
 	}
@@ -102,10 +113,12 @@ func Slice() ([]int, error) { return nil, nil }
 
 func Grouped() (a, b *T, err error) { return nil, nil, nil }
 `)
+
 	want := [][]string{{"*T", "[]int"}, {"[]int"}, {"*T", "*T"}}
 	if len(results) != len(want) {
 		t.Fatalf("got %d results, want %d", len(results), len(want))
 	}
+
 	for i, r := range results {
 		if !reflect.DeepEqual(r.ResultTypes, want[i]) {
 			t.Errorf("%s: result types = %v, want %v", r.Function, r.ResultTypes, want[i])
@@ -165,10 +178,12 @@ func Plain() {
 
 var PackageLevel = func() (*T, error) { return nil, nil }
 `)
+
 	want := []string{"Plain", ""}
 	if len(results) != len(want) {
 		t.Fatalf("got %d results, want %d", len(results), len(want))
 	}
+
 	for i, r := range results {
 		if r.Function != want[i] || !r.InClosure {
 			t.Errorf("results[%d]: function = %q in_closure = %v", i, r.Function, r.InClosure)
@@ -184,6 +199,7 @@ type T struct{}
 func Find() (*T, error) { return nil, nil }
 `)
 	pkg.TypesInfo = nil
+
 	results := analyze(t, ws)
 	if len(results) != 1 {
 		t.Fatalf("got %d results, want 1", len(results))

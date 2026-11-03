@@ -58,6 +58,7 @@ func (idx *ReferenceIndex) CallSitesOf(obj gotypes.Object) []CallSite {
 	}
 
 	var sites []CallSite
+
 	for _, pix := range idx.workspaceIdx.packages {
 		for cur := range pix.Calls(obj) {
 			call, ok := cur.Node().(*ast.CallExpr)
@@ -83,6 +84,7 @@ func (idx *ReferenceIndex) CallSitesOf(obj gotypes.Object) []CallSite {
 			for c := range cur.Enclosing((*ast.FuncLit)(nil)) {
 				litCur = c
 				site.Lit, _ = c.Node().(*ast.FuncLit)
+
 				break
 			}
 
@@ -101,6 +103,7 @@ func (idx *ReferenceIndex) CallSitesOf(obj gotypes.Object) []CallSite {
 			sites = append(sites, site)
 		}
 	}
+
 	return sites
 }
 
@@ -112,16 +115,19 @@ func goOrDeferLit(litCur inspector.Cursor) (isGo, isDefer bool) {
 	if litCur.ParentEdgeKind() != edge.CallExpr_Fun {
 		return false, false
 	}
+
 	callCur := litCur.Parent()
 	if !callCur.Valid() {
 		return false, false
 	}
+
 	switch callCur.ParentEdgeKind() {
 	case edge.GoStmt_Call:
 		return true, false
 	case edge.DeferStmt_Call:
 		return false, true
 	}
+
 	return false, false
 }
 
@@ -137,20 +143,24 @@ func (idx *ReferenceIndex) NonCallUsesOf(obj gotypes.Object) []ValueUse {
 	}
 
 	var uses []ValueUse
+
 	for _, pix := range idx.workspaceIdx.packages {
 		for cur := range pix.Uses(obj) {
 			_, ok := callSiteFor(cur)
 			if ok {
 				continue // it's a call site, reported by CallSitesOf instead
 			}
+
 			ident, ok := cur.Node().(*ast.Ident)
 			if !ok {
 				continue
 			}
+
 			file, pkg := idx.workspaceIdx.fileAndPkgFor(ident.Pos())
 			if file == nil {
 				continue
 			}
+
 			uses = append(uses, ValueUse{
 				File:   file,
 				Pkg:    pkg,
@@ -160,6 +170,7 @@ func (idx *ReferenceIndex) NonCallUsesOf(obj gotypes.Object) []ValueUse {
 			})
 		}
 	}
+
 	return uses
 }
 
@@ -186,9 +197,11 @@ func (wi *workspaceIndex) fileAndPkgFor(pos token.Pos) (*types.File, *types.Pack
 	if tf == nil {
 		return nil, nil
 	}
+
 	file := wi.tokenToFile[tf]
 	if file == nil {
 		return nil, nil
 	}
+
 	return file, file.Package
 }

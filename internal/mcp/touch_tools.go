@@ -43,22 +43,27 @@ func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// Read workspace metadata under RLock, then release.
 		state.RLock()
+
 		ws, err := state.GetWorkspace()
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		modulePath := ""
 		if ws.Module != nil {
 			modulePath = ws.Module.Path
 		}
+
 		rootPath := ws.RootPath
+
 		state.RUnlock()
 
 		// Discover workspace modules for import grouping.
 		workspaceModules, _ := refactor.DiscoverWorkspaceModules(rootPath)
 		// Filter out the current module.
 		var filtered []string
+
 		for _, wm := range workspaceModules {
 			if wm != modulePath {
 				filtered = append(filtered, wm)
@@ -130,6 +135,7 @@ func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 			Modified: len(modifiedFiles),
 			Total:    len(in.Files),
 		}
+
 		return textResult(out), nil, nil
 	})
 }

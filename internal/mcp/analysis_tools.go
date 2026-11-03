@@ -178,10 +178,12 @@ func findUnused(state *MCPServer, in UnusedInput) (*refactor.UnusedReport, error
 	if err != nil {
 		return nil, fmt.Errorf("find unused: %w", err)
 	}
+
 	req := refactor.UnusedRequest{IncludeExported: in.IncludeExported}
 	if in.Package != "" {
 		req.Packages = []string{in.Package, types.ResolvePackagePath(ws, in.Package)}
 	}
+
 	return state.GetEngine().UnusedAcrossConfigs(req)
 }
 
@@ -202,11 +204,13 @@ func unusedItems(findings []refactor.UnusedFinding) []UnusedSymbolItem {
 		for _, ref := range f.Referrers {
 			items[i].ReferencedFrom = append(items[i].ReferencedFrom, ReferrerItem{Name: ref.Name, File: ref.File, Line: ref.Line})
 		}
+
 		use := f.PossibleUse
 		if use != nil {
 			items[i].PossibleUse = &PossibleUseItem{File: use.File, Line: use.Line, Configs: use.Configs, Reason: use.Unverified}
 		}
 	}
+
 	return items
 }
 
@@ -270,6 +274,7 @@ func packageFilter(ws *types.Workspace, pkg string) []string {
 	if pkg == "" {
 		return nil
 	}
+
 	return []string{pkg, types.ResolvePackagePath(ws, pkg), filepath.Join(ws.RootPath, pkg)}
 }
 
@@ -279,16 +284,20 @@ func addDetectHeader(out map[string]any, ws *types.Workspace, h refactor.DetectH
 	if len(h.Configs) > 1 {
 		out["build_configs"] = h.Configs
 	}
+
 	if len(h.Unchecked) > 0 {
 		out["uncovered_files"] = uncheckedFileInfos(h.Unchecked, ws.RootPath)
 	}
-	if len(h.TypeErrors) <= 0 {
+
+	if len(h.TypeErrors) == 0 {
 		return
 	}
+
 	typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
 	for i, e := range h.TypeErrors {
 		typeErrors[i] = TypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
 	}
+
 	out["type_error_files"] = typeErrors
 }
 
@@ -634,6 +643,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		symbol := report.Symbol
+
 		info := SymbolInfo{
 			Name:      symbol.Name,
 			Kind:      symbol.Kind.String(),
@@ -650,15 +660,19 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				info.Declarations = append(info.Declarations, DeclarationInfo{File: d.File, Line: d.Line, Column: d.Column, Configs: d.Configs})
 			}
 		}
+
 		for _, ref := range report.References {
 			info.Refs = append(info.Refs, ReferenceInfo{File: ref.File, Line: ref.Line, Column: ref.Column})
 		}
+
 		if len(report.Configs) > 1 {
 			info.BuildConfigs = report.Configs
 		}
+
 		if len(report.Unchecked) > 0 {
 			info.UncoveredFiles = uncheckedFileInfos(report.Unchecked, ws.RootPath)
 		}
+
 		return textResult(info), nil, nil
 	})
 
@@ -689,17 +703,21 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				PointerReceiver: f.PointerReceiver, External: f.External, Configs: f.Configs,
 			}
 		}
+
 		key := "interfaces"
 		if report.IsInterface {
 			key = "implementations"
 		}
+
 		out := map[string]any{key: items, "count": len(items)}
 		if len(report.Configs) > 1 {
 			out["build_configs"] = report.Configs
 		}
+
 		if len(report.Unchecked) > 0 {
 			out["uncovered_files"] = uncheckedFileInfos(report.Unchecked, ws.RootPath)
 		}
+
 		return textResult(out), nil, nil
 	})
 
@@ -721,12 +739,14 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		a := complexity.NewAnalyzer(complexity.WithMinComplexity(minC))
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		var items []ComplexityResultItem
+
 		results, ok := rr.Result.([]*complexity.Result)
 		if ok {
 			items = make([]ComplexityResultItem, len(results))
@@ -744,6 +764,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"results":        items,
 			"count":          len(items),
@@ -764,6 +785,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		state.RLock()
 		report, err := findUnused(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -775,9 +797,11 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if len(report.PossiblyUsed) > 0 {
 			out["possibly_used"] = unusedItems(report.PossiblyUsed)
 		}
+
 		if len(report.Configs) > 1 {
 			out["build_configs"] = report.Configs
 		}
+
 		return textResult(out), nil, nil
 	})
 
@@ -791,22 +815,27 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ReachableReferencesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		ws, err := state.GetWorkspace()
+
 		var report *refactor.ReachableReport
 		if err == nil {
 			report, err = state.GetEngine().ReachableAcrossConfigs(refactor.ReachableRequest{Entry: in.EntryPackage, Targets: in.Targets, IncludeTests: in.IncludeTests, Within: in.Within})
 		}
+
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		items := make([]ReachableSiteItem, len(report.Sites))
 		byPackage, byTarget := map[string]int{}, map[string]int{}
+
 		for i, f := range report.Sites {
 			items[i] = ReachableSiteItem{Package: f.Package, File: f.File, Line: f.Line, Enclosing: f.Enclosing, Target: f.Target, Kind: f.Kind, Configs: f.Configs, Path: f.Path}
 			byPackage[f.Package]++
 			byTarget[f.Target]++
 		}
+
 		out := map[string]any{
 			"sites":   items,
 			"count":   len(items),
@@ -815,16 +844,20 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if len(report.Configs) > 1 {
 			out["build_configs"] = report.Configs
 		}
+
 		if len(report.Bodiless) > 0 {
 			bodiless := make([]BodilessPackageItem, len(report.Bodiless))
 			for i, b := range report.Bodiless {
 				bodiless[i] = BodilessPackageItem{Package: b.Package, Reason: b.Reason, Configs: b.Configs}
 			}
+
 			out["bodiless_packages"] = bodiless
 		}
+
 		if len(report.Unchecked) > 0 {
 			out["uncovered_files"] = uncheckedFileInfos(report.Unchecked, ws.RootPath)
 		}
+
 		return textResult(out), nil, nil
 	})
 
@@ -842,7 +875,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		request := refactor.VariadicsRequest{Packages: packageFilter(ws, in.Package)}
+
 		report, err := state.GetEngine().VariadicsAcrossConfigs(request)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -865,11 +900,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				ValueUses: f.ValueUses,
 			}
 		}
+
 		out := map[string]any{
 			"variadics":   items,
 			"total_count": len(items),
 		}
 		addDetectHeader(out, ws, report.DetectHeader)
+
 		return textResult(out), nil, nil
 	})
 
@@ -887,7 +924,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		request := refactor.UnusedParamsRequest{Packages: packageFilter(ws, in.Package)}
+
 		report, err := state.GetEngine().UnusedParamsAcrossConfigs(request)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -911,11 +950,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				Reason:    strings.ReplaceAll(f.Reason, ws.RootPath+string(filepath.Separator), ""),
 			}
 		}
+
 		out := map[string]any{
 			"unused_params": items,
 			"total_count":   len(items),
 		}
 		addDetectHeader(out, ws, report.DetectHeader)
+
 		return textResult(out), nil, nil
 	})
 
@@ -934,7 +975,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		request := refactor.AlwaysNilErrorsRequest{Packages: packageFilter(ws, in.Package)}
+
 		report, err := state.GetEngine().AlwaysNilErrorsAcrossConfigs(request)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -955,11 +998,13 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				Reason:    strings.ReplaceAll(f.Reason, ws.RootPath+string(filepath.Separator), ""),
 			}
 		}
+
 		out := map[string]any{
 			"always_nil_errors": items,
 			"total_count":       len(items),
 		}
 		addDetectHeader(out, ws, report.DetectHeader)
+
 		return textResult(out), nil, nil
 	})
 
@@ -983,6 +1028,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []IfInitViolationItem
+
 		results, ok := rr.Result.([]*ifinit.Result)
 		if ok {
 			items = make([]IfInitViolationItem, len(results))
@@ -1002,6 +1048,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -1029,12 +1076,14 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var skipped []IfInitSkippedItem
+
 		results, ok := rr.Result.([]*ifinit.Result)
 		if ok {
 			for _, v := range results {
 				if !v.Skipped {
 					continue
 				}
+
 				skipped = append(skipped, IfInitSkippedItem{
 					File:       v.File,
 					Line:       v.Line,
@@ -1048,10 +1097,12 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			message := "No if-init assignment violations found"
 			if len(skipped) > 0 {
 				message = "All if-init assignment sites found were skipped as unsafe to rewrite; see skipped"
 			}
+
 			return textResult(map[string]any{
 				"files_modified": []string{},
 				"changes_count":  0,
@@ -1065,25 +1116,30 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// The importer must be the one that type-checked ws; see
 		// VerifyPlanTypesWithImporter's doc comment.
 		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, state.GetEngine().Importer(ws))
+
 		blocking := verificationBlocker(verification)
 		if blocking != "" && !in.DryRun {
 			state.RUnlock()
 			return errResult(errors.New(blocking)), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "Fix if-init assignments", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		if blocking != "" {
 			result.Success = false
 			result.BlockingIssue = blocking
 		}
+
 		out := map[string]any{
 			"files_modified": result.ModifiedFiles,
 			"changes_count":  result.ChangeCount,
 			"skipped":        skipped,
 			"skipped_count":  len(skipped),
 		}
+
 		return textResult(withDryRun(out, result)), nil, nil
 	})
 
@@ -1105,6 +1161,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []MissingContextViolationItem
+
 		results, ok := rr.Result.([]*missingctx.Result)
 		if ok {
 			items = make([]MissingContextViolationItem, len(results))
@@ -1119,6 +1176,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -1143,6 +1201,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		results, _ := rr.Result.([]*nilreceiver.Result)
+
 		return textResult(map[string]any{
 			"violations":  results,
 			"total_count": len(results),
@@ -1169,6 +1228,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		results, _ := rr.Result.([]*nilnil.Result)
+
 		return textResult(map[string]any{
 			"violations":  results,
 			"total_count": len(results),
@@ -1191,13 +1251,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minBranches <= 0 {
 			minBranches = 2
 		}
+
 		a := booleanbranch.NewAnalyzer(booleanbranch.WithMinBranches(minBranches))
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		var items []BooleanBranchingViolationItem
+
 		results, ok := rr.Result.([]*booleanbranch.Result)
 		if ok {
 			items = make([]BooleanBranchingViolationItem, len(results))
@@ -1214,6 +1277,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -1236,7 +1300,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minBranches <= 0 {
 			minBranches = 2
 		}
+
 		a := booleanbranch.NewAnalyzer(booleanbranch.WithMinBranches(minBranches))
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
@@ -1246,6 +1312,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"files_modified":   []string{},
 				"changes_count":    0,
@@ -1258,6 +1325,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// Collect fix metadata from results.
 		var allBooleansRemoved []string
 		totalCases := 0
+
 		results, ok := rr.Result.([]*booleanbranch.Result)
 		if ok {
 			for _, fix := range booleanbranch.CollectFixResults(results) {
@@ -1267,16 +1335,19 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+
 		result, err := executePlanWithUnlock(state, plan, "Fix boolean branching", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		out := map[string]any{
 			"files_modified":   result.ModifiedFiles,
 			"changes_count":    result.ChangeCount,
 			"booleans_removed": allBooleansRemoved,
 			"switch_cases":     totalCases,
 		}
+
 		return textResult(withDryRun(out, result)), nil, nil
 	})
 
@@ -1300,20 +1371,24 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if maxNesting <= 0 {
 			maxNesting = 2
 		}
+
 		minElseLines := in.MinElseLines
 		if minElseLines <= 0 {
 			minElseLines = 3
 		}
+
 		a := deepifelse.NewAnalyzer(
 			deepifelse.WithMaxNesting(maxNesting),
 			deepifelse.WithMinElseLines(minElseLines),
 		)
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		var items []DeepIfElseViolationItem
+
 		results, ok := rr.Result.([]*deepifelse.Result)
 		if ok {
 			items = make([]DeepIfElseViolationItem, len(results))
@@ -1333,6 +1408,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -1359,14 +1435,17 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if maxNesting <= 0 {
 			maxNesting = 2
 		}
+
 		minElseLines := in.MinElseLines
 		if minElseLines <= 0 {
 			minElseLines = 3
 		}
+
 		a := deepifelse.NewAnalyzer(
 			deepifelse.WithMaxNesting(maxNesting),
 			deepifelse.WithMinElseLines(minElseLines),
 		)
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
@@ -1387,6 +1466,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// changes[i].
 		var unfixable []DeepIfElseUnfixableItem
 		var fixableResults []*deepifelse.Result
+
 		results, ok := rr.Result.([]*deepifelse.Result)
 		if ok {
 			for _, r := range results {
@@ -1398,8 +1478,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 						NestingDepth: r.NestingDepth,
 						Reason:       r.Reason,
 					})
+
 					continue
 				}
+
 				fixableResults = append(fixableResults, r)
 			}
 		}
@@ -1407,10 +1489,12 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			message := "No deep if-else chain violations found"
 			if len(unfixable) > 0 {
 				message = fmt.Sprintf("Found %d deep if-else chain(s), none of a shape this fixer can rewrite", len(unfixable))
 			}
+
 			return textResult(map[string]any{
 				"files_modified":  []string{},
 				"changes_count":   0,
@@ -1428,6 +1512,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			state.logger.Error("fix_deep_if_else_chains: diagnostics/results count mismatch, refusing to apply",
 				"changes", len(changes), "fixable_results", len(fixableResults))
+
 			return errResult(fmt.Errorf("internal error: could not correlate %d rewrite(s) with %d fixable finding(s)", len(changes), len(fixableResults))), nil, nil
 		}
 
@@ -1447,6 +1532,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			// unverified plan must not be treated as clean. Nothing is
 			// applied; the caller is told why.
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"files_modified":  []string{},
 				"changes_count":   0,
@@ -1473,6 +1559,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			// chain.
 			for i, c := range changes {
 				r := fixableResults[i]
+
 				single := refactor.VerifyPlanTypesWithImporter(ws, analyzers.ChangesToPlan([]types.Change{c}), importer)
 				switch {
 				case single.Skipped != "":
@@ -1494,6 +1581,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		if len(appliedChanges) == 0 {
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"files_modified":  []string{},
 				"changes_count":   0,
@@ -1511,12 +1599,15 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		var functionsFixed []string
 		var partial []DeepIfElseUnfixableItem
 		totalEarlyReturns := 0
+
 		for _, r := range appliedResults {
 			functionsFixed = append(functionsFixed, r.Function)
+
 			totalEarlyReturns += r.EarlyReturns
 			if r.Reason == "" {
 				continue
 			}
+
 			partial = append(partial, DeepIfElseUnfixableItem{
 				File:         r.File,
 				Line:         r.Line,
@@ -1527,6 +1618,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan = analyzers.ChangesToPlan(appliedChanges)
+
 		result, err := executePlanWithUnlock(state, plan, "Fix deep if-else chains", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -1540,6 +1632,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"unfixable":       unfixable,
 			"partial":         partial,
 		}
+
 		return textResult(withDryRun(out, result)), nil, nil
 	})
 
@@ -1564,17 +1657,21 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minBranches <= 0 {
 			minBranches = 3
 		}
+
 		opts := []switchchain.Option{switchchain.WithMinBranches(minBranches)}
 		if len(in.Kinds) > 0 {
 			opts = append(opts, switchchain.WithKinds(in.Kinds...))
 		}
+
 		a := switchchain.NewAnalyzer(opts...)
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		var items []SwitchableIfChainViolationItem
+
 		results, ok := rr.Result.([]*switchchain.Result)
 		if ok {
 			items = make([]SwitchableIfChainViolationItem, len(results))
@@ -1594,6 +1691,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -1621,11 +1719,14 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if minBranches <= 0 {
 			minBranches = 3
 		}
+
 		opts := []switchchain.Option{switchchain.WithMinBranches(minBranches)}
 		if len(in.Kinds) > 0 {
 			opts = append(opts, switchchain.WithKinds(in.Kinds...))
 		}
+
 		a := switchchain.NewAnalyzer(opts...)
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
@@ -1648,6 +1749,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// fixableResults[i] below be paired with changes[i].
 		var unfixable []SwitchableIfChainUnfixableItem
 		var fixableResults []*switchchain.Result
+
 		results, ok := rr.Result.([]*switchchain.Result)
 		if ok {
 			for _, r := range results {
@@ -1660,8 +1762,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 						Branches: r.Branches,
 						Reason:   r.Reason,
 					})
+
 					continue
 				}
+
 				fixableResults = append(fixableResults, r)
 			}
 		}
@@ -1669,10 +1773,12 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			message := "No switchable if-else chains found"
 			if len(unfixable) > 0 {
 				message = fmt.Sprintf("Found %d if-else chain(s) that map onto a switch, none of a shape this fixer can rewrite", len(unfixable))
 			}
+
 			return textResult(map[string]any{
 				"files_modified":   []string{},
 				"changes_count":    0,
@@ -1689,6 +1795,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			state.logger.Error("fix_switchable_if_chains: diagnostics/results count mismatch, refusing to apply",
 				"changes", len(changes), "fixable_results", len(fixableResults))
+
 			return errResult(fmt.Errorf("internal error: could not correlate %d rewrite(s) with %d fixable finding(s)", len(changes), len(fixableResults))), nil, nil
 		}
 
@@ -1709,6 +1816,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			// unverified plan must not be treated as clean. Nothing is
 			// applied; the caller is told why.
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"files_modified":   []string{},
 				"changes_count":    0,
@@ -1735,6 +1843,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			// checker can see).
 			for i, c := range changes {
 				r := fixableResults[i]
+
 				single := refactor.VerifyPlanTypesWithImporter(ws, analyzers.ChangesToPlan([]types.Change{c}), importer)
 				switch {
 				case single.Skipped != "":
@@ -1756,6 +1865,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		if len(appliedChanges) == 0 {
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"files_modified":   []string{},
 				"changes_count":    0,
@@ -1775,6 +1885,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan = analyzers.ChangesToPlan(appliedChanges)
+
 		result, err := executePlanWithUnlock(state, plan, "Convert if-else chains to switch statements", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -1787,6 +1898,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"chains_converted": len(appliedResults),
 			"unfixable":        unfixable,
 		}
+
 		return textResult(withDryRun(out, result)), nil, nil
 	})
 
@@ -1818,6 +1930,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		items := earlyReturnItems(rr.Result)
 		fixable := 0
+
 		for _, item := range items {
 			if item.Fixable {
 				fixable++
@@ -1860,17 +1973,20 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var fixed, unfixable []EarlyReturnViolationItem
+
 		for _, item := range earlyReturnItems(rr.Result) {
 			if item.Fixable {
 				fixed = append(fixed, item)
 				continue
 			}
+
 			unfixable = append(unfixable, item)
 		}
 
 		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			return textResult(&EarlyReturnFixResult{
 				Applied:   !in.DryRun,
 				Fixed:     []EarlyReturnViolationItem{},
@@ -1880,6 +1996,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+
 		result, err := executePlanWithUnlock(state, plan, "Invert conditionals into early returns", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -1914,6 +2031,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a := redundantNegationsAnalyzer(in.MinReduction)
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -1944,6 +2062,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a := redundantNegationsAnalyzer(in.MinReduction)
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
@@ -1955,6 +2074,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			return textResult(map[string]any{
 				"files_modified": []string{},
 				"changes_count":  0,
@@ -1964,6 +2084,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+
 		result, err := executePlanWithUnlock(state, plan, "Simplify redundant negations", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
@@ -1974,6 +2095,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"changes_count":  result.ChangeCount,
 			"fixed":          items,
 		}
+
 		return textResult(withDryRun(out, result)), nil, nil
 	})
 
@@ -1993,13 +2115,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if sev == "" {
 			sev = errorwrap.SeverityCritical
 		}
+
 		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev))
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		var items []ErrorWrappingViolationItem
+
 		results, ok := rr.Result.([]*errorwrap.Result)
 		if ok {
 			items = make([]ErrorWrappingViolationItem, len(results))
@@ -2016,6 +2141,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -2038,9 +2164,11 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if sev == "" {
 			sev = errorwrap.SeverityCritical
 		}
+
 		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
 		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev), errorwrap.WithExcludedFunctions(in.ExcludeFunctions...))
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
@@ -2050,12 +2178,14 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		results, _ := rr.Result.([]*errorwrap.Result)
 		var skipped []ErrorWrappingSkippedItem
 		var needFmt []string
+
 		for _, r := range results {
 			if r.Skipped {
 				skipped = append(skipped, ErrorWrappingSkippedItem{
 					File: r.File, Line: r.Line, Function: r.Function, Snippet: r.CurrentCode, SkipReason: r.SkipReason,
 				})
 			}
+
 			if r.NeedsFmtImport && !slices.Contains(needFmt, r.File) {
 				needFmt = append(needFmt, r.File)
 			}
@@ -2068,12 +2198,15 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				changes = append(changes, *c)
 			}
 		}
+
 		if len(changes) == 0 {
 			state.RUnlock()
+
 			message := "No error wrapping violations found"
 			if len(skipped) > 0 {
 				message = "All error wrapping sites found were skipped; see skipped"
 			}
+
 			return textResult(map[string]any{
 				"files_modified":     []string{},
 				"changes_count":      0,
@@ -2090,10 +2223,12 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		errorsWrapped := 0
 		formatVerbsFixed := 0
 		contextsAdded := 0
+
 		for _, r := range results {
 			if r.Skipped {
 				continue
 			}
+
 			switch r.ViolationType {
 			case errorwrap.BareReturn:
 				errorsWrapped++
@@ -2106,19 +2241,23 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		plan := analyzers.ChangesToPlan(changes)
 		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, state.GetEngine().Importer(ws))
+
 		blocking := verificationBlocker(verification)
 		if blocking != "" && !in.DryRun {
 			state.RUnlock()
 			return errResult(errors.New(blocking)), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "Fix error wrapping", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		if blocking != "" {
 			result.Success = false
 			result.BlockingIssue = blocking
 		}
+
 		out := map[string]any{
 			"files_modified":     result.ModifiedFiles,
 			"changes_count":      result.ChangeCount,
@@ -2128,6 +2267,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"skipped":            skipped,
 			"skipped_count":      len(skipped),
 		}
+
 		return textResult(withDryRun(out, result)), nil, nil
 	})
 
@@ -2147,13 +2287,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if maxDepth <= 0 {
 			maxDepth = 1
 		}
+
 		a := envbool.NewAnalyzer(envbool.WithMaxDepth(maxDepth))
+
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		var items []EnvBooleanViolationItem
+
 		results, ok := rr.Result.([]*envbool.Result)
 		if ok {
 			items = make([]EnvBooleanViolationItem, len(results))
@@ -2172,6 +2315,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				}
 			}
 		}
+
 		return textResult(map[string]any{
 			"violations":  items,
 			"total_count": len(items),
@@ -2189,6 +2333,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		report, err := state.GetEngine().AnalyzeDependenciesAcrossConfigs(types.AnalyzeDependenciesRequest{
 			Workspace:           ws.RootPath,
 			DetectBackwardsDeps: in.DetectBackwards,
@@ -2197,8 +2342,10 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		plan := report.Plan
 		impact := *plan.Impact
+
 		result := map[string]any{
 			"affected_files":   plan.AffectedFiles,
 			"change_count":     len(plan.Changes),
@@ -2208,14 +2355,18 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if len(report.Configs) > 1 {
 			result["build_configs"] = report.Configs
 		}
+
 		if in.SuggestMoves {
 			result["suggested_moves"] = impact.SuggestedMoves
 		}
+
 		if in.DetectBackwards {
 			result["backwards_dependencies"] = impact.BackwardsDependencies
 		}
+
 		impact.PackageCoupling, impact.SuggestedMoves, impact.BackwardsDependencies = nil, nil, nil
 		result["impact"] = impact
+
 		return textResult(result), nil, nil
 	})
 }
@@ -2235,8 +2386,10 @@ func earlyReturnAnalyzer(minBodyLines int, patternNames []string) (*goanalysis.A
 			if !ok {
 				return nil, fmt.Errorf("unknown pattern %q: want one of guard_clause, loop_continue, else_after_return", name)
 			}
+
 			patterns = append(patterns, p)
 		}
+
 		opts = append(opts, earlyreturn.WithPatterns(patterns...))
 	}
 
@@ -2264,6 +2417,7 @@ func earlyReturnItems(result any) []EarlyReturnViolationItem {
 			Suggestion: v.Suggestion,
 		}
 	}
+
 	return items
 }
 
@@ -2274,6 +2428,7 @@ func redundantNegationsAnalyzer(minReduction int) *goanalysis.Analyzer {
 	if minReduction > 0 {
 		opts = append(opts, boolsimplify.WithMinReduction(minReduction))
 	}
+
 	return boolsimplify.NewAnalyzer(opts...)
 }
 
@@ -2300,5 +2455,6 @@ func redundantNegationItems(result any) []RedundantNegationViolationItem {
 			NegationsAfter:  v.NegationsAfter,
 		}
 	}
+
 	return items
 }

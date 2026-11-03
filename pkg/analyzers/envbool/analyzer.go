@@ -46,6 +46,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	return &analysis.Analyzer{
 		Name: "envbool",
 		Doc:  "detects environment boolean parameters passed down call stacks",
@@ -79,6 +80,7 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, maxDepth int) []*Result {
 		if !ok || funcDecl.Type.Params == nil {
 			continue
 		}
+
 		results = append(results, analyzeFunction(pass, funcDecl, maxDepth)...)
 	}
 
@@ -153,15 +155,18 @@ func tracePropagation(fn *ast.FuncDecl, paramName string) ([]string, int) {
 			if !ok || ident.Name != paramName {
 				continue
 			}
+
 			calleeName := callName(call)
 			if calleeName != "" {
 				chain = append(chain, calleeName)
 			}
 		}
+
 		return true
 	})
 
 	depth := max(len(chain)-1, 0)
+
 	return chain, depth
 }
 
@@ -174,8 +179,10 @@ func callName(call *ast.CallExpr) string {
 		if ok {
 			return x.Name + "." + fn.Sel.Name
 		}
+
 		return fn.Sel.Name
 	}
+
 	return ""
 }
 
@@ -209,5 +216,6 @@ func buildEnvSuggestion(paramName, pattern string) string {
 	case "concrete_value":
 		return "Replace '" + paramName + "' parameter with the concrete value it controls. Resolve the value at initialization time"
 	}
+
 	return "Replace '" + paramName + "' with an interface or concrete value"
 }
