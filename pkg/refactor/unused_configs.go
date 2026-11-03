@@ -51,10 +51,7 @@ func (e *DefaultEngine) UnusedAcrossConfigs(req UnusedRequest) (*UnusedReport, e
 	defer e.endRun(run)
 
 	for _, v := range views {
-		err := run.visit(v)
-		if err != nil {
-			return nil, viewError(views, v, err)
-		}
+		run.visit(v)
 	}
 
 	return run.report(views), nil
@@ -127,7 +124,7 @@ func declaredIn(list []*types.Symbol, s *types.Symbol) bool {
 }
 
 // visit records what v reports unused and marks the rest of its symbols used.
-func (r *unusedRun) visit(v *analysis.View) error {
+func (r *unusedRun) visit(v *analysis.View) {
 	a := analysis.NewUnusedAnalyzer(v.Workspace, r.engine.logger)
 	a.SetIncludeExported(r.req.IncludeExported)
 	a.SetIndex(r.indexOf(v))
@@ -164,8 +161,6 @@ func (r *unusedRun) visit(v *analysis.View) error {
 
 	r.markUnresolved(v, unused, unresolvedMentions(v, names))
 	r.planned(v, nil)
-
-	return nil
 }
 
 // markUnresolved records, for each declaration v reports unused, the first of
