@@ -78,7 +78,7 @@ func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	}
 	err := n.listingError()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lookup: %w", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -220,7 +220,7 @@ func (i *externalImporter) Import(path string) (*gotypes.Package, error) {
 	}
 	err := dep.listingError()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("import: %w", err)
 	}
 	i.set.check(dep)
 	if dep.types == nil {

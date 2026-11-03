@@ -89,7 +89,7 @@ func (t *SourceTree) AddDir(dir string) error {
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("add dir: %w", err)
 	}
 
 	var files []*SourceFile
@@ -192,7 +192,7 @@ func (t *SourceTree) Load(root string) error {
 	w := &treeWalker{root: root}
 	err := filepath.WalkDir(root, w.visit)
 	if err != nil {
-		return err
+		return fmt.Errorf("load: %w", err)
 	}
 
 	l := &treeLoader{tree: t, dirs: make(chan string, len(w.dirs))}

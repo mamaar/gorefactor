@@ -225,7 +225,7 @@ func (ua *UnusedAnalyzer) ReachedFuncsWithin(entry *types.Package) (all, within 
 	}
 	live, err := ua.buildLiveness(entry, false)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("reached funcs within: %w", err)
 	}
 	if ua.within != nil {
 		w := live.within(*ua.within)

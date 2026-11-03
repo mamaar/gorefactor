@@ -1177,7 +1177,7 @@ func loadWithConfig(t *testing.T, root string, cfg BuildConfig) (*GoParser, *typ
 func parseWorkspace(root string) (*GoParser, *types.Workspace, error) {
 	set, err := LoadWorkspaceSet(root, DefaultBuildConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("parse workspace: %w", err)
 	}
 	return set.Primary().Parser, set.Primary().Workspace, nil
 }

@@ -4,6 +4,7 @@ package mcptest
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os/exec"
@@ -104,7 +105,7 @@ func (ip inProcess) connect(ctx context.Context) (*Session, error) {
 	if err != nil {
 		cancel()
 		state.Close()
-		return nil, err
+		return nil, fmt.Errorf("connect: %w", err)
 	}
 	return &Session{ClientSession: session, cancel: cancel, state: state}, nil
 }
@@ -125,7 +126,7 @@ func (sp subprocess) connect(ctx context.Context) (*Session, error) {
 	session, err := client.Connect(ctx, &mcpsdk.CommandTransport{Command: cmd}, nil)
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, fmt.Errorf("connect: %w", err)
 	}
 	return &Session{ClientSession: session, cancel: cancel}, nil
 }

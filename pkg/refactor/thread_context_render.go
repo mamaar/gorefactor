@@ -117,7 +117,7 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		}
 		change, importFile, err := renderCallEdit(ws, plan, edit)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("render thread plan: %w", err)
 		}
 		if change != nil {
 			changes = append(changes, *change)

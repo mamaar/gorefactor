@@ -573,7 +573,7 @@ func (op *MoveSymbolOperation) planTargetPackageReferences(ws *types.Workspace, 
 	for _, ref := range group.refs {
 		change, err := op.generateReferenceUpdateChange(ref, "")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("plan target package references: %w", err)
 		}
 		changes = append(changes, *change)
 	}
@@ -759,7 +759,7 @@ func (op *RenameSymbolOperation) validateTargets(ws *types.Workspace, targetSymb
 	for _, symbol := range targetSymbols {
 		err := op.checkNameConflict(ws, symbol, op.Request.NewName)
 		if err != nil {
-			return err
+			return fmt.Errorf("validate targets: %w", err)
 		}
 	}
 
@@ -959,7 +959,7 @@ func (op *RenamePackageOperation) Type() types.OperationType {
 func (op *RenamePackageOperation) target(ws *types.Workspace) (dir, name string, err error) {
 	dir, exists, err := findSourceDir(ws, op.Sources, op.Request.PackagePath)
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("target: %w", err)
 	}
 	if !exists {
 		var availablePackages []string
@@ -1428,7 +1428,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	} else {
 		absPackageDir, err = types.ResolveNewPackagePath(ws, targetPackagePath)
 		if err != nil {
-			return nil, nil, false, err
+			return nil, nil, false, fmt.Errorf("get or create target file: %w", err)
 		}
 	}
 
@@ -1478,7 +1478,7 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	}
 	astFile, err := parser.ParseFile(fset, fullPath, initialContent, parser.ParseComments)
 	if err != nil {
-		return nil, nil, false, fmt.Errorf("failed to parse initial file content: %v", err)
+		return nil, nil, false, fmt.Errorf("failed to parse initial file content: %w", err)
 	}
 	if !exists {
 		targetPackage = &types.Package{
@@ -1977,7 +1977,7 @@ func (op *RenamePackageOperation) addQualifierUpdates(ws *types.Workspace, plan 
 		for _, file := range op.Sources.Dir(d) {
 			changes, skipped, err := packageQualifierEdits(op.Views, ws.FileSet, file, renames)
 			if err != nil {
-				return err
+				return fmt.Errorf("add qualifier updates: %w", err)
 			}
 			plan.SkippedSites = append(plan.SkippedSites, skipped...)
 			plan.Changes = append(plan.Changes, changes...)

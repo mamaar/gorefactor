@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func DiscoverWorkspaceModules(rootPath string) ([]string, error) {
 
 	content, err := os.ReadFile(goWorkPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("discover workspace modules: %w", err)
 	}
 
 	useDirs := parseGoWorkFile(content)

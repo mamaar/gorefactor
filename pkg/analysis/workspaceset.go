@@ -205,7 +205,7 @@ func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
 	}
 	v, err := s.buildView(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("view locked: %w", err)
 	}
 	s.views[key] = v
 	return v, nil

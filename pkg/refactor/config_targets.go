@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"go/ast"
 	"path/filepath"
 	"slices"
@@ -148,7 +149,7 @@ func (r *signatureRun) execute(op *ChangeSignatureOperation) ([]AlteredDecl, err
 	op.CachedIndex = r.idx
 	plan, err := op.Execute(r.view.Workspace)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("execute: %w", err)
 	}
 	r.add(plan)
 	for _, d := range op.AlteredDecls() {

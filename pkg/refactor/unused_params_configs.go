@@ -66,7 +66,7 @@ func (e *DefaultEngine) UnusedParamsAcrossConfigs(req UnusedParamsRequest) (*Unu
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unused params across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {

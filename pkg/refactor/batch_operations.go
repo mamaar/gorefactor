@@ -156,7 +156,7 @@ func (e *DefaultEngine) resolveStepPackage(ws *types.Workspace, path string) (st
 	}
 	dir, ok, err := findSourceDir(ws, e.set.Sources(), path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve step package: %w", err)
 	}
 	if !ok {
 		return types.ResolvePackagePath(ws, path), nil
@@ -185,7 +185,7 @@ func (e *DefaultEngine) planSteps(ws *types.Workspace, steps []string) (*types.R
 	}
 	err := findPackageStepConflict(parsed)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan steps: %w", err)
 	}
 	plans := make([]*types.RefactoringPlan, 0, len(parsed))
 	for i, step := range parsed {

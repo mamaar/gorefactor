@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -53,7 +54,7 @@ func threadErrStopping(t *testing.T, files map[string]string, sourceFile, funcNa
 	if err == nil {
 		t.Fatalf("expected Execute to abort, got nil error")
 	}
-	return err
+	return fmt.Errorf("thread err stopping: %w", err)
 }
 
 // gainingNames returns the sorted names of the functions that gain a ctx param.

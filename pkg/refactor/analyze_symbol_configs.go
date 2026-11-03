@@ -48,7 +48,7 @@ func (e *DefaultEngine) AnalyzeSymbolAcrossConfigs(name, pkg string) (*SymbolRep
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("analyze symbol across configs: %w", err)
 	}
 	defer e.endRun(run)
 
@@ -116,7 +116,7 @@ func (r *symbolRun) visit(e *DefaultEngine, v *analysis.View, out *SymbolReport)
 
 	refs, err := analysis.NewSymbolResolver(v.Workspace, e.logger).FindReferencesIndexed(symbol, r.indexOf(v))
 	if err != nil {
-		return err
+		return fmt.Errorf("visit: %w", err)
 	}
 	for _, ref := range refs {
 		r.refs[symbolRefSite{ref.File, ref.Line, ref.Column}] = ref

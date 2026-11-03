@@ -136,7 +136,7 @@ func (op *RenameMethodOperation) renamedMembers(ws *types.Workspace) ([]*types.S
 func (op *RenameMethodOperation) targetFunc(ws *types.Workspace) (*gotypes.Func, error) {
 	typeSymbol, methodSymbol, err := op.target(ws)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("target func: %w", err)
 	}
 	return resolveMethod(resolveSymbolPackage(ws, typeSymbol), typeSymbol.Name, methodSymbol.Name, methodSymbol.Position)
 }

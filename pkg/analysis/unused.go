@@ -86,7 +86,7 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	g, idx, m, err := ua.prepare()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find unused symbols: %w", err)
 	}
 	m.markFrom(g, m.isRoot)
 
@@ -112,7 +112,7 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		}
 		_, err := ua.resolver.BuildSymbolTable(pkg)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %v", pkg.Path, err)
+			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
 		}
 	}
 

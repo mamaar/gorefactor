@@ -57,7 +57,7 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 	run := &reachableRun{req: req, found: make(map[declSite]*ReachableFinding), bodiless: make(map[analysis.BodilessPackage]*BodilessFinding), resolved: make(map[string]bool), dirs: make(map[string]bool)}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reachable across configs: %w", err)
 	}
 	defer e.endRun(run)
 

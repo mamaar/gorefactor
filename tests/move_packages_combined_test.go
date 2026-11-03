@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +25,7 @@ func movePackages(t *testing.T, dir string, mappings ...types.PackageMapping) (*
 	ws := loadWorkspace(t, eng, dir)
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{Packages: mappings})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move packages: %w", err)
 	}
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)

@@ -77,7 +77,7 @@ func appendContentRewrites(plan *types.RefactoringPlan, tree *analysis.SourceTre
 			content := string(file.Content)
 			newContent, err := rewrite(file)
 			if err != nil {
-				return err
+				return fmt.Errorf("append content rewrites: %w", err)
 			}
 			if newContent == content {
 				continue
@@ -136,7 +136,7 @@ func resolvePackageMove(ws *types.Workspace, sources *analysis.SourceTree, sourc
 	}
 	sourceDir, ok, err := findSourceDir(ws, sources, source)
 	if err != nil {
-		return dirMove{}, err
+		return dirMove{}, fmt.Errorf("resolve package move: %w", err)
 	}
 	if !ok {
 		return dirMove{}, fmt.Errorf("source package %s not found in workspace", source)

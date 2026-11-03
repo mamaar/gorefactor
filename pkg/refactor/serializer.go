@@ -142,7 +142,7 @@ func (f *fileStep) commit() error {
 	if f.delete {
 		err := deleteFile(f.path)
 		if err != nil {
-			return fmt.Errorf("failed to delete file %s: %v", f.path, err)
+			return fmt.Errorf("failed to delete file %s: %w", f.path, err)
 		}
 		return nil
 	}
@@ -151,11 +151,11 @@ func (f *fileStep) commit() error {
 	}
 	err := os.MkdirAll(filepath.Dir(f.path), 0755)
 	if err != nil {
-		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %v", f.path, err)
+		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %w", f.path, err)
 	}
 	err = os.WriteFile(f.path, f.content, f.mode)
 	if err != nil {
-		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %v", f.path, err)
+		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %w", f.path, err)
 	}
 	return nil
 }
@@ -380,7 +380,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	})
 
 	if err := s.validateChangePositions(sorted); err != nil {
-		return nil, fmt.Errorf("invalid change positions: %v", err)
+		return nil, fmt.Errorf("invalid change positions: %w", err)
 	}
 
 	modifiedContent := string(content)
@@ -388,7 +388,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	for _, change := range sorted {
 		modifiedContent, err = s.applyChange(modifiedContent, change)
 		if err != nil {
-			return nil, fmt.Errorf("failed to apply change: %v", err)
+			return nil, fmt.Errorf("failed to apply change: %w", err)
 		}
 	}
 	return []byte(modifiedContent), nil
@@ -399,7 +399,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 func (s *Serializer) computeContent(filePath string, content []byte, changes []refactorTypes.Change) ([]byte, error) {
 	modifiedBytes, err := s.ApplyChangesToContent(content, changes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("compute content: %w", err)
 	}
 	if len(modifiedBytes) == 0 || !strings.HasSuffix(filePath, ".go") || slices.Contains(strings.Split(filepath.ToSlash(filePath), "/"), "testdata") {
 		return modifiedBytes, nil
@@ -474,13 +474,13 @@ func (s *Serializer) formatGoCode(code string) (string, error) {
 	// First, try to parse to ensure it's valid Go code
 	_, err := parser.ParseFile(s.fileSet, "", code, parser.ParseComments)
 	if err != nil {
-		return "", fmt.Errorf("invalid Go syntax: %v", err)
+		return "", fmt.Errorf("invalid Go syntax: %w", err)
 	}
 
 	// Format the code
 	formatted, err := format.Source([]byte(code))
 	if err != nil {
-		return "", fmt.Errorf("formatting failed: %v", err)
+		return "", fmt.Errorf("formatting failed: %w", err)
 	}
 
 	return string(formatted), nil

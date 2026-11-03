@@ -116,7 +116,7 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 
 	decl, err = formatDeclaration(b.String())
 	if err != nil {
-		return "", "", err
+		return "", "", fmt.Errorf("render extraction: %w", err)
 	}
 
 	callExpr := name + "(" + strings.Join(args, ", ") + ")"

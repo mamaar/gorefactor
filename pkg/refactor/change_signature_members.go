@@ -62,7 +62,7 @@ func (op *ChangeSignatureOperation) signatureMembers(
 func propagatedMembers(survey *ifaceSurvey, seed *gotypes.Func, refuse func(*gotypes.Func, ifaceCandidate) error) ([]*gotypes.Func, error) {
 	members, err := methodClosure(survey, seed, refuse)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("propagated members: %w", err)
 	}
 	return members[1:], nil // the closure starts with the seed
 }

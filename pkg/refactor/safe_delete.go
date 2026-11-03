@@ -147,7 +147,7 @@ func (op *SafeDeleteOperation) targetsOf(ws *pkgtypes.Workspace, roots []*pkgtyp
 	for _, root := range roots {
 		found, err := op.deletionTargets(resolveSymbolPackage(ws, root), root)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("targets of: %w", err)
 		}
 		for _, t := range found {
 			if !seen[t.node] {

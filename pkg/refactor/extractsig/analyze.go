@@ -556,7 +556,7 @@ func (a *analyzer) collectParams() ([]Param, error) {
 		seen[obj] = true
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("collect params: %w", err)
 		}
 		params = append(params, Param{Name: obj.Name(), Type: typeStr})
 		a.paramObjs = append(a.paramObjs, obj)
@@ -588,7 +588,7 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 		}
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("collect results: %w", err)
 		}
 		results = append(results, Result{Name: obj.Name(), Type: typeStr})
 	}
@@ -852,7 +852,7 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 		v := v
 		typeStr, err := a.renderType(v.Type(), "enclosing function result")
 		if err != nil {
-			return err
+			return fmt.Errorf("analyze returns: %w", err)
 		}
 		res.EnclosingResults = append(res.EnclosingResults, Result{Name: v.Name(), Type: typeStr})
 	}

@@ -47,7 +47,7 @@ func (r *configRun) reportUncovered(plan *types.RefactoringPlan) error {
 	dirs, names := r.reached()
 	err := r.unattributedAbort(dirs)
 	if err != nil {
-		return err
+		return fmt.Errorf("report uncovered: %w", err)
 	}
 	for _, u := range analysis.UncheckedFiles(r.views, dirs) {
 		file := types.UncoveredFile{Path: u.Source.Path, Configs: configNames(u.Configs), Reason: u.Reason}

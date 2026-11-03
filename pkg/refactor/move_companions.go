@@ -324,7 +324,7 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		}
 		err := checkSplitInterfaceImplementers(ws, m.pkg, moving)
 		if err != nil {
-			return err
+			return fmt.Errorf("check for stranded references: %w", err)
 		}
 	}
 	return nil

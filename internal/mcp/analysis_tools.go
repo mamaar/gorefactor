@@ -176,7 +176,7 @@ type PossibleUseItem struct {
 func findUnused(state *MCPServer, in UnusedInput) (*refactor.UnusedReport, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find unused: %w", err)
 	}
 	req := refactor.UnusedRequest{IncludeExported: in.IncludeExported}
 	if in.Package != "" {

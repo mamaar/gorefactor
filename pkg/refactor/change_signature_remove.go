@@ -50,7 +50,7 @@ func (op *ChangeSignatureOperation) planRemoveParam(ws *pkgtypes.Workspace, pkg 
 	}
 	idx, err := removedParamIndex(old, op.NewParams)
 	if err != nil {
-		return err
+		return fmt.Errorf("plan remove param: %w", err)
 	}
 	op.removedIdx, op.removedCount = idx, len(old)
 	op.removedVariadic = strings.HasPrefix(old[len(old)-1].Type, "...")

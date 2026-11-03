@@ -701,7 +701,7 @@ func firstTestError(tests []testAST, bad map[string]error) error {
 	for _, t := range tests {
 		err, ok := bad[t.name]
 		if ok {
-			return err
+			return fmt.Errorf("first test error: %w", err)
 		}
 	}
 	return nil

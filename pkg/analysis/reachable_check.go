@@ -162,7 +162,7 @@ func (sc *sourceChecker) production(pkg *types.Package) (*checkedPkg, error) {
 
 	c, err := sc.check(pkg, sourceFiles(pkg, false, false), checkImporter{sc: sc})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("production: %w", err)
 	}
 	c.bodiless = bodilessReason(c)
 	if c.bodiless != "" {

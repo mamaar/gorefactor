@@ -32,7 +32,7 @@ func (op *ChangeSignatureOperation) returnTargets(
 		var err error
 		target, err = methodObject(ws, pkg, typeName, methodName)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("return targets: %w", err)
 		}
 	} else {
 		decl := op.findFunction(file, op.FunctionName)

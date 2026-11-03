@@ -505,7 +505,7 @@ func (op *ChangeSignatureOperation) collectConcreteChanges(
 	symbol := op.targetSymbol(resolver, sourcePackage, sourceFile, functionNode)
 	memberSymbols, err := op.applyMembers(ws, members, plan)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("collect concrete changes: %w", err)
 	}
 	return append([]*pkgtypes.Symbol{symbol}, memberSymbols...), functionNode, nil
 }

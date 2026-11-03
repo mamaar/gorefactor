@@ -56,7 +56,7 @@ func (importsRun) finish()                  {}
 func (e *DefaultEngine) DetectCycles() (*CyclesReport, error) {
 	views, err := e.beginRun(importsRun{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("detect cycles: %w", err)
 	}
 	defer e.endRun(importsRun{})
 
@@ -75,7 +75,7 @@ func (e *DefaultEngine) DetectCycles() (*CyclesReport, error) {
 func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDependenciesRequest) (*DependenciesReport, error) {
 	views, err := e.beginRun(importsRun{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("analyze dependencies across configs: %w", err)
 	}
 	defer e.endRun(importsRun{})
 

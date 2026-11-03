@@ -818,7 +818,7 @@ func (op *ThreadContextOperation) resolve(
 		for _, site := range idx.CallSitesOf(f) {
 			expr, err := op.argFor(idx, plan, site)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve: %w", err)
 			}
 			plan.ArgFor[site.Call.Lparen] = &callEdit{Expr: expr, Site: site, Callee: f}
 		}
@@ -901,7 +901,7 @@ func (op *ThreadContextOperation) calledFromCleanup(idx *analysis.ReferenceIndex
 	}
 	caller, err := op.callerObject(site)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("called from cleanup: %w", err)
 	}
 	return slices.ContainsFunc(idx.CallSitesOf(caller), func(s analysis.CallSite) bool {
 		return inCleanupClosure(s.Pkg, s.Fn, s.Call)
@@ -1223,7 +1223,7 @@ func (op *ThreadContextOperation) referenceIndex(ws *pkgtypes.Workspace) *analys
 func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.Func, error) {
 	file, pkg, err := op.findSourceFile(ws)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve seed: %w", err)
 	}
 	// The name identifier to resolve: an ordinary declaration's, or — when the
 	// seed names an interface method such as "Store.Save", which is an *ast.Field

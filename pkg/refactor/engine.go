@@ -266,7 +266,7 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 	run := &typesRun{}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("rename package: %w", err)
 	}
 	defer e.endRun(run)
 	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
@@ -455,7 +455,7 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry, within string)
 		if within != "" {
 			key, ok, err := withinKey(v.Workspace, within)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("entry reach: %w", err)
 			}
 			if ok {
 				a.SetWithin(key)
@@ -1112,7 +1112,7 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	run := &typesRun{}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move package: %w", err)
 	}
 	defer e.endRun(run)
 	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
@@ -1142,7 +1142,7 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	run := &typesRun{}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move dir: %w", err)
 	}
 	defer e.endRun(run)
 	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources(), Views: views}
@@ -1173,7 +1173,7 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	run := &typesRun{}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("move packages: %w", err)
 	}
 	defer e.endRun(run)
 	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources(), Views: views}

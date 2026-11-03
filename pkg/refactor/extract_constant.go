@@ -267,7 +267,7 @@ func (op *ExtractConstantOperation) checkPackageLevelName(pkg *pkgtypes.Package)
 	name := op.Request.ConstantName
 	files, err := sourceFilesOf(op.Sources, pkg.Dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("check package level name: %w", err)
 	}
 	for _, f := range files {
 		if f.AST == nil || f.AST.Name.Name != pkg.Name {

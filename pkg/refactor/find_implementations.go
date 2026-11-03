@@ -57,7 +57,7 @@ func (e *DefaultEngine) FindImplementationsAcrossConfigs(pkg, typeName, method s
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find implementations across configs: %w", err)
 	}
 	defer e.endRun(run)
 

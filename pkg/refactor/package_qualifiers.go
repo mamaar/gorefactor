@@ -24,7 +24,7 @@ type pkgRename struct {
 func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysis.SourceFile, renames []pkgRename, extra []textEdit) (string, []types.SkippedSite, error) {
 	changes, skipped, err := packageQualifierEdits(views, fset, file, renames)
 	if err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("qualifier rewrite: %w", err)
 	}
 	edits := extra
 	for _, c := range changes {

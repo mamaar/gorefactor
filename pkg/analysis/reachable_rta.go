@@ -64,7 +64,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	for pkg := range ua.importClosure(entry, includeTests) {
 		c, err := sc.production(pkg)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("build liveness: %w", err)
 		}
 		if pkg == entry && c.bodiless != "" {
 			return nil, &EntryBodilessError{Package: entry.ImportPath, Reason: c.bodiless}

@@ -57,7 +57,7 @@ func MergeConfigPlans(plans []ConfigPlan) (*types.RefactoringPlan, error) {
 	merged := mergeConfigChanges(live)
 	err := findConfigConflict(merged, live)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("merge config plans: %w", err)
 	}
 
 	out := &types.RefactoringPlan{
@@ -187,7 +187,7 @@ func MergeStepPlans(steps []*types.RefactoringPlan) (*types.RefactoringPlan, err
 	}
 	err := findStepConflict(steps)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("merge step plans: %w", err)
 	}
 	seenFiles := make(map[string]bool)
 	seenSites := make(map[types.SkippedSite]bool)

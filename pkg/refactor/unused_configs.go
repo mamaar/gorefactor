@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"cmp"
+	"fmt"
 	"go/token"
 	"math"
 	"path/filepath"
@@ -44,7 +45,7 @@ func (e *DefaultEngine) UnusedAcrossConfigs(req UnusedRequest) (*UnusedReport, e
 	run := &unusedRun{engine: e, req: req, used: make(types.SymbolKeySet), decls: make(map[declSite]*unusedDecl)}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unused across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
@@ -125,7 +126,7 @@ func (r *unusedRun) visit(v *analysis.View) error {
 	a.SetIndex(r.indexOf(v))
 	unused, err := a.FindUnusedSymbols()
 	if err != nil {
-		return err
+		return fmt.Errorf("visit: %w", err)
 	}
 
 	reported := make(types.SymbolKeySet)

@@ -112,7 +112,7 @@ func carriedByDir(root dirMove, packages []dirMove) ([]fileMove, error) {
 	}
 	entries, err := walkTree(root.source)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("carried by dir: %w", err)
 	}
 	var keep []treeEntry
 	for _, e := range entries {

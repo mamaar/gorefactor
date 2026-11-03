@@ -55,7 +55,7 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 		for _, site := range idx.CallSitesOf(t.Obj) {
 			seed, err := op.callSiteSeed(idx, plan, site)
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("call site seeds: %w", err)
 			}
 			if seed != nil {
 				seeds = append(seeds, seed)

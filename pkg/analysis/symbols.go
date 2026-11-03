@@ -1795,7 +1795,7 @@ func (sr *SymbolResolver) getInterfaceMethods(iface *types.Symbol) ([]*types.Sym
 func (sr *SymbolResolver) findPromotedMethods(symbol *types.Symbol) ([]*types.Symbol, error) {
 	embeddedFields, err := sr.ResolveEmbeddedFields(symbol)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find promoted methods: %w", err)
 	}
 
 	var promotedMethods []*types.Symbol

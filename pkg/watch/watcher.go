@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"path/filepath"
@@ -55,7 +56,7 @@ func NewWatcher(rootPath string, debounce time.Duration, logger *slog.Logger) (*
 func (w *Watcher) addDirs() error {
 	return filepath.WalkDir(w.rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("add dirs: %w", err)
 		}
 		if !d.IsDir() {
 			return nil

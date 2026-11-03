@@ -61,7 +61,7 @@ func (e *DefaultEngine) AlwaysNilErrorsAcrossConfigs(req AlwaysNilErrorsRequest)
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("always nil errors across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
