@@ -1595,11 +1595,6 @@ func (sr *SymbolResolver) ResolveEmbeddedFields(symbol *types.Symbol) ([]*types.
 	return embeddedFields, nil
 }
 
-// FindPromotedMethods finds methods promoted from embedded fields
-func (sr *SymbolResolver) FindPromotedMethods(symbol *types.Symbol) ([]*types.Symbol, error) {
-	return sr.findPromotedMethods(symbol)
-}
-
 // InvalidateCacheForPackage clears cache entries for a package
 func (sr *SymbolResolver) InvalidateCacheForPackage(pkgPath string) {
 	sr.cache.InvalidatePackage(pkgPath)

@@ -99,7 +99,7 @@ func TestEmbeddedFieldResolution(t *testing.T) {
 	}
 
 	// Test promoted method resolution
-	promotedMethods, err := resolver.FindPromotedMethods(compositeType)
+	promotedMethods, err := resolver.findPromotedMethods(compositeType)
 	if err != nil {
 		t.Fatalf("Failed to find promoted methods: %v", err)
 	}
