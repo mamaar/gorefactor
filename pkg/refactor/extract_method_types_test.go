@@ -917,7 +917,7 @@ func extractAndVet(t *testing.T, src, wantSig, wantCall string) *types.Refactori
 
 // TestExtractFunctionGuardCallSiteDoesNotRedeclareErr: a guard with no
 // outputs whose err is not read afterwards uses an if-init, so a later
-// `err :=` in the same scope still compiles; a live err is reused with `=`.
+// `err :=` in the same scope still compiles, and a live err is left alone.
 func TestExtractFunctionGuardCallSiteDoesNotRedeclareErr(t *testing.T) {
 	cases := []struct{ name, src, wantCall string }{
 		{
@@ -939,7 +939,7 @@ func run(n int) error {
 			wantCall: "if err := measure(n); err != nil {\n\treturn err\n}",
 		},
 		{
-			name: "err read afterwards",
+			name: "known-nil err read afterwards",
 			src: `package main
 
 import "errors"
@@ -957,7 +957,7 @@ func run(n int) error {
 	return step(n)
 }
 `,
-			wantCall: "err = measure(n)\nif err != nil {\n\treturn err\n}",
+			wantCall: "if err := measure(n); err != nil {\n\treturn err\n}",
 		},
 	}
 	for _, tc := range cases {
@@ -983,6 +983,57 @@ func run(n int) ([]int, error) {
 	var err error
 	err = step(n)
 	return out, err
+}
+`
+		extractAndVet(t, src, "func measure(n int) ([]int, error) {",
+			"out, err2 := measure(n)\nif err2 != nil {\n\treturn nil, err2\n}")
+	})
+}
+
+// TestExtractFunctionGuardNeverOverwritesALiveErr: the extracted guard returns
+// nil on fall-through, so an err holding a value that is read afterwards is
+// not reused.
+func TestExtractFunctionGuardNeverOverwritesALiveErr(t *testing.T) {
+	t.Run("no outputs", func(t *testing.T) {
+		src := `package main
+
+import "errors"
+
+func step(n int) error { return nil }
+
+func run(n int) error {
+	err := step(n)
+	if n < 0 { // start
+		return errors.New("negative")
+	} // end
+	if err != nil {
+		return err
+	}
+	return nil
+}
+`
+		extractAndVet(t, src, "func measure(n int) error {", "if err := measure(n); err != nil {\n\treturn err\n}")
+	})
+	t.Run("with outputs", func(t *testing.T) {
+		src := `package main
+
+import "errors"
+
+func step(n int) error { return nil }
+
+func run(n int) ([]int, error) {
+	err := step(n)
+	var out []int
+	for i := 0; i < n; i++ { // start
+		if i > 5 {
+			return nil, errors.New("too many")
+		}
+		out = append(out, i)
+	} // end
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 `
 		extractAndVet(t, src, "func measure(n int) ([]int, error) {",

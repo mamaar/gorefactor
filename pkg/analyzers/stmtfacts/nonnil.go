@@ -8,9 +8,18 @@ import (
 
 // ProvablyNonNil reports whether the variable name is non-nil at ret: ret sits
 // in a branch of an enclosing if whose condition proves it, and nothing in
-// that branch assigns the name before ret.
+// that branch assigns the name before ret, or anywhere in a loop around ret
+// inside the branch. A ret inside a function literal is never proven: the
+// literal may run later, or redeclare the name.
 func ProvablyNonNil(stack []ast.Node, ret *ast.ReturnStmt, name string) bool {
+	var loops []ast.Node
 	for i := len(stack) - 2; i >= 0; i-- {
+		switch stack[i].(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ForStmt, *ast.RangeStmt:
+			loops = append(loops, stack[i])
+		}
 		ifStmt, ok := stack[i].(*ast.IfStmt)
 		if !ok {
 			continue
@@ -23,7 +32,9 @@ func ProvablyNonNil(stack []ast.Node, ret *ast.ReturnStmt, name string) bool {
 		case ifStmt.Else:
 			proven = nonNilWhen(ifStmt.Cond, name, false)
 		}
-		if proven && !assignsBefore(branch, name, ret.Pos()) {
+		if proven && !assignsBefore(branch, name, ret.Pos()) && !slices.ContainsFunc(loops, func(l ast.Node) bool {
+			return assignsBefore(l, name, l.End())
+		}) {
 			return true
 		}
 	}
@@ -72,6 +83,8 @@ func assignsBefore(root ast.Node, name string, pos token.Pos) bool {
 			found = s.Key != nil && isName(s.Key) || s.Value != nil && isName(s.Value)
 		case *ast.UnaryExpr:
 			found = s.Op == token.AND && isName(s.X)
+		case *ast.Field:
+			found = slices.ContainsFunc(s.Names, func(id *ast.Ident) bool { return id.Name == name })
 		case *ast.ValueSpec:
 			found = slices.ContainsFunc(s.Names, func(id *ast.Ident) bool { return id.Name == name })
 		}

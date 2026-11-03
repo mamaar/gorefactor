@@ -568,3 +568,50 @@ func TestReferencesAny(t *testing.T) {
 		})
 	}
 }
+
+func TestProvablyNonNil(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"guarded return", `if err != nil { return err }`, true},
+		{"assigned before the return", `if err != nil { err = nil; return err }`, false},
+		{"closure parameter redeclares the name", `if err != nil { h := func(err error) error { return err }; _ = h }`, false},
+		{"closure runs later", `if err != nil { h := func() error { return err }; _ = h }`, false},
+		{"loop writes the name after the return", `if err != nil { for i := 0; i < 3; i++ { if i > 1 { return err }; err = nil } }`, false},
+		{"loop that never writes it", `if err != nil { for i := 0; i < 3; i++ { if i > 1 { return err } } }`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package p\nfunc f(err error) error {\n" + tc.body + "\nreturn nil\n}\n"
+			file, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var stack, found []ast.Node
+			var ret *ast.ReturnStmt
+			ast.Inspect(file, func(n ast.Node) bool {
+				if n == nil {
+					stack = stack[:len(stack)-1]
+					return true
+				}
+				stack = append(stack, n)
+				// The innermost return of the guarded branch is the one
+				// asked about; the trailing `return nil` is not.
+				if r, ok := n.(*ast.ReturnStmt); ok && len(r.Results) == 1 {
+					if id, ok := r.Results[0].(*ast.Ident); ok && id.Name == "err" {
+						ret, found = r, append([]ast.Node(nil), stack...)
+					}
+				}
+				return true
+			})
+			if ret == nil {
+				t.Fatal("no return of err in the fixture")
+			}
+			if got := stmtfacts.ProvablyNonNil(found, ret, "err"); got != tc.want {
+				t.Errorf("ProvablyNonNil = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -313,7 +313,7 @@ var errNoImportChange = errors.New("no imports to add")
 
 // extractImportsChange returns the change that adds the imports the rendered
 // signature needs but the source file does not have yet, or errNoImportChange
-// when there are none.
+// when there are none, or the file already has them.
 //
 // The Description text is load-bearing: the plan validator skips its
 // standalone-syntax check for descriptions containing "import" (see
@@ -348,7 +348,11 @@ func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports m
 		needed = append(needed, neededImport{alias: alias, path: path})
 	}
 
-	return generateNeededImportsChange(ws, sourceFile, needed), nil
+	change := generateNeededImportsChange(ws, sourceFile, needed)
+	if change == nil {
+		return nil, errNoImportChange
+	}
+	return change, nil
 }
 
 func lastPathSegment(path string) string {

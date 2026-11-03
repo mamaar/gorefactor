@@ -41,13 +41,14 @@ func (a *analyzer) analyzeErrGuard(res *Analysis) error {
 		res.GuardZeros = append(res.GuardZeros, zero)
 	}
 	res.ErrGuard = true
+	if len(res.Results) == 0 {
+		res.ErrInline = true
+		res.ErrName = "err" // scoped to the if, so nothing else can collide
+		return nil
+	}
 	var errVar *gotypes.Var
 	res.ErrName, errVar = a.guardErrName(res.Results)
 	res.ErrExists = errVar != nil
-	res.ErrInline = len(res.Results) == 0 && (errVar == nil || !a.liveOut(errVar))
-	if res.ErrInline {
-		res.ErrName = "err" // scoped to the if, so nothing else can collide
-	}
 	return nil
 }
 
@@ -182,7 +183,9 @@ func (a *analyzer) zeroExpr(t gotypes.Type) (string, error) {
 
 // guardErrName picks the variable that receives the extracted function's
 // error. A visible error variable of the enclosing function is reused (and
-// returned); a name taken by anything else, or by a result, is skipped.
+// returned) only when overwriting it with nil loses nothing: its value is not
+// read after the block, or it is known nil there. A name taken by anything
+// else, or by a result, is skipped.
 func (a *analyzer) guardErrName(results []Result) (string, *gotypes.Var) {
 	// One byte earlier, so a block that is itself a for/if/switch does not
 	// resolve to the scope that statement opens.
@@ -207,7 +210,7 @@ func (a *analyzer) guardErrName(results []Result) (string, *gotypes.Var) {
 			return name, nil
 		}
 		v, ok := obj.(*gotypes.Var)
-		if ok && gotypes.Identical(v.Type(), errorType) {
+		if ok && gotypes.Identical(v.Type(), errorType) && (!a.liveOut(v) || a.knownZero(v)) {
 			return name, v
 		}
 	}
