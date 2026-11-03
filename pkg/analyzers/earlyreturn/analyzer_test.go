@@ -947,6 +947,105 @@ func f(m map[string]any, k string) bool {
 	}
 }
 
+// Reusing the outer variable would be observable through a named result, a
+// goto that revisits the if, or a pointer to the outer variable.
+func TestDedentReuseRefusedWhenObservable(t *testing.T) {
+	const ptrTypes = `package testpkg
+
+type box struct{ n int }
+
+var kept *box
+
+func (b *box) keep() { kept = b }
+
+func mk(n int) (box, bool) { return box{n}, true }
+
+`
+
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{
+			name: "named result with a bare return",
+			src: `package testpkg
+
+func f(m map[int]bool) (ok bool) {
+	x, ok := m[1]
+	if !x {
+		return false
+	} else {
+		y, ok := m[2]
+		_, _ = y, ok
+	}
+	return
+}
+`,
+		},
+		{
+			name: "goto back over the if",
+			src: `package testpkg
+
+func f() {
+	n, ok := 0, false
+L:
+	println(n, ok)
+	if n < 2 {
+		m, ok := n+1, true
+		n = m
+		_ = ok
+		goto L
+	}
+}
+`,
+		},
+		{
+			name: "pointer method keeps the outer variable",
+			src: ptrTypes + `func f() {
+	s, ok := mk(1)
+	s.keep()
+	if ok {
+		s, ok2 := mk(2)
+		_ = ok2
+		println(s.n)
+	}
+}
+`,
+		},
+		{
+			name: "address of a field",
+			src: ptrTypes + `func f() *int {
+	s, ok := mk(1)
+	p := &s.n
+	if !ok {
+		return nil
+	} else {
+		s, ok2 := mk(2)
+		_ = ok2
+		println(s.n)
+	}
+	return p
+}
+`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			results, _ := run(t, tc.src)
+			if len(results) == 0 {
+				t.Fatal("no findings")
+			}
+
+			for _, r := range results {
+				if r.Fixable {
+					t.Errorf("fixable at line %d, want refused", r.Line)
+				}
+			}
+		})
+	}
+}
+
 func lineOfFirstIf(src, needle string) int {
 	idx := strings.Index(src, needle)
 

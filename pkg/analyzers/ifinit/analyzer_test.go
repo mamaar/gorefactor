@@ -1868,7 +1868,7 @@ func TestIfInit_ReuseOriginalVariable(t *testing.T) {
 
 			results, _ := rr.Result.([]*ifinit.Result)
 			if len(results) != 1 || results[0].Skipped {
-				t.Fatalf("expected one split site, got %+v", *results[0])
+				t.Fatalf("expected one split site, got %+v", results)
 			}
 
 			formatted := mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))

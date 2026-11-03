@@ -19,6 +19,7 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"slices"
 
 	"golang.org/x/tools/go/analysis"
 
@@ -445,8 +446,8 @@ func (w *walker) firstClash(moved []ast.Stmt, enc enclosing) string {
 // `:=` that declares name still compiles and keeps its meaning by assigning
 // the outer variable of the same name instead of declaring a new one. That
 // holds when the statement declares another new name, both variables have the
-// same type, nothing after the if reads the outer variable, and no closure or
-// address can observe the overwrite.
+// same type, nothing after the if reads the outer variable, and no named
+// result, goto, closure or pointer can observe the overwrite.
 func (w *walker) reusable(name string, moved []ast.Stmt, enc enclosing) bool {
 	outer := w.outerVar(name, enc.list[:enc.idx])
 	inner := w.firstDefinition(name, moved, enc.names)
@@ -455,11 +456,18 @@ func (w *walker) reusable(name string, moved []ast.Stmt, enc enclosing) bool {
 		return false
 	}
 
+	if v, isVar := outer.(*gotypes.Var); !isVar || v.Kind() == gotypes.ResultVar || stmtfacts.HasGoto(enc.list) {
+		return false
+	}
+
 	if refersTo(enc.list[enc.idx+1:], map[string]bool{name: true}) {
 		return false
 	}
 
-	return !captured(name, enc.list[:enc.idx]) && !captured(name, moved)
+	info := w.pass.TypesInfo
+
+	return !slices.ContainsFunc(enc.list[:enc.idx], func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, outer) }) &&
+		!slices.ContainsFunc(moved, func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, inner) })
 }
 
 // outerVar returns the variable name that a `:=` in prior declares or assigns.
@@ -533,29 +541,6 @@ func refersTo(stmts []ast.Stmt, names map[string]bool) bool {
 	}
 
 	return false
-}
-
-// captured reports whether name is mentioned inside a function literal or has
-// its address taken in stmts, so an assignment to it could be seen later.
-func captured(name string, stmts []ast.Stmt) bool {
-	names := map[string]bool{name: true}
-	found := false
-
-	for _, stmt := range stmts {
-		ast.Inspect(stmt, func(n ast.Node) bool {
-			switch x := n.(type) {
-			case *ast.FuncLit:
-				found = found || stmtfacts.ReferencesAny(x, names)
-			case *ast.UnaryExpr:
-				ident, ok := x.X.(*ast.Ident)
-				found = found || (x.Op == token.AND && ok && ident.Name == name)
-			}
-
-			return !found
-		})
-	}
-
-	return found
 }
 
 func (w *walker) record(ifStmt *ast.IfStmt, pattern Pattern, fnName string, bodyLines int, fixable bool, reason string) {

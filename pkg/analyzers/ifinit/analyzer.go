@@ -224,75 +224,13 @@ func (w *walker) unhoistCaptured(declared scope, assign *ast.AssignStmt, node as
 		dn, exists := declared[id.Name]
 
 		obj := w.pass.TypesInfo.Defs[id]
-		if !exists || !dn.hoisted || obj == nil || !w.captures(node, obj) {
+		if !exists || !dn.hoisted || obj == nil || !stmtfacts.Captures(w.pass.TypesInfo, node, obj) {
 			continue
 		}
 
 		dn.hoisted = false
 		declared[id.Name] = dn
 	}
-}
-
-// captures reports whether node uses obj inside a func literal or takes its
-// address: under '&', by calling a pointer method on it, or by slicing it.
-func (w *walker) captures(node ast.Node, obj types.Object) bool {
-	uses := func(n ast.Node) bool {
-		found := false
-
-		ast.Inspect(n, func(n ast.Node) bool {
-			id, ok := n.(*ast.Ident)
-			if ok && w.pass.TypesInfo.Uses[id] == obj {
-				found = true
-			}
-
-			return !found
-		})
-
-		return found
-	}
-	found := false
-
-	ast.Inspect(node, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.FuncLit:
-			found = found || uses(n)
-			return false
-		case *ast.UnaryExpr:
-			found = found || n.Op == token.AND && uses(n.X)
-		case *ast.SelectorExpr:
-			found = found || w.pointerMethodOnValue(n) && uses(n.X)
-		case *ast.SliceExpr:
-			t := w.pass.TypesInfo.TypeOf(n.X)
-			if t != nil {
-				_, array := t.Underlying().(*types.Array)
-				found = found || array && uses(n.X)
-			}
-		}
-
-		return !found
-	})
-
-	return found
-}
-
-// pointerMethodOnValue reports whether sel selects a pointer-receiver method
-// on an operand that is not itself a pointer, which takes the operand's address.
-func (w *walker) pointerMethodOnValue(sel *ast.SelectorExpr) bool {
-	fn, ok := w.pass.TypesInfo.Uses[sel.Sel].(*types.Func)
-	if !ok || fn.Signature().Recv() == nil {
-		return false
-	}
-
-	_, ptrRecv := fn.Signature().Recv().Type().(*types.Pointer)
-
-	operand := w.pass.TypesInfo.TypeOf(sel.X)
-	if operand == nil {
-		return false
-	}
-
-	_, ptrOperand := operand.Underlying().(*types.Pointer)
-
-	return ptrRecv && !ptrOperand
 }
 
 // walkLabeled handles the guard: an if/switch/type-switch that is the direct
@@ -492,10 +430,11 @@ type emission struct {
 
 // decideEmission decides how to hoist assign, the init of list[idx]. When
 // checkCollisions is false (plain '=' assigns, or an else-if's brand-new
-// wrapping block) the text is always emitted unchanged. When true, it performs the collision analysis
-// described in the package design: unchanged ':=' unless every non-blank
-// LHS name already exists in declared, in which case it attempts a
-// type-checked downgrade to '=', or skips if that cannot be verified safe.
+// wrapping block) the text is always emitted unchanged. When true, it performs
+// the collision analysis described in the package design: unchanged ':=' unless
+// every non-blank LHS name already exists in declared, in which case it
+// attempts a type-checked downgrade to '=', or skips if that cannot be
+// verified safe.
 func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCollisions bool, list []ast.Stmt, idx int) emission {
 	fullText := w.text(assign.Pos(), assign.End())
 
@@ -617,7 +556,7 @@ func (w *walker) overwriteHazard(outer types.Object, id *ast.Ident, list []ast.S
 		return "a variable of another type"
 	case stmtfacts.HasGoto(list):
 		return "a variable a goto can revisit"
-	case w.captures(list[idx], inner) || slices.ContainsFunc(list, func(s ast.Stmt) bool { return w.captures(s, outer) }):
+	case stmtfacts.Captures(info, list[idx], inner) || slices.ContainsFunc(list, func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, outer) }):
 		return "a variable a closure or pointer can observe"
 	case liveness{info: info, v: outer}.readFirst(list[idx+1:]):
 		return "a value read later"

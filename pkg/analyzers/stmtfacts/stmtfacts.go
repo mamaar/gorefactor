@@ -486,3 +486,76 @@ func HasGoto(stmts []ast.Stmt) bool {
 
 	return found
 }
+
+// Captures reports whether node uses obj inside a func literal or can observe
+// it through a pointer, see AddressTaken.
+func Captures(info *types.Info, node ast.Node, obj types.Object) bool {
+	found := false
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		lit, ok := n.(*ast.FuncLit)
+		found = found || ok && usesObject(info, lit, obj)
+
+		return !found
+	})
+
+	return found || AddressTaken(info, node, obj)
+}
+
+// AddressTaken reports whether node takes obj's address: under '&', by calling
+// a pointer method on it, or by slicing it when it is an array.
+func AddressTaken(info *types.Info, node ast.Node, obj types.Object) bool {
+	found := false
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.UnaryExpr:
+			found = found || n.Op == token.AND && usesObject(info, n.X, obj)
+		case *ast.SelectorExpr:
+			found = found || pointerMethodOnValue(info, n) && usesObject(info, n.X, obj)
+		case *ast.SliceExpr:
+			t := info.TypeOf(n.X)
+			if t != nil {
+				_, array := t.Underlying().(*types.Array)
+				found = found || array && usesObject(info, n.X, obj)
+			}
+		}
+
+		return !found
+	})
+
+	return found
+}
+
+func usesObject(info *types.Info, node ast.Node, obj types.Object) bool {
+	found := false
+
+	ast.Inspect(node, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		found = found || ok && info.Uses[id] == obj
+
+		return !found
+	})
+
+	return found
+}
+
+// pointerMethodOnValue reports whether sel selects a pointer-receiver method
+// on an operand that is not itself a pointer, which takes the operand's address.
+func pointerMethodOnValue(info *types.Info, sel *ast.SelectorExpr) bool {
+	fn, ok := info.Uses[sel.Sel].(*types.Func)
+	if !ok || fn.Signature().Recv() == nil {
+		return false
+	}
+
+	_, ptrRecv := fn.Signature().Recv().Type().(*types.Pointer)
+
+	operand := info.TypeOf(sel.X)
+	if operand == nil {
+		return false
+	}
+
+	_, ptrOperand := operand.Underlying().(*types.Pointer)
+
+	return ptrRecv && !ptrOperand
+}

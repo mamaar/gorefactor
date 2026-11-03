@@ -432,7 +432,8 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	var writes []token.Pos
 
 	fn := enclosingFunc(site.Cursor)
-	local := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End()
+	// A pointer to the variable can read it from anywhere, so every read counts.
+	local := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End() && !stmtfacts.AddressTaken(info, funcBody(fn), obj)
 	uses := refs.NonCallUsesOf(obj)
 
 	var kill *ast.AssignStmt
