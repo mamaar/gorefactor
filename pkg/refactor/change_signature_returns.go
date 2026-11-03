@@ -614,7 +614,9 @@ func enclosingFunc(c inspector.Cursor) ast.Node {
 // call or the function has a goto, where a break, continue or jump could skip it.
 func killingWrite(call inspector.Cursor, uses []analysis.ValueUse) *ast.AssignStmt {
 	block := call.Parent().Parent().Node()
-	if _, ok := block.(*ast.BlockStmt); !ok {
+
+	_, ok := block.(*ast.BlockStmt)
+	if !ok {
 		return nil
 	}
 
@@ -653,7 +655,8 @@ func killingWrite(call inspector.Cursor, uses []analysis.ValueUse) *ast.AssignSt
 
 // funcBody returns the body of a function declaration or literal.
 func funcBody(fn ast.Node) *ast.BlockStmt {
-	if decl, ok := fn.(*ast.FuncDecl); ok {
+	decl, ok := fn.(*ast.FuncDecl)
+	if ok {
 		return decl.Body
 	}
 

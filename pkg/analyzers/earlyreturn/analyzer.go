@@ -456,7 +456,8 @@ func (w *walker) reusable(name string, moved []ast.Stmt, enc enclosing) bool {
 		return false
 	}
 
-	if v, isVar := outer.(*gotypes.Var); !isVar || v.Kind() == gotypes.ResultVar || stmtfacts.HasGoto(enc.list) {
+	v, isVar := outer.(*gotypes.Var)
+	if !isVar || v.Kind() == gotypes.ResultVar || stmtfacts.HasGoto(enc.list) {
 		return false
 	}
 
