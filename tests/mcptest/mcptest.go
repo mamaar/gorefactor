@@ -33,14 +33,14 @@ func (s *Session) Close() {
 
 // Transport selects how the MCP server is reached.
 type Transport interface {
-	connect(ctx context.Context, t testing.TB) (*Session, error)
+	connect(ctx context.Context) (*Session, error)
 }
 
 // Dial connects to an MCP server using the given transport,
 // then calls load_workspace with workspacePath.
 func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath string) *Session {
 	t.Helper()
-	sess, err := transport.connect(ctx, t)
+	sess, err := transport.connect(ctx)
 	if err != nil {
 		t.Fatalf("mcptest.Dial: connect: %v", err)
 	}
@@ -87,7 +87,7 @@ func InProcessWithClient(clientOpts *mcpsdk.ClientOptions, sessionOpts *mcpsdk.C
 	return inProcess{clientOpts: clientOpts, sessionOpts: sessionOpts}
 }
 
-func (ip inProcess) connect(ctx context.Context, t testing.TB) (*Session, error) {
+func (ip inProcess) connect(ctx context.Context) (*Session, error) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	state := internalmcp.NewMCPServer(logger)
 
@@ -117,7 +117,7 @@ type subprocess struct {
 // Subprocess returns a transport that shells out to the given binary.
 func Subprocess(bin string) Transport { return subprocess{binPath: bin} }
 
-func (sp subprocess) connect(ctx context.Context, t testing.TB) (*Session, error) {
+func (sp subprocess) connect(ctx context.Context) (*Session, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, sp.binPath)
 

@@ -132,9 +132,7 @@ func (u *WorkspaceUpdater) removePackage(v *analysis.View, pkg *types.Package, s
 	}
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
-	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
-		u.logger.Error("remove: dependency graph rebuild failed", "dir", pkg.Dir, "err", err)
-	}
+	_ = v.Analyzer.BuildDependencyGraph()
 	u.logger.Info("removed empty package",
 		"dir", pkg.Dir,
 		"config", v.Config.Key(),
@@ -156,10 +154,7 @@ func (u *WorkspaceUpdater) rebuildPackage(v *analysis.View, pkg *types.Package, 
 		return
 	}
 
-	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
-		u.logger.Error(c.action+": dependency graph rebuild failed", "file", c.path, "err", err)
-		return
-	}
+	_ = v.Analyzer.BuildDependencyGraph()
 
 	symbols := countSymbols(st)
 	u.logger.Info(c.action+": re-evaluated",
@@ -194,9 +189,7 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 	if _, err := v.Resolver.BuildSymbolTable(pkg); err != nil {
 		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)
 	}
-	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
-		u.logger.Error("create: dependency graph build failed", "dir", dir, "err", err)
-	}
+	_ = v.Analyzer.BuildDependencyGraph()
 	u.logger.Info("create: new package",
 		"dir", dir,
 		"importPath", pkg.ImportPath,

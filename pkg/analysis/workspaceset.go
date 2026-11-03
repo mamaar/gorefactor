@@ -151,10 +151,7 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	}
 
 	analyzer := NewDependencyAnalyzer(ws, s.logger)
-	if _, err := analyzer.BuildDependencyGraph(); err != nil {
-		s.logger.Error("dependency graph build failed", "err", err)
-		return nil, fmt.Errorf("failed to build dependency graph: %w", err)
-	}
+	_ = analyzer.BuildDependencyGraph()
 	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}, nil
 }
 

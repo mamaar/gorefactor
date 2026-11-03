@@ -614,7 +614,7 @@ func (op *ThreadContextOperation) discover(
 			}
 		}
 
-		extra, err := op.expandInterfaces(f, ws, idx)
+		extra, err := op.expandInterfaces(f, ws)
 		if err != nil {
 			return nil, err
 		}
@@ -901,7 +901,6 @@ func (op *ThreadContextOperation) calledFromCleanup(idx *analysis.ReferenceIndex
 func (op *ThreadContextOperation) expandInterfaces(
 	f *gotypes.Func,
 	ws *pkgtypes.Workspace,
-	idx *analysis.ReferenceIndex,
 ) ([]*gotypes.Func, error) {
 	// Checked for every worklist entry, before anything is expanded. Satisfaction
 	// of an interface declared outside the workspace is broken by the signature

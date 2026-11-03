@@ -113,7 +113,7 @@ func analyzeFile(pass *analysis.Pass, cfg *config, file *ast.File, content []byt
 			if !funcReturnsError {
 				return true
 			}
-			violations := checkReturnStmt(pass, cfg, file, content, node, currentFunc)
+			violations := checkReturnStmt(pass, cfg, content, node, currentFunc)
 			results = append(results, violations...)
 		}
 		return true
@@ -134,14 +134,14 @@ func returnsError(fn *ast.FuncDecl) bool {
 	return false
 }
 
-func checkReturnStmt(pass *analysis.Pass, cfg *config, file *ast.File, content []byte, ret *ast.ReturnStmt, funcName string) []*Result {
+func checkReturnStmt(pass *analysis.Pass, cfg *config, content []byte, ret *ast.ReturnStmt, funcName string) []*Result {
 	var results []*Result
 
 	for _, expr := range ret.Results {
-		if r := checkBareReturn(pass, cfg, file, content, ret, expr, funcName); r != nil {
+		if r := checkBareReturn(pass, cfg, content, ret, expr, funcName); r != nil {
 			results = append(results, r)
 		}
-		if r := checkFmtErrorf(pass, cfg, file, content, ret, expr, funcName); r != nil {
+		if r := checkFmtErrorf(pass, cfg, content, ret, expr, funcName); r != nil {
 			results = append(results, r)
 		}
 	}
@@ -149,7 +149,7 @@ func checkReturnStmt(pass *analysis.Pass, cfg *config, file *ast.File, content [
 	return results
 }
 
-func checkBareReturn(pass *analysis.Pass, cfg *config, file *ast.File, content []byte, ret *ast.ReturnStmt, expr ast.Expr, funcName string) *Result {
+func checkBareReturn(pass *analysis.Pass, cfg *config, content []byte, ret *ast.ReturnStmt, expr ast.Expr, funcName string) *Result {
 	ident, ok := expr.(*ast.Ident)
 	if !ok || !isErrorVarName(ident.Name) {
 		return nil
@@ -206,7 +206,7 @@ func checkBareReturn(pass *analysis.Pass, cfg *config, file *ast.File, content [
 	}
 }
 
-func checkFmtErrorf(pass *analysis.Pass, cfg *config, file *ast.File, content []byte, ret *ast.ReturnStmt, expr ast.Expr, funcName string) *Result {
+func checkFmtErrorf(pass *analysis.Pass, cfg *config, content []byte, ret *ast.ReturnStmt, expr ast.Expr, funcName string) *Result {
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
 		return nil

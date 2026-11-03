@@ -318,9 +318,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	}
 
 	// Preserve existing params if not explicitly provided (fixes add_return/remove_return dropping params)
-	if err := op.preserveExistingParamsIfNeeded(sourceFile); err != nil {
-		return nil, err
-	}
+	op.preserveExistingParamsIfNeeded(sourceFile)
 
 	plan := &pkgtypes.RefactoringPlan{
 		Changes:       make([]pkgtypes.Change, 0),
@@ -598,7 +596,7 @@ func (op *ChangeSignatureOperation) buildImpactAnalysis(
 		plan.Impact = &pkgtypes.ImpactAnalysis{
 			AffectedFiles:    plan.AffectedFiles,
 			AffectedPackages: op.getAffectedPackages(ws, plan.AffectedFiles),
-			PotentialIssues:  op.analyzeImpact(ws, primaryFuncDecl, callSiteCount),
+			PotentialIssues:  op.analyzeImpact(primaryFuncDecl, callSiteCount),
 		}
 	} else {
 		plan.Impact = &pkgtypes.ImpactAnalysis{
@@ -1088,7 +1086,7 @@ func (op *ChangeSignatureOperation) getAffectedPackages(ws *pkgtypes.Workspace, 
 	return packages
 }
 
-func (op *ChangeSignatureOperation) analyzeImpact(ws *pkgtypes.Workspace, funcDecl *ast.FuncDecl, numReferences int) []pkgtypes.Issue {
+func (op *ChangeSignatureOperation) analyzeImpact(funcDecl *ast.FuncDecl, numReferences int) []pkgtypes.Issue {
 	var issues []pkgtypes.Issue
 
 	// Warn about breaking changes
@@ -1213,9 +1211,9 @@ func (op *ChangeSignatureOperation) extractNamedReturnParams(funcType *ast.FuncT
 // preserveExistingParamsIfNeeded populates NewParams from the existing signature
 // when the caller did not explicitly provide parameters. This prevents add_return
 // and remove_return from accidentally dropping the parameter list.
-func (op *ChangeSignatureOperation) preserveExistingParamsIfNeeded(sourceFile *pkgtypes.File) error {
+func (op *ChangeSignatureOperation) preserveExistingParamsIfNeeded(sourceFile *pkgtypes.File) {
 	if len(op.NewParams) > 0 || op.changesParams() {
-		return nil // The caller gave the parameters
+		return // The caller gave the parameters
 	}
 
 	// For interface methods, extract params from the interface declaration.
@@ -1224,7 +1222,7 @@ func (op *ChangeSignatureOperation) preserveExistingParamsIfNeeded(sourceFile *p
 		typeName, methodName := parts[0], parts[1]
 		if isInterfaceMethod(sourceFile, typeName, methodName) {
 			op.NewParams = op.extractInterfaceMethodParams(sourceFile, typeName, methodName)
-			return nil
+			return
 		}
 	}
 
@@ -1234,7 +1232,7 @@ func (op *ChangeSignatureOperation) preserveExistingParamsIfNeeded(sourceFile *p
 		op.NewParams = op.extractParamList(funcDecl.Type.Params)
 	}
 
-	return nil
+	return
 }
 
 // extractParamList extracts Parameter values from an ast.FieldList.

@@ -507,7 +507,7 @@ func (op *ExtractInterfaceOperation) Execute(ws *types.Workspace) (*types.Refact
 	}
 
 	// Generate interface definition
-	interfaceCode := op.generateInterface(structSymbol, sourcePackage)
+	interfaceCode := op.generateInterface(sourcePackage)
 
 	// Determine target file (absolute path so the serializer can write it)
 	targetFile := filepath.Join(sourcePackage.Dir, op.getTargetFileName())
@@ -551,7 +551,7 @@ func (op *ExtractInterfaceOperation) Description() string {
 		op.InterfaceName, op.SourceStruct, strings.Join(op.Methods, " "), op.TargetPackage)
 }
 
-func (op *ExtractInterfaceOperation) generateInterface(structSymbol *types.Symbol, sourcePackage *types.Package) string {
+func (op *ExtractInterfaceOperation) generateInterface(sourcePackage *types.Package) string {
 	var interfaceCode strings.Builder
 	fmt.Fprintf(&interfaceCode, "type %s interface {\n", op.InterfaceName)
 

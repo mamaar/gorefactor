@@ -143,7 +143,7 @@ func (op *SafeDeleteOperation) targetsOf(ws *pkgtypes.Workspace, roots []*pkgtyp
 	var targets []deletionTarget
 	seen := make(map[ast.Node]bool)
 	for _, root := range roots {
-		found, err := op.deletionTargets(ws, resolveSymbolPackage(ws, root), root)
+		found, err := op.deletionTargets(resolveSymbolPackage(ws, root), root)
 		if err != nil {
 			return nil, err
 		}
@@ -174,7 +174,7 @@ func (op *SafeDeleteOperation) blockingAmong(ws *pkgtypes.Workspace, targets []d
 				Message: fmt.Sprintf("failed to find references: %v", err),
 			}
 		}
-		scoped := op.filterReferencesByScope(references, resolveSymbolPackage(ws, t.root), ws)
+		scoped := op.filterReferencesByScope(references, resolveSymbolPackage(ws, t.root))
 		for _, ref := range op.filterOutDefinition(scoped, t.symbol) {
 			if !insideTargets(ws, targets, ref) {
 				blocking = append(blocking, *ref)
@@ -205,7 +205,7 @@ func nodeOffsets(ws *pkgtypes.Workspace, n ast.Node) (int, int) {
 
 // deletionTargets returns the declaration of symbol plus, when symbol is a
 // type, the declarations of its methods.
-func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgtypes.Package, symbol *pkgtypes.Symbol) ([]deletionTarget, error) {
+func (op *SafeDeleteOperation) deletionTargets(pkg *pkgtypes.Package, symbol *pkgtypes.Symbol) ([]deletionTarget, error) {
 	symbols := []*pkgtypes.Symbol{symbol}
 	if symbol.Kind == pkgtypes.TypeSymbol && pkg != nil && pkg.Symbols != nil {
 		for _, m := range pkg.Symbols.Methods[symbol.Name] {
@@ -381,7 +381,7 @@ func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []del
 	plan.Impact = &pkgtypes.ImpactAnalysis{
 		AffectedFiles:    plan.AffectedFiles,
 		AffectedPackages: op.getAffectedPackages(ws, plan.AffectedFiles),
-		PotentialIssues:  op.analyzeImpact(ws, targets[0].root, op.Force),
+		PotentialIssues:  op.analyzeImpact(targets[0].root, op.Force),
 	}
 	return plan
 }
@@ -400,7 +400,7 @@ func (op *SafeDeleteOperation) Description() string {
 
 // Helper methods
 
-func (op *SafeDeleteOperation) filterReferencesByScope(references []*pkgtypes.Reference, sourcePackage *pkgtypes.Package, ws *pkgtypes.Workspace) []*pkgtypes.Reference {
+func (op *SafeDeleteOperation) filterReferencesByScope(references []*pkgtypes.Reference, sourcePackage *pkgtypes.Package) []*pkgtypes.Reference {
 	if op.Scope == pkgtypes.PackageScope {
 		// Only include references from the same package
 		var filtered []*pkgtypes.Reference
@@ -633,7 +633,7 @@ func (op *SafeDeleteOperation) getAffectedPackages(ws *pkgtypes.Workspace, affec
 	return packages
 }
 
-func (op *SafeDeleteOperation) analyzeImpact(ws *pkgtypes.Workspace, symbol *pkgtypes.Symbol, forced bool) []pkgtypes.Issue {
+func (op *SafeDeleteOperation) analyzeImpact(symbol *pkgtypes.Symbol, forced bool) []pkgtypes.Issue {
 	var issues []pkgtypes.Issue
 
 	// Check if symbol is exported

@@ -2,7 +2,6 @@ package envbool
 
 import (
 	"go/ast"
-
 	"slices"
 	"strings"
 
@@ -80,13 +79,13 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, maxDepth int) []*Result {
 		if !ok || funcDecl.Type.Params == nil {
 			continue
 		}
-		results = append(results, analyzeFunction(pass, file, funcDecl, maxDepth)...)
+		results = append(results, analyzeFunction(pass, funcDecl, maxDepth)...)
 	}
 
 	return results
 }
 
-func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, maxDepth int) []*Result {
+func analyzeFunction(pass *analysis.Pass, fn *ast.FuncDecl, maxDepth int) []*Result {
 	var results []*Result
 
 	for _, field := range fn.Type.Params.List {

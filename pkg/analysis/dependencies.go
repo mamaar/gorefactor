@@ -21,7 +21,7 @@ func NewDependencyAnalyzer(ws *types.Workspace, logger *slog.Logger) *Dependency
 }
 
 // BuildDependencyGraph builds the dependency graph for the workspace.
-func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, error) {
+func (da *DependencyAnalyzer) BuildDependencyGraph() *types.DependencyGraph {
 	da.logger.Info("building dependency graph", "packages", len(da.workspace.Packages))
 
 	imports := make(map[string][]string)
@@ -42,7 +42,7 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, er
 	}
 
 	da.workspace.Dependencies = graph
-	return graph, nil
+	return graph
 }
 
 func (da *DependencyAnalyzer) collectPackageImports(pkg *types.Package, imports map[string][]string) {

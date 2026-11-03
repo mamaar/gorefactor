@@ -105,9 +105,7 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 	if ws.Dependencies == nil {
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		analyzer := analysis.NewDependencyAnalyzer(ws, logger)
-		if _, err := analyzer.BuildDependencyGraph(); err != nil {
-			return nil
-		}
+		_ = analyzer.BuildDependencyGraph()
 	}
 
 	fileToPackage := buildFilePackageIndex(ws)
@@ -536,7 +534,7 @@ func ensureDependencyGraph(ws *types.Workspace) {
 		return
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, _ = analysis.NewDependencyAnalyzer(ws, logger).BuildDependencyGraph()
+	_ = analysis.NewDependencyAnalyzer(ws, logger).BuildDependencyGraph()
 }
 
 // packageCouplingOf returns import counts and symbol counts per package, keyed

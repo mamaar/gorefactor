@@ -121,7 +121,7 @@ func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// Sync workspace state for modified files.
 		if len(modifiedFiles) > 0 {
-			_ = state.SyncWorkspaceChanges(modifiedFiles)
+			state.SyncWorkspaceChanges(modifiedFiles)
 		}
 
 		out := TouchOutput{

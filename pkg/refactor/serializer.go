@@ -36,7 +36,7 @@ func (s *Serializer) SetModuleInfo(modulePath string, workspaceModules []string)
 }
 
 // ApplyChanges applies a list of changes to the workspace files
-func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refactorTypes.Change) error {
+func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 	if len(changes) == 0 {
 		return nil // No changes to apply
 	}
@@ -292,7 +292,7 @@ func pruneEmptyDirs(dir string) {
 }
 
 // PreviewChanges generates a preview of what changes would be applied
-func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refactorTypes.Change) (string, error) {
+func (s *Serializer) PreviewChanges(changes []refactorTypes.Change) (string, error) {
 	if len(changes) == 0 {
 		return "No changes to preview", nil
 	}

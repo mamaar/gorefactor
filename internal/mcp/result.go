@@ -197,10 +197,7 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dry
 	}
 
 	// Synchronously update workspace state with the changes we just wrote
-	if err := state.SyncWorkspaceChanges(plan.AffectedFiles); err != nil {
-		state.logger.Warn("workspace sync failed", "err", err)
-		// Don't fail the operation - changes are already on disk
-	}
+	state.SyncWorkspaceChanges(plan.AffectedFiles)
 
 	return &PlanResult{
 		Description:    desc,

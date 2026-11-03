@@ -55,9 +55,7 @@ func TestSyncWorkspaceChanges_ReachesBuiltSecondaryViews(t *testing.T) {
 	if err := os.WriteFile(path, []byte(applied), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SyncWorkspaceChanges([]string{path}); err != nil {
-		t.Fatal(err)
-	}
+	s.SyncWorkspaceChanges([]string{path})
 
 	for _, v := range views {
 		pkg := v.Workspace.Packages[filepath.Join(root, "p")]

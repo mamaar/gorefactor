@@ -86,7 +86,7 @@ func unresolvedUses(v *analysis.View, targets []deletionTarget) []types.Blocker 
 	}
 	var out []types.Blocker
 	for _, m := range unresolvedMentions(v, names) {
-		if insideTargets(ws, targets, &m.Reference) || !usesAnyTarget(ws, m, targets) {
+		if insideTargets(ws, targets, &m.Reference) || !usesAnyTarget(m, targets) {
 			continue
 		}
 		out = append(out, m.blocker())
@@ -95,7 +95,7 @@ func unresolvedUses(v *analysis.View, targets []deletionTarget) []types.Blocker 
 }
 
 // usesAnyTarget reports whether m could be a use of a target of its name.
-func usesAnyTarget(ws *types.Workspace, m unresolvedMention, targets []deletionTarget) bool {
+func usesAnyTarget(m unresolvedMention, targets []deletionTarget) bool {
 	for _, t := range targets {
 		key, ok := symbolKeyOf(t.symbol)
 		if !ok || t.symbol.Name != m.name {

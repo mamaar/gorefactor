@@ -190,7 +190,7 @@ func (e *DefaultEngine) SaveWorkspace(ws *types.Workspace) error {
 	}
 
 	// Apply all changes
-	return e.serializer.ApplyChanges(ws, allChanges)
+	return e.serializer.ApplyChanges(allChanges)
 }
 
 // MoveSymbol implements symbol moving between packages
@@ -975,7 +975,7 @@ func (e *DefaultEngine) ExecutePlan(plan *types.RefactoringPlan) error {
 
 	// Apply changes
 	if len(plan.Changes) > 0 {
-		err := e.serializer.ApplyChanges(nil, plan.Changes) // workspace will be inferred from changes
+		err := e.serializer.ApplyChanges(plan.Changes) // workspace will be inferred from changes
 		if err != nil {
 			return fmt.Errorf("failed to apply changes: %w", err)
 		}
@@ -1035,7 +1035,7 @@ func (e *DefaultEngine) checkDirectoryCompilation(dir string) error {
 
 // PreviewPlan generates a preview of the changes without applying them
 func (e *DefaultEngine) PreviewPlan(plan *types.RefactoringPlan) (string, error) {
-	return e.serializer.PreviewChanges(nil, plan.Changes)
+	return e.serializer.PreviewChanges(plan.Changes)
 }
 
 // Helper methods

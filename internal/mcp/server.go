@@ -156,9 +156,9 @@ func (s *MCPServer) buildReferenceIndexLocked() bool {
 
 // SyncWorkspaceChanges forces an immediate workspace update for the given files.
 // This is called after MCP operations write files to ensure workspace state is current.
-func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
+func (s *MCPServer) SyncWorkspaceChanges(files []string) {
 	if s.updater == nil || len(files) == 0 {
-		return nil
+		return
 	}
 
 	// Create synthetic change events for modified files
@@ -179,7 +179,7 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
 	// Invalidate cached reference index since files changed
 	s.InvalidateReferenceIndex()
 
-	return nil
+	return
 }
 
 // RefreshStaleFiles re-syncs every .go file whose on-disk content differs from

@@ -125,13 +125,13 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte, cfg *confi
 		if !ok || funcDecl.Body == nil {
 			continue
 		}
-		results = append(results, analyzeFunction(pass, file, funcDecl, content, cfg)...)
+		results = append(results, analyzeFunction(pass, funcDecl, content, cfg)...)
 	}
 
 	return results
 }
 
-func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, content []byte, cfg *config) []*Result {
+func analyzeFunction(pass *analysis.Pass, fn *ast.FuncDecl, content []byte, cfg *config) []*Result {
 	assigns := collectBoolAssigns(pass.Fset, fn.Body, content)
 
 	// Group by source expression.

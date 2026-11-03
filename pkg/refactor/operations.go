@@ -1629,7 +1629,7 @@ func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath st
 
 		if isSingleLine {
 			// Convert single-line import to multi-line format
-			return convertSingleLineImportToMultiLine(file.AST, content, filePath, alias, importPath)
+			return convertSingleLineImportToMultiLine(content, filePath, alias, importPath)
 		}
 
 		// Add to existing multi-line import block
@@ -1750,7 +1750,7 @@ func isSingleLineImport(astFile *ast.File, content []byte) bool {
 
 // convertSingleLineImportToMultiLine converts a single-line import to multi-line format
 // and adds the new import
-func convertSingleLineImportToMultiLine(astFile *ast.File, content []byte, filePath, newAlias, newImportPath string) *types.Change {
+func convertSingleLineImportToMultiLine(content []byte, filePath, newAlias, newImportPath string) *types.Change {
 	lines := strings.Split(string(content), "\n")
 
 	// Find the single-line import statement

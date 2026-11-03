@@ -117,18 +117,12 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 
 	// Process all files in the package
 	for _, file := range pkg.Files {
-		err := sr.extractSymbolsFromFile(file, symbolTable)
-		if err != nil {
-			return nil, err
-		}
+		sr.extractSymbolsFromFile(file, symbolTable)
 	}
 
 	// Process test files
 	for _, file := range pkg.TestFiles {
-		err := sr.extractSymbolsFromFile(file, symbolTable)
-		if err != nil {
-			return nil, err
-		}
+		sr.extractSymbolsFromFile(file, symbolTable)
 	}
 
 	// Struct fields need every package-level type retained first, so they get their own pass.
@@ -167,10 +161,7 @@ func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Referen
 	for _, pkg := range sr.workspace.Packages {
 		for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 			for _, file := range files {
-				refs, err := sr.findReferencesInFile(pkg, file, symbol, target)
-				if err != nil {
-					return nil, err
-				}
+				refs := sr.findReferencesInFile(pkg, file, symbol, target)
 				references = append(references, refs...)
 			}
 		}
@@ -914,13 +905,13 @@ func formatMemberList(names []string) string {
 
 // Helper methods
 
-func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *types.SymbolTable) error {
+func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *types.SymbolTable) {
 	if file == nil || file.AST == nil {
 		// Defensive: pkg.Files entries should always carry a parsed AST, but
 		// a fabricated/placeholder File slipping through (see
 		// pkg/watch/updater.go's recollectImports for the matching guard)
 		// must not crash symbol-table rebuilds for the whole package.
-		return nil
+		return
 	}
 	for _, decl := range file.AST.Decls {
 		switch node := decl.(type) {
@@ -938,7 +929,7 @@ func (sr *SymbolResolver) extractSymbolsFromFile(file *types.File, symbolTable *
 		}
 	}
 
-	return nil
+	return
 }
 
 // shadowsProduction reports whether symbol, from a test file, would replace
@@ -1162,11 +1153,11 @@ func (sr *SymbolResolver) extractInterfaceMethodSymbols(typeSpec *ast.TypeSpec, 
 	}
 }
 
-func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.File, symbol *types.Symbol, target gotypes.Object) ([]*types.Reference, error) {
+func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.File, symbol *types.Symbol, target gotypes.Object) []*types.Reference {
 	var references []*types.Reference
 
 	if file.AST == nil {
-		return references, nil
+		return references
 	}
 
 	info := checkedInfo(pkg, file)
@@ -1191,7 +1182,7 @@ func (sr *SymbolResolver) findReferencesInFile(pkg *types.Package, file *types.F
 		return true
 	})
 
-	return references, nil
+	return references
 }
 
 func (sr *SymbolResolver) referenceAt(file *types.File, ident *ast.Ident, symbol *types.Symbol) *types.Reference {

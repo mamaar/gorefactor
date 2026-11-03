@@ -90,10 +90,7 @@ func TestDependencyGraph_ThreeNodeCycleIsDeterministic(t *testing.T) {
 
 	ws := set.Primary().Workspace
 	for range 10 {
-		g, err := NewDependencyAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildDependencyGraph()
-		if err != nil {
-			t.Fatal(err)
-		}
+		g := NewDependencyAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildDependencyGraph()
 		if !reflect.DeepEqual(g.ImportCycles, want) {
 			t.Fatalf("ImportCycles = %v, want %v", g.ImportCycles, want)
 		}
