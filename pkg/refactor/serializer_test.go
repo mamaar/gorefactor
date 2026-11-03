@@ -474,10 +474,9 @@ func TestSerializer_truncateText(t *testing.T) {
 	serializer := NewSerializer()
 
 	testCases := []struct {
-		name      string
-		text      string
-		maxLength []int
-		expected  string
+		name     string
+		text     string
+		expected string
 	}{
 		{
 			name:     "Short text",
@@ -488,12 +487,6 @@ func TestSerializer_truncateText(t *testing.T) {
 			name:     "Long text",
 			text:     strings.Repeat("a", 100),
 			expected: strings.Repeat("a", 77) + "...",
-		},
-		{
-			name:      "Custom length",
-			text:      "Hello World",
-			maxLength: []int{5},
-			expected:  "He...",
 		},
 		{
 			name:     "Text with newlines",
@@ -509,13 +502,7 @@ func TestSerializer_truncateText(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var result string
-			if len(tc.maxLength) > 0 {
-				result = serializer.truncateText(tc.text, tc.maxLength[0])
-			} else {
-				result = serializer.truncateText(tc.text)
-			}
-
+			result := serializer.truncateText(tc.text)
 			if result != tc.expected {
 				t.Errorf("Expected truncateText result '%s', got '%s'", tc.expected, result)
 			}

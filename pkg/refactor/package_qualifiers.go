@@ -21,7 +21,7 @@ type pkgRename struct {
 
 // qualifierRewrite returns file's content with extra and the edits of
 // packageQualifierEdits applied, plus the imports that kept their old name.
-func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysis.SourceFile, renames []pkgRename, extra ...textEdit) (string, []types.SkippedSite, error) {
+func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysis.SourceFile, renames []pkgRename, extra []textEdit) (string, []types.SkippedSite, error) {
 	changes, skipped, err := packageQualifierEdits(views, fset, file, renames)
 	if err != nil {
 		return "", nil, err

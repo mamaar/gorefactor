@@ -472,11 +472,8 @@ func (s *Serializer) formatGoCode(code string) (string, error) {
 }
 
 // truncateText truncates text for display in previews
-func (s *Serializer) truncateText(text string, maxLength ...int) string {
-	length := 80 // default max length
-	if len(maxLength) > 0 {
-		length = maxLength[0]
-	}
+func (s *Serializer) truncateText(text string) string {
+	const length = 80
 
 	// Replace newlines with spaces for single-line display
 	text = strings.ReplaceAll(text, "\n", " ")

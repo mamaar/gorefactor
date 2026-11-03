@@ -314,7 +314,7 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 	// exactly one whole-file change and the serializer sees no overlap. at is
 	// the path the file ends up at; clause carries its own package clause edit, if any.
 	rewriteContent := func(file *analysis.SourceFile, at string, clause ...textEdit) (string, error) {
-		content, skipped, err := qualifierRewrite(views, ws.FileSet, file, renames, clause...)
+		content, skipped, err := qualifierRewrite(views, ws.FileSet, file, renames, clause)
 		if err != nil {
 			return "", err
 		}
