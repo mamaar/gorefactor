@@ -7,7 +7,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	gotypes "go/types"
 	"io"
 	"log/slog"
 	"maps"
@@ -258,31 +257,20 @@ func (op *MoveSymbolOperation) memberRefusal(ws *types.Workspace, pkg *types.Pac
 }
 
 // interfaceMethodRefusal refuses moving a method of a non-test file into a
-// _test.go file when its type satisfies an interface, std or workspace, that
-// declares a method of that name: production code may convert the type to it.
+// _test.go file when non-test code converts its type to an interface that
+// reaches the method.
 func (op *MoveSymbolOperation) interfaceMethodRefusal(ws *types.Workspace, pkg *types.Package, symbol *types.Symbol) error {
-	if !strings.HasSuffix(op.Request.ToFile, "_test.go") || strings.HasSuffix(symbol.File, "_test.go") || pkg.TypesPkg == nil {
+	if !strings.HasSuffix(op.Request.ToFile, "_test.go") || strings.HasSuffix(symbol.File, "_test.go") {
+		return nil
+	}
+	if !analysis.CollectInterfaceConversions(ws).KeepsMethod(symbol.Position) {
 		return nil
 	}
 	owner := memberOwner(pkg, symbol)
-	obj := pkg.TypesPkg.Scope().Lookup(owner)
-	if obj == nil {
-		return nil
+	return &types.RefactorError{
+		Type:    types.InvalidOperation,
+		Message: fmt.Sprintf("cannot move %s.%s into a test file: %s satisfies an interface through it, and non-test code converts it", owner, symbol.Name, owner),
 	}
-	named, ok := obj.Type().(*gotypes.Named)
-	if !ok {
-		return nil
-	}
-	survey := surveyInterfaces(ws)
-	for _, iface := range slices.Concat(survey.workspace, survey.external) {
-		if interfaceMethodNamed(iface.iface, symbol.Name) != nil && typeImplements(named, iface.iface) {
-			return &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("cannot move %s.%s into a test file: %s satisfies %s through it, and non-test code may convert it", owner, symbol.Name, owner, iface.label()),
-			}
-		}
-	}
-	return nil
 }
 
 // embedRefusal refuses a constant or variable carrying a //go:embed directive:

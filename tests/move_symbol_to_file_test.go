@@ -383,3 +383,19 @@ func TestMoveSymbol_ToFile_MovesAMethodNoInterfaceNeeds(t *testing.T) {
 	}
 	assertFileContains(t, dir, "p/t_test.go", "func (t T) Helper")
 }
+
+func TestMoveSymbol_ToFile_MovesAnInterfaceNamedMethodOfATypeNeverConverted(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/t.go":      "package p\n\ntype T struct{}\n\nfunc (t T) String() string { return \"t\" }\n",
+		"p/t_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { _ = T{}.String() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := moveToFile(t, sess, map[string]any{"symbol": "T.String", "from_package": "p", "to_package": "p", "to_file": "p/t_test.go"})
+
+	if res.IsError {
+		t.Fatalf("move_symbol: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/t_test.go", "func (t T) String")
+}

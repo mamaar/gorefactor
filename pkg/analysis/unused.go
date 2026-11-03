@@ -127,18 +127,19 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		live:             make(map[*usageNode]bool, len(g.nodes)),
 		from:             make(map[*usageNode]*usageNode),
 		includeExported:  ua.includeExported,
-		ifaceMethodNames: ua.collectInterfaceMethodNames(),
+		ifaceMethodNames: interfaceMethodNames(ua.workspace),
+		conversions:      CollectInterfaceConversions(ua.workspace),
 	}
 	return g, idx, m, nil
 }
 
 func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }
 
-// collectInterfaceMethodNames returns the names of the methods declared by any
+// interfaceMethodNames returns the names of the methods declared by any
 // interface type in the workspace, named or not, plus those of the interfaces
 // the type-checked packages import and well-known standard library ones. A
 // method with such a name may be called through an interface.
-func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
+func interfaceMethodNames(ws *types.Workspace) map[string]bool {
 	names := make(map[string]bool)
 
 	for _, common := range []string{
@@ -150,12 +151,12 @@ func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 	}
 
 	c := &interfaceMethodCollector{names: names}
-	for _, pkg := range ua.workspace.Packages {
+	for _, pkg := range ws.Packages {
 		for _, file := range indexedFiles(pkg) {
 			ast.Walk(c, file.AST)
 		}
 	}
-	for name := range externalMethodNames(ua.importedPackages()) {
+	for name := range externalMethodNames(importedPackages(ws)) {
 		names[name] = true
 	}
 	return names
@@ -163,9 +164,9 @@ func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 
 // importedPackages returns the type-checked packages the workspace imports,
 // transitively, that are not themselves in the workspace.
-func (ua *UnusedAnalyzer) importedPackages() []*gotypes.Package {
+func importedPackages(ws *types.Workspace) []*gotypes.Package {
 	inWorkspace := make(map[*gotypes.Package]bool)
-	for _, pkg := range ua.workspace.Packages {
+	for _, pkg := range ws.Packages {
 		inWorkspace[pkg.TypesPkg] = true
 		inWorkspace[pkg.ExternalTestTypesPkg] = true
 	}
@@ -236,8 +237,9 @@ type marker struct {
 	from             map[*usageNode]*usageNode // first node found to keep a node live; none for roots
 	work             []*usageNode              // FIFO, so from gives shortest paths
 	includeExported  bool
-	followTests      bool // also follow test-to-production edges
-	ifaceMethodNames map[string]bool
+	followTests      bool            // also follow test-to-production edges
+	ifaceMethodNames map[string]bool // for test methods and packages that are not type-checked
+	conversions      *InterfaceConversions
 }
 
 // markFrom marks every declaration reachable from the nodes of g that isRoot accepts.
@@ -305,14 +307,21 @@ func (m *marker) isRoot(n *usageNode) bool {
 }
 
 // isKeptMethod reports whether the method n is live whenever its receiver type
-// is: it is exported and exported symbols are not reported, or it may
-// implement an interface.
+// is: it is exported and exported symbols are not reported, or non-test code
+// can reach it through an interface (by name for test methods and where the
+// package is not type-checked).
 func (m *marker) isKeptMethod(n *usageNode) bool {
 	s := n.symbol
 	if s == nil || s.Kind != types.MethodSymbol {
 		return false
 	}
-	return (s.Exported && !m.includeExported) || m.ifaceMethodNames[s.Name]
+	if s.Exported && !m.includeExported {
+		return true
+	}
+	if n.test || n.pkg.TypesInfo == nil {
+		return m.ifaceMethodNames[s.Name]
+	}
+	return m.conversions.KeepsMethod(s.Position)
 }
 
 // unusedReport turns the dead nodes of a graph into findings.
