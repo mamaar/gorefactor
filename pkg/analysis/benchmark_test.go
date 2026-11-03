@@ -578,9 +578,6 @@ func BenchmarkFindUnusedSymbols(b *testing.B) {
 	b.ReportAllocs()
 
 	for range b.N {
-		_, err := analyzer.FindUnusedSymbols()
-		if err != nil {
-			b.Fatal(err)
-		}
+		_ = analyzer.FindUnusedSymbols()
 	}
 }

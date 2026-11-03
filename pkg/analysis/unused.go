@@ -82,7 +82,7 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 // FindUnusedSymbols finds all unused symbols in the workspace. A symbol is
 // unused unless live code outside test files references it; code that only
 // unused code or tests reference is unused too.
-func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
+func (ua *UnusedAnalyzer) FindUnusedSymbols() []*UnusedSymbol {
 	g, idx, m := ua.prepare()
 
 	m.markFrom(g, m.isRoot)
@@ -99,7 +99,7 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 
 	slices.SortFunc(unused, compareUnused)
 
-	return unused, nil
+	return unused
 }
 
 // prepare builds the symbol tables, the reference index (unless one was set),

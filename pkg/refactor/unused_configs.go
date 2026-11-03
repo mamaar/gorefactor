@@ -132,10 +132,7 @@ func (r *unusedRun) visit(v *analysis.View) error {
 	a.SetIncludeExported(r.req.IncludeExported)
 	a.SetIndex(r.indexOf(v))
 
-	unused, err := a.FindUnusedSymbols()
-	if err != nil {
-		return fmt.Errorf("visit: %w", err)
-	}
+	unused := a.FindUnusedSymbols()
 
 	reported := make(types.SymbolKeySet)
 

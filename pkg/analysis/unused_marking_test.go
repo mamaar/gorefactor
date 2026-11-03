@@ -32,10 +32,7 @@ func typedUnusedFacts(t *testing.T, files map[string]string, includeExported boo
 	a.SetIncludeExported(includeExported)
 	a.SetIndex(idx)
 
-	unused, err := a.FindUnusedSymbols()
-	if err != nil {
-		t.Fatal(err)
-	}
+	unused := a.FindUnusedSymbols()
 
 	return unusedFacts(unused)
 }
@@ -46,10 +43,7 @@ func untypedUnusedFacts(t *testing.T, files map[string]string) map[string]unused
 	ws := parsedGraphWorkspace(t, files)
 	a := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	unused, err := a.FindUnusedSymbols()
-	if err != nil {
-		t.Fatal(err)
-	}
+	unused := a.FindUnusedSymbols()
 
 	return unusedFacts(unused)
 }

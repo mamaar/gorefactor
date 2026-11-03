@@ -157,10 +157,7 @@ func TestFindUnusedSymbols_UnexportedOnly(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	unused, err := analyzer.FindUnusedSymbols()
-	if err != nil {
-		t.Fatalf("FindUnusedSymbols failed: %v", err)
-	}
+	unused := analyzer.FindUnusedSymbols()
 
 	// Should only find unexported unused symbols
 	for _, u := range unused {
@@ -188,10 +185,7 @@ func TestFindUnusedSymbols_IncludeExported(t *testing.T) {
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	analyzer.SetIncludeExported(true)
 
-	unused, err := analyzer.FindUnusedSymbols()
-	if err != nil {
-		t.Fatalf("FindUnusedSymbols failed: %v", err)
-	}
+	unused := analyzer.FindUnusedSymbols()
 
 	// Should find both exported and unexported unused symbols
 	hasExported := false
@@ -231,10 +225,7 @@ func TestFindUnusedSymbols_SkipsSpecialFunctions(t *testing.T) {
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	analyzer.SetIncludeExported(true)
 
-	unused, err := analyzer.FindUnusedSymbols()
-	if err != nil {
-		t.Fatalf("FindUnusedSymbols failed: %v", err)
-	}
+	unused := analyzer.FindUnusedSymbols()
 
 	for _, u := range unused {
 		if u.Symbol.Name == "init" {
@@ -286,10 +277,7 @@ func regularUnused() {}
 
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	unused, err := analyzer.FindUnusedSymbols()
-	if err != nil {
-		t.Fatalf("FindUnusedSymbols failed: %v", err)
-	}
+	unused := analyzer.FindUnusedSymbols()
 
 	for _, u := range unused {
 		for _, prefix := range []string{"Test", "Benchmark", "Example", "Fuzz"} {
@@ -304,10 +292,7 @@ func TestFindUnusedSymbols_Methods(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	unused, err := analyzer.FindUnusedSymbols()
-	if err != nil {
-		t.Fatalf("FindUnusedSymbols failed: %v", err)
-	}
+	unused := analyzer.FindUnusedSymbols()
 
 	foundUnusedMethod := false
 
@@ -327,10 +312,7 @@ func TestFindUnusedSymbols_AllKinds(t *testing.T) {
 	ws := createUnusedTestWorkspace(t)
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	unused, err := analyzer.FindUnusedSymbols()
-	if err != nil {
-		t.Fatalf("FindUnusedSymbols failed: %v", err)
-	}
+	unused := analyzer.FindUnusedSymbols()
 
 	kindFound := make(map[types.SymbolKind]bool)
 	for _, u := range unused {
