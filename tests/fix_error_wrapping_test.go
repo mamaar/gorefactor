@@ -16,7 +16,8 @@ func goVet(t *testing.T, dir string) {
 	t.Helper()
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("go vet: %v\n%s", err, out)
 	}
 }
@@ -47,7 +48,8 @@ func TestFixErrorWrapping_ExcludeFunctionsListsThemAsSkipped(t *testing.T) {
 		t.Fatalf("skipped = %v, want the two excluded functions", result["skipped"])
 	}
 	for _, s := range skipped {
-		if reason := s.(map[string]any)["skip_reason"]; reason != "excluded" {
+		reason := s.(map[string]any)["skip_reason"]
+		if reason != "excluded" {
 			t.Errorf("skip_reason = %v, want excluded", reason)
 		}
 	}
@@ -57,7 +59,8 @@ func TestFixErrorWrapping_ExcludeFunctionsListsThemAsSkipped(t *testing.T) {
 func TestFixErrorWrapping_DryRunReportsTypeErrorAsBlockingIssue(t *testing.T) {
 	_, result := callToolOnFixture(t, "fix_error_wrapping_typeerr", "fix_error_wrapping", map[string]any{"dry_run": true})
 
-	if issue, _ := result["blocking_issue"].(string); !strings.Contains(issue, "type errors") {
+	issue, _ := result["blocking_issue"].(string)
+	if !strings.Contains(issue, "type errors") {
 		t.Errorf("blocking_issue = %q, want the introduced type error", issue)
 	}
 }
@@ -75,7 +78,8 @@ func TestFixErrorWrapping_ApplyRefusesPlanThatWouldNotTypeCheck(t *testing.T) {
 	if !result.IsError || !strings.Contains(errText(result), "type errors") {
 		t.Fatalf("expected the apply refused, got IsError=%v: %s", result.IsError, errText(result))
 	}
-	if got := readFile(t, filepath.Join(dir, "main.go")); got != readFile(t, filepath.Join("testdata", "fix_error_wrapping_typeerr", "main.go")) {
+	got := readFile(t, filepath.Join(dir, "main.go"))
+	if got != readFile(t, filepath.Join("testdata", "fix_error_wrapping_typeerr", "main.go")) {
 		t.Errorf("refused apply modified the file:\n%s", got)
 	}
 }

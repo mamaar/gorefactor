@@ -2063,7 +2063,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		for _, file := range needFmt {
-			if c := refactor.GenerateAddImportChange(ws, file, "", "fmt"); c != nil {
+			c := refactor.GenerateAddImportChange(ws, file, "", "fmt")
+			if c != nil {
 				changes = append(changes, *c)
 			}
 		}

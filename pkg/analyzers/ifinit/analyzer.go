@@ -169,13 +169,14 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 }
 
 func (w *walker) walkSelectClauses(s *ast.SelectStmt) {
-	if s.Body != nil {
-		for _, c := range s.Body.List {
-			cc, ok := c.(*ast.CommClause)
-			if ok {
-				w.processFuncLitsIn(cc.Comm)
-				w.walkList(cc.Body, commClauseScope(cc))
-			}
+	if s.Body == nil {
+		return
+	}
+	for _, c := range s.Body.List {
+		cc, ok := c.(*ast.CommClause)
+		if ok {
+			w.processFuncLitsIn(cc.Comm)
+			w.walkList(cc.Body, commClauseScope(cc))
 		}
 	}
 }

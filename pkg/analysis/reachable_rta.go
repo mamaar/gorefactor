@@ -63,7 +63,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	}
 	testPkgs, err = ua.createSSAPackages(entry, includeTests, sc, ssaPkgs, create, testPkgs)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build liveness: %w", err)
 	}
 	external := createImports(prog, created)
 	prog.Build()

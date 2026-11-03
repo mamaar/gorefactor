@@ -359,7 +359,8 @@ func (a *analyzer) knownZero(obj gotypes.Object) bool {
 	if a.zeroDecl(obj) == nil {
 		return false
 	}
-	if region := a.repeatRegion(); region != nil && obj.Pos() < region.Pos() {
+	region := a.repeatRegion()
+	if region != nil && obj.Pos() < region.Pos() {
 		return false
 	}
 	var stack []ast.Node
@@ -393,7 +394,8 @@ func (a *analyzer) knownZero(obj gotypes.Object) bool {
 // inside the selection.
 func (a *analyzer) inBlockClosure(stack []ast.Node) bool {
 	for _, n := range stack {
-		if _, ok := n.(*ast.FuncLit); ok && n.Pos() >= a.blockStart {
+		_, ok := n.(*ast.FuncLit)
+		if ok && n.Pos() >= a.blockStart {
 			return true
 		}
 	}
@@ -469,7 +471,7 @@ func (a *analyzer) repeatRegion() ast.Node {
 func (a *analyzer) inForeignClosure(stack []ast.Node) bool {
 	for _, n := range stack {
 		lit, ok := n.(*ast.FuncLit)
-		if ok && !(lit.Pos() <= a.blockStart && a.blockEnd <= lit.End()) {
+		if ok && (lit.Pos() > a.blockStart || a.blockEnd > lit.End()) {
 			return true
 		}
 	}

@@ -599,8 +599,10 @@ func TestProvablyNonNil(t *testing.T) {
 				stack = append(stack, n)
 				// The innermost return of the guarded branch is the one
 				// asked about; the trailing `return nil` is not.
-				if r, ok := n.(*ast.ReturnStmt); ok && len(r.Results) == 1 {
-					if id, ok := r.Results[0].(*ast.Ident); ok && id.Name == "err" {
+				r, ok := n.(*ast.ReturnStmt)
+				if ok && len(r.Results) == 1 {
+					id, ok := r.Results[0].(*ast.Ident)
+					if ok && id.Name == "err" {
 						ret, found = r, append([]ast.Node(nil), stack...)
 					}
 				}
@@ -609,7 +611,8 @@ func TestProvablyNonNil(t *testing.T) {
 			if ret == nil {
 				t.Fatal("no return of err in the fixture")
 			}
-			if got := stmtfacts.ProvablyNonNil(found, ret, "err"); got != tc.want {
+			got := stmtfacts.ProvablyNonNil(found, ret, "err")
+			if got != tc.want {
 				t.Errorf("ProvablyNonNil = %v, want %v", got, tc.want)
 			}
 		})

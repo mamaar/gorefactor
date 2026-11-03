@@ -118,7 +118,8 @@ func (b *conversionCollector) walk(root ast.Node, results *gotypes.Tuple) {
 		case *ast.CompositeLit:
 			b.compositeLit(n)
 		case *ast.SendStmt:
-			if ch, ok := underlying(b.info.TypeOf(n.Chan)).(*gotypes.Chan); ok {
+			ch, ok := underlying(b.info.TypeOf(n.Chan)).(*gotypes.Chan)
+			if ok {
 				b.add(b.info.TypeOf(n.Value), ch.Elem())
 			}
 		case *ast.TypeAssertExpr:
@@ -128,7 +129,8 @@ func (b *conversionCollector) walk(root ast.Node, results *gotypes.Tuple) {
 				b.assert(e)
 			}
 		case *ast.IndexExpr:
-			if m, ok := underlying(b.info.TypeOf(n.X)).(*gotypes.Map); ok {
+			m, ok := underlying(b.info.TypeOf(n.X)).(*gotypes.Map)
+			if ok {
 				b.add(b.info.TypeOf(n.Index), m.Key())
 			}
 		}
@@ -165,7 +167,8 @@ func (b *conversionCollector) call(call *ast.CallExpr) {
 	}
 	// A generic callee's declared parameters name the type parameters, whose
 	// constraints the arguments are converted to; the instantiated ones do not.
-	if generic := b.genericCallee(call.Fun); generic != nil {
+	generic := b.genericCallee(call.Fun)
+	if generic != nil {
 		sig = generic
 	}
 	params := sig.Params()
@@ -221,7 +224,8 @@ func (b *conversionCollector) genericCallee(fun ast.Expr) *gotypes.Signature {
 
 func (b *conversionCollector) compositeLit(lit *ast.CompositeLit) {
 	t := b.info.TypeOf(lit)
-	if ptr, ok := underlying(t).(*gotypes.Pointer); ok {
+	ptr, ok := underlying(t).(*gotypes.Pointer)
+	if ok {
 		t = ptr.Elem()
 	}
 	switch u := underlying(t).(type) {
@@ -249,7 +253,8 @@ func (b *conversionCollector) compositeLit(lit *ast.CompositeLit) {
 
 func (b *conversionCollector) addElements(lit *ast.CompositeLit, elem gotypes.Type) {
 	for _, elt := range lit.Elts {
-		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if ok {
 			elt = kv.Value
 		}
 		b.add(b.info.TypeOf(elt), elem)
@@ -281,10 +286,12 @@ func (b *conversionCollector) add(src, dst gotypes.Type) {
 	if src == nil || dst == nil {
 		return
 	}
-	if _, ok := src.(*gotypes.Tuple); ok {
+	_, ok := src.(*gotypes.Tuple)
+	if ok {
 		return
 	}
-	if _, ok := dst.Underlying().(*gotypes.Interface); ok {
+	_, ok = dst.Underlying().(*gotypes.Interface)
+	if ok {
 		b.convs = append(b.convs, conversion{src, dst})
 	}
 }
@@ -335,7 +342,8 @@ func (b *conversionCollector) escapes(escaped []gotypes.Type, dst gotypes.Type) 
 func (b *conversionCollector) keepDeclared(src gotypes.Type, iface *gotypes.Interface) {
 	ms := gotypes.NewMethodSet(src)
 	for m := range iface.Methods() {
-		if sel := ms.Lookup(m.Pkg(), m.Name()); sel != nil {
+		sel := ms.Lookup(m.Pkg(), m.Name())
+		if sel != nil {
 			b.keep(sel.Obj())
 		}
 	}
@@ -374,7 +382,8 @@ func (b *conversionCollector) keepKnown(t gotypes.Type, seen map[gotypes.Type]bo
 }
 
 func (b *conversionCollector) keep(obj gotypes.Object) {
-	if f, ok := obj.(*gotypes.Func); ok {
+	f, ok := obj.(*gotypes.Func)
+	if ok {
 		b.used[f.Origin().Pos()] = true
 	}
 }

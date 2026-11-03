@@ -662,7 +662,8 @@ func bump() int {
 			if tc.wantBodyHas != "" && !strings.Contains(decl, tc.wantBodyHas) {
 				t.Errorf("body: want %q in:\n%s", tc.wantBodyHas, decl)
 			}
-			if call := callOf(t, plan); call != tc.wantCall {
+			call := callOf(t, plan)
+			if call != tc.wantCall {
 				t.Errorf("call site = %q, want %q", call, tc.wantCall)
 			}
 			vetPlan(t, ws, plan)
@@ -701,7 +702,8 @@ func render(names []string) string {
 	if !strings.Contains(decl, "func build(names []string, sb *strings.Builder) {") || strings.Contains(decl, "var sb") {
 		t.Errorf("want sb as a pointer parameter with its declaration removed:\n%s", decl)
 	}
-	if call, want := callOf(t, plan), "var sb strings.Builder\nbuild(names, &sb)"; call != want {
+	call, want := callOf(t, plan), "var sb strings.Builder\nbuild(names, &sb)"
+	if call != want {
 		t.Errorf("call site = %q, want %q", call, want)
 	}
 	vetPlan(t, ws, plan)
@@ -796,7 +798,8 @@ func pick(c bool) int {
 			if tc.wantBodyHas != "" && !strings.Contains(decl, tc.wantBodyHas) {
 				t.Errorf("body: want %q in:\n%s", tc.wantBodyHas, decl)
 			}
-			if call := callOf(t, plan); call != tc.wantCall {
+			call := callOf(t, plan)
+			if call != tc.wantCall {
 				t.Errorf("call site = %q, want %q", call, tc.wantCall)
 			}
 			vetPlan(t, ws, plan)
@@ -857,7 +860,8 @@ func TestExtractFunctionErrorGuards(t *testing.T) {
 		}
 	}
 	wantCall := "var n int\nn, err = parseData(data)\nif err != nil {\n\treturn 0, err\n}"
-	if call := callOf(t, plan); call != wantCall {
+	call := callOf(t, plan)
+	if call != wantCall {
 		t.Errorf("call site = %q, want %q", call, wantCall)
 	}
 	vetPlan(t, ws, plan)
@@ -908,7 +912,8 @@ func extractAndVet(t *testing.T, src, wantSig, wantCall string) *types.Refactori
 	if !strings.Contains(decl, wantSig) {
 		t.Errorf("signature: want %q in:\n%s", wantSig, decl)
 	}
-	if call := callOf(t, plan); call != wantCall {
+	call := callOf(t, plan)
+	if call != wantCall {
 		t.Errorf("call site = %q, want %q", call, wantCall)
 	}
 	vetPlan(t, ws, plan)

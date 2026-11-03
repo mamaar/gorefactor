@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -182,14 +183,14 @@ func (op *ChangeSignatureOperation) Validate(ws *pkgtypes.Workspace) error {
 	}
 
 	sourceFile, _, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return err
-	}
-	if sourceFile == nil {
+	if errors.Is(err, pkgtypes.ErrFileNotFound) {
 		return &pkgtypes.RefactorError{
 			Type:    pkgtypes.SymbolNotFound,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return err
 	}
 
 	// Find the function

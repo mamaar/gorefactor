@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	gotypes "go/types"
@@ -56,15 +57,15 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	sourceFile, _, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return err
-	}
-	if sourceFile == nil {
+	_, _, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return err
 	}
 
 	// Validate method name is a valid Go identifier
@@ -80,16 +81,16 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 
 func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
 	file, pkg, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
+		return nil, nil, &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
+		}
+	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("resolve source file: %w", err)
 	}
-	if file != nil {
-		return file, pkg, nil
-	}
-	return nil, nil, &types.RefactorError{
-		Type:    types.FileSystemError,
-		Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-	}
+	return file, pkg, nil
 }
 
 // resolveReceiver decides what the extracted method's receiver is.
@@ -276,16 +277,16 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 
 func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
 	file, pkg, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
+		return nil, nil, &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
+		}
+	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("resolve source file: %w", err)
 	}
-	if file != nil {
-		return file, pkg, nil
-	}
-	return nil, nil, &types.RefactorError{
-		Type:    types.FileSystemError,
-		Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-	}
+	return file, pkg, nil
 }
 
 func (op *ExtractFunctionOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
@@ -351,7 +352,8 @@ func (op *ExtractInterfaceOperation) Type() types.OperationType {
 }
 
 func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
-	if err := op.checkRequestFields(); err != nil {
+	err := op.checkRequestFields()
+	if err != nil {
 		return err
 	}
 
@@ -388,7 +390,7 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check methods in the package's symbol table
-	err := op.checkMethodsExist(sourcePackage)
+	err = op.checkMethodsExist(sourcePackage)
 	if err != nil {
 		return err
 	}
@@ -709,14 +711,14 @@ func (op *ExtractVariableOperation) Validate(ws *types.Workspace) error {
 
 func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return nil, err
-	}
-	if sourceFile == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return nil, err
 	}
 
 	// Resolve absolute path for the serializer

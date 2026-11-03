@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -96,15 +97,15 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	_, targetPackage, err := ws.FindFile(op.TargetFile)
-	if err != nil {
-		return err
-	}
-	if targetPackage == nil {
+	_, _, err := ws.FindFile(op.TargetFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
 		}
+	}
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -329,14 +330,14 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 
 func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodCall, error) {
 	targetFile, _, err := ws.FindFile(op.TargetFile)
-	if err != nil {
-		return nil, err
-	}
-	if targetFile == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find method calls: %w", err)
 	}
 
 	// Parse and find method calls
@@ -728,14 +729,14 @@ type VariableReference struct {
 func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (string, error) {
 	// Find the file and parse it
 	sourceFile, _, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return "", err
-	}
-	if sourceFile == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return "", &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("find variable value: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -810,14 +811,14 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) ([]VariableReference, error) {
 	// Find the file and parse it
 	sourceFile, _, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return nil, err
-	}
-	if sourceFile == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find variable references: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -890,14 +891,14 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 
 func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) (int, int, error) {
 	sourceFile, _, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return 0, 0, err
-	}
-	if sourceFile == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return 0, 0, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("find variable declaration: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -1098,7 +1099,10 @@ func (op *InlineFunctionOperation) Description() string {
 // op.SourceFile, or nil when that package declares no such function.
 func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.Symbol, *types.Package, error) {
 	_, pkg, err := ws.FindFile(op.SourceFile)
-	if err != nil || pkg == nil || pkg.Symbols == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
+		return nil, nil, nil
+	}
+	if err != nil || pkg.Symbols == nil {
 		return nil, pkg, err
 	}
 	return pkg.Symbols.Functions[op.FunctionName], pkg, nil
@@ -1107,7 +1111,7 @@ func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.S
 func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (MethodImpl, error) {
 	funcSymbol, sourcePackage, err := op.functionSymbol(ws)
 	if err != nil {
-		return MethodImpl{}, err
+		return MethodImpl{}, fmt.Errorf("find function implementation: %w", err)
 	}
 	if funcSymbol == nil {
 		return MethodImpl{}, &types.RefactorError{
@@ -1175,14 +1179,14 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 
 func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, targetFile string) ([]MethodCall, error) {
 	file, _, err := ws.FindFile(targetFile)
-	if err != nil {
-		return nil, err
-	}
-	if file == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", targetFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find function calls: %w", err)
 	}
 
 	fset := token.NewFileSet()

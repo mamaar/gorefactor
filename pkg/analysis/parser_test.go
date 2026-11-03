@@ -1065,7 +1065,8 @@ func funcDefNamed(t *testing.T, pkg *types.Package, name string) *gotypes.Func {
 		if ident.Name != name {
 			continue
 		}
-		if fn, ok := obj.(*gotypes.Func); ok {
+		fn, ok := obj.(*gotypes.Func)
+		if ok {
 			return fn
 		}
 	}

@@ -895,7 +895,8 @@ type Greeter interface {
 	})
 
 	t.Run("interfaces contribute no fields", func(t *testing.T) {
-		if _, exists := symbolTable.Fields["Greeter"]; exists {
+		_, exists := symbolTable.Fields["Greeter"]
+		if exists {
 			t.Error("Expected interface type 'Greeter' to have no entry in symbolTable.Fields")
 		}
 	})

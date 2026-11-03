@@ -1,6 +1,7 @@
 package types
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -131,10 +132,13 @@ type DependencyGraph struct {
 	TestImportCycles [][]string
 }
 
+// ErrFileNotFound is returned by FindFile when no file matches.
+var ErrFileNotFound = errors.New("file not found in workspace")
+
 // FindFile returns the file a caller named, test files included, and its
 // package. path may be absolute, workspace-relative, or a bare file name. A
 // bare name must match exactly one file in the workspace: more is an
-// InvalidOperation error naming the matches. No match is nil, nil, nil.
+// InvalidOperation error naming the matches. No match is ErrFileNotFound.
 func (ws *Workspace) FindFile(path string) (*File, *Package, error) {
 	clean := filepath.Clean(path)
 	exact := []func(f *File) bool{
@@ -173,7 +177,7 @@ func (ws *Workspace) FindFile(path string) (*File, *Package, error) {
 	}
 	switch len(named) {
 	case 0:
-		return nil, nil, nil
+		return nil, nil, ErrFileNotFound
 	case 1:
 		return named[0].file, named[0].pkg, nil
 	}

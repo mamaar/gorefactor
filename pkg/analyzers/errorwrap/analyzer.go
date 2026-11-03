@@ -201,7 +201,8 @@ func qualifiedName(fn *ast.FuncDecl) string {
 		}
 		break
 	}
-	if id, ok := t.(*ast.Ident); ok {
+	id, ok := t.(*ast.Ident)
+	if ok {
 		return id.Name + "." + fn.Name.Name
 	}
 	return fn.Name.Name

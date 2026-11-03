@@ -2,7 +2,6 @@ package watch
 
 import (
 	"errors"
-	"fmt"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -221,20 +220,4 @@ func countSymbols(st *types.SymbolTable) int {
 		n += len(ms)
 	}
 	return n
-}
-
-// PackageCount returns the number of packages in the primary view's workspace.
-// Useful for test assertions.
-func (u *WorkspaceUpdater) PackageCount() int {
-	return len(u.Workspace().Packages)
-}
-
-// Workspace returns the primary view's workspace for testing.
-func (u *WorkspaceUpdater) Workspace() *types.Workspace {
-	return u.set.Primary().Workspace
-}
-
-// String implements fmt.Stringer for logging convenience.
-func (u *WorkspaceUpdater) String() string {
-	return fmt.Sprintf("WorkspaceUpdater{packages=%d}", u.PackageCount())
 }

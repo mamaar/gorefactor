@@ -820,7 +820,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 
 	// Check different symbol types
 	var err error
-	symbol, err = sr.lookupBareName(pkg, name, symbol)
+	symbol, err = sr.lookupBareName(pkg, name)
 	if err != nil {
 		return nil, err
 	}
@@ -891,22 +891,23 @@ func (sr *SymbolResolver) unknownMemberError(pkg *types.Package, typeName string
 	}
 }
 
-func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string, symbol *types.Symbol) (*types.Symbol, error) {
+func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string) (*types.Symbol, error) {
+	var found *types.Symbol
 	sym, exists := pkg.Symbols.Functions[name]
 	if exists {
-		symbol = sym
+		found = sym
 	} else {
 		sym, exists := pkg.Symbols.Types[name]
 		if exists {
-			symbol = sym
+			found = sym
 		} else {
 			sym, exists := pkg.Symbols.Variables[name]
 			if exists {
-				symbol = sym
+				found = sym
 			} else {
 				sym, exists := pkg.Symbols.Constants[name]
 				if exists {
-					symbol = sym
+					found = sym
 				} else {
 					// Check for method symbols by searching through all receivers.
 					// Detect ambiguity when multiple receiver types define the same method.
@@ -916,7 +917,7 @@ func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string, symbol
 							if method.Name != name {
 								continue
 							}
-							symbol = method
+							found = method
 							matchingReceivers = append(matchingReceivers, recvType)
 							break
 						}
@@ -927,7 +928,7 @@ func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string, symbol
 						for _, recv := range matchingReceivers {
 							suggestions = append(suggestions, recv+"."+name)
 						}
-						return symbol, &types.RefactorError{
+						return found, &types.RefactorError{
 							Type: types.SymbolNotFound,
 							Message: fmt.Sprintf(
 								"ambiguous method name %q: found on %d receiver types.\nUse Type.Method syntax to disambiguate:\n  %s",
@@ -939,7 +940,7 @@ func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string, symbol
 			}
 		}
 	}
-	return symbol, nil
+	return found, nil
 }
 
 func qualifiedFieldsNamed(pkg *types.Package, name string) []string {

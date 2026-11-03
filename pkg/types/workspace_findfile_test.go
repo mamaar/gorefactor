@@ -1,6 +1,7 @@
 package types
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -35,7 +36,7 @@ func TestFindFile_BareNameMustBeUnique(t *testing.T) {
 		}
 	}
 	f, _, err := ws.FindFile("nope.go")
-	if f != nil || err != nil {
-		t.Errorf("missing file: got %v, %v", f, err)
+	if f != nil || !errors.Is(err, ErrFileNotFound) {
+		t.Errorf("missing file: got %v, %v; want ErrFileNotFound", f, err)
 	}
 }

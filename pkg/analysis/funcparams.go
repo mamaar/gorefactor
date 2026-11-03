@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"strings"
@@ -18,14 +19,14 @@ type FuncParam struct {
 // A missing file or function is a SymbolNotFound RefactorError.
 func FindFuncType(ws *types.Workspace, sourceFile, functionName string) (*ast.FuncType, error) {
 	file, _, err := ws.FindFile(sourceFile)
-	if err != nil {
-		return nil, err
-	}
-	if file == nil {
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("source file not found: %s", sourceFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find func type: %w", err)
 	}
 	if file.AST == nil {
 		return nil, fmt.Errorf("source file has no AST: %s", sourceFile)

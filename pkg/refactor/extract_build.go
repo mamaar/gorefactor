@@ -299,7 +299,8 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 func wholeLineIfAlone(content string, start, end int) (int, int) {
 	lineStart := strings.LastIndex(content[:start], "\n") + 1
 	lineEnd := len(content)
-	if i := strings.Index(content[end:], "\n"); i >= 0 {
+	i := strings.Index(content[end:], "\n")
+	if i >= 0 {
 		lineEnd = end + i + 1
 	}
 	if strings.TrimSpace(content[lineStart:start]+content[end:lineEnd]) != "" {

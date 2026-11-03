@@ -28,7 +28,8 @@ func TestSafeDelete_EmptiedFileIsKeptWhenItSaysSomethingOnItsOwn(t *testing.T) {
 			callJSON(t, sess, "safe_delete", map[string]any{"symbol": "dead", "source_file": "p/drivers.go"})
 
 			_, err := os.Stat(filepath.Join(dir, "p/drivers.go"))
-			if gone := os.IsNotExist(err); gone != tc.deleted {
+			gone := os.IsNotExist(err)
+			if gone != tc.deleted {
 				t.Fatalf("file deleted = %v, want %v", gone, tc.deleted)
 			}
 			if !tc.deleted {

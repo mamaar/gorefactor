@@ -159,7 +159,8 @@ func (a *analyzer) isZeroExpr(e ast.Expr) bool {
 
 // zeroExpr renders an expression for the zero value of t.
 func (a *analyzer) zeroExpr(t gotypes.Type) (string, error) {
-	if _, ok := t.(*gotypes.TypeParam); ok {
+	_, ok := t.(*gotypes.TypeParam)
+	if ok {
 		s, err := a.renderType(t, "a zero value")
 		return "*new(" + s + ")", err
 	}

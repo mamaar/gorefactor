@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/constant"
@@ -44,15 +45,15 @@ func (op *ExtractConstantOperation) Validate(ws *pkgtypes.Workspace) error {
 	case req.Line < 1 || req.Column < 1:
 		return invalidExtractConstant("line and column must be 1-based positions")
 	}
-	_, pkg, err := ws.FindFile(req.SourceFile)
-	if err != nil {
-		return err
-	}
-	if pkg == nil {
+	_, _, err := ws.FindFile(req.SourceFile)
+	if errors.Is(err, pkgtypes.ErrFileNotFound) {
 		return &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", req.SourceFile),
 		}
+	}
+	if err != nil {
+		return err
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -267,17 +268,15 @@ func findFileByPath(pkg *pkgtypes.Package, path string) *pkgtypes.File {
 // Validate, Execute, and BlockingReferences share for this lookup.
 func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, *analysis.SymbolResolver, *pkgtypes.Symbol, error) {
 	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-
 	resolver := quietResolver(ws)
-
-	if sourceFile == nil {
+	if errors.Is(err, pkgtypes.ErrFileNotFound) {
 		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("resolve source and symbol: %w", err)
 	}
 
 	declared := declaredInFile(sourcePackage, sourceFile, op.SymbolName)
