@@ -1580,3 +1580,75 @@ func h() (int, string)       { return 0, "" }
 		})
 	}
 }
+
+func TestIfInit_ReuseAfterOriginalRedefinition_Skipped(t *testing.T) {
+	src := `package testpkg
+
+func foo() int {
+	if x := a(); x > 0 {
+		println(x)
+	}
+	x := f()
+	if x := c(); x > 1 {
+		println(x)
+	}
+	return x
+}
+
+func a() int { return 1 }
+func f() int { return 2 }
+func c() int { return 3 }
+`
+	ws := createTypeCheckedWorkspace(t, src)
+	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, _ := rr.Result.([]*ifinit.Result)
+	if len(results) != 2 {
+		t.Fatalf("Expected 2 violations, got %d", len(results))
+	}
+	if !results[1].Skipped {
+		t.Errorf("third split must be skipped: reusing x would clobber f(); got %+v", results[1])
+	}
+	mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+}
+
+func TestIfInit_ReuseOfCapturedHoist_Skipped(t *testing.T) {
+	for name, capture := range map[string]string{
+		"closure": "defer func() { println(x) }()",
+		"address": "p := &x\n\t\t_ = p",
+	} {
+		t.Run(name, func(t *testing.T) {
+			src := `package testpkg
+
+func foo() {
+	if x := a(); x > 0 {
+		` + capture + `
+	}
+	if x := c(); x > 1 {
+		println(x)
+	}
+}
+
+func a() int { return 1 }
+func c() int { return 3 }
+`
+			ws := createTypeCheckedWorkspace(t, src)
+			rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			results, _ := rr.Result.([]*ifinit.Result)
+			if len(results) != 2 {
+				t.Fatalf("Expected 2 violations, got %d", len(results))
+			}
+			if results[0].Skipped {
+				t.Errorf("first split should still be hoisted: %+v", results[0])
+			}
+			if !results[1].Skipped {
+				t.Errorf("second split must be skipped: x is captured by the first if; got %+v", results[1])
+			}
+		})
+	}
+}

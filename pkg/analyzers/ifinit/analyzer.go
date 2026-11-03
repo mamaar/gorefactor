@@ -181,20 +181,71 @@ func (w *walker) walkSelectClauses(s *ast.SelectStmt) {
 }
 
 func (w *walker) recordDefinedNames(s *ast.AssignStmt, declared scope) {
-	if s.Tok == token.DEFINE {
-		for _, lhs := range s.Lhs {
-			id, ok := lhs.(*ast.Ident)
-			if !ok || id.Name == "_" {
-				continue
-			}
-			// A redeclaring ':=' assigns the existing variable, so the
-			// first declaration (possibly a hoist) stays authoritative.
-			_, exists := declared[id.Name]
-			if !exists {
-				declared[id.Name] = declaredName{ident: id}
-			}
+	for _, lhs := range s.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok || id.Name == "_" {
+			continue
+		}
+		dn, exists := declared[id.Name]
+		switch {
+		case !exists && s.Tok == token.DEFINE:
+			declared[id.Name] = declaredName{ident: id}
+		case exists && dn.hoisted:
+			// Original code now writes the hoisted variable, so its value
+			// is live; a later hoist must not overwrite it.
+			dn.hoisted = false
+			declared[id.Name] = dn
 		}
 	}
+}
+
+// unhoistCaptured stops later hoists from reusing a name that node (the
+// split if/switch) captures in a closure or by address: reuse would change
+// the value the capture observes.
+func (w *walker) unhoistCaptured(declared scope, assign *ast.AssignStmt, node ast.Node) {
+	if assign.Tok != token.DEFINE {
+		return
+	}
+	for _, lhs := range assign.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		dn, exists := declared[id.Name]
+		obj := w.pass.TypesInfo.Defs[id]
+		if !exists || !dn.hoisted || obj == nil || !w.captures(node, obj) {
+			continue
+		}
+		dn.hoisted = false
+		declared[id.Name] = dn
+	}
+}
+
+// captures reports whether node uses obj inside a func literal or under '&'.
+func (w *walker) captures(node ast.Node, obj types.Object) bool {
+	uses := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if ok && w.pass.TypesInfo.Uses[id] == obj {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			found = found || uses(n)
+			return false
+		case *ast.UnaryExpr:
+			found = found || n.Op == token.AND && uses(n.X)
+		}
+		return !found
+	})
+	return found
 }
 
 // walkLabeled handles the guard: an if/switch/type-switch that is the direct
@@ -756,6 +807,7 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 				// not be mutated either.
 				if len(fixes) > 0 {
 					declared.hoist(em.newNames)
+					w.unhoistCaptured(declared, assign, node)
 					for _, t := range cascadeTargets {
 						cascaded[t] = true
 					}
@@ -883,6 +935,7 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
 				declared.hoist(em.newNames)
+				w.unhoistCaptured(declared, assign, node)
 				for _, t := range cascadeTargets {
 					cascaded[t] = true
 				}
