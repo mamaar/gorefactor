@@ -1452,7 +1452,7 @@ func TestTypeCheck_ErrorChainLongerThanPassLimitDropsAllTestFilesUnattributed(t 
 		t.Errorf("ExcludedTestFiles = %v, want every test file %v", got, want)
 	}
 	assertErrorIn(t, ws, pkg, "t0_test.go")
-	if got := pkg.ExcludedTestFiles["good_test.go"]; got != pkg.UnattributedTestErr {
+	if got := pkg.ExcludedTestFiles["good_test.go"]; got != pkg.UnattributedTestErr { //nolint:errorlint // pins the error as returned unchanged
 		t.Errorf("good_test.go recorded %v, want the unattributed error", got)
 	}
 	if usesIn(pkg, "good_test.go", "F") {

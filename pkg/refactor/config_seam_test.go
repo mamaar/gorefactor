@@ -129,7 +129,7 @@ func TestPlanAcrossViews_SingleViewErrorIsReturnedUnchanged(t *testing.T) {
 	}}
 
 	_, _, err := planAcrossViews([]*analysis.View{primary}, planner, 10)
-	if err != boom {
+	if err != boom { //nolint:errorlint // pins the error as returned unchanged
 		t.Errorf("err = %v, want the planner error itself", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestPlanAcrossViews_TargetAbsentEverywhereReturnsThePrimaryError(t *testing
 	}}
 
 	_, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
-	if err != primaryErr {
+	if err != primaryErr { //nolint:errorlint // pins the error as returned unchanged
 		t.Errorf("err = %v, want the primary view's error unchanged", err)
 	}
 }

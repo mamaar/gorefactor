@@ -85,7 +85,7 @@ func TestRefactorError_Unwrap(t *testing.T) {
 	}
 
 	unwrapped := err.Unwrap()
-	if unwrapped != cause {
+	if unwrapped != cause { //nolint:errorlint // Unwrap must return the cause itself
 		t.Errorf("Expected unwrapped error to be original error, got %v", unwrapped)
 	}
 
@@ -226,7 +226,7 @@ func TestErrorChaining(t *testing.T) {
 
 	// Test unwrapping
 	unwrapped := errors.Unwrap(refactorErr)
-	if unwrapped != originalErr {
+	if unwrapped != originalErr { //nolint:errorlint // Unwrap must return the cause itself
 		t.Errorf("Expected unwrapped error to be original error, got %v", unwrapped)
 	}
 

@@ -43,7 +43,7 @@ func TestPlanAcrossViews_BlockerInAnyViewStopsTheMerge(t *testing.T) {
 
 	plan, _, err := planAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
 
-	if err != refused || plan != nil {
+	if !errors.Is(err, refused) || plan != nil {
 		t.Fatalf("plan = %v, err = %v; want the gate's refusal and no plan", plan, err)
 	}
 	want := []types.Blocker{{File: "/ws/use_tagx.go", Offset: 7, Configs: []string{tagged.Config.String()}}}
@@ -126,7 +126,7 @@ func TestBlockersAcrossViews_TargetAbsentEverywhereReturnsThePrimaryError(t *tes
 	}
 
 	_, err := blockersAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
-	if err != primaryErr {
+	if err != primaryErr { //nolint:errorlint // pins the error as returned unchanged
 		t.Errorf("err = %v, want the primary view's error unchanged", err)
 	}
 }

@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -500,7 +501,7 @@ func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPa
 // message-only comparison would incorrectly conflate into one.
 func normalizeTypeError(err error) (key string, full string) {
 	full = err.Error()
-	terr, ok := err.(gotypes.Error)
+	terr, ok := errors.AsType[gotypes.Error](err)
 	if ok {
 		base := "?"
 		if terr.Fset != nil {

@@ -50,7 +50,7 @@ func packageQualifierEdits(views []*analysis.View, fset *token.FileSet, file *an
 		return nil, nil, nil
 	}
 	if file.AST == nil || file.Err != nil {
-		return nil, nil, fmt.Errorf("cannot rename package qualifiers in %s: file does not parse: %v", file.Path, file.Err)
+		return nil, nil, fmt.Errorf("cannot rename package qualifiers in %s: file does not parse: %w", file.Path, file.Err)
 	}
 
 	var changes []types.Change

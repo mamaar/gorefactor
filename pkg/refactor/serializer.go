@@ -188,7 +188,7 @@ func rollback(committed []fileStep, failed *fileStep) error {
 	for i := len(committed) - 1; i >= 0; i-- {
 		err := committed[i].undo()
 		if err != nil {
-			errs = append(errs, fmt.Errorf("failed to restore %s: %v", committed[i].path, err))
+			errs = append(errs, fmt.Errorf("failed to restore %s: %w", committed[i].path, err))
 		}
 	}
 	return errors.Join(errs...)

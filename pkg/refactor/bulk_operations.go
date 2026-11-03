@@ -445,7 +445,7 @@ func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, 
 		return 0, 0, "", false, nil
 	}
 	if file.AST == nil || file.AST.Name == nil || file.AST.Name.Name == "" {
-		return 0, 0, "", false, fmt.Errorf("cannot rewrite the package clause of %s: file does not parse: %v", file.Path, file.Err)
+		return 0, 0, "", false, fmt.Errorf("cannot rewrite the package clause of %s: file does not parse: %w", file.Path, file.Err)
 	}
 	switch file.AST.Name.Name {
 	case oldName:

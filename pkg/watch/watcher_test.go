@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -167,7 +168,7 @@ func TestWatcher_ContextCancellationStops(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != context.Canceled {
+		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got %v", err)
 		}
 	case <-time.After(2 * time.Second):

@@ -718,7 +718,7 @@ type typeErrors struct {
 }
 
 func (c *typeErrors) add(err error) {
-	terr, ok := err.(gotypes.Error)
+	terr, ok := errors.AsType[gotypes.Error](err)
 	if ok {
 		c.errs = append(c.errs, terr)
 	}

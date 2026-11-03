@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -98,7 +99,7 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		exitCode := 0
 		err = cmd.Run()
 		if err != nil {
-			exitErr, ok := err.(*exec.ExitError)
+			exitErr, ok := errors.AsType[*exec.ExitError](err)
 			if ok {
 				exitCode = exitErr.ExitCode()
 			} else {
