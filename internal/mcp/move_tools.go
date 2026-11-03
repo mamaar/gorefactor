@@ -100,7 +100,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Move a symbol (function, type, variable, constant) from one package to another. Updates all references across the workspace. " +
 			"Give one name as symbol, or several as symbols to move them together. " +
 			"Names declared together must be moved together through symbols: the constants of an iota group (or any group that repeats an expression implicitly) and the names of one declaration such as var a, b = f(). " +
-			"Give to_file to choose the file of to_package that receives them (created when missing); it may be a _test.go file, in which case a symbol that a non-test file uses is refused, and it lets to_package equal from_package to move a symbol between files of one package. " +
+			"Give to_file to choose the file of to_package that receives them (created when missing); it may be a _test.go file, in which case a symbol that a non-test file uses is refused, and it lets to_package equal from_package to move a symbol, or a method alone (Type.Method), between files of one package. " +
 			"A source file the move leaves without declarations is deleted, unless it has a //go:build line or a package doc comment. " +
 			"Moving a variable moves its initializer's side effects to the target package's init. " +
 			"A type does not take its constants along: name them in the same call, or the move is refused as an import cycle when its methods use constants left behind. " +

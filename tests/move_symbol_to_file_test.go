@@ -238,3 +238,96 @@ func TestBatchOperations_MoveSymbolCarriesToFile(t *testing.T) {
 		t.Errorf("p.go emptied but kept:\n%s", fileText(t, dir, "p/p.go"))
 	}
 }
+
+func TestMoveSymbol_ToFile_MovesAMethodAloneWithinItsPackage(t *testing.T) {
+	for _, name := range []string{"T.Get", "Get"} {
+		t.Run(name, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{
+				"p/t.go":     "package p\n\nimport \"strings\"\n\ntype T struct{ s string }\n\nfunc (t T) Get() string { return strings.ToUpper(t.s) }\n\nfunc (t T) Keep() string { return t.s }\n",
+				"use/use.go": "package use\n\nimport \"example.com/threadmcp/p\"\n\nfunc Use() string { return p.T{}.Get() }\n",
+			})
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+
+			args := map[string]any{"symbol": name, "from_package": "p", "to_package": "p", "to_file": "p/get.go"}
+			args["dry_run"] = true
+			if res := moveToFile(t, sess, args); res.IsError {
+				t.Fatalf("dry run: %s", errText(res))
+			}
+			delete(args, "dry_run")
+			if res := moveToFile(t, sess, args); res.IsError {
+				t.Fatalf("move_symbol: %s", errText(res))
+			}
+
+			assertFileContains(t, dir, "p/get.go", "func (t T) Get()")
+			assertFileContains(t, dir, "p/get.go", `"strings"`)
+			got := fileText(t, dir, "p/t.go")
+			if strings.Contains(got, "Get") || strings.Contains(got, `"strings"`) || !strings.Contains(got, "Keep") {
+				t.Errorf("t.go:\n%s", got)
+			}
+			assertFileContains(t, dir, "use/use.go", "p.T{}.Get()")
+			goVets(t, dir, "")
+		})
+	}
+}
+
+func TestMoveSymbol_ToFile_MethodIntoTestFileFollowsItsCallers(t *testing.T) {
+	files := map[string]string{
+		"p/t.go":      "package p\n\ntype T struct{ n int }\n\nfunc (t T) Dbg() int { return t.n }\n\nfunc (t T) Live() int { return t.n }\n",
+		"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { _ = T{}.Dbg(); _ = T{}.Live() }\n",
+		"p/use.go":    "package p\n\nfunc Use() int { return T{}.Live() }\n",
+	}
+	dir := writeInlineWorkspace(t, files)
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := moveToFile(t, sess, map[string]any{"symbol": "T.Live", "from_package": "p", "to_package": "p", "to_file": "p/p_test.go"})
+	if !res.IsError || !strings.Contains(errText(res), "use.go") {
+		t.Errorf("want a refusal naming use.go, got error=%v %s", res.IsError, errText(res))
+	}
+	assertFileUnchanged(t, dir, "p/t.go", files["p/t.go"])
+
+	if res := moveToFile(t, sess, map[string]any{"symbol": "T.Dbg", "from_package": "p", "to_package": "p", "to_file": "p/p_test.go"}); res.IsError {
+		t.Fatalf("move Dbg: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/p_test.go", "func (t T) Dbg()")
+	goVets(t, dir, "")
+}
+
+func TestMoveSymbol_ToFile_MethodStillRefusedAcrossPackages(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": memberSrc, "dst/dst.go": "package dst\n"})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	res := moveToFile(t, sess, map[string]any{"symbol": "T.M", "from_package": "src", "to_package": "dst", "to_file": "dst/m.go"})
+	assertRefused(t, res, "moves with its type")
+	if fileExists(dir, "dst/m.go") {
+		t.Error("a refused move created a file")
+	}
+}
+
+func TestMoveSymbol_ToFile_MovesASymbolOutOfATestFile(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/p.go":        "package p\n\nfunc Live() int { return 1 }\n",
+		"p/a_test.go":   "package p\n\nimport \"testing\"\n\nfunc helper() int { return Live() }\n\nfunc TestA(t *testing.T) { _ = helper() }\n",
+		"p/b_test.go":   "package p\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) { _ = helper() }\n",
+		"p/m_test.go":   "package p\n\ntype fake struct{}\n\nfunc (fake) Do() int { return 1 }\n",
+		"p/use_test.go": "package p\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) { _ = fake{}.Do() }\n",
+	})
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	if res := moveToFile(t, sess, map[string]any{"symbol": "helper", "from_package": "p", "to_package": "p", "to_file": "p/b_test.go"}); res.IsError {
+		t.Fatalf("move helper: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/b_test.go", "func helper")
+	if strings.Contains(fileText(t, dir, "p/a_test.go"), "func helper") {
+		t.Error("helper was not removed from a_test.go")
+	}
+
+	if res := moveToFile(t, sess, map[string]any{"symbol": "fake.Do", "from_package": "p", "to_package": "p", "to_file": "p/use_test.go"}); res.IsError {
+		t.Fatalf("move Do: %s", errText(res))
+	}
+	assertFileContains(t, dir, "p/use_test.go", "func (fake) Do()")
+	goVets(t, dir, "")
+}

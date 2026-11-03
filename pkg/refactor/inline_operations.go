@@ -126,7 +126,7 @@ func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 			Start:       location.Start,
 			End:         location.End,
 			OldText:     location.CallText,
-			NewText:     op.adaptMethodBodyForInlining(impl, location.Arguments),
+			NewText:     op.adaptMethodBodyForInlining(impl, location.Receiver, location.Arguments),
 			Description: fmt.Sprintf("Inline method call %s", op.MethodName),
 		})
 	}
@@ -153,6 +153,11 @@ func (op *InlineMethodOperation) Description() string {
 type MethodImpl struct {
 	Body       string
 	ParamNames []string
+	// Receiver is the method's receiver identifier, empty when it has none or is blank.
+	// ReceiverType and ResultType are source text, ResultType empty for no result.
+	Receiver     string
+	ReceiverType string
+	ResultType   string
 }
 
 type MethodCall struct {
@@ -160,6 +165,8 @@ type MethodCall struct {
 	End       int
 	CallText  string
 	Arguments []string
+	// Receiver is the source text of the expression the method is called on.
+	Receiver string
 	// NameOffset is the byte offset of the called identifier.
 	NameOffset int
 }
@@ -273,10 +280,18 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 					start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
 					end := fset.Position(funcDecl.Body.Rbrace).Offset
 					if start < len(content) && end <= len(content) {
-						return MethodImpl{
-							Body:       string(content[start:end]),
-							ParamNames: paramNames,
-						}, nil
+						impl := MethodImpl{
+							Body:         string(content[start:end]),
+							ParamNames:   paramNames,
+							ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
+						}
+						if names := funcDecl.Recv.List[0].Names; len(names) == 1 && names[0].Name != "_" {
+							impl.Receiver = names[0].Name
+						}
+						if funcDecl.Type.Results != nil {
+							impl.ResultType = sourceText(fset, content, funcDecl.Type.Results)
+						}
+						return impl, nil
 					}
 				}
 			}
@@ -336,6 +351,7 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 							End:        end,
 							CallText:   callText,
 							Arguments:  args,
+							Receiver:   sourceText(fset, string(targetFile.OriginalContent), selExpr.X),
 							NameOffset: fset.Position(selExpr.Sel.Pos()).Offset,
 						})
 					}
@@ -348,7 +364,45 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 	return calls, nil
 }
 
-func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arguments []string) string {
+// sourceText is the text of node in content, which fset positions describe.
+func sourceText(fset *token.FileSet, content string, node ast.Node) string {
+	return content[fset.Position(node.Pos()).Offset:fset.Position(node.End()).Offset]
+}
+
+// receiverOperand is receiver spelled so a selector can follow it.
+func receiverOperand(receiver string) string {
+	expr, err := parser.ParseExpr(receiver)
+	if err != nil {
+		return "(" + receiver + ")"
+	}
+	switch expr.(type) {
+	case *ast.Ident, *ast.SelectorExpr, *ast.CallExpr, *ast.IndexExpr, *ast.ParenExpr:
+		return receiver
+	}
+	return "(" + receiver + ")"
+}
+
+// evaluatesCode reports whether evaluating receiver runs a call or a receive,
+// so that evaluating it twice would not be the same as once.
+func evaluatesCode(receiver string) bool {
+	expr, err := parser.ParseExpr(receiver)
+	if err != nil {
+		return true
+	}
+	found := false
+	ast.Inspect(expr, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			found = true
+		case *ast.UnaryExpr:
+			found = found || n.Op == token.ARROW
+		}
+		return !found
+	})
+	return found
+}
+
+func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, receiver string, arguments []string) string {
 	body := strings.TrimSpace(impl.Body)
 
 	// Build param→arg substitution map
@@ -357,6 +411,9 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 		if i < len(arguments) {
 			paramToArg[name] = arguments[i]
 		}
+	}
+	if impl.Receiver != "" {
+		paramToArg[impl.Receiver] = receiverOperand(receiver)
 	}
 
 	// Try to parse the body as a single return expression.
@@ -371,8 +428,12 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 			if len(stmts) == 1 {
 				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
-					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
-					return result
+					if impl.Receiver != "" && countIdents(expr, impl.Receiver) > 1 && evaluatesCode(receiver) {
+						delete(paramToArg, impl.Receiver)
+						inner := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
+						return fmt.Sprintf("func(%s %s) %s { return %s }(%s)", impl.Receiver, impl.ReceiverType, impl.ResultType, inner, receiver)
+					}
+					return replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
 				}
 			}
 		}
@@ -386,6 +447,31 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 	return result
 }
 
+// inspectIdents calls visit for each identifier in expr other than the
+// selected name of a selector, which is not a use of any variable.
+func inspectIdents(expr ast.Expr, visit func(*ast.Ident)) {
+	ast.Inspect(expr, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.SelectorExpr:
+			inspectIdents(n.X, visit)
+			return false
+		case *ast.Ident:
+			visit(n)
+		}
+		return true
+	})
+}
+
+func countIdents(expr ast.Expr, name string) int {
+	count := 0
+	inspectIdents(expr, func(id *ast.Ident) {
+		if id.Name == name {
+			count++
+		}
+	})
+	return count
+}
+
 // replaceIdentsInExpr rewrites identifier tokens in an AST expression using the
 // param→arg map and returns the resulting source text.
 func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *token.FileSet, src string) string {
@@ -395,15 +481,12 @@ func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *toke
 		text       string
 	}
 	var replacements []replacement
-	ast.Inspect(expr, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok {
-			if arg, exists := paramToArg[ident.Name]; exists {
-				start := fset.Position(ident.Pos()).Offset
-				end := fset.Position(ident.End()).Offset
-				replacements = append(replacements, replacement{start, end, arg})
-			}
+	inspectIdents(expr, func(ident *ast.Ident) {
+		if arg, exists := paramToArg[ident.Name]; exists {
+			start := fset.Position(ident.Pos()).Offset
+			end := fset.Position(ident.End()).Offset
+			replacements = append(replacements, replacement{start, end, arg})
 		}
-		return true
 	})
 
 	// Extract the expression text from src first
@@ -433,7 +516,7 @@ func replaceIdentToken(src, oldIdent, newText string) string {
 			break
 		}
 		// Check that the character before and after are not identifier characters
-		before := idx == 0 || !isIdentChar(remainder[idx-1])
+		before := idx == 0 || !isIdentChar(remainder[idx-1]) && remainder[idx-1] != '.'
 		afterIdx := idx + len(oldIdent)
 		after := afterIdx >= len(remainder) || !isIdentChar(remainder[afterIdx])
 		if before && after {

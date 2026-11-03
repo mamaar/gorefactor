@@ -138,7 +138,7 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 			Cause:   err,
 		}
 	}
-	if err := memberRefusal(sourcePackage, symbol); err != nil {
+	if err := op.memberRefusal(ws, sourcePackage, symbol); err != nil {
 		return err
 	}
 	if err := embedRefusal(sourcePackage, symbol); err != nil {
@@ -198,27 +198,37 @@ func (op *MoveSymbolOperation) existsInTarget(ws *types.Workspace, name string) 
 	return false
 }
 
-// memberRefusal refuses a method or struct field, which move only with their type.
-func memberRefusal(pkg *types.Package, symbol *types.Symbol) error {
-	var members map[string][]*types.Symbol
-	var what string
-	switch symbol.Kind {
-	case types.MethodSymbol:
-		members, what = pkg.Symbols.Methods, "method"
-	case types.StructFieldSymbol:
-		members, what = pkg.Symbols.Fields, "field"
-	default:
-		return nil
-	}
+// memberOwner is the name of the type declaring a method or struct field of pkg.
+func memberOwner(pkg *types.Package, symbol *types.Symbol) string {
 	owner := ""
 	if symbol.Parent != nil {
 		owner = symbol.Parent.Name
 	}
-	for typeName, syms := range members {
-		if slices.Contains(syms, symbol) {
-			owner = typeName
+	for _, members := range []map[string][]*types.Symbol{pkg.Symbols.Methods, pkg.Symbols.Fields} {
+		for typeName, syms := range members {
+			if slices.Contains(syms, symbol) {
+				owner = typeName
+			}
 		}
 	}
+	return owner
+}
+
+// memberRefusal refuses a struct field, and a method unless it moves to
+// another file of its own package: members otherwise move only with their type.
+func (op *MoveSymbolOperation) memberRefusal(ws *types.Workspace, pkg *types.Package, symbol *types.Symbol) error {
+	var what string
+	switch {
+	case symbol.Kind == types.MethodSymbol && op.staysInPackage(ws, pkg):
+		return nil
+	case symbol.Kind == types.MethodSymbol:
+		what = "method"
+	case symbol.Kind == types.StructFieldSymbol:
+		what = "field"
+	default:
+		return nil
+	}
+	owner := memberOwner(pkg, symbol)
 	return &types.RefactorError{
 		Type:    types.InvalidOperation,
 		Message: fmt.Sprintf("cannot move %s: it is a %s of %s and moves with its type; move %s instead", symbol.Name, what, owner, owner),
@@ -268,8 +278,9 @@ func embedRefusal(pkg *types.Package, symbol *types.Symbol) error {
 
 // movingSymbol is a declaration the operation moves, the package it leaves and
 // the index of the requested symbol that brought it along. A method of a moving
-// type is an entry of its own, with typ the entry of that type. Names declared
-// in one unit (see valueUnit) are entries of their own too; all but the first
+// type is an entry of its own, with typ the entry of that type; a method moving
+// alone within its package has lone set and a typ that only names its type.
+// Names declared in one unit (see valueUnit) are entries of their own too; all but the first
 // have sharedWith the first, which alone removes and copies the unit.
 type movingSymbol struct {
 	sym        *types.Symbol
@@ -277,6 +288,7 @@ type movingSymbol struct {
 	file       *types.File
 	owner      int
 	typ        *movingSymbol
+	lone       bool
 	sharedWith *movingSymbol
 	removal    []types.Change
 }
@@ -310,7 +322,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	var allReferences []*types.Reference
 	refSource := make(map[*types.Reference]*types.Package)
 	for _, m := range moving {
-		if m.typ != nil {
+		if m.typ != nil && !m.lone {
 			continue
 		}
 		moveSet = append(moveSet, m.sym)
@@ -566,7 +578,18 @@ func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *anal
 		if err != nil {
 			return nil, err
 		}
+		if err := op.memberRefusal(ws, pkg, symbol); err != nil {
+			return nil, &groupMemberError{index: i, err: err}
+		}
 		file := findFileContainingSymbol(pkg, symbol)
+		if symbol.Kind == types.MethodSymbol {
+			if !seen[symbol] {
+				seen[symbol] = true
+				owner := &movingSymbol{sym: &types.Symbol{Name: memberOwner(pkg, symbol)}, pkg: pkg}
+				moving = append(moving, &movingSymbol{sym: symbol, pkg: pkg, file: file, owner: i, typ: owner, lone: true})
+			}
+			continue
+		}
 		companions, err := op.resolveCompanionSymbols(resolver, pkg, file, symbol)
 		if err != nil {
 			return nil, err
@@ -1492,12 +1515,7 @@ func (op *RenameSymbolOperation) generateReferenceRenameChange(ref *types.Refere
 // Utility functions
 
 func findFileContainingSymbol(pkg *types.Package, symbol *types.Symbol) *types.File {
-	for _, file := range pkg.Files {
-		if file.Path == symbol.File {
-			return file
-		}
-	}
-	return nil
+	return findFileByPath(pkg, symbol.File)
 }
 
 // findPackageForFile locates the package containing filePath, searching both
