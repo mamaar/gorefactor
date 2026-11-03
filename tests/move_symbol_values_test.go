@@ -323,11 +323,13 @@ func skippedReasons(out map[string]any) []string {
 	sites, _ := out["skipped_sites"].([]any)
 	for _, s := range sites {
 		m, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		r, ok := m["reason"].(string)
 		if ok {
-			r, ok := m["reason"].(string)
-			if ok {
-				reasons = append(reasons, r)
-			}
+			reasons = append(reasons, r)
 		}
 	}
 

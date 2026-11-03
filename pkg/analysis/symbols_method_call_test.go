@@ -270,10 +270,7 @@ func main() {
 	resolver.scopeAnalyzer = NewScopeAnalyzer(resolver)
 
 	// Build symbol table
-	_, err = resolver.BuildSymbolTable(testFile.Package)
-	if err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(testFile.Package)
 
 	// Index the file
 	index := make(map[string][]indexEntry)

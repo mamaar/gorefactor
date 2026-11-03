@@ -372,12 +372,14 @@ func (l *liveness) searchWithin(key types.SymbolKey, taken map[*ssa.Function]boo
 		}
 
 		fn, ok := n.Func.Object().(*gotypes.Func)
-		if ok {
-			k, ok := types.SymbolKeyOf(fn)
-			if ok && k == key {
-				w.pred[n] = nil
-				queue = append(queue, n)
-			}
+		if !ok {
+			continue
+		}
+
+		k, ok := types.SymbolKeyOf(fn)
+		if ok && k == key {
+			w.pred[n] = nil
+			queue = append(queue, n)
 		}
 	}
 

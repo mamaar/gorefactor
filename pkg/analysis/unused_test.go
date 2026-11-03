@@ -115,9 +115,7 @@ func main() { consumer() }
 	}
 
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	return workspace
 }
@@ -284,9 +282,7 @@ func regularUnused() {}
 	}
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
-		t.Fatalf("Failed to build symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	analyzer := NewUnusedAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 

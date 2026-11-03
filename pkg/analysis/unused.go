@@ -114,10 +114,7 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 			continue
 		}
 
-		_, err := ua.resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
-		}
+		_ = ua.resolver.BuildSymbolTable(pkg)
 	}
 
 	idx := ua.index

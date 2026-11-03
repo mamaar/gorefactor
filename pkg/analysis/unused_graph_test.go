@@ -45,10 +45,7 @@ func parsedGraphWorkspace(t *testing.T, files map[string]string) *types.Workspac
 	}
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	_, err := resolver.BuildSymbolTable(pkg)
-	if err != nil {
-		t.Fatalf("symbol table: %v", err)
-	}
+	_ = resolver.BuildSymbolTable(pkg)
 
 	return ws
 }
@@ -267,10 +264,7 @@ func typedGraph(t *testing.T, files map[string]string) graphFixture {
 			continue
 		}
 
-		_, err := v.Resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			t.Fatal(err)
-		}
+		_ = v.Resolver.BuildSymbolTable(pkg)
 	}
 
 	idx, err := v.ReferenceIndex()
@@ -438,10 +432,7 @@ func TestUsageGraph_EmbeddingStructHasEdgeToEmbeddedType(t *testing.T) {
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
 
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			t.Fatal(err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	idx, err := v.ReferenceIndex()

@@ -105,7 +105,7 @@ func getPackageIdentifier(pkg *types.Package) string {
 }
 
 // BuildSymbolTable builds complete symbol table for a package
-func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTable, error) {
+func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) *types.SymbolTable {
 	symbolTable := &types.SymbolTable{
 		Package:   pkg,
 		Functions: make(map[string]*types.Symbol),
@@ -152,14 +152,14 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 
 	pkg.Symbols = symbolTable
 
-	return symbolTable, nil
+	return symbolTable
 }
 
 // FindReferences finds all references to a symbol in workspace. Where a
 // package is type-checked an identifier counts when it uses the symbol's
 // go/types object; other identifiers (untyped packages, test files outside the
 // check, names the checker could not resolve) count by name and qualifier.
-func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Reference, error) {
+func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) []*types.Reference {
 	var references []*types.Reference
 	target := sr.resolveTypesObject(symbol)
 
@@ -172,7 +172,7 @@ func (sr *SymbolResolver) FindReferences(symbol *types.Symbol) ([]*types.Referen
 		}
 	}
 
-	return references, nil
+	return references
 }
 
 // BuildReferenceIndex builds a reverse index mapping identifier names to their
@@ -1490,11 +1490,13 @@ func newIdentRoles(f *ast.File) *identRoles {
 			default:
 				for _, elt := range node.Elts {
 					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+
+					key, ok := kv.Key.(*ast.Ident)
 					if ok {
-						key, ok := kv.Key.(*ast.Ident)
-						if ok {
-							r.nonReference[key] = true
-						}
+						r.nonReference[key] = true
 					}
 				}
 			}

@@ -158,11 +158,7 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 
 	resolver.inspectors = s.tree.inspectors
 	for _, pkg := range ws.Packages {
-		_, err := resolver.BuildSymbolTable(pkg)
-		if err != nil {
-			s.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
-			return nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
-		}
+		_ = resolver.BuildSymbolTable(pkg)
 	}
 
 	analyzer := NewDependencyAnalyzer(ws, s.logger)

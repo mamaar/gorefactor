@@ -159,11 +159,7 @@ func (u *WorkspaceUpdater) rebuildPackage(v *analysis.View, pkg *types.Package, 
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
 
-	st, err := v.Resolver.BuildSymbolTable(pkg)
-	if err != nil {
-		u.logger.Error(c.action+": symbol table rebuild failed", "file", c.path, "err", err)
-		return
-	}
+	st := v.Resolver.BuildSymbolTable(pkg)
 
 	_ = v.Analyzer.BuildDependencyGraph()
 
@@ -200,10 +196,7 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
 
-	_, err = v.Resolver.BuildSymbolTable(pkg)
-	if err != nil {
-		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)
-	}
+	_ = v.Resolver.BuildSymbolTable(pkg)
 
 	_ = v.Analyzer.BuildDependencyGraph()
 	u.logger.Info("create: new package",

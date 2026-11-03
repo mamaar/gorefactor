@@ -518,11 +518,13 @@ func (op *MoveSymbolOperation) dropEmptiedFiles(sourceFiles []*types.File, targe
 		}
 
 		deletion, ok := emptiedFileDeletion(f, removals[f.Path])
-		if ok {
-			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
-
-			delete(unusedImports, f.Path)
+		if !ok {
+			continue
 		}
+
+		plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
+
+		delete(unusedImports, f.Path)
 	}
 }
 
@@ -578,10 +580,7 @@ func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resol
 
 		moveSet = append(moveSet, m.sym)
 
-		refs, err := resolver.FindReferences(m.sym)
-		if err != nil {
-			return nil, nil, err
-		}
+		refs := resolver.FindReferences(m.sym)
 
 		for _, ref := range refs {
 			refSource[ref] = m.pkg
@@ -1128,10 +1127,7 @@ func (op *RenameSymbolOperation) planSymbols(ws *types.Workspace, resolver *anal
 	// Process each symbol
 	for _, symbol := range targetSymbols {
 		// Find all references to this symbol
-		references, err := resolver.FindReferences(symbol)
-		if err != nil {
-			return nil, err
-		}
+		references := resolver.FindReferences(symbol)
 
 		if err := checkShadowedAtReferences(ws, symbol, references, op.Request.NewName); err != nil {
 			return nil, err

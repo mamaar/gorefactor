@@ -82,11 +82,13 @@ func ResolveTargets(ws *types.Workspace, specs []string) ([]Target, error) {
 
 		for _, obj := range objs {
 			id := ObjectIDOf(obj)
-			if !seen[id] {
-				seen[id] = true
-
-				targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
+			if seen[id] {
+				continue
 			}
+
+			seen[id] = true
+
+			targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
 		}
 	}
 
@@ -274,11 +276,13 @@ func (l *liveness) keys() types.SymbolKeySet {
 		}
 
 		fn, ok := topFunc(n.Func).Object().(*gotypes.Func)
+		if !ok {
+			continue
+		}
+
+		key, ok := types.SymbolKeyOf(fn)
 		if ok {
-			key, ok := types.SymbolKeyOf(fn)
-			if ok {
-				keys[key] = struct{}{}
-			}
+			keys[key] = struct{}{}
 		}
 	}
 
