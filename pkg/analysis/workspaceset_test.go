@@ -341,3 +341,20 @@ func TestWorkspaceSet_ConcurrentViewRequestsBuildEachViewOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceSet_ApproximateViewsListsOnlyFailedLoads(t *testing.T) {
+	set, root := loadSet(t, externalWorkspace())
+	tagged := viewWithTag(t, set, "fts5x")
+	loadErr := errors.New("no cross toolchain")
+	set.Primary().Parser.loadPackages = (&recordingLoader{pkgs: fakeExternal()}).load
+	tagged.Parser.loadPackages = (&recordingLoader{err: loadErr}).load
+
+	if got := set.ApproximateViews(); len(got) != 0 {
+		t.Fatalf("before any type-check: %v", got)
+	}
+	checkedPackage(t, tagged, filepath.Join(root, "p"))
+	got := set.ApproximateViews()
+	if len(got) != 1 || got[0].Config.String() != tagged.Config.String() || !errors.Is(got[0].Err, loadErr) {
+		t.Errorf("ApproximateViews = %v, want only the tagged view with %v", got, loadErr)
+	}
+}

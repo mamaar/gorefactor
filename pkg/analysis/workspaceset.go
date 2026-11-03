@@ -79,6 +79,13 @@ func (v *View) ReleaseTypeInfo() {
 // failed, and that failure. It is known once a type-check has needed them.
 func (v *View) Approximate() (bool, error) { return v.Parser.externalFallback() }
 
+// ApproximateView is a built view whose third-party packages came from the
+// primary view, and why.
+type ApproximateView struct {
+	Config BuildConfig
+	Err    error
+}
+
 // WorkspaceSet holds one source tree and a view of it per build configuration.
 // The primary view is built at load, the others on first request.
 type WorkspaceSet struct {
@@ -215,6 +222,18 @@ func (s *WorkspaceSet) pruneLocked(configs []BuildConfig) {
 			delete(s.views, key)
 		}
 	}
+}
+
+// ApproximateViews lists the built views that are approximate. A view is known
+// to be approximate only once a type-check has needed its third-party packages.
+func (s *WorkspaceSet) ApproximateViews() []ApproximateView {
+	var out []ApproximateView
+	for _, v := range s.BuiltViews() {
+		if approx, err := v.Approximate(); approx {
+			out = append(out, ApproximateView{Config: v.Config, Err: err})
+		}
+	}
+	return out
 }
 
 // BuiltViews returns the views built so far that the covering still holds,
