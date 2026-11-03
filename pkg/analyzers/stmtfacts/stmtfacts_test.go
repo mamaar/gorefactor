@@ -380,7 +380,8 @@ func f(a int) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stmt, info := parseBody(t, tt.src)
-			if got := stmtfacts.Terminates(info, stmt); got != tt.want {
+			got := stmtfacts.Terminates(info, stmt)
+			if got != tt.want {
 				t.Errorf("Terminates() = %v, want %v", got, tt.want)
 			}
 		})
@@ -508,7 +509,8 @@ func (r *T) f(a, b int) (res error) {
 
 	var fn *ast.FuncDecl
 	for _, decl := range file.Decls {
-		if d, ok := decl.(*ast.FuncDecl); ok && d.Name.Name == "f" {
+		d, ok := decl.(*ast.FuncDecl)
+		if ok && d.Name.Name == "f" {
 			fn = d
 		}
 	}
@@ -526,10 +528,12 @@ func TestFirstClash(t *testing.T) {
 	dest := map[string]bool{"q": true, "z": true}
 
 	// Sorted, so the reported name does not depend on map iteration order.
-	if got := stmtfacts.FirstClash(moved, dest); got != "q" {
+	got := stmtfacts.FirstClash(moved, dest)
+	if got != "q" {
 		t.Errorf("FirstClash() = %q, want %q", got, "q")
 	}
-	if got := stmtfacts.FirstClash(map[string]bool{"a": true}, dest); got != "" {
+	got = stmtfacts.FirstClash(map[string]bool{"a": true}, dest)
+	if got != "" {
 		t.Errorf("FirstClash() = %q, want %q for disjoint sets", got, "")
 	}
 }
@@ -560,6 +564,56 @@ func TestReferencesAny(t *testing.T) {
 			got := stmtfacts.ReferencesAny(expr, map[string]bool{"ok": true})
 			if got != tt.want {
 				t.Errorf("ReferencesAny(%q) = %v, want %v", tt.expr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestProvablyNonNil(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"guarded return", `if err != nil { return err }`, true},
+		{"assigned before the return", `if err != nil { err = nil; return err }`, false},
+		{"closure parameter redeclares the name", `if err != nil { h := func(err error) error { return err }; _ = h }`, false},
+		{"closure runs later", `if err != nil { h := func() error { return err }; _ = h }`, false},
+		{"loop writes the name after the return", `if err != nil { for i := 0; i < 3; i++ { if i > 1 { return err }; err = nil } }`, false},
+		{"loop that never writes it", `if err != nil { for i := 0; i < 3; i++ { if i > 1 { return err } } }`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package p\nfunc f(err error) error {\n" + tc.body + "\nreturn nil\n}\n"
+			file, err := parser.ParseFile(token.NewFileSet(), "x.go", src, 0)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var stack, found []ast.Node
+			var ret *ast.ReturnStmt
+			ast.Inspect(file, func(n ast.Node) bool {
+				if n == nil {
+					stack = stack[:len(stack)-1]
+					return true
+				}
+				stack = append(stack, n)
+				// The innermost return of the guarded branch is the one
+				// asked about; the trailing `return nil` is not.
+				r, ok := n.(*ast.ReturnStmt)
+				if ok && len(r.Results) == 1 {
+					id, ok := r.Results[0].(*ast.Ident)
+					if ok && id.Name == "err" {
+						ret, found = r, append([]ast.Node(nil), stack...)
+					}
+				}
+				return true
+			})
+			if ret == nil {
+				t.Fatal("no return of err in the fixture")
+			}
+			got := stmtfacts.ProvablyNonNil(found, ret, "err")
+			if got != tc.want {
+				t.Errorf("ProvablyNonNil = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
@@ -46,16 +45,17 @@ func callUnused(t *testing.T, args map[string]any, files map[string]string) (unu
 		args = map[string]any{}
 	}
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "unused", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "unused", Arguments: args})
 	if err != nil || res.IsError {
 		t.Fatalf("unused: %v %s", err, errText(res))
 	}
 	var out unusedJSON
 	var raw map[string]any
 	for _, v := range []any{&out, &raw} {
-		if err := json.Unmarshal([]byte(errText(res)), v); err != nil {
+		err := json.Unmarshal([]byte(errText(res)), v)
+		if err != nil {
 			t.Fatalf("decode: %v\n%s", err, errText(res))
 		}
 	}
@@ -78,7 +78,8 @@ func TestUnused_FunctionUsedOnlyFromTaggedFileIsNotReported(t *testing.T) {
 		"p/use_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use() int { return f(1) }\n",
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f.go:dead"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f.go:dead"}) {
 		t.Errorf("unused = %v, want only dead", got)
 	}
 	if len(out.BuildConfigs) != 2 {
@@ -92,10 +93,12 @@ func TestUnused_FunctionDeclaredAndUnusedOnlyUnderTagIsReportedWithItsConfig(t *
 		"p/f_tagx.go": ctxFTagx,
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f_tagx.go:f"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f_tagx.go:f"}) {
 		t.Fatalf("unused = %v, want f in f_tagx.go", got)
 	}
-	if got := out.Unused[0].Configs; !reflect.DeepEqual(got, []string{"tags=tagx"}) {
+	got = out.Unused[0].Configs
+	if !reflect.DeepEqual(got, []string{"tags=tagx"}) {
 		t.Errorf("configs = %v, want [tags=tagx]", got)
 	}
 }
@@ -107,7 +110,8 @@ func TestUnused_SiblingUsedUnderItsTagKeepsBothUnreported(t *testing.T) {
 		"p/use_tagx.go":  sdcUseTagx,
 	})
 
-	if got := declarations(out.Unused); len(got) != 0 {
+	got := declarations(out.Unused)
+	if len(got) != 0 {
 		t.Errorf("unused = %v, want none: f is used under tagx", got)
 	}
 }
@@ -119,7 +123,8 @@ func TestUnused_UnusedSiblingsAreReportedPerDeclaration(t *testing.T) {
 		"p/plain.go":     sdcPlain,
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f_default.go:f", "f_tagx.go:f"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f_default.go:f", "f_tagx.go:f"}) {
 		t.Fatalf("unused = %v, want both declarations of f", got)
 	}
 	for _, it := range out.Unused {
@@ -135,10 +140,12 @@ func TestUnused_NameMentionedOnlyInUncheckedFileIsFlaggedPossiblyUsed(t *testing
 		"p/bad_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport (\n\t\"testing\"\n\n\t_ \"example.com/this-module-does-not-exist/thirdparty\"\n)\n\nfunc TestBad(t *testing.T) {\n\tf(3)\n}\n",
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f.go:dead"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f.go:dead"}) {
 		t.Errorf("unused = %v, want only dead", got)
 	}
-	if got := declarations(out.PossiblyUsed); !reflect.DeepEqual(got, []string{"f.go:f"}) {
+	got = declarations(out.PossiblyUsed)
+	if !reflect.DeepEqual(got, []string{"f.go:f"}) {
 		t.Fatalf("possibly_used = %v, want f", got)
 	}
 	use := out.PossiblyUsed[0].PossibleUse
@@ -152,11 +159,13 @@ func TestUnused_SingleConfigOutputHasNoConfigFields(t *testing.T) {
 		"p/f.go": "package p\n\nfunc f(n int) int { return n }\n\nfunc dead() {}\n\nvar idle = 1\n\nfunc Use() int { return f(1) }\n",
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f.go:dead", "f.go:idle"}) || out.Count != 2 {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f.go:dead", "f.go:idle"}) || out.Count != 2 {
 		t.Errorf("unused = %v (count %d), want dead and idle", got, out.Count)
 	}
 	for _, key := range []string{"build_configs", "possibly_used"} {
-		if _, ok := raw[key]; ok {
+		_, ok := raw[key]
+		if ok {
 			t.Errorf("%s = %v, want the field omitted", key, raw[key])
 		}
 	}
@@ -178,7 +187,8 @@ func TestUnused_BlankIdentifierIsNotReported(t *testing.T) {
 		"p/f.go": "package p\n\ntype T struct{}\n\nvar _ = T{}\n\nconst _ = 1\n\nfunc dead() {}\n\nvar V T\n",
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f.go:dead"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f.go:dead"}) {
 		t.Errorf("unused = %v, want only dead", got)
 	}
 }
@@ -189,7 +199,8 @@ func TestUnused_DeclarationInUncheckedFileIsNotItsOwnPossibleUse(t *testing.T) {
 		"p/bad_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport (\n\t\"testing\"\n\n\t_ \"example.com/this-module-does-not-exist/thirdparty\"\n)\n\nvar lonely = 1\n\nvar twice = 2\n\nfunc TestBad(t *testing.T) {\n\t_ = twice\n}\n",
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"bad_tagx_test.go:lonely"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"bad_tagx_test.go:lonely"}) {
 		t.Errorf("unused = %v, want only lonely", got)
 	}
 	for _, it := range out.PossiblyUsed {
@@ -235,7 +246,8 @@ func TestUnused_ExportedFunctionCalledOnlyFromTestIsReportedWithIncludeExported(
 	byDefault, _ := callUnused(t, nil, files)
 	withExported, _ := callUnused(t, map[string]any{"include_exported": true}, files)
 
-	if got := declarations(byDefault.Unused); len(got) != 0 {
+	got := declarations(byDefault.Unused)
+	if len(got) != 0 {
 		t.Errorf("default unused = %v, want none", got)
 	}
 	helper := itemNamed(withExported.Unused, "Helper")
@@ -254,7 +266,8 @@ func TestUnused_RequesterTypeConstructorDefaultVarMethodAndInterfaceBehindTestOn
 	})
 
 	want := []string{"f.go:Do", "f.go:Doer", "f.go:Fetch", "f.go:NewRequester", "f.go:Requester", "f.go:defaultRequester"}
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, want) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("unused = %v, want %v", got, want)
 	}
 	for _, it := range out.Unused {
@@ -270,7 +283,8 @@ func TestUnused_UnexportedFunctionCalledOnlyFromTestAndItsCalleeAreReportedByDef
 		"p/f_test.go": "package p\n\nimport \"testing\"\n\nfunc TestHelper(t *testing.T) { helper() }\n",
 	})
 
-	if got := declarations(out.Unused); !reflect.DeepEqual(got, []string{"f.go:helper", "f.go:leaf"}) {
+	got := declarations(out.Unused)
+	if !reflect.DeepEqual(got, []string{"f.go:helper", "f.go:leaf"}) {
 		t.Fatalf("unused = %v, want helper and leaf", got)
 	}
 	if got := itemNamed(out.Unused, "helper").Reason; got != "Only referenced from tests" {

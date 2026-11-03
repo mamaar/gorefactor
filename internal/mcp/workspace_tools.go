@@ -23,6 +23,22 @@ type LoadWorkspaceOutput struct {
 	ReferenceIndexBuilt bool                `json:"reference_index_built"`
 	BuildConfigs        []BuildConfigInfo   `json:"build_configs"`
 	UncoveredFiles      []UncoveredFileInfo `json:"uncovered_files,omitempty"`
+	ApproximateConfigs  []ApproximateConfig `json:"approximate_configs,omitempty"`
+}
+
+// ApproximateConfig is a configuration whose third-party packages could not be
+// loaded under its own settings, so it type-checks against the default one's.
+type ApproximateConfig struct {
+	Config string `json:"config"`
+	Error  string `json:"error"`
+}
+
+func approximateConfigs(views []analysis.ApproximateView) []ApproximateConfig {
+	var out []ApproximateConfig
+	for _, v := range views {
+		out = append(out, ApproximateConfig{Config: v.Config.String(), Error: v.Err.Error()})
+	}
+	return out
 }
 
 // BuildConfigInfo describes one configuration of the covering set.
@@ -98,12 +114,14 @@ type WorkspaceStatusOutput struct {
 
 	BuildConfigs   []BuildConfigInfo   `json:"build_configs,omitempty"`
 	UncoveredFiles []UncoveredFileInfo `json:"uncovered_files,omitempty"`
+
+	ApproximateConfigs []ApproximateConfig `json:"approximate_configs,omitempty"`
 }
 
 func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "load_workspace",
-		Description: "Load a Go workspace into memory for refactoring. Must be called before any other tool. Reports the build configurations covering the workspace as build_configs and the files none of them includes as uncovered_files.",
+		Description: "Load a Go workspace into memory for refactoring. Must be called before any other tool. Reports the build configurations covering the workspace as build_configs and the files none of them includes as uncovered_files, and any configuration checked against the default one's third-party packages as approximate_configs.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in LoadWorkspaceInput) (*mcpsdk.CallToolResult, any, error) {
 		indexBuilt, err := state.LoadWorkspace(ctx, in.Path)
 		if err != nil {
@@ -121,12 +139,13 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		cov := state.Covering()
 		out.BuildConfigs = buildConfigInfos(cov)
 		out.UncoveredFiles = uncoveredFileInfos(cov, ws.RootPath)
+		out.ApproximateConfigs = approximateConfigs(state.set.ApproximateViews())
 		return textResult(out), nil, nil
 	})
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "workspace_status",
-		Description: "Return the current workspace status: loaded state, module name, package count, package list, build_configs and uncovered_files.",
+		Description: "Return the current workspace status: loaded state, module name, package count, package list, build_configs, uncovered_files and approximate_configs (configurations checked against the default one's third-party packages).",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in WorkspaceStatusInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -150,6 +169,7 @@ func registerWorkspaceTools(s *mcpsdk.Server, state *MCPServer) {
 		cov := state.Covering()
 		out.BuildConfigs = buildConfigInfos(cov)
 		out.UncoveredFiles = uncoveredFileInfos(cov, ws.RootPath)
+		out.ApproximateConfigs = approximateConfigs(state.set.ApproximateViews())
 		return textResult(out), nil, nil
 	})
 }

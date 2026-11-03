@@ -34,7 +34,8 @@ func TestMovePackageCarriesEmbedAssetsAndTestdata(t *testing.T) {
 	}, "p", "q")
 
 	for rel, want := range map[string]string{"q/templates/a.txt": "template a\n", "q/testdata/x.golden": "golden\n"} {
-		if got := readRel(t, dir, rel); got != want {
+		got := readRel(t, dir, rel)
+		if got != want {
 			t.Errorf("%s = %q, want %q", rel, got, want)
 		}
 	}
@@ -70,7 +71,8 @@ func TestMovePackageCarriesEmptyAndBinaryFilesAndModes(t *testing.T) {
 		"p/data/blob.bin": "\x00\xff\xfe\x01binary",
 		"p/run.sh":        "#!/bin/sh\n",
 	})
-	if err := os.Chmod(filepath.Join(dir, "p/run.sh"), 0o755); err != nil {
+	err := os.Chmod(filepath.Join(dir, "p/run.sh"), 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
 	eng := createEngine(t)
@@ -78,11 +80,13 @@ func TestMovePackageCarriesEmptyAndBinaryFilesAndModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MovePackage: %v", err)
 	}
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
-	if got := readRel(t, dir, "q/data/blob.bin"); got != "\x00\xff\xfe\x01binary" {
+	got := readRel(t, dir, "q/data/blob.bin")
+	if got != "\x00\xff\xfe\x01binary" {
 		t.Errorf("binary file corrupted: %q", got)
 	}
 	readRel(t, dir, "q/data/.gitkeep")
@@ -148,7 +152,8 @@ func TestMoveRefusesExistingNonGoTargetWritingNothing(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "q/data.txt") {
 		t.Fatalf("want a refusal naming q/data.txt, got %v", err)
 	}
-	if got := readRel(t, dir, "q/data.txt"); got != "already here\n" {
+	got := readRel(t, dir, "q/data.txt")
+	if got != "already here\n" {
 		t.Errorf("target overwritten: %q", got)
 	}
 	readRel(t, dir, "p/p.go")
@@ -158,7 +163,8 @@ func TestMoveRefusesExistingNonGoTargetWritingNothing(t *testing.T) {
 func TestMoveRefusesSymlinkAndRepositoryDirs(t *testing.T) {
 	for name, setup := range map[string]func(t *testing.T, dir string){
 		"symlink": func(t *testing.T, dir string) {
-			if err := os.Symlink("p.go", filepath.Join(dir, "p/link.go.txt")); err != nil {
+			err := os.Symlink("p.go", filepath.Join(dir, "p/link.go.txt"))
+			if err != nil {
 				t.Skip(err)
 			}
 		},
@@ -169,10 +175,12 @@ func TestMoveRefusesSymlinkAndRepositoryDirs(t *testing.T) {
 			setup(t, dir)
 			eng := createEngine(t)
 			ws := loadWorkspace(t, eng, dir)
-			if _, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "p", TargetPackage: "q"}); err == nil {
+			_, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "p", TargetPackage: "q"})
+			if err == nil {
 				t.Error("MovePackage should refuse")
 			}
-			if _, err := eng.MoveDir(ws, types.MoveDirRequest{SourceDir: "p", TargetDir: "q"}); err == nil {
+			_, err = eng.MoveDir(ws, types.MoveDirRequest{SourceDir: "p", TargetDir: "q"})
+			if err == nil {
 				t.Error("MoveDir should refuse")
 			}
 		})
@@ -206,10 +214,12 @@ func TestMovePackageCarriesTestdataGoFilesByteForByte(t *testing.T) {
 		"p/testdata/src/a/a.go": brokenFixture,
 		"p/testdata/src/b/b.go": unformattedFixture,
 	}, "p", "q")
-	if got := readRel(t, dir, "q/testdata/src/a/a.go"); got != brokenFixture {
+	got := readRel(t, dir, "q/testdata/src/a/a.go")
+	if got != brokenFixture {
 		t.Errorf("invalid fixture changed: %q", got)
 	}
-	if got := readRel(t, dir, "q/testdata/src/b/b.go"); got != unformattedFixture {
+	got = readRel(t, dir, "q/testdata/src/b/b.go")
+	if got != unformattedFixture {
 		t.Errorf("unformatted fixture changed: %q", got)
 	}
 }
@@ -227,7 +237,8 @@ func TestMoveDirCarriesInvalidTestdataGoByteForByte(t *testing.T) {
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
-	if got := readRel(t, dir, "c/testdata/x/x.go"); got != strings.Replace(brokenFixture, "package a", "package x", 1) {
+	got := readRel(t, dir, "c/testdata/x/x.go")
+	if got != strings.Replace(brokenFixture, "package a", "package x", 1) {
 		t.Errorf("invalid fixture changed: %q", got)
 	}
 }

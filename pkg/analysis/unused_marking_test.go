@@ -62,7 +62,8 @@ func assertReported(t *testing.T, facts map[string]unusedFact, key, reason strin
 func assertNotReported(t *testing.T, facts map[string]unusedFact, keys ...string) {
 	t.Helper()
 	for _, key := range keys {
-		if f, ok := facts[key]; ok {
+		f, ok := facts[key]
+		if ok {
 			t.Errorf("%s reported (%q), want it live", key, f.Reason)
 		}
 	}
@@ -324,7 +325,7 @@ func TestFindUnusedSymbols_PointerEmbeddedTypeIsNotReported(t *testing.T) {
 func TestFindUnusedSymbols_TypeEmbeddedFromAnotherPackageIsNotReported(t *testing.T) {
 	facts := typedUnusedFacts(t, map[string]string{
 		"dep/dep.go": "package dep\n\ntype Base struct{}\n\nfunc (Base) Close() error { return leaf() }\n\nfunc leaf() error { return nil }\n",
-		"p/a.go":     "package p\n\nimport \"example.com/w/dep\"\n\ntype Impl struct{ dep.Base }\n\nfunc main() { _ = Impl{} }\n",
+		"p/a.go":     "package p\n\nimport \"example.com/w/dep\"\n\ntype Impl struct{ dep.Base }\n\nfunc main() { var _ any = Impl{} }\n",
 	}, true)
 	assertNotReported(t, facts, "dep.go:Base", "dep.go:Close", "dep.go:leaf")
 }
@@ -412,4 +413,135 @@ func TestFindUnusedSymbols_MethodCalledThroughInlineTypeConstraintKeepsItsCallee
 
 func TestFindUnusedSymbols_MethodCalledThroughAnonymousInterfaceFieldKeepsItsCalleesAlive(t *testing.T) {
 	assertMethodThroughInterfaceLiteralIsLive(t, "type holder struct{ x interface{ foo(); bar() } }\n\nfunc main() {\n\th := holder{x: T{}}\n\th.x.foo()\n\th.x.bar()\n}\n")
+}
+
+func TestFindUnusedSymbols_MethodsNamedByStdInterfacesOfLiveTypesAreNotReported(t *testing.T) {
+	src := `package p
+
+import (
+	"go/ast"
+	"go/types"
+)
+
+type imp struct{}
+
+func (imp) Import(path string) (*types.Package, error) { return nil, nil }
+
+func (imp) Dead() {}
+
+type vis struct{}
+
+func (vis) Visit(n ast.Node) ast.Visitor { return nil }
+
+type wrapErr struct{}
+
+func (wrapErr) Error() string { return "" }
+
+func (wrapErr) Unwrap() error { return nil }
+
+func main() {
+	_ = types.Config{Importer: imp{}}
+	ast.Walk(vis{}, nil)
+	_ = error(wrapErr{})
+}
+`
+	facts := typedUnusedFacts(t, map[string]string{"p/a.go": src}, true)
+	assertNotReported(t, facts, "a.go:Import", "a.go:Visit", "a.go:Error", "a.go:Unwrap")
+	assertReported(t, facts, "a.go:Dead", "")
+}
+
+func TestFindUnusedSymbols_ExportedMethodNamedByAnInterfaceButNeverConvertedIsReported(t *testing.T) {
+	src := "package p\n\ntype T struct{}\n\nfunc (T) String() string { return \"\" }\n\nfunc (T) Live() {}\n\nfunc main() { T{}.Live() }\n"
+	facts := typedUnusedFacts(t, map[string]string{"p/a.go": src}, true)
+	assertReported(t, facts, "a.go:String", "")
+	assertNotReported(t, facts, "a.go:T", "a.go:Live")
+}
+
+func TestFindUnusedSymbols_MethodOfTypeConvertedToAnyOrBroadInterfaceIsKept(t *testing.T) {
+	src := `package p
+
+import "fmt"
+
+type viaPrint struct{}
+
+func (viaPrint) String() string { return "" }
+
+type viaVariadic struct{}
+
+func (viaVariadic) String() string { return "" }
+
+type viaIface struct{}
+
+func (viaIface) Foo() {}
+
+func (viaIface) Dead() {}
+
+type nested struct{ in inner }
+
+type inner struct{}
+
+func (inner) String() string { return "" }
+
+type shape interface{ Foo() }
+
+func main() {
+	fmt.Println(viaPrint{})
+	args := []any{viaVariadic{}}
+	fmt.Println(args...)
+	var s shape = viaIface{}
+	fmt.Println(s)
+	fmt.Println(nested{})
+}
+`
+	facts := typedUnusedFacts(t, map[string]string{"p/a.go": src}, true)
+	assertNotReported(t, facts, "a.go:String", "a.go:Foo")
+	assertReported(t, facts, "a.go:Dead", "")
+}
+
+func TestFindUnusedSymbols_MethodSatisfyingInterfaceOnlyInTestCodeIsReported(t *testing.T) {
+	files := map[string]string{
+		"p/a.go":      "package p\n\ntype T struct{}\n\nfunc (T) Foo() {}\n\ntype I interface{ Foo() }\n\nfunc main() { _ = T{} }\n",
+		"p/a_test.go": testImport + "func TestX(t *testing.T) { var _ I = T{} }\n",
+	}
+	assertReported(t, typedUnusedFacts(t, files, true), "a.go:Foo", "")
+}
+
+func TestFindUnusedSymbols_MethodOfAnInterfaceTheWorkspaceAssertsToIsKept(t *testing.T) {
+	src := `package p
+
+type base interface{ run() }
+
+type gated interface {
+	base
+	refuse() bool
+}
+
+type planner struct{}
+
+func (planner) run() {}
+
+func (planner) refuse() bool { return false }
+
+func (planner) dead() {}
+
+func drive(b base) {
+	b.run()
+	if g, ok := b.(gated); ok {
+		_ = g.refuse()
+	}
+}
+
+func main() { drive(planner{}) }
+`
+	facts := typedUnusedFacts(t, map[string]string{"p/a.go": src}, false)
+	assertNotReported(t, facts, "a.go:refuse", "a.go:run")
+	assertReported(t, facts, "a.go:dead", "")
+}
+
+func TestFindUnusedSymbols_InterfaceMethodDeclaredInTestFileIsNotReported(t *testing.T) {
+	files := map[string]string{
+		"p/a.go":      "package p\n\ntype I interface{ Foo() }\n\nfunc Use(i I) { i.Foo() }\n\nfunc main() { Use(nil) }\n",
+		"p/a_test.go": testImport + "type fake struct{}\n\nfunc (fake) Foo() {}\n\nfunc TestX(t *testing.T) { Use(fake{}) }\n",
+	}
+	assertNotReported(t, typedUnusedFacts(t, files, true), "a_test.go:Foo")
 }

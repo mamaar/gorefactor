@@ -79,7 +79,8 @@ func TestStandardizeImports_SkipsFileWhenNewNameIsTakenAtAUse(t *testing.T) {
 	out := callJSON(t, sess, "standardize_imports", map[string]any{"rules": []any{siRule("check")}})
 
 	assertFileUnchanged(t, dir, "p/p.go", src)
-	if sites, _ := out["skipped_sites"].([]any); len(sites) != 1 {
+	sites, _ := out["skipped_sites"].([]any)
+	if len(sites) != 1 {
 		t.Errorf("skipped_sites = %v, want one entry", out["skipped_sites"])
 	}
 }

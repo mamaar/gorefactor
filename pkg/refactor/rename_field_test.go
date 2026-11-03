@@ -20,10 +20,12 @@ func writeRenameFieldWorkspace(t *testing.T, files map[string]string) (RefactorE
 	files["go.mod"] = "module example.com/m\n\ngo 1.21\n"
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
 		}
 	}

@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -174,7 +176,7 @@ type PossibleUseItem struct {
 func findUnused(state *MCPServer, in UnusedInput) (*refactor.UnusedReport, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find unused: %w", err)
 	}
 	req := refactor.UnusedRequest{IncludeExported: in.IncludeExported}
 	if in.Package != "" {
@@ -200,7 +202,8 @@ func unusedItems(findings []refactor.UnusedFinding) []UnusedSymbolItem {
 		for _, ref := range f.Referrers {
 			items[i].ReferencedFrom = append(items[i].ReferencedFrom, ReferrerItem{Name: ref.Name, File: ref.File, Line: ref.Line})
 		}
-		if use := f.PossibleUse; use != nil {
+		use := f.PossibleUse
+		if use != nil {
 			items[i].PossibleUse = &PossibleUseItem{File: use.File, Line: use.Line, Configs: use.Configs, Reason: use.Unverified}
 		}
 	}
@@ -279,13 +282,14 @@ func addDetectHeader(out map[string]any, ws *types.Workspace, h refactor.DetectH
 	if len(h.Unchecked) > 0 {
 		out["uncovered_files"] = uncheckedFileInfos(h.Unchecked, ws.RootPath)
 	}
-	if len(h.TypeErrors) > 0 {
-		typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
-		for i, e := range h.TypeErrors {
-			typeErrors[i] = TypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
-		}
-		out["type_error_files"] = typeErrors
+	if len(h.TypeErrors) <= 0 {
+		return
 	}
+	typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
+	for i, e := range h.TypeErrors {
+		typeErrors[i] = TypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
+	}
+	out["type_error_files"] = typeErrors
 }
 
 // --- detect_variadics ---
@@ -571,6 +575,17 @@ type FixErrorWrappingInput struct {
 	Package       string `json:"package,omitempty" jsonschema:"specific package to fix"`
 	SeverityLevel string `json:"severity_level,omitempty" jsonschema:"fix violations at this severity or higher: critical, warning, or info (default critical)"`
 	DryRun        bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
+
+	ExcludeFunctions []string `json:"exclude_functions,omitempty" jsonschema:"functions (Func or Type.Method) whose sites, func literals inside them included, are left untouched and listed as skipped"`
+}
+
+// ErrorWrappingSkippedItem describes a violation the fixer left unmodified.
+type ErrorWrappingSkippedItem struct {
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Function   string `json:"function"`
+	Snippet    string `json:"snippet"`
+	SkipReason string `json:"skip_reason"`
 }
 
 // --- detect_environment_booleans ---
@@ -712,7 +727,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []ComplexityResultItem
-		if results, ok := rr.Result.([]*complexity.Result); ok {
+		results, ok := rr.Result.([]*complexity.Result)
+		if ok {
 			items = make([]ComplexityResultItem, len(results))
 			for i, r := range results {
 				items[i] = ComplexityResultItem{
@@ -967,7 +983,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []IfInitViolationItem
-		if results, ok := rr.Result.([]*ifinit.Result); ok {
+		results, ok := rr.Result.([]*ifinit.Result)
+		if ok {
 			items = make([]IfInitViolationItem, len(results))
 			for i, v := range results {
 				items[i] = IfInitViolationItem{
@@ -993,7 +1010,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_if_init_assignments",
-		Description: "Split if/switch/type-switch init assignments into a separate assignment and check statement. Else-if inits are de-sugared into a nested block, and a `:=` is downgraded to `=` when every declared name already exists in the target scope. Sites the analyzer judges unsafe to rewrite are left unmodified and reported in `skipped` rather than silently dropped; for loops and range statements are never touched.",
+		Description: "Split if/switch/type-switch init assignments into a separate assignment and check statement. Else-if inits are de-sugared into a nested block, and a `:=` is downgraded to `=` only when every declared name was introduced by an earlier split in the same scope with an identical type. A split is skipped when it would redeclare a name later in the scope, capture a later use of an outer name, or overwrite an original variable. The plan is type-checked before it is applied: new type errors refuse the apply and appear as `blocking_issue` in a dry run. Sites the analyzer judges unsafe to rewrite are left unmodified and reported in `skipped` rather than silently dropped; for loops and range statements are never touched.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixIfInitInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -1012,21 +1029,23 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var skipped []IfInitSkippedItem
-		if results, ok := rr.Result.([]*ifinit.Result); ok {
+		results, ok := rr.Result.([]*ifinit.Result)
+		if ok {
 			for _, v := range results {
-				if v.Skipped {
-					skipped = append(skipped, IfInitSkippedItem{
-						File:       v.File,
-						Line:       v.Line,
-						Function:   v.Function,
-						Snippet:    v.Snippet,
-						SkipReason: v.SkipReason,
-					})
+				if !v.Skipped {
+					continue
 				}
+				skipped = append(skipped, IfInitSkippedItem{
+					File:       v.File,
+					Line:       v.Line,
+					Function:   v.Function,
+					Snippet:    v.Snippet,
+					SkipReason: v.SkipReason,
+				})
 			}
 		}
 
-		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
 			message := "No if-init assignment violations found"
@@ -1043,9 +1062,21 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+		// The importer must be the one that type-checked ws; see
+		// VerifyPlanTypesWithImporter's doc comment.
+		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, state.GetEngine().Importer(ws))
+		blocking := verificationBlocker(verification)
+		if blocking != "" && !in.DryRun {
+			state.RUnlock()
+			return errResult(errors.New(blocking)), nil, nil
+		}
 		result, err := executePlanWithUnlock(state, plan, "Fix if-init assignments", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
+		}
+		if blocking != "" {
+			result.Success = false
+			result.BlockingIssue = blocking
 		}
 		out := map[string]any{
 			"files_modified": result.ModifiedFiles,
@@ -1074,7 +1105,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []MissingContextViolationItem
-		if results, ok := rr.Result.([]*missingctx.Result); ok {
+		results, ok := rr.Result.([]*missingctx.Result)
+		if ok {
 			items = make([]MissingContextViolationItem, len(results))
 			for i, v := range results {
 				items[i] = MissingContextViolationItem{
@@ -1166,7 +1198,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []BooleanBranchingViolationItem
-		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
+		results, ok := rr.Result.([]*booleanbranch.Result)
+		if ok {
 			items = make([]BooleanBranchingViolationItem, len(results))
 			for i, v := range results {
 				items[i] = BooleanBranchingViolationItem{
@@ -1225,7 +1258,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// Collect fix metadata from results.
 		var allBooleansRemoved []string
 		totalCases := 0
-		if results, ok := rr.Result.([]*booleanbranch.Result); ok {
+		results, ok := rr.Result.([]*booleanbranch.Result)
+		if ok {
 			for _, fix := range booleanbranch.CollectFixResults(results) {
 				allBooleansRemoved = append(allBooleansRemoved, fix.BooleansRemoved...)
 				totalCases += fix.SwitchCases
@@ -1280,7 +1314,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []DeepIfElseViolationItem
-		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+		results, ok := rr.Result.([]*deepifelse.Result)
+		if ok {
 			items = make([]DeepIfElseViolationItem, len(results))
 			for i, v := range results {
 				items[i] = DeepIfElseViolationItem{
@@ -1352,7 +1387,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// changes[i].
 		var unfixable []DeepIfElseUnfixableItem
 		var fixableResults []*deepifelse.Result
-		if results, ok := rr.Result.([]*deepifelse.Result); ok {
+		results, ok := rr.Result.([]*deepifelse.Result)
+		if ok {
 			for _, r := range results {
 				if !r.Fixable {
 					unfixable = append(unfixable, DeepIfElseUnfixableItem{
@@ -1478,15 +1514,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		for _, r := range appliedResults {
 			functionsFixed = append(functionsFixed, r.Function)
 			totalEarlyReturns += r.EarlyReturns
-			if r.Reason != "" {
-				partial = append(partial, DeepIfElseUnfixableItem{
-					File:         r.File,
-					Line:         r.Line,
-					Function:     r.Function,
-					NestingDepth: r.NestingDepth,
-					Reason:       r.Reason,
-				})
+			if r.Reason == "" {
+				continue
 			}
+			partial = append(partial, DeepIfElseUnfixableItem{
+				File:         r.File,
+				Line:         r.Line,
+				Function:     r.Function,
+				NestingDepth: r.NestingDepth,
+				Reason:       r.Reason,
+			})
 		}
 
 		plan = analyzers.ChangesToPlan(appliedChanges)
@@ -1538,7 +1575,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []SwitchableIfChainViolationItem
-		if results, ok := rr.Result.([]*switchchain.Result); ok {
+		results, ok := rr.Result.([]*switchchain.Result)
+		if ok {
 			items = make([]SwitchableIfChainViolationItem, len(results))
 			for i, v := range results {
 				items[i] = SwitchableIfChainViolationItem{
@@ -1610,7 +1648,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		// fixableResults[i] below be paired with changes[i].
 		var unfixable []SwitchableIfChainUnfixableItem
 		var fixableResults []*switchchain.Result
-		if results, ok := rr.Result.([]*switchchain.Result); ok {
+		results, ok := rr.Result.([]*switchchain.Result)
+		if ok {
 			for _, r := range results {
 				if !r.Fixable {
 					unfixable = append(unfixable, SwitchableIfChainUnfixableItem{
@@ -1961,7 +2000,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []ErrorWrappingViolationItem
-		if results, ok := rr.Result.([]*errorwrap.Result); ok {
+		results, ok := rr.Result.([]*errorwrap.Result)
+		if ok {
 			items = make([]ErrorWrappingViolationItem, len(results))
 			for i, v := range results {
 				items[i] = ErrorWrappingViolationItem{
@@ -1984,7 +2024,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_error_wrapping",
-		Description: "Automatically fix improper error wrapping. Wraps bare `return err` with `fmt.Errorf`, replaces `%v` with `%w`, and replaces generic error messages with descriptive context derived from the function name.",
+		Description: "Automatically fix improper error wrapping. Wraps a bare `return err` with `fmt.Errorf` only where err is provably non-nil (inside an `if err != nil` branch, not reassigned before the return; adding the fmt import when the file lacks it), replaces `%v` with `%w`, and replaces generic error messages with descriptive context derived from the function name. Context-adding sites in `exclude_functions` (not `%v`→`%w`, which keeps the message), and sites in a file where another package is named fmt, are left unmodified and reported in `skipped`. The plan is type-checked before it is applied: new type errors refuse the apply and appear as `blocking_issue` in a dry run.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixErrorWrappingInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -1998,23 +2038,51 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		if sev == "" {
 			sev = errorwrap.SeverityCritical
 		}
-		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev))
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
+
+		a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(sev), errorwrap.WithExcludedFunctions(in.ExcludeFunctions...))
 		rr, err := analyzers.Run(ws, a, in.Package)
 		if err != nil {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		results, _ := rr.Result.([]*errorwrap.Result)
+		var skipped []ErrorWrappingSkippedItem
+		var needFmt []string
+		for _, r := range results {
+			if r.Skipped {
+				skipped = append(skipped, ErrorWrappingSkippedItem{
+					File: r.File, Line: r.Line, Function: r.Function, Snippet: r.CurrentCode, SkipReason: r.SkipReason,
+				})
+			}
+			if r.NeedsFmtImport && !slices.Contains(needFmt, r.File) {
+				needFmt = append(needFmt, r.File)
+			}
+		}
+
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		for _, file := range needFmt {
+			c := refactor.GenerateAddImportChange(ws, file, "", "fmt")
+			if c != nil {
+				changes = append(changes, *c)
+			}
+		}
 		if len(changes) == 0 {
 			state.RUnlock()
+			message := "No error wrapping violations found"
+			if len(skipped) > 0 {
+				message = "All error wrapping sites found were skipped; see skipped"
+			}
 			return textResult(map[string]any{
 				"files_modified":     []string{},
 				"changes_count":      0,
 				"errors_wrapped":     0,
 				"format_verbs_fixed": 0,
 				"contexts_added":     0,
-				"message":            "No error wrapping violations found",
+				"skipped":            skipped,
+				"skipped_count":      len(skipped),
+				"message":            message,
 			}), nil, nil
 		}
 
@@ -2022,23 +2090,34 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		errorsWrapped := 0
 		formatVerbsFixed := 0
 		contextsAdded := 0
-		if results, ok := rr.Result.([]*errorwrap.Result); ok {
-			for _, r := range results {
-				switch r.ViolationType {
-				case errorwrap.BareReturn:
-					errorsWrapped++
-				case errorwrap.FormatVerbV:
-					formatVerbsFixed++
-				case errorwrap.NoContext:
-					contextsAdded++
-				}
+		for _, r := range results {
+			if r.Skipped {
+				continue
+			}
+			switch r.ViolationType {
+			case errorwrap.BareReturn:
+				errorsWrapped++
+			case errorwrap.FormatVerbV:
+				formatVerbsFixed++
+			case errorwrap.NoContext:
+				contextsAdded++
 			}
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, state.GetEngine().Importer(ws))
+		blocking := verificationBlocker(verification)
+		if blocking != "" && !in.DryRun {
+			state.RUnlock()
+			return errResult(errors.New(blocking)), nil, nil
+		}
 		result, err := executePlanWithUnlock(state, plan, "Fix error wrapping", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
+		}
+		if blocking != "" {
+			result.Success = false
+			result.BlockingIssue = blocking
 		}
 		out := map[string]any{
 			"files_modified":     result.ModifiedFiles,
@@ -2046,6 +2125,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			"errors_wrapped":     errorsWrapped,
 			"format_verbs_fixed": formatVerbsFixed,
 			"contexts_added":     contextsAdded,
+			"skipped":            skipped,
+			"skipped_count":      len(skipped),
 		}
 		return textResult(withDryRun(out, result)), nil, nil
 	})
@@ -2073,7 +2154,8 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		var items []EnvBooleanViolationItem
-		if results, ok := rr.Result.([]*envbool.Result); ok {
+		results, ok := rr.Result.([]*envbool.Result)
+		if ok {
 			items = make([]EnvBooleanViolationItem, len(results))
 			for i, v := range results {
 				items[i] = EnvBooleanViolationItem{

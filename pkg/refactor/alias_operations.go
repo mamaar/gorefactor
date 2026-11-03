@@ -62,7 +62,8 @@ func (op *CleanAliasesOperation) cleanFileAliases(file *types.File) []types.Chan
 
 	// Walk through import declarations
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if importSpec, ok := n.(*ast.ImportSpec); ok && importSpec.Name != nil {
+		importSpec, ok := n.(*ast.ImportSpec)
+		if ok && importSpec.Name != nil {
 			// Found an aliased import
 			alias := importSpec.Name.Name
 			importPath := strings.Trim(importSpec.Path.Value, `"`)
@@ -230,10 +231,12 @@ func uncheckedReason(pkg *types.Package, file *types.File) string {
 	if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 		return "package is not type-checked"
 	}
-	if err := pkg.ExcludedTestFiles[name]; err != nil {
+	err := pkg.ExcludedTestFiles[name]
+	if err != nil {
 		return "excluded from type-checking: " + err.Error()
 	}
-	if err := pkg.ProductionErrs[name]; err != nil {
+	err = pkg.ProductionErrs[name]
+	if err != nil {
 		return "type errors may hide uses: " + err.Error()
 	}
 	return ""
@@ -255,13 +258,7 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 		if importSpec.Name != nil && (importSpec.Name.Name == "." || importSpec.Name.Name == "_") {
 			continue
 		}
-		var rule *types.AliasRule
-		for i := range op.Request.Rules {
-			if op.matchesPattern(importPath, op.Request.Rules[i].PackagePattern) {
-				rule = &op.Request.Rules[i]
-				break
-			}
-		}
+		rule := op.ruleForImport(importPath)
 		if rule == nil {
 			continue
 		}
@@ -274,7 +271,8 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 				Snippet: importSpec.Path.Value,
 			})
 		}
-		if reason := uncheckedReason(pkg, file); reason != "" {
+		reason := uncheckedReason(pkg, file)
+		if reason != "" {
 			skip(reason)
 			continue
 		}
@@ -297,12 +295,14 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 		var uses []*ast.Ident
 		if current != target {
 			ast.Inspect(file.AST, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok && pkg.TypesInfo.Uses[id] == pkgName {
+				id, ok := n.(*ast.Ident)
+				if ok && pkg.TypesInfo.Uses[id] == pkgName {
 					uses = append(uses, id)
 				}
 				return true
 			})
-			if taken := nameTakenAt(pkg.TypesPkg, pkgName, target, uses); taken != nil {
+			taken := nameTakenAt(pkg.TypesPkg, pkgName, target, uses)
+			if taken != nil {
 				skip(fmt.Sprintf("name %q is already declared at %s", target, ws.FileSet.Position(taken.Pos())))
 				continue
 			}
@@ -351,6 +351,17 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 	return changes
 }
 
+func (op *StandardizeImportsOperation) ruleForImport(importPath string) *types.AliasRule {
+	var rule *types.AliasRule
+	for i := range op.Request.Rules {
+		if op.matchesPattern(importPath, op.Request.Rules[i].PackagePattern) {
+			rule = &op.Request.Rules[i]
+			break
+		}
+	}
+	return rule
+}
+
 // nameTakenAt returns the declaration that name would clash with at one of the
 // uses of pkgName, looked up through the scopes of tp.
 func nameTakenAt(tp *gotypes.Package, pkgName *gotypes.PkgName, name string, uses []*ast.Ident) gotypes.Object {
@@ -359,7 +370,8 @@ func nameTakenAt(tp *gotypes.Package, pkgName *gotypes.PkgName, name string, use
 		if scope == nil {
 			continue
 		}
-		if _, obj := scope.LookupParent(name, id.Pos()); obj != nil && obj != pkgName {
+		_, obj := scope.LookupParent(name, id.Pos())
+		if obj != nil && obj != pkgName {
 			return obj
 		}
 	}
@@ -424,7 +436,8 @@ func (op *ResolveAliasConflictsOperation) detectConflicts(file *types.File) map[
 	// Find all aliases and group by alias name
 	aliases := make(map[string][]string)
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if importSpec, ok := n.(*ast.ImportSpec); ok && importSpec.Name != nil {
+		importSpec, ok := n.(*ast.ImportSpec)
+		if ok && importSpec.Name != nil {
 			alias := importSpec.Name.Name
 			if alias != "." && alias != "_" {
 				importPath := strings.Trim(importSpec.Path.Value, `"`)
@@ -521,9 +534,8 @@ func (op *ConvertAliasesOperation) Type() types.OperationType {
 func (op *ConvertAliasesOperation) Description() string {
 	if op.Request.ToFullNames {
 		return fmt.Sprintf("Convert aliases to full package names in workspace %s", op.Request.Workspace)
-	} else {
-		return fmt.Sprintf("Convert full package names to aliases in workspace %s", op.Request.Workspace)
 	}
+	return fmt.Sprintf("Convert full package names to aliases in workspace %s", op.Request.Workspace)
 }
 
 func (op *ConvertAliasesOperation) Validate(ws *types.Workspace) error {
@@ -573,7 +585,8 @@ func (op *ConvertAliasesOperation) convertToFullNames(file *types.File) []types.
 
 	// Find all aliased imports and convert references to full names
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if importSpec, ok := n.(*ast.ImportSpec); ok && importSpec.Name != nil {
+		importSpec, ok := n.(*ast.ImportSpec)
+		if ok && importSpec.Name != nil {
 			alias := importSpec.Name.Name
 			if alias != "." && alias != "_" {
 				importPath := strings.Trim(importSpec.Path.Value, `"`)
@@ -608,7 +621,8 @@ func (op *ConvertAliasesOperation) convertToAliases(file *types.File) []types.Ch
 
 	// Find all non-aliased imports and add appropriate aliases
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if importSpec, ok := n.(*ast.ImportSpec); ok && importSpec.Name == nil {
+		importSpec, ok := n.(*ast.ImportSpec)
+		if ok && importSpec.Name == nil {
 			importPath := strings.Trim(importSpec.Path.Value, `"`)
 			packageName := filepath.Base(importPath)
 

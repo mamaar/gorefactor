@@ -10,7 +10,8 @@ func TestMoveSymbolRequestRefsDropsRepeatedPackageAndNameButKeepsSameNameFromAno
 	req := MoveSymbolRequest{Symbols: []QualifiedSymbol{ref("a", "X"), ref("b", "X"), ref("a", "X"), ref("a", "Y")}}
 
 	want := []QualifiedSymbol{ref("a", "X"), ref("b", "X"), ref("a", "Y")}
-	if got := req.Refs(); !slices.Equal(got, want) {
+	got := req.Refs()
+	if !slices.Equal(got, want) {
 		t.Errorf("Refs() = %v, want %v", got, want)
 	}
 }

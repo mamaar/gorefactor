@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/format"
 	gotypes "go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -60,14 +61,7 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		recvIdx, recvName, recvDecl = recv.paramIdx, recv.name, recv.decl
 	}
 
-	var sigParams, args []string
-	for i, p := range an.Params {
-		if i == recvIdx {
-			continue
-		}
-		sigParams = append(sigParams, p.Name+" "+p.Type)
-		args = append(args, p.Name)
-	}
+	sigParams, args := splitParamsAndArgs(an, recvIdx)
 
 	results := an.Results
 	if an.TailReturns {
@@ -82,6 +76,9 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		}
 		results = an.EnclosingResults
 	}
+	if an.ErrGuard {
+		results = append(slices.Clone(results), extractsig.Result{Type: "error"})
+	}
 
 	var b strings.Builder
 	b.WriteString("func ")
@@ -89,6 +86,29 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		b.WriteString("(" + recvDecl + ") ")
 	}
 	b.WriteString(name + "(" + strings.Join(sigParams, ", ") + ")")
+	writeResultTypes(results, &b)
+	b.WriteString(" {\n")
+	for _, d := range an.LocalDecls {
+		b.WriteString("var " + d.Name + " " + d.Type + "\n")
+	}
+	b.WriteString(an.BodyText)
+	writeTrailingReturn(an, &b)
+	b.WriteString("\n}\n")
+
+	decl, err = formatDeclaration(b.String())
+	if err != nil {
+		return "", "", fmt.Errorf("render extraction: %w", err)
+	}
+
+	callExpr := name + "(" + strings.Join(args, ", ") + ")"
+	if recvName != "" {
+		callExpr = recvName + "." + callExpr
+	}
+
+	return decl, hoistedDecls(an) + callSite(an, callExpr), nil
+}
+
+func writeResultTypes(results []extractsig.Result, b *strings.Builder) {
 	switch len(results) {
 	case 0:
 	case 1:
@@ -100,9 +120,16 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		}
 		b.WriteString(" (" + strings.Join(typeList, ", ") + ")")
 	}
-	b.WriteString(" {\n")
-	b.WriteString(an.BodyText)
-	if !an.TailReturns && len(an.Results) > 0 {
+}
+
+func writeTrailingReturn(an *extractsig.Analysis, b *strings.Builder) {
+	if an.ErrGuard {
+		names := make([]string, 0, len(an.Results)+1)
+		for _, r := range an.Results {
+			names = append(names, r.Name)
+		}
+		b.WriteString("\nreturn " + strings.Join(append(names, "nil"), ", "))
+	} else if !an.TailReturns && len(an.Results) > 0 {
 		// TailReturns is false, so extractsig found no return bound to the
 		// enclosing function anywhere in the block — the body therefore cannot
 		// already end in one, and the results need an explicit return.
@@ -112,23 +139,30 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		}
 		b.WriteString("\nreturn " + strings.Join(names, ", "))
 	}
-	b.WriteString("\n}\n")
+}
 
-	decl, err = formatDeclaration(b.String())
-	if err != nil {
-		return "", "", err
+// hoistedDecls renders the declarations of the no-copy variables the caller
+// now owns.
+func hoistedDecls(an *extractsig.Analysis) string {
+	var b strings.Builder
+	for _, h := range an.Hoisted {
+		b.WriteString("var " + h.Name + " " + h.Type + "\n")
 	}
+	return b.String()
+}
 
-	callExpr := name + "(" + strings.Join(args, ", ") + ")"
-	if recvName != "" {
-		callExpr = recvName + "." + callExpr
-	}
-
+// callSite renders the statement(s) that replace the block.
+func callSite(an *extractsig.Analysis, callExpr string) string {
 	switch {
 	case an.TailReturns:
-		return decl, "return " + callExpr, nil
-	case len(an.Results) == 0:
-		return decl, callExpr, nil
+		return "return " + callExpr
+	case len(an.Results) == 0 && !an.ErrGuard:
+		return callExpr
+	}
+
+	if an.ErrInline {
+		returned := append(slices.Clone(an.GuardZeros), an.ErrName)
+		return "if " + an.ErrName + " := " + callExpr + "; " + an.ErrName + " != nil {\n\treturn " + strings.Join(returned, ", ") + "\n}"
 	}
 
 	// Results that were already variables before the block must be assigned
@@ -136,29 +170,60 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 	// mixed set cannot be written as one assignment statement, so the new
 	// names get an explicit `var` on preceding lines and the assignment stays
 	// a plain `=`.
-	isParam := make(map[string]bool, len(an.Params))
+	existing := make(map[string]bool, len(an.Params)+len(an.LocalDecls))
 	for _, p := range an.Params {
-		isParam[p.Name] = true
+		existing[p.Name] = true
+	}
+	for _, d := range an.LocalDecls {
+		existing[d.Name] = true
+	}
+	for _, d := range an.DroppedDecls {
+		delete(existing, d.Name)
 	}
 
-	lhs := make([]string, 0, len(an.Results))
+	outs := slices.Clone(an.Results)
+	if an.ErrGuard {
+		outs = append(outs, extractsig.Result{Name: an.ErrName, Type: "error"})
+		existing[an.ErrName] = an.ErrExists
+	}
+	lhs := make([]string, 0, len(outs))
 	var fresh []extractsig.Result
-	for _, r := range an.Results {
+	for _, r := range outs {
 		lhs = append(lhs, r.Name)
-		if !isParam[r.Name] {
+		if !existing[r.Name] {
 			fresh = append(fresh, r)
 		}
 	}
-	if len(fresh) == len(an.Results) {
-		return decl, strings.Join(lhs, ", ") + " := " + callExpr, nil
+	assign := strings.Join(lhs, ", ") + " := " + callExpr
+	if len(fresh) != len(outs) {
+		lines := make([]string, 0, len(fresh)+1)
+		for _, r := range fresh {
+			lines = append(lines, "var "+r.Name+" "+r.Type)
+		}
+		lines = append(lines, strings.Join(lhs, ", ")+" = "+callExpr)
+		assign = strings.Join(lines, "\n")
 	}
+	if !an.ErrGuard {
+		return assign
+	}
+	returned := append(slices.Clone(an.GuardZeros), an.ErrName)
+	return assign + "\nif " + an.ErrName + " != nil {\n\treturn " + strings.Join(returned, ", ") + "\n}"
+}
 
-	lines := make([]string, 0, len(fresh)+1)
-	for _, r := range fresh {
-		lines = append(lines, "var "+r.Name+" "+r.Type)
+func splitParamsAndArgs(an *extractsig.Analysis, recvIdx int) ([]string, []string) {
+	var sigParams, args []string
+	for i, p := range an.Params {
+		if i == recvIdx {
+			continue
+		}
+		sigParams = append(sigParams, p.Name+" "+p.Type)
+		if p.ByPointer {
+			args = append(args, "&"+p.Name)
+			continue
+		}
+		args = append(args, p.Name)
 	}
-	lines = append(lines, strings.Join(lhs, ", ")+" = "+callExpr)
-	return decl, strings.Join(lines, "\n"), nil
+	return sigParams, args
 }
 
 // formatDeclaration gofmts a single top-level declaration by wrapping it in a
@@ -229,9 +294,27 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 	return start, end, true
 }
 
+// wholeLineIfAlone widens [start,end) to the full line, newline included,
+// when only whitespace shares the line with it.
+func wholeLineIfAlone(content string, start, end int) (int, int) {
+	lineStart := strings.LastIndex(content[:start], "\n") + 1
+	lineEnd := len(content)
+	i := strings.Index(content[end:], "\n")
+	if i >= 0 {
+		lineEnd = end + i + 1
+	}
+	if strings.TrimSpace(content[lineStart:start]+content[end:lineEnd]) != "" {
+		return start, end
+	}
+	return lineStart, lineEnd
+}
+
+// errNoImportChange reports that extractImportsChange has no imports to add.
+var errNoImportChange = errors.New("no imports to add")
+
 // extractImportsChange returns the change that adds the imports the rendered
-// signature needs but the source file does not have yet, or nil when there
-// are none.
+// signature needs but the source file does not have yet, or errNoImportChange
+// when there are none, or the file already has them.
 //
 // The Description text is load-bearing: the plan validator skips its
 // standalone-syntax check for descriptions containing "import" (see
@@ -239,7 +322,7 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 // produces the exact wording other operations rely on.
 func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports map[string]string) (*types.Change, error) {
 	if len(imports) == 0 {
-		return nil, nil
+		return nil, errNoImportChange
 	}
 
 	paths := make([]string, 0, len(imports))
@@ -266,18 +349,23 @@ func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports m
 		needed = append(needed, neededImport{alias: alias, path: path})
 	}
 
-	return generateNeededImportsChange(ws, sourceFile, needed), nil
+	change := generateNeededImportsChange(ws, sourceFile, needed)
+	if change == nil {
+		return nil, errNoImportChange
+	}
+	return change, nil
 }
 
 func lastPathSegment(path string) string {
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+	idx := strings.LastIndex(path, "/")
+	if idx >= 0 {
 		return path[idx+1:]
 	}
 	return path
 }
 
 // buildVerifiedExtractPlan assembles the plan for one extraction and gates it
-// on VerifyPlanTypes.
+// on VerifyPlanTypesWithImporter.
 //
 // The gate is the whole point of the rewrite: these operations used to report
 // success while emitting code that could not compile. A plan that introduces
@@ -294,7 +382,7 @@ func lastPathSegment(path string) string {
 // workspace was already checked with, instead of a second importer producing
 // distinct-but-identical-looking packages for the same import path — see
 // VerifyPlanTypesWithImporter's doc comment for why that produces spurious
-// type errors. importer may be nil (falls back to VerifyPlanTypes's own
+// type errors. importer may be nil (falls back to VerifyPlanTypesWithImporter's own
 // fresh-parser construction), which callers without a pre-checked workspace
 // parser should pass.
 func buildVerifiedExtractPlan(
@@ -347,14 +435,27 @@ func buildVerifiedExtractPlan(
 		},
 	}
 
+	for _, d := range an.DroppedDecls {
+		start, end := wholeLineIfAlone(content, d.Start, d.End)
+		changes = append(changes, types.Change{
+			File:        sourceFile.Path,
+			Start:       start,
+			End:         end,
+			OldText:     content[start:end],
+			NewText:     "",
+			Description: fmt.Sprintf("Remove declaration of %s, now declared by the call to %s", d.Name, name),
+		})
+	}
+
 	importChange, err := extractImportsChange(ws, sourceFile, an.Imports)
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoImportChange):
+	case err != nil:
 		return nil, &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: fmt.Sprintf("cannot extract %s: %v", name, err),
 		}
-	}
-	if importChange != nil {
+	default:
 		changes = append(changes, *importChange)
 	}
 

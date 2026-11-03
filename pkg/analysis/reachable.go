@@ -19,13 +19,17 @@ type Target struct {
 
 // Name is pkg.Func or pkg.Type.Method.
 func (t Target) Name() string {
-	if fn, ok := t.Obj.(*gotypes.Func); ok {
-		if recv := fn.Signature().Recv(); recv != nil {
+	fn, ok := t.Obj.(*gotypes.Func)
+	if ok {
+		recv := fn.Signature().Recv()
+		if recv != nil {
 			typ := recv.Type()
-			if p, ok := typ.(*gotypes.Pointer); ok {
+			p, ok := typ.(*gotypes.Pointer)
+			if ok {
 				typ = p.Elem()
 			}
-			if named, _, _, ok := namedOf(typ); ok {
+			named, _, _, ok := namedOf(typ)
+			if ok {
 				return t.Obj.Pkg().Name() + "." + named.Obj().Name() + "." + fn.Name()
 			}
 		}
@@ -70,7 +74,8 @@ func ResolveTargets(ws *types.Workspace, specs []string) ([]Target, error) {
 			return nil, fmt.Errorf("unknown target %q", spec)
 		}
 		for _, obj := range objs {
-			if id := ObjectIDOf(obj); !seen[id] {
+			id := ObjectIDOf(obj)
+			if !seen[id] {
 				seen[id] = true
 				targets = append(targets, Target{Spec: spec, Obj: canonicalObject(obj)})
 			}
@@ -97,7 +102,8 @@ func resolveSpec(pkgs map[string]*gotypes.Package, spec string) ([]gotypes.Objec
 	parts := strings.Split(spec[len(pkg.Path())+1:], ".")
 	switch len(parts) {
 	case 1:
-		if fn, ok := pkg.Scope().Lookup(parts[0]).(*gotypes.Func); ok {
+		fn, ok := pkg.Scope().Lookup(parts[0]).(*gotypes.Func)
+		if ok {
 			return []gotypes.Object{fn}, true
 		}
 	case 2:
@@ -166,7 +172,8 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 		return nil, nil, err
 	}
 	if ua.within != nil {
-		if live = live.within(*ua.within); live == nil {
+		live = live.within(*ua.within)
+		if live == nil {
 			return nil, nil, &WithinUnreachedError{Function: ua.within.String()}
 		}
 	}
@@ -210,14 +217,6 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 	return sites, live.bodiless, nil
 }
 
-// ReachedFuncs returns the keys of the declared functions and methods whose code
-// is reachable from main of entry, and the packages whose code it could not see.
-// An entry that cannot be analysed is an *EntryBodilessError.
-func (ua *UnusedAnalyzer) ReachedFuncs(entry *types.Package) (types.SymbolKeySet, []BodilessPackage, error) {
-	keys, _, bodiless, err := ua.ReachedFuncsWithin(entry)
-	return keys, bodiless, err
-}
-
 // ReachedFuncsWithin is ReachedFuncs plus, when SetWithin was called, the keys
 // reached from that declaration (nil when the entry program does not reach it).
 func (ua *UnusedAnalyzer) ReachedFuncsWithin(entry *types.Package) (all, within types.SymbolKeySet, bodiless []BodilessPackage, err error) {
@@ -226,10 +225,11 @@ func (ua *UnusedAnalyzer) ReachedFuncsWithin(entry *types.Package) (all, within 
 	}
 	live, err := ua.buildLiveness(entry, false)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("reached funcs within: %w", err)
 	}
 	if ua.within != nil {
-		if w := live.within(*ua.within); w != nil {
+		w := live.within(*ua.within)
+		if w != nil {
 			within = w.keys()
 		}
 	}
@@ -243,8 +243,10 @@ func (l *liveness) keys() types.SymbolKeySet {
 		if n.Func == nil {
 			continue
 		}
-		if fn, ok := topFunc(n.Func).Object().(*gotypes.Func); ok {
-			if key, ok := types.SymbolKeyOf(fn); ok {
+		fn, ok := topFunc(n.Func).Object().(*gotypes.Func)
+		if ok {
+			key, ok := types.SymbolKeyOf(fn)
+			if ok {
 				keys[key] = struct{}{}
 			}
 		}
@@ -270,7 +272,8 @@ func (ua *UnusedAnalyzer) importClosure(entry *types.Package, includeTests bool)
 				continue
 			}
 			for _, imp := range file.AST.Imports {
-				if path, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok && ws.Packages[path] != nil {
+				path, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
+				if ok && ws.Packages[path] != nil {
 					work = append(work, ws.Packages[path])
 				}
 			}

@@ -69,7 +69,8 @@ func (op *RenameMethodOperation) validateIn(ws *types.Workspace) (types.SymbolKe
 	}
 	keys := make(types.SymbolKeySet)
 	for _, member := range members {
-		if err := op.checkSiblingConflict(ws, member); err != nil {
+		err := op.checkSiblingConflict(ws, member)
+		if err != nil {
 			return nil, err
 		}
 		addSymbolKey(keys, member)
@@ -113,10 +114,12 @@ func (op *RenameMethodOperation) renamedMembers(ws *types.Workspace) ([]*types.S
 	}
 	members := make([]*types.Symbol, 0, len(funcs))
 	for _, f := range funcs {
-		if err := stdMethodError("rename", f); err != nil {
+		err := stdMethodError("rename", f)
+		if err != nil {
 			return nil, err
 		}
-		if err := stdRenameError(f, op.Request.NewMethodName); err != nil {
+		err = stdRenameError(f, op.Request.NewMethodName)
+		if err != nil {
 			return nil, err
 		}
 		member, err := memberSymbol(ws, f)
@@ -133,7 +136,7 @@ func (op *RenameMethodOperation) renamedMembers(ws *types.Workspace) ([]*types.S
 func (op *RenameMethodOperation) targetFunc(ws *types.Workspace) (*gotypes.Func, error) {
 	typeSymbol, methodSymbol, err := op.target(ws)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("target func: %w", err)
 	}
 	return resolveMethod(resolveSymbolPackage(ws, typeSymbol), typeSymbol.Name, methodSymbol.Name, methodSymbol.Position)
 }
@@ -148,9 +151,11 @@ func resolveMethod(pkg *types.Package, typeName, name string, pos token.Pos) (*g
 				"method operations require a type-checked workspace", typeName, name),
 		}
 	}
-	if tn, ok := pkg.TypesPkg.Scope().Lookup(typeName).(*gotypes.TypeName); ok {
+	tn, ok := pkg.TypesPkg.Scope().Lookup(typeName).(*gotypes.TypeName)
+	if ok {
 		obj, _, _ := gotypes.LookupFieldOrMethod(tn.Type(), true, pkg.TypesPkg, name)
-		if f, ok := obj.(*gotypes.Func); ok && f.Pos() == pos {
+		f, ok := obj.(*gotypes.Func)
+		if ok && f.Pos() == pos {
 			return canonicalFunc(f), nil
 		}
 	}
@@ -167,7 +172,8 @@ func receiverNamed(f *gotypes.Func) *gotypes.Named {
 		return nil
 	}
 	recv = gotypes.Unalias(recv)
-	if ptr, ok := recv.(*gotypes.Pointer); ok {
+	ptr, ok := recv.(*gotypes.Pointer)
+	if ok {
 		recv = gotypes.Unalias(ptr.Elem())
 	}
 	named, _ := recv.(*gotypes.Named)

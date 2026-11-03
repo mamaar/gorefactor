@@ -19,7 +19,7 @@ func callToolOnFixture(t *testing.T, fixture, tool string, args map[string]any) 
 
 	dir := copyFixture(t, fixture)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -55,14 +55,17 @@ func TestFixEarlyReturns_PreviewsOnDryRun(t *testing.T) {
 
 	dir, result := callToolOnFixture(t, "fix_early_returns", "fix_early_returns", map[string]any{"dry_run": true})
 
-	if after := readFile(t, filepath.Join(dir, "main.go")); after != before {
+	after := readFile(t, filepath.Join(dir, "main.go"))
+	if after != before {
 		t.Errorf("preview mode modified the file on disk:\n%s", after)
 	}
 
-	if applied, _ := result["applied"].(bool); applied {
+	applied, _ := result["applied"].(bool)
+	if applied {
 		t.Error("applied should be false when dry_run is set")
 	}
-	if blocking, ok := result["blocking_issue"]; ok {
+	blocking, ok := result["blocking_issue"]
+	if ok {
 		t.Errorf("preview reported a blocking issue: %v", blocking)
 	}
 
@@ -80,10 +83,12 @@ func TestFixEarlyReturns_PreviewsOnDryRun(t *testing.T) {
 	}
 	for i, h := range hunks {
 		hunk := h.(map[string]any)
-		if old, _ := hunk["old"].(string); old == "" {
+		old, _ := hunk["old"].(string)
+		if old == "" {
 			t.Errorf("hunk %d has no before-text; the preview cannot be reviewed", i)
 		}
-		if next, _ := hunk["new"].(string); next == "" {
+		next, _ := hunk["new"].(string)
+		if next == "" {
 			t.Errorf("hunk %d has no after-text", i)
 		}
 	}
@@ -107,15 +112,18 @@ func TestFixEarlyReturns_ReportsUnfixableSeparately(t *testing.T) {
 	}
 
 	item := unfixable[0].(map[string]any)
-	if fn, _ := item["function_name"].(string); fn != "clamp" {
+	fn, _ := item["function_name"].(string)
+	if fn != "clamp" {
 		t.Errorf("unfixable finding = %q, want clamp", fn)
 	}
-	if reason, _ := item["reason"].(string); reason == "" {
+	reason, _ := item["reason"].(string)
+	if reason == "" {
 		t.Error("an unfixable finding must explain why")
 	}
 
 	for _, f := range fixed {
-		if fn, _ := f.(map[string]any)["function_name"].(string); fn == "clamp" {
+		fn, _ := f.(map[string]any)["function_name"].(string)
+		if fn == "clamp" {
 			t.Error("clamp was reported as fixed despite being unfixable")
 		}
 	}
@@ -150,7 +158,8 @@ func TestDetectEarlyReturns_ReportsEveryPattern(t *testing.T) {
 		}
 	}
 
-	if fixable, _ := result["fixable_count"].(float64); fixable != 3 {
+	fixable, _ := result["fixable_count"].(float64)
+	if fixable != 3 {
 		t.Errorf("fixable_count = %v, want 3", fixable)
 	}
 }
@@ -164,7 +173,8 @@ func TestDetectEarlyReturns_PatternFilter(t *testing.T) {
 	if len(violations) != 1 {
 		t.Fatalf("expected only the loop_continue finding, got %v", violations)
 	}
-	if pattern, _ := violations[0].(map[string]any)["pattern"].(string); pattern != "loop_continue" {
+	pattern, _ := violations[0].(map[string]any)["pattern"].(string)
+	if pattern != "loop_continue" {
 		t.Errorf("pattern = %q, want loop_continue", pattern)
 	}
 }

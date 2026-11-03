@@ -46,7 +46,8 @@ func TestRenameField_WithoutCycleRenamesAcrossPackages(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("rename_field failed: %s", errText(res))
 	}
-	if got := fileText(t, dir, "b/b.go"); !strings.Contains(got, "t.Gld") {
+	got := fileText(t, dir, "b/b.go")
+	if !strings.Contains(got, "t.Gld") {
 		t.Errorf("b.go not renamed:\n%s", got)
 	}
 	goVets(t, dir, "")

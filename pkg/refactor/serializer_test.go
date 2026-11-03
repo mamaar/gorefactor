@@ -23,7 +23,7 @@ func TestNewSerializer(t *testing.T) {
 func TestSerializer_ApplyChanges_NoChanges(t *testing.T) {
 	serializer := NewSerializer()
 
-	err := serializer.ApplyChanges(nil, []refactorTypes.Change{})
+	err := serializer.ApplyChanges([]refactorTypes.Change{})
 	if err != nil {
 		t.Errorf("Expected no error with empty changes, got %v", err)
 	}
@@ -60,7 +60,7 @@ func Original() {
 	}
 
 	// Apply changes
-	err = serializer.ApplyChanges(nil, changes)
+	err = serializer.ApplyChanges(changes)
 	if err != nil {
 		t.Fatalf("Failed to apply changes: %v", err)
 	}
@@ -123,7 +123,7 @@ func SecondFunc() {
 	}
 
 	// Apply changes
-	err = serializer.ApplyChanges(nil, changes)
+	err = serializer.ApplyChanges(changes)
 	if err != nil {
 		t.Fatalf("Failed to apply changes: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestSerializer_ApplyChanges_InvalidChange(t *testing.T) {
 	}
 
 	// Apply changes - should fail
-	err = serializer.ApplyChanges(nil, changes)
+	err = serializer.ApplyChanges(changes)
 	if err == nil {
 		t.Error("Expected error when applying invalid change")
 	}
@@ -182,7 +182,7 @@ func TestSerializer_ApplyChanges_InvalidChange(t *testing.T) {
 func TestSerializer_PreviewChanges_NoChanges(t *testing.T) {
 	serializer := NewSerializer()
 
-	preview, err := serializer.PreviewChanges(nil, []refactorTypes.Change{})
+	preview, err := serializer.PreviewChanges([]refactorTypes.Change{})
 	if err != nil {
 		t.Errorf("Expected no error with empty changes, got %v", err)
 	}
@@ -214,7 +214,7 @@ func TestSerializer_PreviewChanges_WithChanges(t *testing.T) {
 		},
 	}
 
-	preview, err := serializer.PreviewChanges(nil, changes)
+	preview, err := serializer.PreviewChanges(changes)
 	if err != nil {
 		t.Errorf("Expected no error with changes, got %v", err)
 	}
@@ -460,11 +460,12 @@ func main() {
 				return
 			}
 
-			if !tc.expectError {
-				// Check that result is valid Go code
-				if !strings.HasPrefix(result, "package main") {
-					t.Error("Expected formatted result to start with package declaration")
-				}
+			if tc.expectError {
+				return
+			}
+			// Check that result is valid Go code
+			if !strings.HasPrefix(result, "package main") {
+				t.Error("Expected formatted result to start with package declaration")
 			}
 		})
 	}
@@ -474,10 +475,9 @@ func TestSerializer_truncateText(t *testing.T) {
 	serializer := NewSerializer()
 
 	testCases := []struct {
-		name      string
-		text      string
-		maxLength []int
-		expected  string
+		name     string
+		text     string
+		expected string
 	}{
 		{
 			name:     "Short text",
@@ -488,12 +488,6 @@ func TestSerializer_truncateText(t *testing.T) {
 			name:     "Long text",
 			text:     strings.Repeat("a", 100),
 			expected: strings.Repeat("a", 77) + "...",
-		},
-		{
-			name:      "Custom length",
-			text:      "Hello World",
-			maxLength: []int{5},
-			expected:  "He...",
 		},
 		{
 			name:     "Text with newlines",
@@ -509,104 +503,11 @@ func TestSerializer_truncateText(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			var result string
-			if len(tc.maxLength) > 0 {
-				result = serializer.truncateText(tc.text, tc.maxLength[0])
-			} else {
-				result = serializer.truncateText(tc.text)
-			}
-
+			result := serializer.truncateText(tc.text)
 			if result != tc.expected {
 				t.Errorf("Expected truncateText result '%s', got '%s'", tc.expected, result)
 			}
 		})
-	}
-}
-
-func TestSerializer_ValidateFileStructure(t *testing.T) {
-	serializer := NewSerializer()
-
-	// Create a temporary test file with valid Go code
-	tempDir := t.TempDir()
-	testFile := filepath.Join(tempDir, "test.go")
-	validContent := `package test
-
-func Test() {
-	// test function
-}
-`
-
-	err := os.WriteFile(testFile, []byte(validContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Validate valid file
-	err = serializer.ValidateFileStructure(testFile)
-	if err != nil {
-		t.Errorf("Expected no error for valid Go file, got %v", err)
-	}
-
-	// Test with invalid Go code
-	invalidFile := filepath.Join(tempDir, "invalid.go")
-	invalidContent := "package test\nfunc invalid( {\n"
-
-	err = os.WriteFile(invalidFile, []byte(invalidContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create invalid test file: %v", err)
-	}
-
-	err = serializer.ValidateFileStructure(invalidFile)
-	if err == nil {
-		t.Error("Expected error for invalid Go file")
-	}
-
-	// Test with non-Go file (should not validate)
-	nonGoFile := filepath.Join(tempDir, "test.txt")
-	err = os.WriteFile(nonGoFile, []byte("not go code"), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create non-Go test file: %v", err)
-	}
-
-	err = serializer.ValidateFileStructure(nonGoFile)
-	if err != nil {
-		t.Errorf("Expected no error for non-Go file, got %v", err)
-	}
-}
-
-func TestSerializer_GetFileLines(t *testing.T) {
-	serializer := NewSerializer()
-
-	// Create a temporary test file
-	tempDir := t.TempDir()
-	testFile := filepath.Join(tempDir, "test.go")
-	content := `line 1
-line 2
-line 3
-line 4
-line 5
-`
-
-	err := os.WriteFile(testFile, []byte(content), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
-
-	// Get specific lines
-	lines, err := serializer.GetFileLines(testFile, 2, 4)
-	if err != nil {
-		t.Fatalf("Failed to get file lines: %v", err)
-	}
-
-	if len(lines) != 3 {
-		t.Errorf("Expected 3 lines, got %d", len(lines))
-	}
-
-	expected := []string{"2: line 2", "3: line 3", "4: line 4"}
-	for i, expectedLine := range expected {
-		if i >= len(lines) || lines[i] != expectedLine {
-			t.Errorf("Expected line %d to be '%s', got '%s'", i, expectedLine, lines[i])
-		}
 	}
 }
 
@@ -618,7 +519,7 @@ line 5
 func TestApplyChanges_RejectsRelativePaths(t *testing.T) {
 	serializer := NewSerializer()
 
-	err := serializer.ApplyChanges(nil, []refactorTypes.Change{
+	err := serializer.ApplyChanges([]refactorTypes.Change{
 		{
 			File:        filepath.Join("scratch", "pkg", "wms", "wms.go"),
 			NewText:     "package wms\n",
@@ -641,13 +542,14 @@ func TestApplyChanges_RejectsRelativePaths(t *testing.T) {
 func TestApplyChanges_RejectsBeforeMutating(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "source.go")
-	if err := os.WriteFile(source, []byte("package p\n"), 0644); err != nil {
+	err := os.WriteFile(source, []byte("package p\n"), 0644)
+	if err != nil {
 		t.Fatalf("writing fixture: %v", err)
 	}
 
 	// The shape of a move: write the destination, delete the source. The
 	// destination path is relative (the bug), the deletion is not.
-	err := serializerApplyBoth(t, []refactorTypes.Change{
+	err = serializerApplyBoth(t, []refactorTypes.Change{
 		{
 			File:        filepath.Join("elsewhere", "source.go"),
 			NewText:     "package p\n",
@@ -663,17 +565,19 @@ func TestApplyChanges_RejectsBeforeMutating(t *testing.T) {
 		t.Fatal("expected the batch to be rejected")
 	}
 
-	if _, statErr := os.Stat(source); statErr != nil {
+	_, statErr := os.Stat(source)
+	if statErr != nil {
 		t.Errorf("source was deleted despite the batch being rejected: %v", statErr)
 	}
-	if _, statErr := os.Stat("elsewhere"); statErr == nil {
+	_, statErr = os.Stat("elsewhere")
+	if statErr == nil {
 		t.Error(`a relative "elsewhere" directory was created in the test's working directory`)
 	}
 }
 
 func serializerApplyBoth(t *testing.T, changes []refactorTypes.Change) error {
 	t.Helper()
-	return NewSerializer().ApplyChanges(nil, changes)
+	return NewSerializer().ApplyChanges(changes)
 }
 
 const generatedHeader = "// Code generated by stringer; DO NOT EDIT.\n\npackage p\n\nvar X = 1\n"
@@ -681,7 +585,8 @@ const generatedHeader = "// Code generated by stringer; DO NOT EDIT.\n\npackage 
 func writeFixture(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	err := os.WriteFile(path, []byte(content), 0644)
+	if err != nil {
 		t.Fatalf("writing fixture: %v", err)
 	}
 	return path
@@ -705,7 +610,7 @@ func replaceXChange(file string) refactorTypes.Change {
 func TestApplyChanges_RefusesGeneratedFile(t *testing.T) {
 	gen := writeFixture(t, t.TempDir(), "gen.go", generatedHeader)
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{replaceXChange(gen)})
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{replaceXChange(gen)})
 	if err == nil {
 		t.Fatal("expected an edit to a generated file to be refused")
 	}
@@ -721,7 +626,7 @@ func TestApplyChanges_GeneratedFileRefusalLeavesPlanUntouched(t *testing.T) {
 	b := writeFixture(t, dir, "b.go", "package p\n")
 	c := writeFixture(t, dir, "c.go", generatedHeader)
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		replaceXChange(a),
 		{File: b, Delete: true, Description: "Remove file"},
 		replaceXChange(c),
@@ -741,7 +646,7 @@ func TestApplyChanges_AppliesRelocationOfGeneratedFile(t *testing.T) {
 
 	edit := replaceXChange(gen)
 	edit.Relocation = true
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		edit,
 		{File: old, Delete: true, Relocation: true, Description: "Remove file"},
 	})
@@ -749,7 +654,8 @@ func TestApplyChanges_AppliesRelocationOfGeneratedFile(t *testing.T) {
 		t.Fatalf("relocation of a generated file should pass, got: %v", err)
 	}
 	requireContent(t, gen, "// edited\n"+generatedHeader)
-	if _, statErr := os.Stat(old); statErr == nil {
+	_, statErr := os.Stat(old)
+	if statErr == nil {
 		t.Error("relocated source was not deleted")
 	}
 }
@@ -757,7 +663,7 @@ func TestApplyChanges_AppliesRelocationOfGeneratedFile(t *testing.T) {
 func TestApplyChanges_AllowsCreatingFileWithGeneratedHeader(t *testing.T) {
 	created := filepath.Join(t.TempDir(), "new.go")
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		{File: created, NewText: generatedHeader, Description: "Create file"},
 	})
 	if err != nil {
@@ -770,7 +676,8 @@ func TestApplyChanges_AllowsFileGeneratedByGorefactor(t *testing.T) {
 	src := "// This file was generated by gorefactor.\n\npackage p\n"
 	f := writeFixture(t, t.TempDir(), "facade.go", src)
 
-	if err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{replaceXChange(f)}); err != nil {
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{replaceXChange(f)})
+	if err != nil {
 		t.Fatalf("gorefactor-generated file should stay editable, got: %v", err)
 	}
 }
@@ -778,13 +685,14 @@ func TestApplyChanges_AllowsFileGeneratedByGorefactor(t *testing.T) {
 func TestApplyChanges_AddedImportKeepsNeighbourComment(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.go")
 	src := "package a\n\nimport (\n\t\"bytes\"\n\t//nolint:gosec\n\t\"crypto/md5\"\n\t\"encoding/json\"\n)\n"
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+	err := os.WriteFile(path, []byte(src), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 	insert := strings.Index(src, "\t\"bytes\"\n") + len("\t\"bytes\"\n")
 	s := NewSerializer()
 	s.SetModuleInfo("example.com/m", nil)
-	err := s.ApplyChanges(nil, []refactorTypes.Change{{File: path, Start: insert, End: insert, NewText: "\t\"context\"\n"}})
+	err = s.ApplyChanges([]refactorTypes.Change{{File: path, Start: insert, End: insert, NewText: "\t\"context\"\n"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -800,7 +708,7 @@ func TestApplyChanges_ApplyFailureWritesNothing(t *testing.T) {
 	a := writeFixture(t, dir, "a.go", "package p\n")
 	z := writeFixture(t, dir, "z.go", "package p\n")
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		replaceXChange(a),
 		{File: z, Start: 0, End: 1, OldText: "x", NewText: "y", Description: "Replace text"},
 	})
@@ -816,7 +724,7 @@ func TestApplyChanges_RefusesResultThatDoesNotParse(t *testing.T) {
 	a := writeFixture(t, dir, "a.go", "package p\n")
 	z := writeFixture(t, dir, "z.go", "package p\n")
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		{File: a, Start: 9, End: 9, NewText: "\nfunc {", Description: "Replace text"},
 		replaceXChange(z),
 	})
@@ -830,13 +738,14 @@ func TestApplyChanges_RefusesResultThatDoesNotParse(t *testing.T) {
 func TestApplyChanges_RefusesNewFileThatDoesNotParse(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "new.go")
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		{File: path, NewText: "package p\n\nfunc {\n", Description: "Create file"},
 	})
 	if err == nil {
 		t.Fatal("expected the plan to fail")
 	}
-	if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+	_, statErr := os.Stat(path)
+	if !os.IsNotExist(statErr) {
 		t.Errorf("%s was written", path)
 	}
 }
@@ -846,7 +755,7 @@ func TestApplyChanges_WritesEditToFileThatAlreadyDidNotParse(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "broken.go", broken)
 	start := strings.Index(broken, "old/path")
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{
 		{File: path, Start: start, End: start + len("old/path"), OldText: "old/path", NewText: "new/path", Description: "Update import path"},
 	})
 	if err != nil {
@@ -861,25 +770,28 @@ func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
 	}
 	dir := t.TempDir()
 	for _, sub := range []string{"a", "b", "d"} {
-		if err := os.Mkdir(filepath.Join(dir, sub), 0o755); err != nil {
+		err := os.Mkdir(filepath.Join(dir, sub), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	x := writeFixture(t, dir, "a/x.go", "package a\n")
 	y := writeFixture(t, dir, "b/y.go", "package b\n")
 	bin := writeFixture(t, dir, "b/run.bin", "\x00\xff#!")
-	if err := os.Chmod(bin, 0o755); err != nil {
+	err := os.Chmod(bin, 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
 	movedBin := filepath.Join(dir, "c", "new", "run.bin")
 	z := filepath.Join(dir, "c", "new", "z.go")
 	w := filepath.Join(dir, "d", "w.go")
-	if err := os.Chmod(filepath.Join(dir, "d"), 0o555); err != nil {
+	err = os.Chmod(filepath.Join(dir, "d"), 0o555)
+	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "d"), 0o755) })
 
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{
+	err = NewSerializer().ApplyChanges([]refactorTypes.Change{
 		replaceXChange(x),
 		{File: y, Delete: true, Description: "Remove file"},
 		{File: movedBin, NewText: "\x00\xff#!", Mode: 0o755, Description: "Move file"},
@@ -896,17 +808,19 @@ func TestApplyChanges_WriteFailureRestoresWrittenFiles(t *testing.T) {
 	requireContent(t, x, "package a\n")
 	requireContent(t, y, "package b\n")
 	requireContent(t, bin, "\x00\xff#!")
-	if info, statErr := os.Stat(bin); statErr != nil || info.Mode().Perm() != 0o755 {
+	info, statErr := os.Stat(bin)
+	if statErr != nil || info.Mode().Perm() != 0o755 {
 		t.Errorf("deleted binary file not restored with its mode: %v %v", info, statErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, "c")); !os.IsNotExist(statErr) {
+	_, statErr = os.Stat(filepath.Join(dir, "c"))
+	if !os.IsNotExist(statErr) {
 		t.Errorf("directory created for the rolled-back file was left behind: %v", statErr)
 	}
 }
 
 func TestApplyChanges_NewFileGetsRequestedMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "run.sh")
-	err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{{File: path, NewText: "#!/bin/sh\n", Mode: 0o755}})
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{{File: path, NewText: "#!/bin/sh\n", Mode: 0o755}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -916,7 +830,7 @@ func TestApplyChanges_NewFileGetsRequestedMode(t *testing.T) {
 }
 
 func TestSerializer_PreviewChanges_CarriedFileIsSummarised(t *testing.T) {
-	got, err := NewSerializer().PreviewChanges(nil, []refactorTypes.Change{
+	got, err := NewSerializer().PreviewChanges([]refactorTypes.Change{
 		{File: "/x/blob.bin", NewText: "\x00\xff\xfe", Mode: 0o644, Relocation: true, Description: "Move file"},
 	})
 	if err != nil {
@@ -930,7 +844,8 @@ func TestSerializer_PreviewChanges_CarriedFileIsSummarised(t *testing.T) {
 func TestApplyChanges_LeavesTestdataGoFileUnformatted(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "testdata", "a.go")
 	src := "package a\nfunc  f( ) {\n"
-	if err := NewSerializer().ApplyChanges(nil, []refactorTypes.Change{{File: path, NewText: src}}); err != nil {
+	err := NewSerializer().ApplyChanges([]refactorTypes.Change{{File: path, NewText: src}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	requireContent(t, path, src)

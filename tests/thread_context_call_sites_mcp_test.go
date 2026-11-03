@@ -68,7 +68,8 @@ func Has(ctx context.Context) { lg.Warn("has") }
 			t.Errorf("p.go lacks %q:\n%s", want, got)
 		}
 	}
-	if m := fileText(t, dir, "main.go"); !strings.Contains(m, "p.Run(context.TODO())") {
+	m := fileText(t, dir, "main.go")
+	if !strings.Contains(m, "p.Run(context.TODO())") {
 		t.Errorf("main.go:\n%s", m)
 	}
 	if out["success"] != true {
@@ -93,10 +94,12 @@ func Spawn() { go func() { lg.Warn("x") }() }
 
 	callJSON(t, sess, "add_context_parameter", callSitesArgs(false))
 
-	if got := fileText(t, dir, "p/p.go"); !strings.Contains(got, "func Spawn(ctx context.Context) { go func() { lg.Warn(\"x\") }() }") {
+	got := fileText(t, dir, "p/p.go")
+	if !strings.Contains(got, "func Spawn(ctx context.Context) { go func() { lg.Warn(\"x\") }() }") {
 		t.Errorf("p.go:\n%s", got)
 	}
-	if m := fileText(t, dir, "main.go"); !strings.Contains(m, "p.Spawn(context.TODO())") {
+	m := fileText(t, dir, "main.go")
+	if !strings.Contains(m, "p.Spawn(context.TODO())") {
 		t.Errorf("main.go:\n%s", m)
 	}
 	goBuilds(t, dir, "")
@@ -305,10 +308,12 @@ func Run() { lg.Failure("x") }
 	args["call_sites_of"] = []string{"example.com/threadmcp/lg.Error", "example.com/threadmcp/lg.Failure"}
 	callJSON(t, sess, "add_context_parameter", args)
 
-	if got := fileText(t, dir, "lg/lg.go"); strings.Contains(got, "context") {
+	got := fileText(t, dir, "lg/lg.go")
+	if strings.Contains(got, "context") {
 		t.Errorf("a target was changed:\n%s", got)
 	}
-	if got := fileText(t, dir, "p/p.go"); !strings.Contains(got, "func Run(ctx context.Context)") {
+	got = fileText(t, dir, "p/p.go")
+	if !strings.Contains(got, "func Run(ctx context.Context)") {
 		t.Errorf("p.go:\n%s", got)
 	}
 	goBuilds(t, dir, "")
@@ -415,7 +420,8 @@ func TestAddContextParameter_WithinFunctionRequiresCallSitesOf(t *testing.T) {
 	defer sess.Close()
 
 	args := map[string]any{"function_name": "main", "source_file": "main.go", "thread": true, "within_function": "example.com/threadmcp/p.Run"}
-	if msg := callExpectingError(t, sess, args); !strings.Contains(msg, "within_function") {
+	msg := callExpectingError(t, sess, args)
+	if !strings.Contains(msg, "within_function") {
 		t.Errorf("error should name within_function: %s", msg)
 	}
 }
@@ -440,7 +446,8 @@ func TestReachableReferences_WithinFunctionKeepsLiveTypesOfWholeProgram(t *testi
 		got = append(got, s.(map[string]any)["enclosing"].(string))
 	}
 	slices.Sort(got)
-	if want := []string{"Impl.Do", "inRun", "shared"}; !slices.Equal(got, want) {
+	want := []string{"Impl.Do", "inRun", "shared"}
+	if !slices.Equal(got, want) {
 		t.Errorf("enclosing = %v, want %v", got, want)
 	}
 }
@@ -467,7 +474,8 @@ func helper() { lg.Warn("h") }
 
 	out := callJSON(t, sess, "add_context_parameter", callSitesArgs(false))
 
-	if got := fileText(t, dir, "p/p.go"); strings.Contains(got, "context.TODO()") {
+	got := fileText(t, dir, "p/p.go")
+	if strings.Contains(got, "context.TODO()") {
 		t.Errorf("emitted context.TODO() where context is shadowed:\n%s", got)
 	}
 	if !hasReason(out, "shadowed context:") {
@@ -514,12 +522,14 @@ func Run() {
 	for _, s := range out["sites"].([]any) {
 		site := s.(map[string]any)
 		got = append(got, site["enclosing"].(string))
-		if path := site["path"].([]any); path[0] != "p.Run" {
+		path := site["path"].([]any)
+		if path[0] != "p.Run" {
 			t.Errorf("path of %v does not start at p.Run: %v", site["enclosing"], path)
 		}
 	}
 	slices.Sort(got)
-	if want := []string{"Run", "local"}; !slices.Equal(got, want) {
+	want := []string{"Run", "local"}
+	if !slices.Equal(got, want) {
 		t.Errorf("enclosing = %v, want %v", got, want)
 	}
 }

@@ -304,7 +304,8 @@ func TestMCPTools(t *testing.T) {
 			if result.IsError {
 				var errMsg strings.Builder
 				for _, c := range result.Content {
-					if tc, ok := c.(*mcpsdk.TextContent); ok {
+					tc, ok := c.(*mcpsdk.TextContent)
+					if ok {
 						errMsg.WriteString(tc.Text)
 					}
 				}

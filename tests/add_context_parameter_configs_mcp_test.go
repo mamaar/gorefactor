@@ -20,7 +20,8 @@ func goVets(t *testing.T, dir string, tagSets ...string) {
 		cmd := exec.Command("go", "vet", "-tags="+tags, "./...")
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Errorf("go vet -tags=%q failed: %v\n%s", tags, err, out)
 		}
 	}
@@ -28,7 +29,7 @@ func goVets(t *testing.T, dir string, tagSets ...string) {
 
 func addContext(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -77,15 +78,18 @@ func TestAddContextParameter_TagSiblingsGainCtxAndSharedCallerPassesDefaultOnce(
 
 	out := addContextOK(t, sess, fArgs("p/f_default.go", nil))
 
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "func f(ctx context.Context, n int) int") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "func f(ctx context.Context, n int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
-	if got := fileText(t, dir, "p/use.go"); strings.Count(got, "f(context.TODO(), 1)") != 1 || strings.Count(got, "context.TODO()") != 1 {
+	got := fileText(t, dir, "p/use.go")
+	if strings.Count(got, "f(context.TODO(), 1)") != 1 || strings.Count(got, "context.TODO()") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
 	goVets(t, dir, "", "tagx")
@@ -120,7 +124,8 @@ func TestAddContextParameter_PropagateReachesImplementationOnlyUnderTag(t *testi
 	addContextOK(t, sess, map[string]any{"function_name": "A.Run", "source_file": "p/a.go", "propagate": true})
 
 	for _, f := range []string{"p/iface.go", "p/a.go", "p/b_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "Run(ctx context.Context, n int) int") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "Run(ctx context.Context, n int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
@@ -185,7 +190,8 @@ func TestAddContextParameter_RemovesInternalCtxCreationInBothSiblings(t *testing
 	addContextOK(t, sess, fArgs("p/f_default.go", nil))
 
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Contains(got, "context.Background()") || strings.Count(got, "ctx context.Context") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Contains(got, "context.Background()") || strings.Count(got, "ctx context.Context") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
@@ -239,7 +245,8 @@ func TestAddContextParameter_SingleConfigOmitsBuildConfigs(t *testing.T) {
 
 	for _, dryRun := range []bool{true, false} {
 		out := addContextOK(t, sess, fArgs("p/f.go", map[string]any{"dry_run": dryRun}))
-		if _, ok := out["build_configs"]; ok {
+		_, ok := out["build_configs"]
+		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
 		}
 	}

@@ -30,11 +30,15 @@ func (op *ChangeSignatureOperation) returnTargets(
 	var target *gotypes.Func
 	if isIface {
 		var err error
-		if target, err = methodObject(ws, pkg, typeName, methodName); err != nil {
-			return nil, err
+		target, err = methodObject(ws, pkg, typeName, methodName)
+		if err != nil {
+			return nil, fmt.Errorf("return targets: %w", err)
 		}
-	} else if decl := op.findFunction(file, op.FunctionName); decl != nil && pkg.TypesInfo != nil {
-		target, _ = pkg.TypesInfo.Defs[decl.Name].(*gotypes.Func)
+	} else {
+		decl := op.findFunction(file, op.FunctionName)
+		if decl != nil && pkg.TypesInfo != nil {
+			target, _ = pkg.TypesInfo.Defs[decl.Name].(*gotypes.Func)
+		}
 	}
 	if target == nil {
 		return nil, fmt.Errorf("%s: no type information for %s; its results cannot be changed by object identity", op.subcommandName(), op.FunctionName)
@@ -52,17 +56,20 @@ func (op *ChangeSignatureOperation) planReturns(
 		return 0, fmt.Errorf("%s: no type information; the workspace must be type-checked first", op.subcommandName())
 	}
 	n := targets[0].Signature().Results().Len()
-	if want := n + 1; op.NewReturnPosition >= 0 && len(op.NewReturns) != want {
+	want := n + 1
+	if op.NewReturnPosition >= 0 && len(op.NewReturns) != want {
 		return 0, fmt.Errorf("add_return: returns must list the current %d results plus the added one, got %d", n, len(op.NewReturns))
 	}
-	if want := n - 1; op.RemovedReturnIndex >= 0 && len(op.NewReturns) != want {
+	want = n - 1
+	if op.RemovedReturnIndex >= 0 && len(op.NewReturns) != want {
 		return 0, fmt.Errorf("remove_return: returns must list the current %d results minus the last, got %d", n, len(op.NewReturns))
 	}
 
 	decls := buildFuncDeclIndex(ws)
 	var calls []plannedCall
 	for _, t := range targets {
-		if d := decls[canonicalFunc(t)]; d != nil && d.Decl != nil {
+		d := decls[canonicalFunc(t)]
+		if d != nil && d.Decl != nil {
 			op.planReturnBody(ws, d, n, plan)
 		}
 		for _, u := range idx.NonCallUsesOf(t) {
@@ -149,7 +156,8 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 	}
 	content := d.File.OriginalContent
 	info := d.Pkg.TypesInfo
-	if list := d.Decl.Body.List; n == 0 && op.NewReturnPosition >= 0 && (len(list) == 0 || !stmtfacts.Terminates(info, list[len(list)-1])) {
+	list := d.Decl.Body.List
+	if n == 0 && op.NewReturnPosition >= 0 && (len(list) == 0 || !stmtfacts.Terminates(info, list[len(list)-1])) {
 		op.refuse(ws, d.Decl.Name.Pos(), fmt.Sprintf("%s has no results and does not end in a return, so an added result has nothing to return", d.Decl.Name.Name))
 	}
 	walkBodyForReturnStmts(d.Decl.Body, func(ret *ast.ReturnStmt) {
@@ -301,7 +309,8 @@ func callUseOf(call inspector.Cursor) (callUse, ast.Node) {
 // addedResultRefusals returns why the call at site cannot take an added
 // result: only statements and assignments can.
 func addedResultRefusals(site analysis.CallSite) []returnRefusal {
-	if use, _ := callUseOf(site.Cursor); use == useEmbedded {
+	use, _ := callUseOf(site.Cursor)
+	if use == useEmbedded {
 		return []returnRefusal{embeddedCallRefusal(site.Call, "extended")}
 	}
 	return nil
@@ -353,7 +362,8 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 		reads = append(reads, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
 	}
 	plan := foldErrorReads(info, site, assign, idx, obj, reads, writes)
-	if ret := bareReturnOfResult(info, site.Cursor, obj); ret != nil {
+	ret := bareReturnOfResult(info, site.Cursor, obj)
+	if ret != nil {
 		plan.Refusals = append(plan.Refusals, returnRefusal{Pos: ret.Pos(), Reason: fmt.Sprintf("%s is a named result and this bare return reads it", id.Name)})
 	}
 	return plan

@@ -148,7 +148,7 @@ func addContextParameter(t *testing.T, sess *mcptest.Session, args map[string]an
 	t.Helper()
 	args["function_name"] = "Process"
 	args["source_file"] = "foo/foo.go"
-	result, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
+	result, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -161,7 +161,8 @@ func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSO
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
 	var out planResultJSON
-	if err := json.Unmarshal([]byte(errText(result)), &out); err != nil {
+	err := json.Unmarshal([]byte(errText(result)), &out)
+	if err != nil {
 		t.Fatalf("decode result: %v\n%s", err, errText(result))
 	}
 	return out
@@ -171,7 +172,7 @@ func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSO
 // path of add_context_parameter does not type-check by itself.
 func typeCheckFoo(t *testing.T, sess *mcptest.Session) {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "detect_if_init_assignments",
 		Arguments: map[string]any{"package": "example.com/threadmcp/foo"},
 	})
@@ -276,7 +277,8 @@ func TestAddContextParameter_Thread_AbortsWhenTestFilesAreUnattributed(t *testin
 	if !result.IsError {
 		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
-	if msg := errText(result); !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
+	msg := errText(result)
+	if !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
 		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
 	assertUnchanged(t, dir, "foo/foo.go")
@@ -293,7 +295,8 @@ func TestAddContextParameter_NoThread_AbortsWhenTestFilesAreUnattributed(t *test
 	if !result.IsError {
 		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
-	if msg := errText(result); !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
+	msg := errText(result)
+	if !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
 		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
 	assertUnchanged(t, dir, "foo/foo.go")

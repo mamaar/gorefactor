@@ -108,7 +108,8 @@ func TestMoveByDependencies_CandidateReferencedFromGeneratedFileIsSkippedAndTheR
 		}
 	}
 	assertFileContains(t, dir, "shared/shared.go", "func Shared() int")
-	if got := fileText(t, dir, "shared/shared.go"); strings.Contains(got, "Other") {
+	got := fileText(t, dir, "shared/shared.go")
+	if strings.Contains(got, "Other") {
 		t.Errorf("Other moved:\n%s", got)
 	}
 	assertFileContains(t, dir, "src/src.go", "func Other() int")
@@ -124,7 +125,8 @@ func TestMoveSymbol_TargetFileSkipsGeneratedFile(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "F", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "F", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move F: %s", errText(res))
 	}
 
@@ -142,7 +144,8 @@ func TestMoveSymbol_TargetPackageWithOnlyGeneratedFileGetsNewFile(t *testing.T) 
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "F", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "F", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move F: %s", errText(res))
 	}
 

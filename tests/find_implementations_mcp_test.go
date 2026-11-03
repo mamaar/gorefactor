@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"slices"
@@ -17,9 +16,9 @@ func findImplementations(t *testing.T, files map[string]string, args map[string]
 	t.Helper()
 	files["go.mod"] = "module example.com/fimpl\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "find_implementations", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "find_implementations", Arguments: args})
 	if err != nil {
 		t.Fatalf("find_implementations: %v", err)
 	}
@@ -41,7 +40,8 @@ func entryNames(t *testing.T, out map[string]any, key string) []string {
 	for _, it := range items {
 		e := it.(map[string]any)
 		name := e["name"].(string)
-		if ptr, _ := e["pointer_receiver"].(bool); ptr {
+		ptr, _ := e["pointer_receiver"].(bool)
+		if ptr {
 			name = "*" + name
 		}
 		names = append(names, name)
@@ -64,7 +64,8 @@ func TestFindImplementations_InterfaceListsValueAndPointerImplementersOnly(t *te
 		t.Fatal(errMsg)
 	}
 	got := entryNames(t, out, "implementations")
-	if want := []string{"*B", "A"}; !slices.Equal(got, want) {
+	want := []string{"*B", "A"}
+	if !slices.Equal(got, want) {
 		t.Errorf("implementations = %v, want %v", got, want)
 	}
 }
@@ -118,7 +119,8 @@ func TestFindImplementations_FindsTypeDeclaredOnlyUnderAnotherConfig(t *testing.
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
-	if got, want := entryNames(t, out, "implementations"), []string{"A", "B"}; !slices.Equal(got, want) {
+	got, want := entryNames(t, out, "implementations"), []string{"A", "B"}
+	if !slices.Equal(got, want) {
 		t.Errorf("implementations = %v, want %v", got, want)
 	}
 	for _, it := range out["implementations"].([]any) {

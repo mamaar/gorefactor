@@ -18,6 +18,7 @@ type MoveSymbolInput struct {
 	Symbols     []string `json:"symbols,omitempty" jsonschema:"names of several symbols of from_package to move together; give exactly one of symbol and symbols"`
 	FromPackage string   `json:"from_package" jsonschema:"source package path (relative to workspace root)"`
 	ToPackage   string   `json:"to_package" jsonschema:"target package path (relative to workspace root)"`
+	ToFile      string   `json:"to_file,omitempty" jsonschema:"file of to_package to put the symbols in, relative to the workspace root; created when missing, may be a _test.go file (a method is refused there when its type satisfies an interface through it), and allows to_package to equal from_package"`
 	DryRun      bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
@@ -32,6 +33,7 @@ func (in MoveSymbolInput) request(ws *types.Workspace) (types.MoveSymbolRequest,
 		SymbolName:  in.Symbol,
 		FromPackage: from,
 		ToPackage:   types.ResolvePackagePath(ws, in.ToPackage),
+		ToFile:      in.ToFile,
 	}
 	for _, name := range in.Symbols {
 		req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: from, Name: name})
@@ -98,6 +100,8 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Move a symbol (function, type, variable, constant) from one package to another. Updates all references across the workspace. " +
 			"Give one name as symbol, or several as symbols to move them together. " +
 			"Names declared together must be moved together through symbols: the constants of an iota group (or any group that repeats an expression implicitly) and the names of one declaration such as var a, b = f(). " +
+			"Give to_file to choose the file of to_package that receives them (created when missing); it may be a _test.go file, in which case a symbol that a non-test file uses is refused, and it lets to_package equal from_package to move a symbol, or a method alone (Type.Method), between files of one package. " +
+			"A source file the move leaves without declarations is deleted, unless it has a //go:build line or a package doc comment. " +
 			"Moving a variable moves its initializer's side effects to the target package's init. " +
 			"A type does not take its constants along: name them in the same call, or the move is refused as an import cycle when its methods use constants left behind. " +
 			"A type's methods move with it from every non-test file of its package; a method declared in a test file refuses the move, as does anything the move would have to edit in a generated file. " +
@@ -106,17 +110,19 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			"it is refused when a file outside the default configuration references or declares the symbol.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
 		defer func() {
-			if r := recover(); r != nil {
-				stack := debug.Stack()
-				state.logger.Error("panic in move_symbol handler",
-					"symbol", in.label(),
-					"from", in.FromPackage,
-					"to", in.ToPackage,
-					"panic", fmt.Sprintf("%v", r),
-					"stack", string(stack),
-				)
-				result = errResult(fmt.Errorf("internal error (panic) in move_symbol: %v", r))
+			r := recover()
+			if r == nil {
+				return
 			}
+			stack := debug.Stack()
+			state.logger.Error("panic in move_symbol handler",
+				"symbol", in.label(),
+				"from", in.FromPackage,
+				"to", in.ToPackage,
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(stack),
+			)
+			result = errResult(fmt.Errorf("internal error (panic) in move_symbol: %v", r))
 		}()
 
 		plan, err := planMoveSymbol(state, in)

@@ -167,7 +167,8 @@ func returnExpr(t *testing.T, src string) ast.Expr {
 			continue
 		}
 		for _, stmt := range fn.Body.List {
-			if ret, ok := stmt.(*ast.ReturnStmt); ok && len(ret.Results) == 1 {
+			ret, ok := stmt.(*ast.ReturnStmt)
+			if ok && len(ret.Results) == 1 {
 				return ret.Results[0]
 			}
 		}
@@ -259,7 +260,8 @@ func TestFixedSourceParses(t *testing.T) {
 	for _, tt := range fixtures {
 		t.Run(tt.name, func(t *testing.T) {
 			_, _, fixed := runSrc(t, sampleSrc(tt.body))
-			if _, err := parser.ParseFile(token.NewFileSet(), "", fixed, parser.ParseComments); err != nil {
+			_, err := parser.ParseFile(token.NewFileSet(), "", fixed, parser.ParseComments)
+			if err != nil {
 				t.Fatalf("patched source does not parse: %v\n%s", err, fixed)
 			}
 		})
@@ -403,7 +405,8 @@ func freeVars(e ast.Expr) []string {
 	seen := make(map[string]bool)
 	var names []string
 	ast.Inspect(e, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok && !seen[ident.Name] {
+		ident, ok := n.(*ast.Ident)
+		if ok && !seen[ident.Name] {
 			seen[ident.Name] = true
 			names = append(names, ident.Name)
 		}
@@ -468,7 +471,8 @@ func sample(x, y float64, a bool) bool {
 `
 	ws := createTypedWorkspace(t, src)
 	_, diags := run(t, ws)
-	if texts, _ := applyFixes(t, ws.FileSet, src, diags); len(texts) != 0 {
+	texts, _ := applyFixes(t, ws.FileSet, src, diags)
+	if len(texts) != 0 {
 		t.Fatalf("expected no fix, got %q", texts)
 	}
 }
@@ -488,7 +492,8 @@ func TestNegationInsideOpaqueOperandConverges(t *testing.T) {
 		t.Fatalf("second pass = %q, want [\"b\"]", texts)
 	}
 
-	if _, texts, _ = runSrc(t, fixed); len(texts) != 0 {
+	_, texts, _ = runSrc(t, fixed)
+	if len(texts) != 0 {
 		t.Fatalf("third pass = %q, want none", texts)
 	}
 }
@@ -527,13 +532,15 @@ func TestWithMinReduction(t *testing.T) {
 	// `!(!a || b)` drops one negation (2 -> 1); `!(!a && !b)` drops three.
 	src := sampleSrc("return !(!a || b)")
 
-	if _, texts, _ := runSrc(t, src); len(texts) != 1 {
+	_, texts, _ := runSrc(t, src)
+	if len(texts) != 1 {
 		t.Fatalf("default config: expected 1 fix, got %q", texts)
 	}
 
 	ws := createTestWorkspace(t, src)
 	_, diags := run(t, ws, boolsimplify.WithMinReduction(2))
-	if texts, _ := applyFixes(t, ws.FileSet, src, diags); len(texts) != 0 {
+	texts, _ = applyFixes(t, ws.FileSet, src, diags)
+	if len(texts) != 0 {
 		t.Fatalf("min reduction 2: expected no fix, got %q", texts)
 	}
 
@@ -541,7 +548,8 @@ func TestWithMinReduction(t *testing.T) {
 	// it is clamped.
 	ws = createTestWorkspace(t, src)
 	_, diags = run(t, ws, boolsimplify.WithMinReduction(0))
-	if texts, _ := applyFixes(t, ws.FileSet, src, diags); len(texts) != 1 {
+	texts, _ = applyFixes(t, ws.FileSet, src, diags)
+	if len(texts) != 1 {
 		t.Fatalf("min reduction 0: expected 1 fix, got %q", texts)
 	}
 }

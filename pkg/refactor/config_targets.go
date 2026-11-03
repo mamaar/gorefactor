@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"go/ast"
 	"path/filepath"
 	"slices"
@@ -71,7 +72,8 @@ func reachOf(plan *types.RefactoringPlan, names []string) reach {
 		return out
 	}
 	for _, c := range plan.Changes {
-		if dir := filepath.Dir(c.File); !slices.Contains(out.dirs, dir) {
+		dir := filepath.Dir(c.File)
+		if !slices.Contains(out.dirs, dir) {
 			out.dirs = append(out.dirs, dir)
 		}
 	}
@@ -112,7 +114,8 @@ func funcTargetsByKey(ws *types.Workspace) map[types.SymbolKey]funcTarget {
 func linkedFuncTargets(declared map[types.SymbolKey]funcTarget, linked types.SymbolKeySet) []funcTarget {
 	var targets []funcTarget
 	for key := range linked {
-		if t, ok := declared[key]; ok {
+		t, ok := declared[key]
+		if ok {
 			targets = append(targets, t)
 		}
 	}
@@ -146,7 +149,7 @@ func (r *signatureRun) execute(op *ChangeSignatureOperation) ([]AlteredDecl, err
 	op.CachedIndex = r.idx
 	plan, err := op.Execute(r.view.Workspace)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("execute: %w", err)
 	}
 	r.add(plan)
 	for _, d := range op.AlteredDecls() {
@@ -205,7 +208,8 @@ func planSignatureView(c *viewIndexes, s signatureStrategy, v *analysis.View, li
 		if !isRequested && run.covered.Has(t.key) {
 			continue
 		}
-		if err := s.run(run, t, isRequested); err != nil {
+		err := s.run(run, t, isRequested)
+		if err != nil {
 			return configResult{}, err
 		}
 	}
@@ -215,7 +219,8 @@ func planSignatureView(c *viewIndexes, s signatureStrategy, v *analysis.View, li
 		names[i] = d.Key.Name
 	}
 	res := configResult{plan: run.plan(), changed: run.covered, reach: run.reach(names), declared: declared}
-	if pv, ok := s.(planVerifier); ok {
+	pv, ok := s.(planVerifier)
+	if ok {
 		pv.verify(v, res.plan)
 	}
 	c.planned(v, res.plan)
@@ -231,7 +236,8 @@ func (r *signatureRun) addImports(paths []string) {
 			if hasImport(ws, d.File, path) {
 				continue
 			}
-			if c := generateAddImportChange(ws, d.File, "", path); c != nil {
+			c := GenerateAddImportChange(ws, d.File, "", path)
+			if c != nil {
 				r.merge([]types.Change{*c}, nil)
 			}
 		}

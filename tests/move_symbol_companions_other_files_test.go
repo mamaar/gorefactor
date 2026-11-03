@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 func moveTypeAcrossFiles(t *testing.T, files map[string]string, symbol string) (string, bool, string) {
 	t.Helper()
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")
 	return dir, res.IsError, errText(res)
@@ -28,7 +27,8 @@ func TestMoveSymbolMovesConstructorDeclaredInAnotherFile(t *testing.T) {
 	}
 	assertFileContains(t, dir, "dst/dst.go", "type T struct")
 	assertFileContains(t, dir, "dst/dst.go", "func NewT()")
-	if got := fileText(t, dir, "src/new.go"); strings.Contains(got, "NewT") {
+	got := fileTextOrEmpty(t, dir, "src/new.go")
+	if strings.Contains(got, "NewT") {
 		t.Errorf("NewT remains in src/new.go:\n%s", got)
 	}
 	assertFileContains(t, dir, "use/use.go", "dst.NewT()")
@@ -45,7 +45,8 @@ func TestMoveSymbolBringsImportOfConstructorInAnotherFile(t *testing.T) {
 	}
 	assertFileContains(t, dir, "dst/dst.go", "\"strings\"")
 	assertFileContains(t, dir, "dst/dst.go", "func NewT(")
-	if got := fileText(t, dir, "src/new.go"); strings.Contains(got, "strings") {
+	got := fileTextOrEmpty(t, dir, "src/new.go")
+	if strings.Contains(got, "strings") {
 		t.Errorf("unused import remains in src/new.go:\n%s", got)
 	}
 	goVets(t, dir, "")

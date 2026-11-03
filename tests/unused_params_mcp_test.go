@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -38,9 +37,9 @@ func callUnusedParams(t *testing.T, args map[string]any, files map[string]string
 	}
 	files["go.mod"] = "module example.com/up\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "detect_unused_params", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_unused_params", Arguments: args})
 	if err != nil {
 		t.Fatalf("detect_unused_params: %v", err)
 	}
@@ -112,7 +111,8 @@ func use() {
 	}
 	wantFixable(t, findParam(t, out, "F", "alsoUnused"))
 	wantFixable(t, findParam(t, out, "Closure", "x"))
-	if p := findParam(t, out, "Closure", "x"); p.Index != 0 {
+	p := findParam(t, out, "Closure", "x")
+	if p.Index != 0 {
 		t.Errorf("Closure(x) index = %d", p.Index)
 	}
 }
@@ -415,7 +415,8 @@ func next() int { return 1 }
 	})
 
 	wantRefused(t, findParam(t, out, "F", "unused"), "side effects")
-	if f := findParam(t, out, "F", "unused"); f.CallSites != 1 {
+	f := findParam(t, out, "F", "unused")
+	if f.CallSites != 1 {
 		t.Errorf("F: call_sites = %d", f.CallSites)
 	}
 	h := findParam(t, out, "helper", "unused")

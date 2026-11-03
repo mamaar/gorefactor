@@ -21,7 +21,8 @@ const reloadCount = 30
 func openFDs(t *testing.T) int {
 	t.Helper()
 	for _, dir := range []string{"/dev/fd", "/proc/self/fd"} {
-		if n, ok := countEntries(dir); ok {
+		n, ok := countEntries(dir)
+		if ok {
 			return n
 		}
 	}
@@ -63,7 +64,8 @@ func reloadFixture(t *testing.T) string {
 
 func assertNoGrowth(t *testing.T, fdsBefore, goroutinesBefore int) {
 	t.Helper()
-	if got := settledGoroutines(goroutinesBefore); got > goroutinesBefore {
+	got := settledGoroutines(goroutinesBefore)
+	if got > goroutinesBefore {
 		t.Errorf("goroutines grew from %d to %d across %d reloads", goroutinesBefore, got, reloadCount)
 	}
 	fdsAfter := openFDs(t)
@@ -76,13 +78,15 @@ func assertNoGrowth(t *testing.T, fdsBefore, goroutinesBefore int) {
 func TestLoadWorkspace_ReloadDoesNotLeakDescriptorsOrGoroutines(t *testing.T) {
 	dir := reloadFixture(t)
 	s := mcp.NewMCPServer(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := s.LoadWorkspace(context.Background(), dir); err != nil {
+	_, err := s.LoadWorkspace(context.Background(), dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	fdsBefore, goroutinesBefore := openFDs(t), runtime.NumGoroutine()
 
 	for range reloadCount {
-		if _, err := s.LoadWorkspace(context.Background(), dir); err != nil {
+		_, err := s.LoadWorkspace(context.Background(), dir)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -94,14 +98,17 @@ func TestLoadWorkspace_FailedLoadLeavesNoWatcher(t *testing.T) {
 	dir := reloadFixture(t)
 	s := mcp.NewMCPServer(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	fdsBefore := openFDs(t)
-	if _, err := s.LoadWorkspace(context.Background(), dir); err != nil {
+	_, err := s.LoadWorkspace(context.Background(), dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.LoadWorkspace(context.Background(), dir+"/does-not-exist"); err == nil {
+	_, err = s.LoadWorkspace(context.Background(), dir+"/does-not-exist")
+	if err == nil {
 		t.Fatal("expected load of a missing path to fail")
 	}
-	if got := openFDs(t); got > fdsBefore+8 {
+	got := openFDs(t)
+	if got > fdsBefore+8 {
 		t.Errorf("fds after failed load = %d, want about the %d held before any load", got, fdsBefore)
 	}
 	s.Close()

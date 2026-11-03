@@ -148,7 +148,8 @@ func Existing() {}
 	if _, err := os.Stat(filepath.Join(dir, "kartadm", "wms", "wms.go")); err != nil {
 		t.Errorf("source file should be untouched after a refusal: %v", err)
 	}
-	if got := mustRead(t, filepath.Join(dir, "pkg", "wms", "existing.go")); !strings.Contains(got, "func Existing()") {
+	got := mustRead(t, filepath.Join(dir, "pkg", "wms", "existing.go"))
+	if !strings.Contains(got, "func Existing()") {
 		t.Errorf("existing target package was modified by a refused move:\n%s", got)
 	}
 }

@@ -59,7 +59,8 @@ func localImports(ws *types.Workspace, path string, files map[string]*types.File
 			continue
 		}
 		for _, imp := range file.AST.Imports {
-			if to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok && to != path && !seen[to] {
+			to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
+			if ok && to != path && !seen[to] {
 				seen[to] = true
 				out = append(out, to)
 			}
@@ -92,11 +93,12 @@ func Importers(ws *types.Workspace, paths []string) []string {
 	var out []string
 	for work := slices.Clone(paths); len(work) > 0; work = work[1:] {
 		for _, from := range importedBy[work[0]] {
-			if !seen[from] {
-				seen[from] = true
-				out = append(out, from)
-				work = append(work, from)
+			if seen[from] {
+				continue
 			}
+			seen[from] = true
+			out = append(out, from)
+			work = append(work, from)
 		}
 	}
 	sort.Strings(out)
@@ -109,7 +111,8 @@ func fileImports(ws *types.Workspace, file *types.File) []string {
 	}
 	var out []string
 	for _, imp := range file.AST.Imports {
-		if to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok {
+		to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
+		if ok {
 			out = append(out, to)
 		}
 	}

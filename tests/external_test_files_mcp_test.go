@@ -46,7 +46,8 @@ func TestMoveSymbol_LeavesLocalNamedLikeTheSymbolInExternalTestFile(t *testing.T
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Foo", "a", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Foo", "a", "dst")
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 

@@ -56,11 +56,12 @@ func (e *DefaultEngine) VariadicsAcrossConfigs(req VariadicsRequest) (*Variadics
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("variadics across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
@@ -188,11 +189,13 @@ func classifyVariadicCall(site analysis.CallSite, declared *gotypes.Signature) v
 	args := len(call.Args)
 	if args == 1 {
 		// f(g()) with g returning several values.
-		if tuple, ok := info.TypeOf(call.Args[0]).(*gotypes.Tuple); ok {
+		tuple, ok := info.TypeOf(call.Args[0]).(*gotypes.Tuple)
+		if ok {
 			args = tuple.Len()
 		}
 	}
-	switch passed := args - (sig.Params().Len() - 1); {
+	passed := args - (sig.Params().Len() - 1)
+	switch {
 	case passed <= 0:
 		return variadicZeroArgs
 	case passed == 1:

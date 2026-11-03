@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/token"
 	"log/slog"
@@ -79,6 +80,13 @@ func (v *View) ReleaseTypeInfo() {
 // failed, and that failure. It is known once a type-check has needed them.
 func (v *View) Approximate() (bool, error) { return v.Parser.externalFallback() }
 
+// ApproximateView is a built view whose third-party packages came from the
+// primary view, and why.
+type ApproximateView struct {
+	Config BuildConfig
+	Err    error
+}
+
 // WorkspaceSet holds one source tree and a view of it per build configuration.
 // The primary view is built at load, the others on first request.
 type WorkspaceSet struct {
@@ -118,7 +126,8 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 		tree:   tree,
 		views:  make(map[string]*View),
 	}
-	if s.primary, err = s.buildView(primary); err != nil {
+	s.primary, err = s.buildView(primary)
+	if err != nil {
 		return nil, err
 	}
 	s.views[primary.Key()] = s.primary
@@ -137,17 +146,15 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	resolver := NewSymbolResolver(ws, s.logger)
 	resolver.inspectors = s.tree.inspectors
 	for _, pkg := range ws.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			s.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
 			return nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
 		}
 	}
 
 	analyzer := NewDependencyAnalyzer(ws, s.logger)
-	if _, err := analyzer.BuildDependencyGraph(); err != nil {
-		s.logger.Error("dependency graph build failed", "err", err)
-		return nil, fmt.Errorf("failed to build dependency graph: %w", err)
-	}
+	_ = analyzer.BuildDependencyGraph()
 	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}, nil
 }
 
@@ -193,12 +200,13 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 
 func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
 	key := cfg.Key()
-	if v := s.views[key]; v != nil {
+	v := s.views[key]
+	if v != nil {
 		return v, nil
 	}
 	v, err := s.buildView(cfg)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("view locked: %w", err)
 	}
 	s.views[key] = v
 	return v, nil
@@ -217,6 +225,19 @@ func (s *WorkspaceSet) pruneLocked(configs []BuildConfig) {
 	}
 }
 
+// ApproximateViews lists the built views that are approximate. A view is known
+// to be approximate only once a type-check has needed its third-party packages.
+func (s *WorkspaceSet) ApproximateViews() []ApproximateView {
+	var out []ApproximateView
+	for _, v := range s.BuiltViews() {
+		approx, err := v.Approximate()
+		if approx {
+			out = append(out, ApproximateView{Config: v.Config, Err: err})
+		}
+	}
+	return out
+}
+
 // BuiltViews returns the views built so far that the covering still holds,
 // primary first, and drops the rest.
 func (s *WorkspaceSet) BuiltViews() []*View {
@@ -229,7 +250,8 @@ func (s *WorkspaceSet) BuiltViews() []*View {
 	configs := s.coveringLocked().Configs
 	s.pruneLocked(configs)
 	for _, cfg := range configs[1:] {
-		if v := s.views[cfg.Key()]; v != nil {
+		v := s.views[cfg.Key()]
+		if v != nil {
 			views = append(views, v)
 		}
 	}
@@ -248,26 +270,40 @@ func (s *WorkspaceSet) ViewOf(ws *types.Workspace) *View {
 	return nil
 }
 
+// ErrSkippedSource reports that SyncSource does not track the path: it is not a
+// .go file or lies in a skipped directory.
+var ErrSkippedSource = errors.New("source file is not tracked")
+
+// ErrSourceRemoved reports that SyncSource found the path missing on disk and
+// forgot it.
+var ErrSourceRemoved = errors.New("source file was removed")
+
 // SyncSource brings the shared source tree in line with path on disk: a missing
-// file is forgotten (nil result), a recorded one is re-read, a new one is
-// recorded. Views are not touched; ProjectFile applies the result to each.
+// file is forgotten (ErrSourceRemoved), a recorded one is re-read, a new one is
+// recorded. Untracked paths yield ErrSkippedSource. Views are not touched;
+// ProjectFile applies the result to each.
 func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 	if !strings.HasSuffix(path, ".go") {
-		return nil, nil
+		return nil, ErrSkippedSource
 	}
 	defer s.invalidateCovering()
 	path = absDir(path)
-	if _, err := os.Stat(path); err != nil {
+	if InSkippedDir(s.root, filepath.Dir(path)) {
+		return nil, ErrSkippedSource
+	}
+	_, err := os.Stat(path)
+	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
 		s.tree.Remove(path)
-		return nil, nil
+		return nil, ErrSourceRemoved
 	}
 
 	dir := filepath.Dir(path)
 	if !s.tree.loaded(dir) {
-		if err := s.tree.AddDir(dir); err != nil {
+		err := s.tree.AddDir(dir)
+		if err != nil {
 			return nil, err
 		}
 		return s.tree.File(path), nil

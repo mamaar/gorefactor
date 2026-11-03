@@ -18,12 +18,14 @@ func TestMoveSymbol_MethodInAnotherFileMovesWithItsType(t *testing.T) {
 	})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
-	if res := moveSymbolCall(t, sess, "T", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "T", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move T: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "func (t T) Upper() string")
 	assertFileContains(t, dir, "dst/dst.go", `"strings"`)
-	if m := fileText(t, dir, "src/m.go"); strings.Contains(m, "Upper") || strings.Contains(m, `"strings"`) {
+	m := fileText(t, dir, "src/m.go")
+	if strings.Contains(m, "Upper") || strings.Contains(m, `"strings"`) {
 		t.Errorf("method or its import left in src/m.go:\n%s", m)
 	}
 	goVets(t, dir, "")
@@ -41,7 +43,8 @@ func TestMoveSymbol_MethodsSpreadOverFilesMoveInDeterministicOrder(t *testing.T)
 	for range 2 {
 		dir := writeInlineWorkspace(t, files())
 		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
-		if res := moveSymbolCall(t, sess, "T", "src", "dst"); res.IsError {
+		res := moveSymbolCall(t, sess, "T", "src", "dst")
+		if res.IsError {
 			t.Fatalf("move T: %s", errText(res))
 		}
 		sess.Close()
@@ -68,7 +71,8 @@ func TestMoveSymbol_GenericTypeMethodInAnotherFileMoves(t *testing.T) {
 	})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
-	if res := moveSymbolCall(t, sess, "G", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "G", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move G: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "func (g *G[K]) Len() int")
@@ -82,11 +86,13 @@ func TestMoveSymbol_DocCommentOfMethodInAnotherFileTravelsWithIt(t *testing.T) {
 	})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
-	if res := moveSymbolCall(t, sess, "T", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "T", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move T: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "// Do does it.\nfunc (t T) Do() {}")
-	if m := fileText(t, dir, "src/m.go"); strings.Contains(m, "Do does it") {
+	m := fileText(t, dir, "src/m.go")
+	if strings.Contains(m, "Do does it") {
 		t.Errorf("doc left in src/m.go:\n%s", m)
 	}
 	goVets(t, dir, "")
@@ -104,7 +110,8 @@ func TestMoveSymbol_MethodInAnotherFileUsingUnexportedHelperIsRefused(t *testing
 	if !res.IsError {
 		t.Fatal("move succeeded, want refusal")
 	}
-	if msg := errText(res); !strings.Contains(msg, "T cannot move") || !strings.Contains(msg, "helper") {
+	msg := errText(res)
+	if !strings.Contains(msg, "T cannot move") || !strings.Contains(msg, "helper") {
 		t.Errorf("error = %s, want it to name T and helper", msg)
 	}
 	assertFileUnchanged(t, dir, "src/t.go", files["src/t.go"])
@@ -118,7 +125,8 @@ func TestMoveSymbol_MethodInAnotherFileUsingExportedLeftBehindNameIsQualified(t 
 	})
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
-	if res := moveSymbolCall(t, sess, "T", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "T", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move T: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "src.Helper()")
@@ -137,7 +145,8 @@ func TestMoveSymbol_MethodInInPackageTestFileIsRefusedNamingIt(t *testing.T) {
 	if !res.IsError {
 		t.Fatal("move succeeded, want refusal")
 	}
-	if msg := errText(res); !strings.Contains(msg, "Peek") || !strings.Contains(msg, "src/export_test.go:5") {
+	msg := errText(res)
+	if !strings.Contains(msg, "Peek") || !strings.Contains(msg, "src/export_test.go:5") {
 		t.Errorf("error = %s, want it to name Peek and src/export_test.go:5", msg)
 	}
 	assertFileUnchanged(t, dir, "src/t.go", files["src/t.go"])

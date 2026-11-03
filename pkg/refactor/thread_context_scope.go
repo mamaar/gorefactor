@@ -24,7 +24,6 @@ const (
 	ctxUnknown     ctxSourceKind = iota // type info missing — caller must abort, never guess
 	ctxInScope                          // a real context.Context is in scope
 	ctxFromRequest                      // derived via r.Context()
-	ctxFakeRoot                         // only a local `ctx := context.Background()/TODO()` — caller should hoist
 	ctxRootLiteral                      // a root: context.TODO() / t.Context()
 	ctxNeedsParam                       // nothing available; enclosing func must gain a param
 )
@@ -61,12 +60,14 @@ func findCtxSource(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExpr) 
 	}
 
 	for _, s := range scopes {
-		if v, ok := scopeCtxVar(s, call.Pos()); ok {
+		v, ok := scopeCtxVar(s, call.Pos())
+		if ok {
 			return ctxSource{Expr: v.Name(), Kind: ctxInScope}, true
 		}
 	}
 
-	if src, ok := requestParamCtx(pkg, fn); ok {
+	src, ok := requestParamCtx(pkg, fn)
+	if ok {
 		return src, true
 	}
 
@@ -78,8 +79,10 @@ func findCtxSource(pkg *pkgtypes.Package, fn *ast.FuncDecl, call *ast.CallExpr) 
 // variable named exactly "ctx"; failing that, the first match in s.Names()
 // order (which go/types returns sorted, so this is deterministic).
 func scopeCtxVar(s *gotypes.Scope, callPos token.Pos) (*gotypes.Var, bool) {
-	if obj := s.Lookup("ctx"); obj != nil {
-		if v, ok := acceptScopeVar(obj, callPos, analysis.IsContextType); ok {
+	obj := s.Lookup("ctx")
+	if obj != nil {
+		v, ok := acceptScopeVar(obj, callPos, analysis.IsContextType)
+		if ok {
 			return v, true
 		}
 	}
@@ -87,7 +90,8 @@ func scopeCtxVar(s *gotypes.Scope, callPos token.Pos) (*gotypes.Var, bool) {
 		if name == "ctx" {
 			continue // already tried above
 		}
-		if v, ok := acceptScopeVar(s.Lookup(name), callPos, analysis.IsContextType); ok {
+		v, ok := acceptScopeVar(s.Lookup(name), callPos, analysis.IsContextType)
+		if ok {
 			return v, true
 		}
 	}
@@ -194,7 +198,8 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 		// a generic callback) gets context.TODO() since it may run
 		// outside any traceable synchronous caller chain.
 		if pkg != nil && pkg.TypesInfo != nil && !inCleanupClosure(pkg, fn, call) {
-			if p, ok := anyTestingTBParam(pkg, lit.Type, call.Pos()); ok {
+			p, ok := anyTestingTBParam(pkg, lit.Type, call.Pos())
+			if ok {
 				return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 			}
 		}
@@ -215,7 +220,8 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 		}
 
 		if file != nil && strings.HasSuffix(file.Path, "_test.go") && fn.Name.Name == "TestMain" && pkg != nil && pkg.TypesInfo != nil {
-			if p, ok := firstParamIdent(fn.Type); ok && analysis.IsTestingM(paramType(pkg, p)) {
+			p, ok := firstParamIdent(fn.Type)
+			if ok && analysis.IsTestingM(paramType(pkg, p)) {
 				// testing.M has no Context() method.
 				return ctxSource{Expr: "context.TODO()", Kind: ctxRootLiteral}, true
 			}
@@ -223,7 +229,8 @@ func classifyRoot(pkg *pkgtypes.Package, file *pkgtypes.File, fn *ast.FuncDecl, 
 	}
 
 	if pkg != nil && pkg.TypesInfo != nil {
-		if p, ok := anyTestingTBParam(pkg, fn.Type, call.Pos()); ok && !cleanupHelper {
+		p, ok := anyTestingTBParam(pkg, fn.Type, call.Pos())
+		if ok && !cleanupHelper {
 			return ctxSource{Expr: p.Name + ".Context()", Kind: ctxRootLiteral}, true
 		}
 		if file != nil && isTestDecl(file, fn) && hasTestingTBParam(pkg, fn.Type) {
@@ -365,7 +372,8 @@ func scopeAt(pkg *pkgtypes.Package, pos token.Pos) (pkgScope, inner *gotypes.Sco
 			continue
 		}
 		pkgScope = tp.Scope()
-		if inner = pkgScope.Innermost(pos); inner != nil {
+		inner = pkgScope.Innermost(pos)
+		if inner != nil {
 			return pkgScope, inner
 		}
 	}

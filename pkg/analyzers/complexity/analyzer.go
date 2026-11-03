@@ -143,7 +143,8 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 		m.CyclomaticComplexity++
 		m.CognitiveComplexity += cognitiveWeight(depth)
 		if stmt.Else != nil {
-			if _, ok := stmt.Else.(*ast.IfStmt); !ok {
+			_, ok := stmt.Else.(*ast.IfStmt)
+			if !ok {
 				m.CyclomaticComplexity++
 			}
 		}
@@ -152,7 +153,8 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 		}
 		walkWithDepth(stmt.Body, m, depth+1)
 		if stmt.Else != nil {
-			if _, ok := stmt.Else.(*ast.IfStmt); ok {
+			_, ok := stmt.Else.(*ast.IfStmt)
+			if ok {
 				walkWithDepth(stmt.Else, m, depth)
 			} else {
 				walkWithDepth(stmt.Else, m, depth+1)
@@ -175,10 +177,12 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 			m.CyclomaticComplexity += caseCount
 			m.CognitiveComplexity += cognitiveWeight(depth)
 			for _, s := range stmt.Body.List {
-				if cc, ok := s.(*ast.CaseClause); ok {
-					for _, child := range cc.Body {
-						walkWithDepth(child, m, depth+1)
-					}
+				cc, ok := s.(*ast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, child := range cc.Body {
+					walkWithDepth(child, m, depth+1)
 				}
 			}
 		}
@@ -189,10 +193,12 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 			m.CyclomaticComplexity += caseCount
 			m.CognitiveComplexity += cognitiveWeight(depth)
 			for _, s := range stmt.Body.List {
-				if cc, ok := s.(*ast.CaseClause); ok {
-					for _, child := range cc.Body {
-						walkWithDepth(child, m, depth+1)
-					}
+				cc, ok := s.(*ast.CaseClause)
+				if !ok {
+					continue
+				}
+				for _, child := range cc.Body {
+					walkWithDepth(child, m, depth+1)
 				}
 			}
 		}
@@ -203,10 +209,12 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 			m.CyclomaticComplexity += caseCount
 			m.CognitiveComplexity += cognitiveWeight(depth)
 			for _, s := range stmt.Body.List {
-				if cc, ok := s.(*ast.CommClause); ok {
-					for _, child := range cc.Body {
-						walkWithDepth(child, m, depth+1)
-					}
+				cc, ok := s.(*ast.CommClause)
+				if !ok {
+					continue
+				}
+				for _, child := range cc.Body {
+					walkWithDepth(child, m, depth+1)
 				}
 			}
 		}
@@ -236,7 +244,8 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 	case *ast.AssignStmt:
 		if stmt.Tok == token.DEFINE {
 			for _, expr := range stmt.Lhs {
-				if ident, ok := expr.(*ast.Ident); ok && ident.Name != "_" {
+				ident, ok := expr.(*ast.Ident)
+				if ok && ident.Name != "_" {
 					m.LocalVariables++
 				}
 			}
@@ -248,7 +257,8 @@ func walkWithDepth(node ast.Node, m *Metrics, depth int) {
 	case *ast.GenDecl:
 		if stmt.Tok == token.VAR {
 			for _, spec := range stmt.Specs {
-				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if ok {
 					m.LocalVariables += len(valueSpec.Names)
 				}
 			}
@@ -277,12 +287,14 @@ func countSwitchCases(body *ast.BlockStmt) int {
 	hasDefault := false
 
 	for _, stmt := range body.List {
-		if caseClause, ok := stmt.(*ast.CaseClause); ok {
-			if caseClause.List == nil {
-				hasDefault = true
-			} else {
-				count++
-			}
+		caseClause, ok := stmt.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		if caseClause.List == nil {
+			hasDefault = true
+		} else {
+			count++
 		}
 	}
 
@@ -296,16 +308,12 @@ func countSwitchCases(body *ast.BlockStmt) int {
 func countSelectCases(body *ast.BlockStmt) int {
 	count := 0
 	for _, stmt := range body.List {
-		if _, ok := stmt.(*ast.CommClause); ok {
+		_, ok := stmt.(*ast.CommClause)
+		if ok {
 			count++
 		}
 	}
 	return count
-}
-
-// ClassifyComplexity classifies a cyclomatic complexity value into a level string.
-func ClassifyComplexity(complexity int) string {
-	return classifyComplexity(complexity)
 }
 
 func classifyComplexity(complexity int) string {

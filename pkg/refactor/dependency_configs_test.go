@@ -44,7 +44,8 @@ func TestMergeCycles(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := mergeCycles(configs, tc.perView); !reflect.DeepEqual(got, tc.want) {
+			got := mergeCycles(configs, tc.perView)
+			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("mergeCycles = %+v, want %+v", got, tc.want)
 			}
 		})

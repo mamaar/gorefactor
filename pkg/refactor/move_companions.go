@@ -171,10 +171,12 @@ func returnsType(fn *ast.FuncDecl, typeName string) bool {
 	}
 	for _, field := range fn.Type.Results.List {
 		expr := field.Type
-		if star, ok := expr.(*ast.StarExpr); ok {
+		star, ok := expr.(*ast.StarExpr)
+		if ok {
 			expr = star.X
 		}
-		if ident, ok := expr.(*ast.Ident); ok && ident.Name == typeName {
+		ident, ok := expr.(*ast.Ident)
+		if ok && ident.Name == typeName {
 			return true
 		}
 	}
@@ -281,25 +283,27 @@ func (op *MoveSymbolOperation) resolveCompanionSymbols(resolver *analysis.Symbol
 func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, moving []*movingSymbol) error {
 	for _, m := range moving {
 		file := m.file
-		if m.sym.Kind != types.TypeSymbol || file == nil || file.AST == nil {
+		if m.sym.Kind != types.TypeSymbol || file == nil || file.AST == nil || op.staysInPackage(ws, m.pkg) {
 			continue
 		}
 		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
-		if stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving); len(stranded) > 0 {
-			return &groupMemberError{index: m.owner, err: &types.RefactorError{
-				Type: types.VisibilityViolation,
-				Message: fmt.Sprintf(
-					"moving %s would strand code that constructs it via unexported fields (%s) and cannot be safely auto-moved: %s\n"+
-						"Refactor these to only set exported fields (or move them manually alongside %s first), then retry.",
-					m.sym.Name, joinFieldNames(unexportedFields), joinLocations(stranded), m.sym.Name,
-				),
-			}}
+		stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving)
+		if len(stranded) <= 0 {
+			continue
 		}
+		return &groupMemberError{index: m.owner, err: &types.RefactorError{
+			Type: types.VisibilityViolation,
+			Message: fmt.Sprintf(
+				"moving %s would strand code that constructs it via unexported fields (%s) and cannot be safely auto-moved: %s\n"+
+					"Refactor these to only set exported fields (or move them manually alongside %s first), then retry.",
+				m.sym.Name, joinFieldNames(unexportedFields), joinLocations(stranded), m.sym.Name,
+			),
+		}}
 	}
 
 	checked := make(map[*types.Package]bool)
 	for _, m := range moving {
-		if checked[m.pkg] || m.pkg.TypesInfo == nil || m.pkg.TypesPkg == nil {
+		if checked[m.pkg] || m.pkg.TypesInfo == nil || m.pkg.TypesPkg == nil || op.staysInPackage(ws, m.pkg) {
 			continue
 		}
 		checked[m.pkg] = true
@@ -318,8 +322,9 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		if len(found) > 0 {
 			return found[firstStrandedUse(found)].error(m.pkg.Path)
 		}
-		if err := checkSplitInterfaceImplementers(ws, m.pkg, moving); err != nil {
-			return err
+		err := checkSplitInterfaceImplementers(ws, m.pkg, moving)
+		if err != nil {
+			return fmt.Errorf("check for stranded references: %w", err)
 		}
 	}
 	return nil
@@ -341,7 +346,8 @@ func checkSplitInterfaceImplementers(ws *types.Workspace, pkg *types.Package, mo
 			continue
 		}
 		iface, ok := ifaceObj.Type().Underlying().(*gotypes.Interface)
-		if named, isNamed := ifaceObj.Type().(*gotypes.Named); !ok || !isNamed || named.TypeParams().Len() > 0 {
+		named, isNamed := ifaceObj.Type().(*gotypes.Named)
+		if !ok || !isNamed || named.TypeParams().Len() > 0 {
 			continue
 		}
 		method := firstUnexportedMethod(iface, pkg.TypesPkg)

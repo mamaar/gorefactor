@@ -13,7 +13,7 @@ const shaperSrc = "package src\n\ntype shaper interface{ area() int }\n\ntype Sq
 
 func assertMoveRefused(t *testing.T, dir, src, symbol string, want ...string) {
 	t.Helper()
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")
@@ -54,7 +54,8 @@ func TestMoveSymbol_MovesTypeImplementingOnlyExportedMethodInterface(t *testing.
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Sq", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Sq", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Sq: %s", errText(res))
 	}
 
@@ -68,7 +69,8 @@ func TestMoveSymbol_MovesTypeThatDoesNotImplementTheUnexportedMethodInterface(t 
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Circle", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Circle", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Circle: %s", errText(res))
 	}
 

@@ -141,12 +141,13 @@ func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
 			}
 			newErrors = append(newErrors, e)
 		}
-		if c.result.Skipped != "" {
-			// PlanResult has no field for an unverified plan; a site without a file is the closest.
-			plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
-				Reason: "the plan could not be type-checked and is unverified: " + c.result.Skipped,
-			})
+		if c.result.Skipped == "" {
+			continue
 		}
+		// PlanResult has no field for an unverified plan; a site without a file is the closest.
+		plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
+			Reason: "the plan could not be type-checked and is unverified: " + c.result.Skipped,
+		})
 	}
 	if len(newErrors) == 0 {
 		return
@@ -165,7 +166,8 @@ func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
 // SymbolNotFound error.
 func (p *changeSignaturePlanner) requestedIn(ws *types.Workspace) (*funcTarget, error) {
 	op := p.operation(p.req.FunctionName, p.req.SourceFile)
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("change signature operation validation failed: %w", err)
 	}
 	return &funcTarget{name: op.FunctionName, file: op.SourceFile}, nil
@@ -201,7 +203,8 @@ func (p *changeSignaturePlanner) run(r *signatureRun, t funcTarget, requested bo
 	}
 	for _, d := range altered {
 		_, seen := p.before[d.Key]
-		if decl, ok := r.decls[d.Key]; ok && !seen {
+		decl, ok := r.decls[d.Key]
+		if ok && !seen {
 			p.before[d.Key] = signatureOf(decl.ft)
 		}
 	}
@@ -251,7 +254,8 @@ func (p *changeSignaturePlanner) complete(r *signatureRun) {
 	typeTexts = append(typeTexts, p.req.NewReturns...)
 	var paths []string
 	for _, q := range typeQualifiers(typeTexts) {
-		if ipath := importPathFor(r.view.Workspace, q, p.req.SourceFile); ipath != "" && !slices.Contains(paths, ipath) {
+		ipath := importPathFor(r.view.Workspace, q, p.req.SourceFile)
+		if ipath != "" && !slices.Contains(paths, ipath) {
 			paths = append(paths, ipath)
 		}
 	}
@@ -262,7 +266,8 @@ func (p *changeSignaturePlanner) complete(r *signatureRun) {
 func typeQualifiers(typeTexts []string) []string {
 	var c qualifierCollector
 	for _, text := range typeTexts {
-		if expr, err := parser.ParseExpr(text); err == nil {
+		expr, err := parser.ParseExpr(text)
+		if err == nil {
 			ast.Inspect(expr, c.visit)
 		}
 	}
@@ -273,8 +278,10 @@ func typeQualifiers(typeTexts []string) []string {
 type qualifierCollector struct{ names []string }
 
 func (c *qualifierCollector) visit(n ast.Node) bool {
-	if sel, ok := n.(*ast.SelectorExpr); ok {
-		if id, ok := sel.X.(*ast.Ident); ok && !slices.Contains(c.names, id.Name) {
+	sel, ok := n.(*ast.SelectorExpr)
+	if ok {
+		id, ok := sel.X.(*ast.Ident)
+		if ok && !slices.Contains(c.names, id.Name) {
 			c.names = append(c.names, id.Name)
 		}
 	}
@@ -313,7 +320,8 @@ func importPathFor(ws *types.Workspace, qualifier, preferFile string) string {
 		}
 	}
 	if len(found) == 0 {
-		if pkg, err := build.Default.Import(qualifier, "", build.FindOnly); err == nil && pkg.Goroot {
+		pkg, err := build.Default.Import(qualifier, "", build.FindOnly)
+		if err == nil && pkg.Goroot {
 			return qualifier
 		}
 	}

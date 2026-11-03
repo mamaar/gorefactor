@@ -38,7 +38,8 @@ func TestMoveSymbol_UpdatesReferencesInPackagesReachedDuringAnotherPackagesCheck
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Foo", "a", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Foo", "a", "dst")
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 
@@ -68,7 +69,8 @@ func TestUnused_DoesNotListSymbolUsedFromPackagesReachedDuringAnotherPackagesChe
 
 	out := callJSON(t, sess, "unused", map[string]any{"include_exported": true})
 
-	if text, _ := json.Marshal(out["unused_symbols"]); strings.Contains(string(text), `"Foo"`) {
+	text, _ := json.Marshal(out["unused_symbols"])
+	if strings.Contains(string(text), `"Foo"`) {
 		t.Errorf("unused lists Foo, which the live C in c uses: %s", text)
 	}
 }

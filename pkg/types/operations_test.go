@@ -198,7 +198,6 @@ func TestImpactAnalysis(t *testing.T) {
 		AffectedFiles:    []string{"/test/file1.go", "/test/file2.go"},
 		AffectedSymbols:  []*Symbol{symbol},
 		PotentialIssues:  make([]Issue, 0),
-		ImportChanges:    make([]ImportChange, 0),
 	}
 
 	if len(impact.AffectedPackages) != 2 {
@@ -290,51 +289,6 @@ func TestIssueSeverity(t *testing.T) {
 	}
 }
 
-func TestImportChange(t *testing.T) {
-	importChange := ImportChange{
-		File:      "/test/file.go",
-		OldImport: "old/package",
-		NewImport: "new/package",
-		Action:    UpdateImport,
-	}
-
-	if importChange.File != "/test/file.go" {
-		t.Errorf("Expected File to be '/test/file.go', got '%s'", importChange.File)
-	}
-
-	if importChange.OldImport != "old/package" {
-		t.Errorf("Expected OldImport to be 'old/package', got '%s'", importChange.OldImport)
-	}
-
-	if importChange.NewImport != "new/package" {
-		t.Errorf("Expected NewImport to be 'new/package', got '%s'", importChange.NewImport)
-	}
-
-	if importChange.Action != UpdateImport {
-		t.Errorf("Expected Action to be UpdateImport, got %v", importChange.Action)
-	}
-}
-
-func TestImportAction(t *testing.T) {
-	testCases := []struct {
-		name     string
-		action   ImportAction
-		expected ImportAction
-	}{
-		{"AddImport", AddImport, 0},
-		{"RemoveImport", RemoveImport, 1},
-		{"UpdateImport", UpdateImport, 2},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.action != tc.expected {
-				t.Errorf("Expected %s to be %d, got %d", tc.name, tc.expected, tc.action)
-			}
-		})
-	}
-}
-
 // Mock implementation of Operation interface for testing
 type MockOperation struct {
 	opType      OperationType
@@ -372,7 +326,8 @@ func TestMockOperation(t *testing.T) {
 	}
 
 	// Test interface methods
-	if err := op.Validate(nil); err != nil {
+	err := op.Validate(nil)
+	if err != nil {
 		t.Errorf("Expected Validate to return nil, got %v", err)
 	}
 

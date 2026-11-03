@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -149,7 +150,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 func planRenameField(state *MCPServer, in RenameFieldInput) (*types.RefactoringPlan, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan rename field: %w", err)
 	}
 	pkgPath := in.PackagePath
 	if pkgPath != "" {
@@ -168,7 +169,7 @@ func planRenameField(state *MCPServer, in RenameFieldInput) (*types.RefactoringP
 func planRenameSymbol(state *MCPServer, in RenameSymbolInput) (*types.RefactoringPlan, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan rename symbol: %w", err)
 	}
 	scope := types.WorkspaceScope
 	pkg := in.Package
@@ -189,7 +190,7 @@ func planRenameSymbol(state *MCPServer, in RenameSymbolInput) (*types.Refactorin
 func planRenameMethod(state *MCPServer, in RenameMethodInput) (*types.RefactoringPlan, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan rename method: %w", err)
 	}
 	pkgPath := in.PackagePath
 	if pkgPath != "" {

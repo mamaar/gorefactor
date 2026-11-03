@@ -87,7 +87,8 @@ func TestComposeIfInitThenFlatten(t *testing.T) {
 			}
 		}
 
-		if got := maxIndent(body); got > 2 {
+		got := maxIndent(body)
+		if got > 2 {
 			t.Errorf("expected every statement at one level of indentation, got %d:\n%s", got-1, body)
 		}
 		if strings.Contains(body, "else") {
@@ -126,7 +127,8 @@ func mustBuild(t *testing.T, dir string) {
 
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("the rewritten fixture does not build:\n%s", out)
 	}
 }
@@ -142,7 +144,8 @@ func reasonsIn(result map[string]any) string {
 			if !ok {
 				continue
 			}
-			if reason, _ := m["reason"].(string); reason != "" {
+			reason, _ := m["reason"].(string)
+			if reason != "" {
 				reasons = append(reasons, reason)
 			}
 		}

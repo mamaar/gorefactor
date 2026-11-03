@@ -72,7 +72,8 @@ func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.Assi
 	ifs := map[token.Pos]inspector.Cursor{}
 	var stray []returnRefusal
 	for _, r := range reads {
-		if c, ok := nilCheckIf(info, r.Read.Cursor); ok {
+		c, ok := nilCheckIf(info, r.Read.Cursor)
+		if ok {
 			ifs[c.Node().Pos()] = c
 		} else {
 			stray = append(stray, r)
@@ -184,7 +185,8 @@ func (f *errFold) evalChain(n *ast.BinaryExpr) (truth, [][2]token.Pos, string) {
 // pure reports whether evaluating e can neither panic nor act: it is built
 // from identifiers, literals and constants with comparisons and logical operators.
 func (f *errFold) pure(e ast.Expr) bool {
-	if tv, ok := f.info.Types[e]; ok && tv.Value != nil {
+	tv, ok := f.info.Types[e]
+	if ok && tv.Value != nil {
 		return true
 	}
 	switch e := e.(type) {
@@ -255,7 +257,8 @@ func (f *errFold) foldIf(c inspector.Cursor) {
 		f.dropIf(ifs, parent, isElseIf)
 		return
 	}
-	if inner, ok := keep.(*ast.IfStmt); ok {
+	inner, ok := keep.(*ast.IfStmt)
+	if ok {
 		f.promoted[inner] = !isElseIf
 	}
 	f.unwrapIf(ifs, keep, isElseIf)
@@ -291,7 +294,7 @@ func (f *errFold) checkBreaks(c inspector.Cursor, gone ast.Node) {
 			continue
 		}
 		other := slices.ContainsFunc(leavingBreaks(loop.Body), func(o *ast.BranchStmt) bool {
-			return (o.Label == nil || o.Label.Name == label) && !(gone.Pos() <= o.Pos() && o.Pos() < gone.End())
+			return (o.Label == nil || o.Label.Name == label) && (gone.Pos() > o.Pos() || o.Pos() >= gone.End())
 		})
 		if !other {
 			f.refusal(b.Pos(), "folding the nil check would remove the only break of an endless loop, leaving the code after it unreachable")
@@ -304,7 +307,8 @@ func (f *errFold) checkBreaks(c inspector.Cursor, gone ast.Node) {
 func (f *errFold) breakTarget(c inspector.Cursor, b *ast.BranchStmt) (*ast.ForStmt, string) {
 	for enc := range c.Enclosing((*ast.ForStmt)(nil), (*ast.RangeStmt)(nil), (*ast.SwitchStmt)(nil), (*ast.TypeSwitchStmt)(nil), (*ast.SelectStmt)(nil), (*ast.FuncLit)(nil)) {
 		label := ""
-		if l, ok := enc.Parent().Node().(*ast.LabeledStmt); ok {
+		l, ok := enc.Parent().Node().(*ast.LabeledStmt)
+		if ok {
 			label = l.Label.Name
 		}
 		if b.Label != nil && b.Label.Name != label {
@@ -341,7 +345,8 @@ func leavingBreaks(n ast.Node) []*ast.BranchStmt {
 		if breakable(x) {
 			nested++
 		}
-		if b, ok := x.(*ast.BranchStmt); ok && b.Tok == token.BREAK && (b.Label != nil || nested == 0) {
+		b, ok := x.(*ast.BranchStmt)
+		if ok && b.Tok == token.BREAK && (b.Label != nil || nested == 0) {
 			out = append(out, b)
 		}
 		return true
@@ -367,7 +372,8 @@ func (f *errFold) dropIf(ifs, parent *ast.IfStmt, isElseIf bool) {
 func (f *errFold) unwrapIf(ifs *ast.IfStmt, keep ast.Stmt, isElseIf bool) {
 	wrap := ifs.Init != nil && f.initDefines(ifs.Init)
 	from, to := keep.Pos(), keep.End() // retained source
-	if block, ok := keep.(*ast.BlockStmt); ok && !isElseIf && !declaresNames(block) {
+	block, ok := keep.(*ast.BlockStmt)
+	if ok && !isElseIf && !declaresNames(block) {
 		from, to = block.Lbrace+1, block.Rbrace
 	}
 	strip := from != keep.Pos()
@@ -400,7 +406,8 @@ func (f *errFold) initDefines(init ast.Stmt) bool {
 		return false
 	}
 	for i, l := range as.Lhs {
-		if id, ok := l.(*ast.Ident); ok && id.Name != "_" && (as != f.assign || i != f.idx) {
+		id, ok := l.(*ast.Ident)
+		if ok && id.Name != "_" && (as != f.assign || i != f.idx) {
 			return true
 		}
 	}
@@ -440,7 +447,8 @@ func hasFollowingStmt(c inspector.Cursor) bool {
 			return false
 		}
 		block := c.Parent()
-		if k := block.ParentEdgeKind(); k != edge.BlockStmt_List && k != edge.CaseClause_Body && k != edge.CommClause_Body {
+		k := block.ParentEdgeKind()
+		if k != edge.BlockStmt_List && k != edge.CaseClause_Body && k != edge.CommClause_Body {
 			return false
 		}
 		c = block
@@ -453,7 +461,8 @@ func mergeTouching(edits []foldEdit) []foldEdit {
 	slices.SortFunc(edits, func(a, b foldEdit) int { return int(a.Start) - int(b.Start) })
 	var out []foldEdit
 	for _, e := range edits {
-		if n := len(out); n > 0 && out[n-1].End == e.Start && out[n-1].Text == "" && e.Text == "" {
+		n := len(out)
+		if n > 0 && out[n-1].End == e.Start && out[n-1].Text == "" && e.Text == "" {
 			out[n-1].End = e.End
 			out[n-1].Lines = out[n-1].Lines || e.Lines
 			continue
@@ -490,13 +499,15 @@ func (f *errFold) checkLastUses(site analysis.CallSite) {
 		case *ast.AssignStmt:
 			if n.Tok == token.ASSIGN {
 				for _, l := range n.Lhs {
-					if id, ok := l.(*ast.Ident); ok {
+					id, ok := l.(*ast.Ident)
+					if ok {
 						written[id] = true
 					}
 				}
 			}
 		case *ast.IncDecStmt:
-			if id, ok := n.X.(*ast.Ident); ok {
+			id, ok := n.X.(*ast.Ident)
+			if ok {
 				written[id] = true
 			}
 		case *ast.Ident:

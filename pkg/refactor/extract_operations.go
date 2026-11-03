@@ -1,10 +1,9 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
-	"go/parser"
-	"go/token"
 	gotypes "go/types"
 	"io"
 	"log/slog"
@@ -58,30 +57,15 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	// Check if source file exists
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		// Try exact match first
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			break
-		}
-		// Try filepath base match and full path match
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-	if sourceFile == nil {
+	_, _, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return err
 	}
 
 	// Validate method name is a valid Go identifier
@@ -96,20 +80,17 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			return file, pkg, nil
-		}
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				return file, pkg, nil
-			}
+	file, pkg, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
+		return nil, nil, &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
-	return nil, nil, &types.RefactorError{
-		Type:    types.FileSystemError,
-		Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve source file: %w", err)
 	}
+	return file, pkg, nil
 }
 
 // resolveReceiver decides what the extracted method's receiver is.
@@ -134,7 +115,8 @@ func (op *ExtractMethodOperation) resolveReceiver(an *extractsig.Analysis) (*ext
 	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 || fn.Recv.List[0].Names[0].Name == "_" {
 		return nil, fmt.Errorf("no value of type %s is available at the call site: the block captures none and the enclosing function has no named receiver", op.TargetStruct)
 	}
-	if base := receiverBaseTypeName(fn.Recv.List[0].Type); base != op.TargetStruct {
+	base := receiverBaseTypeName(fn.Recv.List[0].Type)
+	if base != op.TargetStruct {
 		return nil, fmt.Errorf("the enclosing function's receiver has type %s, not %s, so the new method could not be called there", base, op.TargetStruct)
 	}
 	recvName := fn.Recv.List[0].Names[0].Name
@@ -164,18 +146,20 @@ func receiverBaseTypeName(expr ast.Expr) string {
 
 func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	defer func() {
-		if r := recover(); r != nil {
-			logFile, _ := os.Create("/tmp/gorefactor-panic.log")
-			if logFile != nil {
-				_, _ = fmt.Fprintf(logFile, "PANIC in ExtractMethodOperation.Execute: %v\n", r)
-				_, _ = fmt.Fprintf(logFile, "SourceFile: %s\n", op.SourceFile)
-				_, _ = fmt.Fprintf(logFile, "StartLine: %d, EndLine: %d\n", op.StartLine, op.EndLine)
-				_, _ = fmt.Fprintf(logFile, "NewMethodName: %s\n", op.NewMethodName)
-				_, _ = fmt.Fprintf(logFile, "TargetStruct: %s\n", op.TargetStruct)
-				_ = logFile.Close()
-			}
-			panic(fmt.Sprintf("ExtractMethodOperation panic: %v", r))
+		r := recover()
+		if r == nil {
+			return
 		}
+		logFile, _ := os.Create("/tmp/gorefactor-panic.log")
+		if logFile != nil {
+			_, _ = fmt.Fprintf(logFile, "PANIC in ExtractMethodOperation.Execute: %v\n", r)
+			_, _ = fmt.Fprintf(logFile, "SourceFile: %s\n", op.SourceFile)
+			_, _ = fmt.Fprintf(logFile, "StartLine: %d, EndLine: %d\n", op.StartLine, op.EndLine)
+			_, _ = fmt.Fprintf(logFile, "NewMethodName: %s\n", op.NewMethodName)
+			_, _ = fmt.Fprintf(logFile, "TargetStruct: %s\n", op.TargetStruct)
+			_ = logFile.Close()
+		}
+		panic(fmt.Sprintf("ExtractMethodOperation panic: %v", r))
 	}()
 
 	sourceFile, sourcePackage, err := op.resolveSourceFile(ws)
@@ -276,7 +260,8 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	if _, _, err := op.resolveSourceFile(ws); err != nil {
+	_, _, err := op.resolveSourceFile(ws)
+	if err != nil {
 		return err
 	}
 
@@ -290,44 +275,18 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
-// resolveSourceFile locates op.SourceFile in the workspace, preferring the
-// root package and accepting an exact key, a base name, a workspace-relative
-// path or an absolute path.
 func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
-	match := func(pkg *types.Package) (*types.File, bool) {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			return file, true
-		}
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				return file, true
-			}
-			if file.Path == filepath.Clean(op.SourceFile) {
-				return file, true
-			}
-			if rel, err := filepath.Rel(ws.RootPath, file.Path); err == nil {
-				if rel == op.SourceFile || rel == filepath.Clean(op.SourceFile) {
-					return file, true
-				}
-			}
-		}
-		return nil, false
-	}
-
-	if rootPkg, exists := ws.Packages[ws.RootPath]; exists {
-		if file, ok := match(rootPkg); ok {
-			return file, rootPkg, nil
+	file, pkg, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
+		return nil, nil, &types.RefactorError{
+			Type:    types.FileSystemError,
+			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
-	for _, pkg := range ws.Packages {
-		if file, ok := match(pkg); ok {
-			return file, pkg, nil
-		}
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve source file: %w", err)
 	}
-	return nil, nil, &types.RefactorError{
-		Type:    types.FileSystemError,
-		Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-	}
+	return file, pkg, nil
 }
 
 func (op *ExtractFunctionOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
@@ -393,6 +352,53 @@ func (op *ExtractInterfaceOperation) Type() types.OperationType {
 }
 
 func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
+	err := op.checkRequestFields()
+	if err != nil {
+		return err
+	}
+
+	// Find the source struct
+	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var structSymbol *types.Symbol
+
+	for _, pkg := range ws.Packages {
+		if pkg.Symbols == nil {
+			continue
+		}
+		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if symbol.Kind == types.TypeSymbol {
+			structSymbol = symbol
+			break
+		}
+	}
+
+	if structSymbol == nil {
+		return &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("struct not found: %s", op.SourceStruct),
+		}
+	}
+
+	// Validate that all specified methods exist on the struct
+	// Find the package containing the struct
+	sourcePackage, err2 := op.findStructPackage(ws, resolver)
+	if err2 != nil {
+		return err2
+	}
+
+	// Check methods in the package's symbol table
+	err = op.checkMethodsExist(sourcePackage)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (op *ExtractInterfaceOperation) checkRequestFields() error {
 	if op.SourceStruct == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -417,54 +423,39 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("invalid Go identifier: %s", op.InterfaceName),
 		}
 	}
+	return nil
+}
 
-	// Find the source struct
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	var structSymbol *types.Symbol
-
-	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			if symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
-				if symbol.Kind == types.TypeSymbol {
-					structSymbol = symbol
-					break
-				}
-			}
-		}
-	}
-
-	if structSymbol == nil {
-		return &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: fmt.Sprintf("struct not found: %s", op.SourceStruct),
-		}
-	}
-
-	// Validate that all specified methods exist on the struct
-	// Find the package containing the struct
+func (op *ExtractInterfaceOperation) findStructPackage(ws *types.Workspace, resolver *analysis.SymbolResolver) (*types.Package, error) {
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			if symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
-				if symbol.Kind == types.TypeSymbol {
-					sourcePackage = pkg
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
+		}
+		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if symbol.Kind == types.TypeSymbol {
+			sourcePackage = pkg
+			break
 		}
 	}
 
 	if sourcePackage == nil {
-		return &types.RefactorError{
+		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("package containing struct %s not found", op.SourceStruct),
 		}
 	}
+	return sourcePackage, nil
+}
 
-	// Check methods in the package's symbol table
+func (op *ExtractInterfaceOperation) checkMethodsExist(sourcePackage *types.Package) error {
 	for _, methodName := range op.Methods {
 		found := false
-		if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
+		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
+		if exists {
 			for _, method := range methods {
 				if method.Name == methodName {
 					found = true
@@ -472,14 +463,14 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 				}
 			}
 		}
-		if !found {
-			return &types.RefactorError{
-				Type:    types.SymbolNotFound,
-				Message: fmt.Sprintf("method %s not found on struct %s", methodName, op.SourceStruct),
-			}
+		if found {
+			continue
+		}
+		return &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("method %s not found on struct %s", methodName, op.SourceStruct),
 		}
 	}
-
 	return nil
 }
 
@@ -490,15 +481,19 @@ func (op *ExtractInterfaceOperation) Execute(ws *types.Workspace) (*types.Refact
 	var sourcePackage *types.Package
 
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			if symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
-				if symbol.Kind == types.TypeSymbol {
-					structSymbol = symbol
-					sourcePackage = pkg
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
 		}
+		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if symbol.Kind != types.TypeSymbol {
+			continue
+		}
+		structSymbol = symbol
+		sourcePackage = pkg
+		break
 	}
 
 	if structSymbol == nil {
@@ -509,7 +504,7 @@ func (op *ExtractInterfaceOperation) Execute(ws *types.Workspace) (*types.Refact
 	}
 
 	// Generate interface definition
-	interfaceCode := op.generateInterface(structSymbol, sourcePackage)
+	interfaceCode := op.generateInterface(sourcePackage)
 
 	// Determine target file (absolute path so the serializer can write it)
 	targetFile := filepath.Join(sourcePackage.Dir, op.getTargetFileName())
@@ -553,20 +548,23 @@ func (op *ExtractInterfaceOperation) Description() string {
 		op.InterfaceName, op.SourceStruct, strings.Join(op.Methods, " "), op.TargetPackage)
 }
 
-func (op *ExtractInterfaceOperation) generateInterface(structSymbol *types.Symbol, sourcePackage *types.Package) string {
+func (op *ExtractInterfaceOperation) generateInterface(sourcePackage *types.Package) string {
 	var interfaceCode strings.Builder
 	fmt.Fprintf(&interfaceCode, "type %s interface {\n", op.InterfaceName)
 
 	for _, methodName := range op.Methods {
-		if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
-			for _, method := range methods {
-				if method.Name == methodName {
-					// Extract method signature without receiver
-					signature := op.extractMethodSignature(method.Signature)
-					fmt.Fprintf(&interfaceCode, "\t%s%s\n", methodName, signature)
-					break
-				}
+		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
+		if !exists {
+			continue
+		}
+		for _, method := range methods {
+			if method.Name != methodName {
+				continue
 			}
+			// Extract method signature without receiver
+			signature := op.extractMethodSignature(method.Signature)
+			fmt.Fprintf(&interfaceCode, "\t%s%s\n", methodName, signature)
+			break
 		}
 	}
 
@@ -712,26 +710,19 @@ func (op *ExtractVariableOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	// Find the source file
-	var sourceFile *types.File
-	var sourcePackage *types.Package
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			sourcePackage = pkg
-			break
-		}
-	}
-
-	if sourceFile == nil {
+	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolve absolute path for the serializer
-	absPath := filepath.Join(sourcePackage.Dir, op.SourceFile)
+	absPath := sourceFile.Path
 
 	// Find insertion point for variable declaration (before the expression usage)
 	insertionPoint := op.findVariableInsertionPoint(string(sourceFile.OriginalContent), op.StartLine)
@@ -802,289 +793,6 @@ func (op *ExtractVariableOperation) findExpressionStart(content string, line int
 func (op *ExtractVariableOperation) findExpressionEnd(content string, line int, expression string) int {
 	start := op.findExpressionStart(content, line, expression)
 	return start + len(expression)
-}
-
-// ExtractBlockOperation implements extracting a function from a block (auto-detects boundaries)
-type ExtractBlockOperation struct {
-	SourceFile      string
-	Position        int // Line or character position within the target block
-	NewFunctionName string
-	// Logger and Parser are forwarded to the ExtractFunctionOperation this
-	// delegates to; without the parser that operation cannot type-check the
-	// source package and refuses.
-	Logger *slog.Logger
-	Parser *analysis.GoParser
-}
-
-func (op *ExtractBlockOperation) Type() types.OperationType {
-	return types.ExtractOperation
-}
-
-func (op *ExtractBlockOperation) Validate(ws *types.Workspace) error {
-	if op.SourceFile == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "source file cannot be empty",
-		}
-	}
-	if op.NewFunctionName == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "function name cannot be empty",
-		}
-	}
-	if op.Position < 1 {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "position must be positive",
-		}
-	}
-
-	// Check if source file exists
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			break
-		}
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-	if sourceFile == nil {
-		return &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-		}
-	}
-
-	if !isValidGoIdentifierExtract(op.NewFunctionName) {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("invalid Go identifier: %s", op.NewFunctionName),
-		}
-	}
-
-	return nil
-}
-
-func (op *ExtractBlockOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	// Find the source file - prioritize files in workspace root
-	var sourceFile *types.File
-	var candidates []*types.File
-
-	// Collect all candidates
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			candidates = append(candidates, file)
-		}
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				candidates = append(candidates, file)
-			}
-		}
-	}
-
-	// Prefer files in the workspace root package
-	for _, candidate := range candidates {
-		if filepath.Dir(candidate.Path) == ws.RootPath {
-			sourceFile = candidate
-			break
-		}
-	}
-
-	// Fallback to first candidate if no root file found
-	if sourceFile == nil && len(candidates) > 0 {
-		sourceFile = candidates[0]
-	}
-
-	if sourceFile == nil {
-		return nil, &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
-		}
-	}
-
-	// Parse the file to get the AST
-	fset := token.NewFileSet()
-	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
-	if err != nil {
-		return nil, &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to parse source file: %v", err),
-		}
-	}
-
-	// Find the block containing the specified position
-	blockInfo, err := op.findBlockAtPosition(astFile, fset, string(sourceFile.OriginalContent), op.Position)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create an ExtractFunctionOperation with the detected boundaries and delegate to it
-	extractFunctionOp := &ExtractFunctionOperation{
-		SourceFile:      op.SourceFile,
-		StartLine:       blockInfo.StartLine,
-		EndLine:         blockInfo.EndLine,
-		NewFunctionName: op.NewFunctionName,
-		Logger:          op.Logger,
-		Parser:          op.Parser,
-	}
-
-	// Validate the function operation
-	if err := extractFunctionOp.Validate(ws); err != nil {
-		return nil, err
-	}
-
-	// Execute the function extraction
-	return extractFunctionOp.Execute(ws)
-}
-
-func (op *ExtractBlockOperation) Description() string {
-	return fmt.Sprintf("Extract block as function '%s' from position %d in %s",
-		op.NewFunctionName, op.Position, op.SourceFile)
-}
-
-// BlockInfo represents information about a detected block
-type BlockInfo struct {
-	StartLine int
-	EndLine   int
-	BlockType string // "if", "for", "switch", "function", etc.
-}
-
-func (op *ExtractBlockOperation) findBlockAtPosition(astFile *ast.File, fset *token.FileSet, content string, position int) (*BlockInfo, error) {
-	var targetBlock *ast.BlockStmt
-	var blockType string
-	var blockStart, blockEnd token.Pos
-	var closestDistance = int(^uint(0) >> 1) // max int
-	var entireStmtStart, entireStmtEnd token.Pos
-
-	// Walk the AST to find the innermost block containing the position
-	ast.Inspect(astFile, func(n ast.Node) bool {
-		if n == nil {
-			return false
-		}
-
-		pos := fset.Position(n.Pos())
-		end := fset.Position(n.End())
-
-		// Check different types of nodes that contain blocks
-		switch node := n.(type) {
-		case *ast.IfStmt:
-			if node.Body != nil {
-				// Check if position is within this if statement
-				if position >= pos.Line && position <= end.Line {
-					// For containing blocks, prefer smaller blocks (innermost)
-					stmtSize := end.Line - pos.Line
-					if stmtSize < closestDistance {
-						targetBlock = node.Body
-						blockStart = node.Body.Pos()
-						blockEnd = node.Body.End()
-						entireStmtStart = node.Pos()
-						entireStmtEnd = node.End()
-						blockType = "if"
-						closestDistance = stmtSize
-					}
-				}
-			}
-		case *ast.ForStmt:
-			if node.Body != nil {
-				// Check if position is within this for statement
-				if position >= pos.Line && position <= end.Line {
-					// For containing blocks, prefer smaller blocks (innermost)
-					stmtSize := end.Line - pos.Line
-					if stmtSize < closestDistance {
-						targetBlock = node.Body
-						blockStart = node.Body.Pos()
-						blockEnd = node.Body.End()
-						entireStmtStart = node.Pos()
-						entireStmtEnd = node.End()
-						blockType = "for"
-						closestDistance = stmtSize
-					}
-				}
-			}
-		case *ast.RangeStmt:
-			if node.Body != nil {
-				// Check if position is within this range statement
-				if position >= pos.Line && position <= end.Line {
-					// For containing blocks, prefer smaller blocks (innermost)
-					stmtSize := end.Line - pos.Line
-					if stmtSize < closestDistance {
-						targetBlock = node.Body
-						blockStart = node.Body.Pos()
-						blockEnd = node.Body.End()
-						entireStmtStart = node.Pos()
-						entireStmtEnd = node.End()
-						blockType = "range"
-						closestDistance = stmtSize
-					}
-				}
-			}
-		case *ast.SwitchStmt:
-			if node.Body != nil {
-				if position >= pos.Line && position <= end.Line {
-					// For containing blocks, prefer smaller blocks (innermost)
-					stmtSize := end.Line - pos.Line
-					if stmtSize < closestDistance {
-						targetBlock = node.Body
-						blockStart = node.Body.Pos()
-						blockEnd = node.Body.End()
-						entireStmtStart = node.Pos()
-						entireStmtEnd = node.End()
-						blockType = "switch"
-						closestDistance = stmtSize
-					}
-				}
-			}
-		case *ast.BlockStmt:
-			// Generic block statement
-			if position >= pos.Line && position <= end.Line {
-				// For containing blocks, prefer smaller blocks (innermost)
-				stmtSize := end.Line - pos.Line
-				if stmtSize < closestDistance {
-					targetBlock = node
-					blockStart = node.Pos()
-					blockEnd = node.End()
-					entireStmtStart = node.Pos()
-					entireStmtEnd = node.End()
-					blockType = "block"
-					closestDistance = stmtSize
-				}
-			}
-		}
-		return true
-	})
-
-	if targetBlock == nil {
-		return nil, &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("no extractable block found at position %d", position),
-		}
-	}
-
-	// For statements like for/range, we want to extract the entire statement including the declaration
-	// Use the entire statement bounds instead of just the body
-	var startPos, endPos token.Position
-	if entireStmtStart != 0 && entireStmtEnd != 0 {
-		startPos = fset.Position(entireStmtStart)
-		endPos = fset.Position(entireStmtEnd)
-	} else {
-		startPos = fset.Position(blockStart)
-		endPos = fset.Position(blockEnd)
-	}
-
-	return &BlockInfo{
-		StartLine: startPos.Line,
-		EndLine:   endPos.Line,
-		BlockType: blockType,
-	}, nil
 }
 
 // Helper functions

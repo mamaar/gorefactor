@@ -30,16 +30,18 @@ func recoveryMiddleware(logger *slog.Logger) mcpsdk.Middleware {
 	return func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (result mcpsdk.Result, err error) {
 			defer func() {
-				if r := recover(); r != nil {
-					stack := debug.Stack()
-					logger.Error("panic in MCP method handler",
-						"method", method,
-						"panic", fmt.Sprintf("%v", r),
-						"stack", string(stack),
-					)
-					result = nil
-					err = fmt.Errorf("internal error (panic) in %s: %v", method, r)
+				r := recover()
+				if r == nil {
+					return
 				}
+				stack := debug.Stack()
+				logger.Error("panic in MCP method handler",
+					"method", method,
+					"panic", fmt.Sprintf("%v", r),
+					"stack", string(stack),
+				)
+				result = nil
+				err = fmt.Errorf("internal error (panic) in %s: %v", method, r)
 			}()
 			return next(ctx, method, req)
 		}

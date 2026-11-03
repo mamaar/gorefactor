@@ -54,18 +54,29 @@ func run(pass *analysis.Pass) (any, error) {
 
 // declaredName is what a "declared" scope map stores for a name already in
 // scope at some point in a statement list. Usually it is just the declaring
-// ident, so canDowngrade can look its object up via pass.TypesInfo.Defs/Uses.
+// ident, so canReuse can look its object up via pass.TypesInfo.Defs/Uses.
 // For names that go/types does not record that way — the implicit per-clause
 // variable of a type-switch case clause — obj is pre-resolved instead (see
 // pass.TypesInfo.Implicits) and takes priority when set.
 type declaredName struct {
 	ident *ast.Ident
 	obj   types.Object
+	// hoisted marks a name this analyzer's own earlier hoist introduced into
+	// the scope; only such names may be reused with '='. Any other name in
+	// scope is original code that a '=' would overwrite.
+	hoisted bool
 }
 
 // scope maps names in scope at some point in a statement list to the
 // declaration that put them there.
 type scope map[string]declaredName
+
+// hoist records ids as introduced into s by a hoist.
+func (s scope) hoist(ids []*ast.Ident) {
+	for _, id := range ids {
+		s[id.Name] = declaredName{ident: id, hoisted: true}
+	}
+}
 
 // walker performs a recursive descent over statement lists (BlockStmt.List,
 // CaseClause.Body, CommClause.Body). Each list carries its own "declared"
@@ -124,13 +135,7 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 		w.recordDeclStmt(s, declared)
 		w.processFuncLitsIn(s)
 	case *ast.AssignStmt:
-		if s.Tok == token.DEFINE {
-			for _, lhs := range s.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
-					declared[id.Name] = declaredName{ident: id}
-				}
-			}
-		}
+		w.recordDefinedNames(s, declared)
 		w.processFuncLitsIn(s)
 	case *ast.IfStmt:
 		w.handleIfChain(s, declared, false, false, list, idx, cascaded)
@@ -155,19 +160,93 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 	case *ast.BlockStmt:
 		w.walkList(s.List, make(scope))
 	case *ast.SelectStmt:
-		if s.Body != nil {
-			for _, c := range s.Body.List {
-				if cc, ok := c.(*ast.CommClause); ok {
-					w.processFuncLitsIn(cc.Comm)
-					w.walkList(cc.Body, commClauseScope(cc))
-				}
-			}
-		}
+		w.walkSelectClauses(s)
 	case *ast.LabeledStmt:
 		w.walkLabeled(s, list, idx, declared, cascaded)
 	default:
 		w.processFuncLitsIn(stmt)
 	}
+}
+
+func (w *walker) walkSelectClauses(s *ast.SelectStmt) {
+	if s.Body == nil {
+		return
+	}
+	for _, c := range s.Body.List {
+		cc, ok := c.(*ast.CommClause)
+		if ok {
+			w.processFuncLitsIn(cc.Comm)
+			w.walkList(cc.Body, commClauseScope(cc))
+		}
+	}
+}
+
+func (w *walker) recordDefinedNames(s *ast.AssignStmt, declared scope) {
+	for _, lhs := range s.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok || id.Name == "_" {
+			continue
+		}
+		dn, exists := declared[id.Name]
+		switch {
+		case !exists && s.Tok == token.DEFINE:
+			declared[id.Name] = declaredName{ident: id}
+		case exists && dn.hoisted:
+			// Original code now writes the hoisted variable, so its value
+			// is live; a later hoist must not overwrite it.
+			dn.hoisted = false
+			declared[id.Name] = dn
+		}
+	}
+}
+
+// unhoistCaptured stops later hoists from reusing a name that node (the
+// split if/switch) captures in a closure or by address: reuse would change
+// the value the capture observes.
+func (w *walker) unhoistCaptured(declared scope, assign *ast.AssignStmt, node ast.Node) {
+	if assign.Tok != token.DEFINE {
+		return
+	}
+	for _, lhs := range assign.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		dn, exists := declared[id.Name]
+		obj := w.pass.TypesInfo.Defs[id]
+		if !exists || !dn.hoisted || obj == nil || !w.captures(node, obj) {
+			continue
+		}
+		dn.hoisted = false
+		declared[id.Name] = dn
+	}
+}
+
+// captures reports whether node uses obj inside a func literal or under '&'.
+func (w *walker) captures(node ast.Node, obj types.Object) bool {
+	uses := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if ok && w.pass.TypesInfo.Uses[id] == obj {
+				found = true
+			}
+			return !found
+		})
+		return found
+	}
+	found := false
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			found = found || uses(n)
+			return false
+		case *ast.UnaryExpr:
+			found = found || n.Op == token.AND && uses(n.X)
+		}
+		return !found
+	})
+	return found
 }
 
 // walkLabeled handles the guard: an if/switch/type-switch that is the direct
@@ -198,7 +277,8 @@ func (w *walker) handleIfChain(node *ast.IfStmt, declared scope, isElseIf, guard
 	w.processFuncLitsIn(node.Cond)
 
 	if !guarded {
-		if assign, ok := matchInitAssign(node.Init); ok {
+		assign, ok := matchInitAssign(node.Init)
+		if ok {
 			w.emitIfFix(node, assign, declared, isElseIf, list, idx, cascaded)
 		}
 	}
@@ -222,20 +302,24 @@ func (w *walker) handleSwitch(node *ast.SwitchStmt, declared scope, guarded bool
 	w.processFuncLitsIn(node.Tag)
 
 	if !guarded {
-		if assign, ok := matchInitAssign(node.Init); ok {
+		assign, ok := matchInitAssign(node.Init)
+		if ok {
 			w.emitSwitchFix(node, assign, declared, list, idx, cascaded)
 		}
 	}
 
-	if node.Body != nil {
-		for _, c := range node.Body.List {
-			if cc, ok := c.(*ast.CaseClause); ok {
-				for _, e := range cc.List {
-					w.processFuncLitsIn(e)
-				}
-				w.walkList(cc.Body, make(scope))
-			}
+	if node.Body == nil {
+		return
+	}
+	for _, c := range node.Body.List {
+		cc, ok := c.(*ast.CaseClause)
+		if !ok {
+			continue
 		}
+		for _, e := range cc.List {
+			w.processFuncLitsIn(e)
+		}
+		w.walkList(cc.Body, make(scope))
 	}
 }
 
@@ -247,11 +331,13 @@ func (w *walker) handleTypeSwitch(node *ast.TypeSwitchStmt, declared scope, guar
 		w.emitTypeSwitchFix(node, declared, list, idx, cascaded)
 	}
 
-	if node.Body != nil {
-		for _, c := range node.Body.List {
-			if cc, ok := c.(*ast.CaseClause); ok {
-				w.walkList(cc.Body, w.typeSwitchClauseScope(node, cc))
-			}
+	if node.Body == nil {
+		return
+	}
+	for _, c := range node.Body.List {
+		cc, ok := c.(*ast.CaseClause)
+		if ok {
+			w.walkList(cc.Body, w.typeSwitchClauseScope(node, cc))
 		}
 	}
 }
@@ -266,9 +352,9 @@ func (w *walker) handleTypeSwitch(node *ast.TypeSwitchStmt, declared scope, guar
 // go/types does not record the guard ident's own occurrence via Defs/Uses
 // (each clause has a differently-typed copy); it records the per-clause
 // object in pass.TypesInfo.Implicits[clause] instead. When available, that
-// object is used directly so canDowngrade can type-check against it; when
+// object is used directly so canReuse can type-check against it; when
 // unavailable (untyped workspace), the guard ident is stored anyway so the
-// name still reads as colliding, and canDowngrade will conservatively skip.
+// name still reads as colliding, and canReuse will conservatively skip.
 func (w *walker) typeSwitchClauseScope(node *ast.TypeSwitchStmt, cc *ast.CaseClause) scope {
 	seed := make(scope)
 	assign, ok := node.Assign.(*ast.AssignStmt)
@@ -281,8 +367,10 @@ func (w *walker) typeSwitchClauseScope(node *ast.TypeSwitchStmt, cc *ast.CaseCla
 			continue
 		}
 		dn := declaredName{ident: id}
-		if info := w.pass.TypesInfo; info != nil && info.Implicits != nil {
-			if obj := info.Implicits[cc]; obj != nil {
+		info := w.pass.TypesInfo
+		if info != nil && info.Implicits != nil {
+			obj := info.Implicits[cc]
+			if obj != nil {
 				dn.obj = obj
 			}
 		}
@@ -352,7 +440,8 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 		var newNames []*ast.Ident
 		if assign.Tok == token.DEFINE {
 			for _, lhs := range assign.Lhs {
-				if id, ok := lhs.(*ast.Ident); ok && id.Name != "_" {
+				id, ok := lhs.(*ast.Ident)
+				if ok && id.Name != "_" {
 					newNames = append(newNames, id)
 				}
 			}
@@ -366,30 +455,33 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 		if !ok || id.Name == "_" {
 			continue
 		}
-		if _, exists := declared[id.Name]; exists {
+		_, exists := declared[id.Name]
+		if exists {
 			colliding = append(colliding, id)
 		} else {
 			newOnes = append(newOnes, id)
 		}
 	}
 
-	if len(colliding) == 0 || len(newOnes) > 0 {
-		// No collision, or a partial collision: ':=' is legal unchanged.
-		return emission{text: fullText, newNames: newOnes}
+	if len(colliding) > 0 {
+		ok, reason := w.canReuse(assign, colliding, declared)
+		if !ok {
+			return emission{skip: true, reason: reason}
+		}
 	}
-
-	// Every non-blank name collides: try to downgrade to '='.
-	ok, reason := w.canDowngrade(assign, colliding, declared)
-	if !ok {
-		return emission{skip: true, reason: reason}
+	if len(newOnes) > 0 || len(colliding) == 0 {
+		// ':=' is legal unchanged: it declares at least one new name.
+		return emission{text: fullText, newNames: newOnes}
 	}
 	return emission{text: w.rewriteDefineToAssign(assign)}
 }
 
-// canDowngrade verifies, via pass.TypesInfo, that writing through each
-// colliding name with '=' cannot change its type. If type information is
-// unavailable or any lookup fails, it refuses conservatively.
-func (w *walker) canDowngrade(assign *ast.AssignStmt, colliding []*ast.Ident, declared scope) (bool, string) {
+// canReuse verifies, via pass.TypesInfo, that assigning to each colliding name
+// instead of declaring it is safe: the name must have been introduced by an
+// earlier hoist (anything else is original code the assignment would
+// overwrite) and the right-hand side must have exactly its type. If type
+// information is unavailable or any lookup fails, it refuses conservatively.
+func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declared scope) (bool, string) {
 	info := w.pass.TypesInfo
 	if info == nil || info.Types == nil {
 		return false, "type information unavailable"
@@ -406,6 +498,9 @@ func (w *walker) canDowngrade(assign *ast.AssignStmt, colliding []*ast.Ident, de
 		if !ok {
 			return false, "type information unavailable"
 		}
+		if !dn.hoisted {
+			return false, "name " + id.Name + " is already declared in this scope; reusing it would overwrite it"
+		}
 
 		obj := dn.obj
 		if obj == nil && dn.ident != nil {
@@ -418,8 +513,8 @@ func (w *walker) canDowngrade(assign *ast.AssignStmt, colliding []*ast.Ident, de
 			return false, "type information unavailable"
 		}
 
-		if !types.AssignableTo(rhsType, obj.Type()) {
-			return false, "types not assignable"
+		if !types.Identical(rhsType, obj.Type()) {
+			return false, "types differ from the hoisted " + id.Name
 		}
 	}
 
@@ -436,8 +531,97 @@ func (w *walker) resolveCascade(list []ast.Stmt, idx int, declared scope, newNam
 	if len(newNames) == 0 || list == nil {
 		return nil, nil, true, ""
 	}
+	reason = w.laterConflict(list[idx+1:], newNames)
+	if reason != "" {
+		return nil, nil, false, reason
+	}
 	augmented := augmentScope(declared, newNames)
-	return w.forwardCascade(list, idx, augmented, cascaded)
+	return w.forwardCascade(list, idx, declared, augmented, cascaded)
+}
+
+// laterConflict reports why hoisting newNames into the scope of rest (the
+// statements following the hoisted one) is unsafe, or "". The names were
+// scoped to the if/switch before, so rest can neither declare them (var,
+// const, type) nor refer to a same-named outer variable, constant, import or
+// function that the hoist would now shadow. A later ':=' is not checked here;
+// forwardCascade handles it.
+func (w *walker) laterConflict(rest []ast.Stmt, newNames []*ast.Ident) string {
+	if len(rest) == 0 {
+		return ""
+	}
+	names := make(map[string]bool, len(newNames))
+	for _, id := range newNames {
+		names[id.Name] = true
+	}
+
+	for _, stmt := range rest {
+		decl, ok := stmt.(*ast.DeclStmt)
+		if !ok {
+			continue
+		}
+		gd, ok := decl.Decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			var declares []*ast.Ident
+			switch sp := spec.(type) {
+			case *ast.ValueSpec:
+				declares = sp.Names
+			case *ast.TypeSpec:
+				declares = []*ast.Ident{sp.Name}
+			}
+			for _, id := range declares {
+				if names[id.Name] {
+					return "hoisting would redeclare " + id.Name + ", which a later declaration in the same scope declares"
+				}
+			}
+		}
+	}
+
+	info := w.pass.TypesInfo
+	if info == nil || info.Uses == nil {
+		return ""
+	}
+	captured := w.shadowedByHoist(rest, names, info)
+	if captured != "" {
+		return "hoisting would make a later use of " + captured + " refer to the hoisted variable instead of the outer " + captured
+	}
+	return ""
+}
+
+func (w *walker) shadowedByHoist(rest []ast.Stmt, names map[string]bool, info *types.Info) string {
+	lo, hi := rest[0].Pos(), rest[len(rest)-1].End()
+	captured := ""
+	for _, stmt := range rest {
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || !names[id.Name] || captured != "" {
+				return captured == ""
+			}
+			obj := info.Uses[id]
+			if obj == nil || isMember(obj) || (obj.Pos() >= lo && obj.Pos() < hi) {
+				return true
+			}
+			captured = id.Name
+			return false
+		})
+	}
+	return captured
+}
+
+// isMember reports whether obj is a struct field or a method, whose
+// identifiers are looked up through a selector or composite literal rather
+// than in the enclosing scope.
+func isMember(obj types.Object) bool {
+	switch o := obj.(type) {
+	case *types.Var:
+		return o.IsField()
+	case *types.Func:
+		sig, ok := o.Type().(*types.Signature)
+		return ok && sig.Recv() != nil
+	}
+	return false
 }
 
 // augmentScope returns a copy of declared with newNames added, each mapped
@@ -448,9 +632,7 @@ func (w *walker) resolveCascade(list []ast.Stmt, idx int, declared scope, newNam
 func augmentScope(declared scope, newNames []*ast.Ident) scope {
 	augmented := make(scope, len(declared)+len(newNames))
 	maps.Copy(augmented, declared)
-	for _, id := range newNames {
-		augmented[id.Name] = declaredName{ident: id}
-	}
+	augmented.hoist(newNames)
 	return augmented
 }
 
@@ -472,32 +654,48 @@ func augmentScope(declared scope, newNames []*ast.Ident) scope {
 // in the same list, so a second, independent hoist that would also reach
 // the same statement does not emit a second, overlapping edit for it.
 //
-// If every affected statement can be safely downgraded (per canDowngrade),
+// If every affected statement can be safely downgraded (per canReuse),
 // it returns their edits and the claimed statements with ok=true. If any
 // cannot be verified safe, it returns ok=false and no edits — the caller
 // must not hoist at all, since doing so would leave that statement broken.
-func (w *walker) forwardCascade(list []ast.Stmt, i int, augmented scope, cascaded map[*ast.AssignStmt]bool) (edits []analysis.TextEdit, targets []*ast.AssignStmt, ok bool, reason string) {
+func (w *walker) forwardCascade(list []ast.Stmt, i int, declared, augmented scope, cascaded map[*ast.AssignStmt]bool) (edits []analysis.TextEdit, targets []*ast.AssignStmt, ok bool, reason string) {
 	for j := i + 1; j < len(list); j++ {
 		assign, isAssign := list[j].(*ast.AssignStmt)
 		if !isAssign || assign.Tok != token.DEFINE || cascaded[assign] {
 			continue
 		}
 
-		var names []*ast.Ident
+		var reused []*ast.Ident
 		allDeclared := true
 		for _, lhs := range assign.Lhs {
 			id, idOk := lhs.(*ast.Ident)
 			if !idOk || id.Name == "_" {
 				continue
 			}
-			names = append(names, id)
-			if _, exists := augmented[id.Name]; !exists {
+			_, exists := augmented[id.Name]
+			if !exists {
 				allDeclared = false
+				continue
+			}
+			// A name only the hoist put in scope: this ':=' declared it anew
+			// before, and now reuses the hoisted variable.
+			_, before := declared[id.Name]
+			if !before {
+				reused = append(reused, id)
 			}
 		}
-		if len(names) == 0 || !allDeclared {
-			// No names, or a partial collision (at least one name is still
-			// new): ':=' remains legal here unchanged, nothing to cascade.
+		if len(reused) == 0 {
+			// Nothing this hoist introduced is involved: the statement
+			// compiles and means what it did.
+			continue
+		}
+
+		reuseOK, reuseReason := w.canReuse(assign, reused, augmented)
+		if !reuseOK {
+			return nil, nil, false, "hoisting would make a later := reuse the hoisted variable: " + reuseReason
+		}
+		if !allDeclared {
+			// A still-new name keeps ':=' legal; the reused ones were checked.
 			continue
 		}
 
@@ -505,10 +703,6 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, augmented scope, cascade
 		endOff := w.pass.Fset.Position(assign.End()).Offset
 		if startOff < 0 || endOff > len(w.content) || startOff >= endOff {
 			return nil, nil, false, "hoisting would invalidate a later := that cannot be downgraded: unable to compute a safe edit"
-		}
-
-		if downOK, downReason := w.canDowngrade(assign, names, augmented); !downOK {
-			return nil, nil, false, "hoisting would invalidate a later := that cannot be downgraded: " + downReason
 		}
 
 		edits = append(edits, analysis.TextEdit{
@@ -552,13 +746,15 @@ func (w *walker) rhsTypeAt(assign *ast.AssignStmt, idx int) types.Type {
 		if t == nil {
 			return nil
 		}
-		if tuple, ok := t.Underlying().(*types.Tuple); ok {
+		tuple, ok := t.Underlying().(*types.Tuple)
+		if ok {
 			if idx >= tuple.Len() {
 				return nil
 			}
 			return tuple.At(idx).Type()
 		}
-		if tuple, ok := t.(*types.Tuple); ok {
+		tuple, ok = t.(*types.Tuple)
+		if ok {
 			if idx >= tuple.Len() {
 				return nil
 			}
@@ -611,9 +807,8 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 				// nothing changes in the source and declared/cascaded must
 				// not be mutated either.
 				if len(fixes) > 0 {
-					for _, id := range em.newNames {
-						declared[id.Name] = declaredName{ident: id}
-					}
+					declared.hoist(em.newNames)
+					w.unhoistCaptured(declared, assign, node)
 					for _, t := range cascadeTargets {
 						cascaded[t] = true
 					}
@@ -740,9 +935,8 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 			fixes = w.buildSwitchFix(node, em.text, tagText, cascadeEdits)
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
-				for _, id := range em.newNames {
-					declared[id.Name] = declaredName{ident: id}
-				}
+				declared.hoist(em.newNames)
+				w.unhoistCaptured(declared, assign, node)
 				for _, t := range cascadeTargets {
 					cascaded[t] = true
 				}
@@ -836,9 +1030,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 			fixes = w.buildTypeSwitchFix(node, em.text, assignText, cascadeEdits)
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
-				for _, id := range em.newNames {
-					declared[id.Name] = declaredName{ident: id}
-				}
+				declared.hoist(em.newNames)
 				for _, t := range cascadeTargets {
 					cascaded[t] = true
 				}
@@ -909,7 +1101,8 @@ func (w *walker) processFuncLitsIn(node ast.Node) {
 		if n == nil {
 			return false
 		}
-		if fl, ok := n.(*ast.FuncLit); ok {
+		fl, ok := n.(*ast.FuncLit)
+		if ok {
 			w.walkFuncLit(fl)
 			return false
 		}
@@ -979,7 +1172,8 @@ func (w *walker) recordDeclStmt(s *ast.DeclStmt, declared scope) {
 func lhsNames(assign *ast.AssignStmt) []string {
 	var vars []string
 	for _, lhs := range assign.Lhs {
-		if ident, ok := lhs.(*ast.Ident); ok {
+		ident, ok := lhs.(*ast.Ident)
+		if ok {
 			vars = append(vars, ident.Name)
 		}
 	}

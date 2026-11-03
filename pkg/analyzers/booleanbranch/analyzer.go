@@ -125,13 +125,13 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte, cfg *confi
 		if !ok || funcDecl.Body == nil {
 			continue
 		}
-		results = append(results, analyzeFunction(pass, file, funcDecl, content, cfg)...)
+		results = append(results, analyzeFunction(pass, funcDecl, content, cfg)...)
 	}
 
 	return results
 }
 
-func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, content []byte, cfg *config) []*Result {
+func analyzeFunction(pass *analysis.Pass, fn *ast.FuncDecl, content []byte, cfg *config) []*Result {
 	assigns := collectBoolAssigns(pass.Fset, fn.Body, content)
 
 	// Group by source expression.
@@ -177,7 +177,8 @@ func analyzeFunction(pass *analysis.Pass, file *ast.File, fn *ast.FuncDecl, cont
 				detailedGroups[da.sourceExpr] = append(detailedGroups[da.sourceExpr], da)
 			}
 
-			if detailedGroup, ok := detailedGroups[sourceExpr]; ok && len(detailedGroup) >= cfg.minBranches {
+			detailedGroup, ok := detailedGroups[sourceExpr]
+			if ok && len(detailedGroup) >= cfg.minBranches {
 				varToDetail := make(map[string]boolAssignDetail, len(detailedGroup))
 				detailVarSet := make(map[string]bool, len(detailedGroup))
 				for _, da := range detailedGroup {
@@ -353,7 +354,8 @@ func findIfChains(body *ast.BlockStmt, varSet map[string]bool) []*ast.IfStmt {
 			return true
 		}
 		if condDirectlyUsesVar(ifStmt.Cond, varSet) {
-			if child, ok := ifStmt.Else.(*ast.IfStmt); ok && condDirectlyUsesVar(child.Cond, varSet) {
+			child, ok := ifStmt.Else.(*ast.IfStmt)
+			if ok && condDirectlyUsesVar(child.Cond, varSet) {
 				children[child] = true
 			}
 		}

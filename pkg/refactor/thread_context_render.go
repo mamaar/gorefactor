@@ -105,56 +105,19 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 
 	// 2. Call sites: for every recorded call-site decision, either insert a
 	// new argument or replace an existing fabricated-root one.
-	for _, edit := range plan.ArgFor {
-		if plan.WithoutCancel && strings.Contains(edit.Expr, "context.") && contextShadowed(edit.Site.Pkg, edit.Site.Call.Pos()) {
-			plan.Notes = append(plan.Notes, pkgtypes.SkippedSite{
-				File:    edit.Site.File.Path,
-				Line:    offsetLine(edit.Site.File, edit.Site.Call.Pos()),
-				Reason:  fmt.Sprintf("shadowed context: %s cannot be written here, so the call to %s needs a ctx argument by hand", edit.Expr, funcLabel(edit.Callee)),
-				Snippet: funcLabel(edit.Callee),
-			})
-			continue
-		}
-		change, importFile, err := renderCallEdit(ws, plan, edit)
-		if err != nil {
-			return nil, err
-		}
-		if change != nil {
-			changes = append(changes, *change)
-		}
-		if importFile != "" {
-			needsContext[importFile] = true
-		}
+	var err2 error
+	changes, err2 = renderCallSites(plan, ws, changes, needsContext)
+	if err2 != nil {
+		return nil, err2
 	}
 
 	// 3. Fake-root deletions: `ctx := context.Background()`/`context.TODO()`
 	// statements that would become illegal redeclarations now that ctx is a
 	// parameter.
-	for f, stmt := range plan.Fake {
-		fd, ok := plan.Decls[f]
-		if !ok {
-			return nil, fmt.Errorf(
-				"internal error: %s has a recorded fake-root deletion but no resolvable declaration", funcLabel(f))
-		}
-		del := renderFakeDeletion(ws, fd.File, stmt, funcLabel(f))
-		if plan.WithoutCancel {
-			del = renderFakeWithoutCancel(ws, fd.File, stmt, plan.Funcs[f], funcLabel(f))
-		}
-		// Assert, per the plan, that this deletion cannot swallow an
-		// insertion already emitted. It never can in practice: the deleted
-		// range is exactly `ctx := context.Background()` (or ...TODO()),
-		// and that call takes no arguments, so no target call site — which
-		// is what every insertion offset points at — can lexically sit
-		// inside it. Assert rather than assume.
-		for _, existing := range changes {
-			if existing.File == del.File && existing.Start == existing.End &&
-				existing.Start >= del.Start && existing.Start < del.End {
-				return nil, fmt.Errorf(
-					"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
-					del.File, del.Start, del.End, existing.Start)
-			}
-		}
-		changes = append(changes, del)
+	var err error
+	changes, err = renderFakeRootDeletions(plan, ws, changes)
+	if err != nil {
+		return nil, err
 	}
 
 	// 4. Internal fabricated contexts: a function that GAINS a ctx parameter
@@ -180,11 +143,67 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		if !needed || hasImport(ws, path, "context") {
 			continue
 		}
-		if imp := generateAddImportChange(ws, path, "", "context"); imp != nil {
+		imp := GenerateAddImportChange(ws, path, "", "context")
+		if imp != nil {
 			changes = append(changes, *imp)
 		}
 	}
 
+	return changes, nil
+}
+
+func renderCallSites(plan *threadPlan, ws *pkgtypes.Workspace, changes []pkgtypes.Change, needsContext map[string]bool) ([]pkgtypes.Change, error) {
+	for _, edit := range plan.ArgFor {
+		if plan.WithoutCancel && strings.Contains(edit.Expr, "context.") && contextShadowed(edit.Site.Pkg, edit.Site.Call.Pos()) {
+			plan.Notes = append(plan.Notes, pkgtypes.SkippedSite{
+				File:    edit.Site.File.Path,
+				Line:    offsetLine(edit.Site.File, edit.Site.Call.Pos()),
+				Reason:  fmt.Sprintf("shadowed context: %s cannot be written here, so the call to %s needs a ctx argument by hand", edit.Expr, funcLabel(edit.Callee)),
+				Snippet: funcLabel(edit.Callee),
+			})
+			continue
+		}
+		change, importFile, err := renderCallEdit(ws, plan, edit)
+		if err != nil {
+			return changes, fmt.Errorf("render thread plan: %w", err)
+		}
+		if change != nil {
+			changes = append(changes, *change)
+		}
+		if importFile != "" {
+			needsContext[importFile] = true
+		}
+	}
+	return changes, nil
+}
+
+func renderFakeRootDeletions(plan *threadPlan, ws *pkgtypes.Workspace, changes []pkgtypes.Change) ([]pkgtypes.Change, error) {
+	for f, stmt := range plan.Fake {
+		fd, ok := plan.Decls[f]
+		if !ok {
+			return changes, fmt.Errorf(
+				"internal error: %s has a recorded fake-root deletion but no resolvable declaration", funcLabel(f))
+		}
+		del := renderFakeDeletion(ws, fd.File, stmt, funcLabel(f))
+		if plan.WithoutCancel {
+			del = renderFakeWithoutCancel(ws, fd.File, stmt, plan.Funcs[f], funcLabel(f))
+		}
+		// Assert, per the plan, that this deletion cannot swallow an
+		// insertion already emitted. It never can in practice: the deleted
+		// range is exactly `ctx := context.Background()` (or ...TODO()),
+		// and that call takes no arguments, so no target call site — which
+		// is what every insertion offset points at — can lexically sit
+		// inside it. Assert rather than assume.
+		for _, existing := range changes {
+			if existing.File != del.File || existing.Start != existing.End || existing.Start < del.Start || existing.Start >= del.End {
+				continue
+			}
+			return changes, fmt.Errorf(
+				"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
+				del.File, del.Start, del.End, existing.Start)
+		}
+		changes = append(changes, del)
+	}
 	return changes, nil
 }
 
@@ -266,7 +285,8 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 func internalRootContextCalls(body *ast.BlockStmt, intoClosures bool) []*ast.CallExpr {
 	var calls []*ast.CallExpr
 	ast.Inspect(body, func(n ast.Node) bool {
-		if _, isLit := n.(*ast.FuncLit); isLit && !intoClosures {
+		_, isLit := n.(*ast.FuncLit)
+		if isLit && !intoClosures {
 			return false
 		}
 		call, ok := n.(*ast.CallExpr)
@@ -361,7 +381,8 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 	call := site.Call
 	callee := edit.Callee
 
-	if _, gaining := plan.Funcs[callee]; gaining {
+	_, gaining := plan.Funcs[callee]
+	if gaining {
 		// Case (a): the callee is itself gaining a ctx parameter. Insert the
 		// new argument — zero-width, so it can never overlap anything else.
 		text := edit.Expr
@@ -384,7 +405,8 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 		return change, importFileFor(site.File.Path, edit.Expr), nil
 	}
 
-	if _, touched := plan.Decls[callee]; touched {
+	_, touched := plan.Decls[callee]
+	if touched {
 		// Case (b): the callee already had a context.Context parameter (that
 		// is why it never joined Funcs), so every call to it already passes
 		// something at that position. Bounded tightly on purpose: replace

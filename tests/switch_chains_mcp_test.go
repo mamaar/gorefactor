@@ -38,10 +38,12 @@ func TestFixSwitchableIfChains_CountsOnlyWhatItRewrote(t *testing.T) {
 		t.Error("resolveKey's rewrite is refused and must not be reported as fixed")
 	}
 
-	if converted, _ := result["chains_converted"].(float64); converted != 3 {
+	converted, _ := result["chains_converted"].(float64)
+	if converted != 3 {
 		t.Errorf("chains_converted = %v, want 3", converted)
 	}
-	if changes, _ := result["changes_count"].(float64); changes != 3 {
+	changes, _ := result["changes_count"].(float64)
+	if changes != 3 {
 		t.Errorf("changes_count = %v, want 3 (one change per converted chain)", changes)
 	}
 
@@ -50,7 +52,8 @@ func TestFixSwitchableIfChains_CountsOnlyWhatItRewrote(t *testing.T) {
 		t.Fatalf("expected exactly 1 unfixable finding (resolveKey), got %d: %v", len(unfixable), unfixable)
 	}
 	item := unfixable[0].(map[string]any)
-	if fn, _ := item["function_name"].(string); fn != "resolveKey" {
+	fn, _ := item["function_name"].(string)
+	if fn != "resolveKey" {
 		t.Errorf("unfixable finding = %q, want resolveKey", fn)
 	}
 }
@@ -93,14 +96,16 @@ func TestDetectSwitchableIfChains_ReportsKinds(t *testing.T) {
 		}
 	}
 
-	if _, found := kinds["resolveKey"]; !found {
+	_, found := kinds["resolveKey"]
+	if !found {
 		t.Error("resolveKey should still be detected (and reported unfixable), just not applied")
 	}
 	if fixable["resolveKey"] {
 		t.Error("resolveKey should be reported as not fixable")
 	}
 
-	if _, found := kinds["gradeScore"]; found {
+	_, found = kinds["gradeScore"]
+	if found {
 		t.Error("gradeScore is the flattener's chain and must not appear in violations at all")
 	}
 }
@@ -114,13 +119,16 @@ func TestFixSwitchableIfChains_DryRunLeavesFilesAlone(t *testing.T) {
 		"dry_run": true,
 	})
 
-	if after := readFile(t, filepath.Join(dir, "main.go")); after != before {
+	after := readFile(t, filepath.Join(dir, "main.go"))
+	if after != before {
 		t.Errorf("dry run modified the file on disk:\n%s", after)
 	}
-	if dryRun, _ := result["dry_run"].(bool); !dryRun {
+	dryRun, _ := result["dry_run"].(bool)
+	if !dryRun {
 		t.Error("result should report dry_run=true so the caller knows nothing was written")
 	}
-	if diffs, _ := result["diffs"].([]any); len(diffs) == 0 {
+	diffs, _ := result["diffs"].([]any)
+	if len(diffs) == 0 {
 		t.Error("a dry run should return the diffs it would apply")
 	}
 }
@@ -137,10 +145,12 @@ func TestFixSwitchableIfChains_KindsFilter(t *testing.T) {
 	if len(fixed) != 1 {
 		t.Fatalf("expected exactly 1 rewritten function, got %d: %v", len(fixed), fixed)
 	}
-	if fn, _ := fixed[0].(string); fn != "httpStatusMessage" {
+	fn, _ := fixed[0].(string)
+	if fn != "httpStatusMessage" {
 		t.Errorf("functions_fixed = %v, want [httpStatusMessage]", fixed)
 	}
-	if converted, _ := result["chains_converted"].(float64); converted != 1 {
+	converted, _ := result["chains_converted"].(float64)
+	if converted != 1 {
 		t.Errorf("chains_converted = %v, want 1", converted)
 	}
 
@@ -166,7 +176,8 @@ func TestFixSwitchableIfChains_RefusalsAreReported(t *testing.T) {
 	var item map[string]any
 	for _, u := range unfixable {
 		candidate := u.(map[string]any)
-		if fn, _ := candidate["function_name"].(string); fn == "resolveKey" {
+		fn, _ := candidate["function_name"].(string)
+		if fn == "resolveKey" {
 			item = candidate
 		}
 	}
@@ -188,13 +199,15 @@ func TestFixSwitchableIfChains_ModuleStillCompiles(t *testing.T) {
 
 	buildCmd := exec.Command("go", "build", "./...")
 	buildCmd.Dir = dir
-	if out, err := buildCmd.CombinedOutput(); err != nil {
+	out, err := buildCmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("go build ./... failed after fix_switchable_if_chains:\n%s", out)
 	}
 
 	vetCmd := exec.Command("go", "vet", "./...")
 	vetCmd.Dir = dir
-	if out, err := vetCmd.CombinedOutput(); err != nil {
+	out, err = vetCmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("go vet ./... failed after fix_switchable_if_chains:\n%s", out)
 	}
 }

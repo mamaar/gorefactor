@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -95,7 +96,8 @@ func TestResolveStopAt_ExternalTestFile(t *testing.T) {
 	}
 	for k := range got {
 		for fn := range buildFuncDeclIndex(ws) {
-			if want, ok := pkgtypes.SymbolKeyOf(fn); ok && want.Name == "helper" && want != k {
+			want, ok := pkgtypes.SymbolKeyOf(fn)
+			if ok && want.Name == "helper" && want != k {
 				t.Errorf("got %v, type-checked key is %v", k, want)
 			}
 		}
@@ -145,8 +147,8 @@ func TestResolveStopAt_EmptyEntries(t *testing.T) {
 
 func assertStopErr(t *testing.T, err error, want string) {
 	t.Helper()
-	re, ok := err.(*pkgtypes.RefactorError)
-	if !ok || re.Type != pkgtypes.InvalidOperation {
+	var re *pkgtypes.RefactorError
+	if !errors.As(err, &re) || re.Type != pkgtypes.InvalidOperation {
 		t.Fatalf("err = %#v, want InvalidOperation RefactorError", err)
 	}
 	if !strings.Contains(re.Message, want) {

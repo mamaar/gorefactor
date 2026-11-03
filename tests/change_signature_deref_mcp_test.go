@@ -87,7 +87,8 @@ func TestChangeSignature_DerefParamRefusesNonDerefUseOfParam(t *testing.T) {
 			if !res.IsError || !strings.Contains(errText(res), "deref_param") {
 				t.Errorf("want deref_param refusal, got IsError=%v %q", res.IsError, errText(res))
 			}
-			if got := fileText(t, dir, "p/f.go"); got != src {
+			got := fileText(t, dir, "p/f.go")
+			if got != src {
 				t.Errorf("f.go changed:\n%s", got)
 			}
 			assertFileContains(t, dir, "p/use.go", "sum(&x, 1)")
@@ -120,7 +121,8 @@ func TestChangeSignature_DerefParamReportsFuncValueReferenceAsSkipped(t *testing
 
 	out := changeSigOK(t, sess, derefArgs(nil))
 
-	if sites, _ := out["skipped_sites"].([]any); len(sites) != 1 {
+	sites, _ := out["skipped_sites"].([]any)
+	if len(sites) != 1 {
 		t.Errorf("skipped_sites = %v, want 1 entry", out["skipped_sites"])
 	}
 }
@@ -145,7 +147,8 @@ func wantDerefRefusal(t *testing.T, dir string, res *mcpsdk.CallToolResult, file
 		t.Errorf("want deref_param refusal containing %q, got IsError=%v %q", contains, res.IsError, errText(res))
 	}
 	for path, src := range files {
-		if got := fileText(t, dir, path); got != src {
+		got := fileText(t, dir, path)
+		if got != src {
 			t.Errorf("%s changed:\n%s", path, got)
 		}
 	}
@@ -250,7 +253,8 @@ func TestChangeSignature_DerefParamBareNilCheckFolds(t *testing.T) {
 				t.Fatalf("unexpected error: %s", errText(res))
 			}
 			assertFileContains(t, dir, "p/f.go", c.want)
-			if got := fileText(t, dir, "p/f.go"); strings.Contains(got, c.notWant) {
+			got := fileText(t, dir, "p/f.go")
+			if strings.Contains(got, c.notWant) {
 				t.Errorf("f.go still contains %q:\n%s", c.notWant, got)
 			}
 			assertFileContains(t, dir, "p/use.go", "g(x, 1)")

@@ -28,7 +28,8 @@ func TestMoveSymbol_KeepsAnImportTheStayingCodeStillUsesWhenItsNameIsNotThePathS
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
-			if res := moveSymbolCall(t, sess, "F", "src", "dst"); res.IsError {
+			res := moveSymbolCall(t, sess, "F", "src", "dst")
+			if res.IsError {
 				t.Fatalf("move: %s", errText(res))
 			}
 			assertFileContains(t, dir, "src/src.go", f.path)
@@ -46,7 +47,8 @@ func TestMoveSymbol_DropsAnImportWhoseOnlyUserMovesWhenItsNameIsNotThePathSuffix
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
-			if res := moveSymbolCall(t, sess, "F", "src", "dst"); res.IsError {
+			res := moveSymbolCall(t, sess, "F", "src", "dst")
+			if res.IsError {
 				t.Fatalf("move: %s", errText(res))
 			}
 			assertFileOmits(t, dir, "src/src.go", f.path)
@@ -65,7 +67,8 @@ func TestMoveSymbol_DropsTheSourceImportOfAReferrerWhenTheSourceNameIsNotThePath
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
-			if res := moveSymbolCall(t, sess, "N", f.dir, "dst"); res.IsError {
+			res := moveSymbolCall(t, sess, "N", f.dir, "dst")
+			if res.IsError {
 				t.Fatalf("move: %s", errText(res))
 			}
 			assertFileOmits(t, dir, "use/use.go", f.path)

@@ -35,7 +35,8 @@ func readRel(t *testing.T, dir, rel string) string {
 
 func assertGone(t *testing.T, dir, rel string) {
 	t.Helper()
-	if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
+	_, err := os.Stat(filepath.Join(dir, rel))
+	if !os.IsNotExist(err) {
 		t.Errorf("%s should be gone, stat err=%v", rel, err)
 	}
 }
@@ -72,11 +73,13 @@ func TestMovePackageMovesAndRewritesFilesOfEveryConfiguration(t *testing.T) {
 		assertGone(t, dir, "p/"+f)
 	}
 	for _, f := range []string{"q/p.go", "q/p_plan9.go", "q/p_tagx.go"} {
-		if got := readRel(t, dir, f); !strings.Contains(got, "package q") {
+		got := readRel(t, dir, f)
+		if !strings.Contains(got, "package q") {
 			t.Errorf("%s clause not renamed:\n%s", f, got)
 		}
 	}
-	if got := readRel(t, dir, "q/gen.go"); !strings.Contains(got, "package main") {
+	got := readRel(t, dir, "q/gen.go")
+	if !strings.Contains(got, "package main") {
 		t.Errorf("ignore-tagged package main clause should be untouched:\n%s", got)
 	}
 	for _, f := range []string{"use/use.go", "use/use_plan9.go", "use/use_tagx_test.go"} {
@@ -102,10 +105,12 @@ func TestMovePackagesMovesFilesOfEveryConfiguration(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	assertGone(t, dir, "p/p_plan9.go")
-	if got := readRel(t, dir, "q/p_plan9.go"); !strings.Contains(got, "package q") {
+	got := readRel(t, dir, "q/p_plan9.go")
+	if !strings.Contains(got, "package q") {
 		t.Errorf("q/p_plan9.go clause not renamed:\n%s", got)
 	}
-	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/q"`) {
+	got = readRel(t, dir, "use/use_plan9.go")
+	if !strings.Contains(got, `"scratch/q"`) {
 		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
 	}
 }
@@ -127,10 +132,12 @@ func TestMoveDirMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	assertGone(t, dir, "a/sub/s_plan9.go")
-	if got := readRel(t, dir, "b/sub/s_plan9.go"); !strings.Contains(got, "package sub") {
+	got := readRel(t, dir, "b/sub/s_plan9.go")
+	if !strings.Contains(got, "package sub") {
 		t.Errorf("moved file clause changed unexpectedly:\n%s", got)
 	}
-	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/b/sub"`) {
+	got = readRel(t, dir, "use/use_plan9.go")
+	if !strings.Contains(got, `"scratch/b/sub"`) {
 		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
 	}
 }
@@ -179,10 +186,12 @@ func TestMovePackagesMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	assertGone(t, dir, "p/p_plan9.go")
-	if got := readRel(t, dir, "q/p_plan9.go"); !strings.Contains(got, "package q") {
+	got := readRel(t, dir, "q/p_plan9.go")
+	if !strings.Contains(got, "package q") {
 		t.Errorf("q/p_plan9.go clause not renamed:\n%s", got)
 	}
-	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/q"`) {
+	got = readRel(t, dir, "use/use_plan9.go")
+	if !strings.Contains(got, `"scratch/q"`) {
 		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
 	}
 }
@@ -202,7 +211,8 @@ func TestMovePackageMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	assertGone(t, dir, "p/p_plan9.go")
-	if got := readRel(t, dir, "use/use_plan9.go"); !strings.Contains(got, `"scratch/q"`) {
+	got := readRel(t, dir, "use/use_plan9.go")
+	if !strings.Contains(got, `"scratch/q"`) {
 		t.Errorf("use_plan9.go import not rewritten:\n%s", got)
 	}
 }

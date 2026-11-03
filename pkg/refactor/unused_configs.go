@@ -2,6 +2,7 @@ package refactor
 
 import (
 	"cmp"
+	"fmt"
 	"go/token"
 	"math"
 	"path/filepath"
@@ -44,11 +45,12 @@ func (e *DefaultEngine) UnusedAcrossConfigs(req UnusedRequest) (*UnusedReport, e
 	run := &unusedRun{engine: e, req: req, used: make(types.SymbolKeySet), decls: make(map[declSite]*unusedDecl)}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unused across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
@@ -124,7 +126,7 @@ func (r *unusedRun) visit(v *analysis.View) error {
 	a.SetIndex(r.indexOf(v))
 	unused, err := a.FindUnusedSymbols()
 	if err != nil {
-		return err
+		return fmt.Errorf("visit: %w", err)
 	}
 
 	reported := make(types.SymbolKeySet)
@@ -164,11 +166,12 @@ func (r *unusedRun) markUnresolved(v *analysis.View, unused []*analysis.UnusedSy
 			if u.Symbol.Name != m.name || !d.keyed || d.unresolved != nil || m.Position == u.Symbol.Position {
 				continue
 			}
-			if mayUse(filepath.Dir(m.File), m.file.AST, d.key, filepath.Dir(u.Symbol.File)) {
-				use := m.blocker()
-				use.Configs = []string{v.Config.String()}
-				d.unresolved = &use
+			if !mayUse(filepath.Dir(m.File), m.file.AST, d.key, filepath.Dir(u.Symbol.File)) {
+				continue
 			}
+			use := m.blocker()
+			use.Configs = []string{v.Config.String()}
+			d.unresolved = &use
 		}
 	}
 }
@@ -239,7 +242,8 @@ func (r *unusedRun) keepCalleesOfUsedCallers() {
 
 func (r *unusedRun) anyCallerUsed(d *unusedDecl) bool {
 	for _, c := range d.UnusedCallers {
-		if key, ok := symbolKeyOf(c); ok && r.used.Has(key) {
+		key, ok := symbolKeyOf(c)
+		if ok && r.used.Has(key) {
 			return true
 		}
 	}

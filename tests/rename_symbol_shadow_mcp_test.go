@@ -59,7 +59,8 @@ func TestRenameSymbol_RefusesNewNameShadowedAtReference(t *testing.T) {
 			if !res.IsError {
 				t.Fatalf("rename succeeded: %s", errText(res))
 			}
-			if got := errText(res); !strings.Contains(got, tc.want) || !strings.Contains(got, "cannot rename helper to local") {
+			got := errText(res)
+			if !strings.Contains(got, tc.want) || !strings.Contains(got, "cannot rename helper to local") {
 				t.Errorf("error = %q, want it to contain %q", got, tc.want)
 			}
 			for rel, content := range tc.files {
@@ -80,7 +81,8 @@ func TestRenameSymbol_AllowsNewNameUsedLocallyWhereSymbolIsNotReferenced(t *test
 	if res.IsError {
 		t.Fatalf("rename failed: %s", errText(res))
 	}
-	if got := fileText(t, dir, "p/p.go"); !strings.Contains(got, "func local() int") || !strings.Contains(got, "return local()") {
+	got := fileText(t, dir, "p/p.go")
+	if !strings.Contains(got, "func local() int") || !strings.Contains(got, "return local()") {
 		t.Errorf("not renamed:\n%s", got)
 	}
 	goVets(t, dir, "")

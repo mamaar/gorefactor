@@ -114,7 +114,8 @@ func TestMoveSymbol_UnrelatedTaggedFilesDoNotBlockAndReferencesAreRewritten(t *t
 
 	out := callJSON(t, sess, "move_symbol", moveHelperArgs())
 
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	assertFileContains(t, dir, "use/use.go", "dst.Helper()")
@@ -127,12 +128,14 @@ func TestMoveSymbol_SingleConfigOmitsBuildConfigsAndKeepsErrorText(t *testing.T)
 	defer sess.Close()
 
 	res := callTool(t, sess, "move_symbol", map[string]any{"symbol": "Nope", "from_package": "src", "to_package": "dst"})
-	if want := "move operation validation failed: symbol not found: Nope"; !res.IsError || errText(res) != want {
+	want := "move operation validation failed: symbol not found: Nope"
+	if !res.IsError || errText(res) != want {
 		t.Errorf("error = %q (IsError %v), want %q", errText(res), res.IsError, want)
 	}
 
 	out := callJSON(t, sess, "move_symbol", moveHelperArgs())
-	if _, ok := out["build_configs"]; ok {
+	_, ok := out["build_configs"]
+	if ok {
 		t.Errorf("build_configs = %v, want the field omitted", out["build_configs"])
 	}
 	assertFileContains(t, dir, "dst/dst.go", "func Helper() int { return 1 }")

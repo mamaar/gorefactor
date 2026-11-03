@@ -1,10 +1,10 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/importer"
-	"go/parser"
 	"go/token"
 	gotypes "go/types"
 	"log/slog"
@@ -17,8 +17,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/packages"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // Parser handles Go code parsing and AST management
@@ -92,47 +93,16 @@ func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoPa
 	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree, loadPackages: packages.Load}
 }
 
-// BuildConfig returns the configuration files are selected under.
-func (p *GoParser) BuildConfig() BuildConfig { return p.buildConfig }
-
-// ParseFile parses a single Go file
-func (p *GoParser) ParseFile(filename string) (*types.File, error) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("failed to read file: %v", err),
-			File:    filename,
-			Cause:   err,
-		}
-	}
-
-	astFile, err := parser.ParseFile(p.fileSet, filename, content, parser.ParseComments)
-	if err != nil {
-		return nil, &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to parse file: %v", err),
-			File:    filename,
-			Cause:   err,
-		}
-	}
-
-	file := &types.File{
-		Path:            filename,
-		AST:             astFile,
-		OriginalContent: content,
-		Modifications:   make([]types.Modification, 0),
-		Generated:       ast.IsGenerated(astFile),
-	}
-
-	return file, nil
-}
+// ErrNoPackage reports that a directory has .go files but none usable under the
+// parser's build config.
+var ErrNoPackage = errors.New("no usable package")
 
 // ParsePackage builds the package in dir from the files that match the parser's
-// build config. It returns (nil, nil) when dir has .go files but none usable
+// build config. It returns ErrNoPackage when dir has .go files but none usable
 // under that config.
 func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
-	if err := p.sources.AddDir(dir); err != nil {
+	err := p.sources.AddDir(dir)
+	if err != nil {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse package: %v", err),
@@ -168,7 +138,7 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 		p.nameFromTests(pkg)
 	}
 	if pkg.Name == "" {
-		return nil, nil
+		return nil, ErrNoPackage
 	}
 
 	return pkg, nil
@@ -265,7 +235,8 @@ func absWorkspaceRoot(rootPath string) (string, error) {
 }
 
 func loadSources(tree *SourceTree, absRoot string) error {
-	if err := tree.Load(absRoot); err != nil {
+	err := tree.Load(absRoot)
+	if err != nil {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse workspace: %v", err),
@@ -322,11 +293,11 @@ func (p *GoParser) projectWorkspace(absRoot string, module *types.Module) *types
 	wg.Wait()
 
 	for i, res := range proj.results {
-		if res.err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
+		if errors.Is(res.err, ErrNoPackage) {
 			continue
 		}
-		if res.pkg == nil {
+		if res.err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
 			continue
 		}
 		workspace.Packages[res.pkg.Path] = res.pkg
@@ -368,33 +339,6 @@ func (j *packageProjector) work() {
 		pkg, err := j.parser.ParsePackage(j.dirs[i])
 		j.results[i] = projectedPackage{pkg: pkg, err: err}
 	}
-}
-
-// UpdateFile updates AST after file modifications
-func (p *GoParser) UpdateFile(file *types.File) error {
-	if len(file.Modifications) == 0 {
-		return nil
-	}
-
-	// Apply modifications to original content
-	content := p.applyModifications(file.OriginalContent, file.Modifications)
-
-	// Re-parse the modified content
-	astFile, err := parser.ParseFile(p.fileSet, file.Path, content, parser.ParseComments)
-	if err != nil {
-		return &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to re-parse modified file: %v", err),
-			File:    file.Path,
-			Cause:   err,
-		}
-	}
-
-	// Update AST and clear modifications
-	file.AST = astFile
-	file.Modifications = make([]types.Modification, 0)
-
-	return nil
 }
 
 // Helper functions
@@ -440,29 +384,6 @@ func computeImportPath(ws *types.Workspace, fsPath string) string {
 // hasGoFiles reports whether dir holds a file admitted by the build config.
 func (p *GoParser) hasGoFiles(dir string) bool {
 	return slices.ContainsFunc(p.sources.Dir(dir), p.admits)
-}
-
-func (p *GoParser) applyModifications(content []byte, modifications []types.Modification) []byte {
-	// Sort modifications by position in reverse order to maintain offsets
-	// This is a simplified implementation
-	result := make([]byte, len(content))
-	copy(result, content)
-
-	for _, mod := range modifications {
-		switch mod.Type {
-		case types.Insert:
-			// Insert new text at position
-			result = append(result[:mod.Start], append([]byte(mod.NewText), result[mod.Start:]...)...)
-		case types.Delete:
-			// Delete text from Start to End
-			result = append(result[:mod.Start], result[mod.End:]...)
-		case types.Replace:
-			// Replace text from Start to End with NewText
-			result = append(result[:mod.Start], append([]byte(mod.NewText), result[mod.End:]...)...)
-		}
-	}
-
-	return result
 }
 
 func contains(slice []string, item string) bool {
@@ -672,7 +593,8 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 func productionASTs(pkg *types.Package) []*ast.File {
 	var files []*ast.File
 	for _, name := range slices.Sorted(maps.Keys(pkg.Files)) {
-		if f := pkg.Files[name]; f.AST != nil {
+		f := pkg.Files[name]
+		if f.AST != nil {
 			files = append(files, f.AST)
 		}
 	}
@@ -782,8 +704,9 @@ func (c *testCheck) drop(tests []testAST, bad map[string]error) []testAST {
 // firstTestError returns the error of the first test, in order, that has one.
 func firstTestError(tests []testAST, bad map[string]error) error {
 	for _, t := range tests {
-		if err, ok := bad[t.name]; ok {
-			return err
+		err, ok := bad[t.name]
+		if ok {
+			return fmt.Errorf("first test error: %w", err)
 		}
 	}
 	return nil
@@ -795,7 +718,8 @@ type typeErrors struct {
 }
 
 func (c *typeErrors) add(err error) {
-	if terr, ok := err.(gotypes.Error); ok {
+	terr, ok := err.(gotypes.Error)
+	if ok {
 		c.errs = append(c.errs, terr)
 	}
 }
@@ -817,7 +741,8 @@ func (c *typeErrors) firstPerFile(fset *token.FileSet, tests []testAST) map[stri
 		if !ok {
 			continue
 		}
-		if prev, seen := first[name]; !seen || e.Pos < prev.Pos {
+		prev, seen := first[name]
+		if !seen || e.Pos < prev.Pos {
 			first[name] = e
 		}
 	}
@@ -896,7 +821,7 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 // need TypeCheckPackage's exact package-resolution logic (workspace-local
 // lookup, then the go/packages-backed external-module fallback, then
 // importer.Default()) against a *types.Workspace some other GoParser already
-// parsed — most notably pkg/refactor.VerifyPlanTypes, which type-checks
+// parsed — most notably pkg/refactor.VerifyPlanTypesWithImporter, which type-checks
 // throwaway in-memory copies of a package's files and must not touch the
 // GoParser that owns ws's cached TypesChecked/TypesInfo state. Safe to call
 // on a fresh GoParser; overwrites any importer p already had.
@@ -906,7 +831,7 @@ func (p *GoParser) BindWorkspace(ws *types.Workspace) {
 
 // Importer exposes p's workspace importer as a go/types.Importer. It exists
 // for callers that need to drive their own go/types.Config — most notably
-// pkg/refactor.VerifyPlanTypes, which needs a custom Config.Error that
+// pkg/refactor.VerifyPlanTypesWithImporter, which needs a custom Config.Error that
 // collects every error instead of Config.Check's default of stopping (or, as
 // checkFiles below does, silently discarding) after the first — so they can
 // reuse the same import-resolution logic as checkFiles without duplicating
@@ -1093,7 +1018,8 @@ func (imp *workspaceImporter) warmImports(file *types.File) {
 	}
 	for _, spec := range file.AST.Imports {
 		path := strings.Trim(spec.Path.Value, `"`)
-		if _, local := imp.ws.ImportToPath[path]; !local {
+		_, local := imp.ws.ImportToPath[path]
+		if !local {
 			_, _ = imp.ext.lookup(path)
 		}
 	}
@@ -1108,7 +1034,8 @@ func externalLoadSettings(cfg BuildConfig, hostOS, hostArch string) (env, flags 
 		cgo = "1"
 	}
 	env = []string{"GOPROXY=off", "GOOS=" + cfg.GOOS, "GOARCH=" + cfg.GOARCH, "CGO_ENABLED=" + cgo}
-	if tags := normalizeTags(cfg.Tags); len(tags) > 0 {
+	tags := normalizeTags(cfg.Tags)
+	if len(tags) > 0 {
 		flags = []string{"-tags=" + strings.Join(tags, ",")}
 	}
 	return env, flags
@@ -1155,7 +1082,8 @@ func (imp *workspaceImporter) hasExternalImports() bool {
 		}
 		for _, spec := range file.AST.Imports {
 			path := strings.Trim(spec.Path.Value, `"`)
-			if _, local := imp.ws.ImportToPath[path]; local {
+			_, local := imp.ws.ImportToPath[path]
+			if local {
 				continue
 			}
 			if isStdlibImportPath(path) {
@@ -1192,9 +1120,12 @@ func isStdlibImportPath(path string) bool {
 
 func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// Check if this is a workspace-local package
-	if fsPath, ok := imp.ws.ImportToPath[path]; ok {
-		if pkg, ok := imp.ws.Packages[fsPath]; ok {
-			if err := imp.productionCycleError(pkg); err != nil {
+	fsPath, ok := imp.ws.ImportToPath[path]
+	if ok {
+		pkg, ok := imp.ws.Packages[fsPath]
+		if ok {
+			err := imp.productionCycleError(pkg)
+			if err != nil {
 				return nil, err
 			}
 			// Import is only ever reached from inside go/types.Config.Check,
@@ -1266,7 +1197,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 			// reference index — finding call sites inside pkg's own test
 			// files) is unaffected: this only changes what OTHER packages
 			// see when THEY import pkg.
-			if rescued, ok := imp.productionOnly[pkg]; ok {
+			rescued, ok := imp.productionOnly[pkg]
+			if ok {
 				return rescued, nil
 			}
 
@@ -1294,7 +1226,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// which is GOPATH-based and cannot see anything in the module cache — on
 	// a real workspace that fails on essentially every third-party import.
 	imp.extOnce.Do(imp.loadExternal)
-	if pkg, err := imp.ext.lookup(path); pkg != nil || err != nil {
+	pkg, err := imp.ext.lookup(path)
+	if !errors.Is(err, errNotListed) {
 		return pkg, err
 	}
 
@@ -1319,7 +1252,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 // importing itself included (see productionCycleError), before recursing, so
 // the walk never re-enters a package still being resolved on the stack.
 func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotypes.Package, error) {
-	if cached, ok := imp.productionOnly[pkg]; ok {
+	cached, ok := imp.productionOnly[pkg]
+	if ok {
 		return cached, nil
 	}
 
@@ -1368,7 +1302,8 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 		stack = append(stack, v)
 		onStack[v] = true
 		for _, w := range g[v] {
-			if _, seen := index[w]; !seen {
+			_, seen := index[w]
+			if !seen {
 				connect(w)
 				if low[w] < low[v] {
 					low[v] = low[w]
@@ -1394,7 +1329,8 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 		comp++
 	}
 	for _, v := range slices.Sorted(maps.Keys(g)) {
-		if _, seen := index[v]; !seen {
+		_, seen := index[v]
+		if !seen {
 			connect(v)
 		}
 	}
@@ -1419,7 +1355,8 @@ func (c *prodCycles) path(from, to string) []string {
 		v := queue[0]
 		queue = queue[1:]
 		for _, w := range c.graph[v] {
-			if _, seen := prev[w]; seen {
+			_, seen := prev[w]
+			if seen {
 				continue
 			}
 			prev[w] = v
@@ -1477,7 +1414,8 @@ func importsItself(pkg *types.Package) bool {
 }
 
 func (imp *workspaceImporter) importPathOf(fsPath string) string {
-	if p, ok := imp.ws.Packages[fsPath]; ok {
+	p, ok := imp.ws.Packages[fsPath]
+	if ok {
 		return p.ImportPath
 	}
 	return fsPath

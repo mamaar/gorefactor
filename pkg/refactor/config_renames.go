@@ -43,8 +43,10 @@ func planRenameView(c *viewIndexes, s renameStrategy, v *analysis.View, linked t
 		return configResult{absent: err, declared: declared}, nil
 	}
 	plan = withoutFiles(plan, v.ExcludedTestFiles())
-	if r, ok := s.(renameRefuser); ok {
-		if err := r.refuseIn(v, renamed); err != nil {
+	r, ok := s.(renameRefuser)
+	if ok {
+		err := r.refuseIn(v, renamed)
+		if err != nil {
 			return configResult{}, err
 		}
 	}
@@ -114,7 +116,8 @@ func declaredSymbolKeys(ws *types.Workspace) types.SymbolKeySet {
 }
 
 func addSymbolKey(keys types.SymbolKeySet, sym *types.Symbol) {
-	if key, ok := symbolKeyOf(sym); ok {
+	key, ok := symbolKeyOf(sym)
+	if ok {
 		keys[key] = struct{}{}
 	}
 }
@@ -128,7 +131,8 @@ func symbolForKey(ws *types.Workspace, key types.SymbolKey) *types.Symbol {
 	table := pkg.Symbols
 	if key.Recv == "" {
 		for _, group := range []map[string]*types.Symbol{table.Functions, table.Types, table.Variables, table.Constants} {
-			if sym := group[key.Name]; sym != nil {
+			sym := group[key.Name]
+			if sym != nil {
 				return sym
 			}
 		}
@@ -152,7 +156,8 @@ func withLinkedSymbols(ws *types.Workspace, symbols []*types.Symbol, linked type
 		if have.Has(key) {
 			continue
 		}
-		if sym := symbolForKey(ws, key); sym != nil {
+		sym := symbolForKey(ws, key)
+		if sym != nil {
 			symbols = append(symbols, sym)
 		}
 	}
@@ -202,17 +207,21 @@ type memberRenames interface {
 // returns the requested operation's not-found error.
 func planMemberRenames(ws *types.Workspace, idx *analysis.ReferenceIndex, s memberRenames, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
 	run := &memberRun{label: s.label(), renamed: make(types.SymbolKeySet)}
-	if err := run.validate(ws, s.requestedOp(idx), true); err != nil {
+	err := run.validate(ws, s.requestedOp(idx), true)
+	if err != nil {
 		return nil, nil, err
 	}
 	for _, key := range orderedKeys(linked) {
 		if run.renamed.Has(key) {
 			continue
 		}
-		if op := s.linkedOp(ws, idx, key); op != nil {
-			if err := run.validate(ws, op, false); err != nil {
-				return nil, nil, err
-			}
+		op := s.linkedOp(ws, idx, key)
+		if op == nil {
+			continue
+		}
+		err := run.validate(ws, op, false)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 	if len(run.ops) == 0 {

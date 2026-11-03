@@ -197,6 +197,28 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// The field must exist on the struct.
+	err = op.checkFieldExists(pkg, structType, req)
+	if err != nil {
+		return err
+	}
+
+	// No existing field on the same struct may already carry the new name.
+	err = op.checkMemberNameConflicts(pkg, req)
+	if err != nil {
+		return err
+	}
+
+	// Promoted field/method collision from an embedded type. Use go/types rather
+	// than walking the AST: LookupFieldOrMethod resolves promotion for us.
+	err = op.checkPromotedCollision(pkg, req)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (op *RenameFieldOperation) checkFieldExists(pkg *types.Package, structType *ast.StructType, req types.RenameFieldRequest) error {
 	if op.fieldSymbol(pkg) == nil {
 		// Distinguish an embedded field (a type rename in disguise) from a plain
 		// unknown field. Embedded fields are deliberately absent from
@@ -206,13 +228,14 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 				if len(field.Names) != 0 {
 					continue
 				}
-				if embeddedFieldTypeName(field.Type) == req.FieldName {
-					return &types.RefactorError{
-						Type: types.InvalidOperation,
-						Message: fmt.Sprintf(
-							"%q is an embedded field on %s: renaming it is a type rename, not a field rename; use rename_symbol on the type %q instead",
-							req.FieldName, req.TypeName, req.FieldName),
-					}
+				if embeddedFieldTypeName(field.Type) != req.FieldName {
+					continue
+				}
+				return &types.RefactorError{
+					Type: types.InvalidOperation,
+					Message: fmt.Sprintf(
+						"%q is an embedded field on %s: renaming it is a type rename, not a field rename; use rename_symbol on the type %q instead",
+						req.FieldName, req.TypeName, req.FieldName),
 				}
 			}
 		}
@@ -221,32 +244,39 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("field %s not found on type %s", req.FieldName, req.TypeName),
 		}
 	}
+	return nil
+}
 
-	// No existing field on the same struct may already carry the new name.
+func (op *RenameFieldOperation) checkMemberNameConflicts(pkg *types.Package, req types.RenameFieldRequest) error {
 	for _, f := range pkg.Symbols.Fields[req.TypeName] {
-		if f.Name == req.NewFieldName {
-			return &types.RefactorError{
-				Type:    types.NameConflict,
-				Message: fmt.Sprintf("field %s already exists on type %s", req.NewFieldName, req.TypeName),
-			}
+		if f.Name != req.NewFieldName {
+			continue
+		}
+		return &types.RefactorError{
+			Type:    types.NameConflict,
+			Message: fmt.Sprintf("field %s already exists on type %s", req.NewFieldName, req.TypeName),
 		}
 	}
 
 	// Go forbids a field and a method sharing a name on the same type.
 	for _, m := range pkg.Symbols.Methods[req.TypeName] {
-		if m.Name == req.NewFieldName {
-			return &types.RefactorError{
-				Type:    types.NameConflict,
-				Message: fmt.Sprintf("type %s already has a method named %s", req.TypeName, req.NewFieldName),
-			}
+		if m.Name != req.NewFieldName {
+			continue
+		}
+		return &types.RefactorError{
+			Type:    types.NameConflict,
+			Message: fmt.Sprintf("type %s already has a method named %s", req.TypeName, req.NewFieldName),
 		}
 	}
+	return nil
+}
 
-	// Promoted field/method collision from an embedded type. Use go/types rather
-	// than walking the AST: LookupFieldOrMethod resolves promotion for us.
+func (op *RenameFieldOperation) checkPromotedCollision(pkg *types.Package, req types.RenameFieldRequest) error {
 	if pkg.TypesPkg != nil {
-		if obj := pkg.TypesPkg.Scope().Lookup(req.TypeName); obj != nil {
-			if named, ok := obj.Type().(*gotypes.Named); ok {
+		obj := pkg.TypesPkg.Scope().Lookup(req.TypeName)
+		if obj != nil {
+			named, ok := obj.Type().(*gotypes.Named)
+			if ok {
 				found, _, _ := gotypes.LookupFieldOrMethod(named, true, pkg.TypesPkg, req.NewFieldName)
 				if found != nil {
 					return &types.RefactorError{
@@ -259,7 +289,6 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -300,15 +329,16 @@ func (op *RenameFieldOperation) Execute(ws *types.Workspace) (*types.Refactoring
 			ownFiles[f.Path] = true
 		}
 		for _, ref := range refs {
-			if !ownFiles[ref.File] {
-				return nil, &types.RefactorError{
-					Type: types.VisibilityViolation,
-					Message: fmt.Sprintf(
-						"changing export status of field %s.%s to %s would break references in package other than %s; re-run with AllowBreaking to proceed",
-						req.TypeName, req.FieldName, req.NewFieldName, pkg.Path),
-					File: ref.File,
-					Line: ref.Line,
-				}
+			if ownFiles[ref.File] {
+				continue
+			}
+			return nil, &types.RefactorError{
+				Type: types.VisibilityViolation,
+				Message: fmt.Sprintf(
+					"changing export status of field %s.%s to %s would break references in package other than %s; re-run with AllowBreaking to proceed",
+					req.TypeName, req.FieldName, req.NewFieldName, pkg.Path),
+				File: ref.File,
+				Line: ref.Line,
 			}
 		}
 	}

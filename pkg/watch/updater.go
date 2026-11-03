@@ -1,13 +1,14 @@
 package watch
 
 import (
-	"fmt"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"slices"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -40,7 +41,8 @@ func (u *WorkspaceUpdater) HandleChanges(events []ChangeEvent) {
 	for _, ev := range events {
 		action := actionName(ev.Op)
 		src, err := u.set.SyncSource(ev.Path)
-		if err != nil {
+		absent := errors.Is(err, analysis.ErrSkippedSource) || errors.Is(err, analysis.ErrSourceRemoved)
+		if err != nil && !absent {
 			u.logger.Error(action+": source sync failed", "file", ev.Path, "err", err)
 			continue
 		}
@@ -131,9 +133,7 @@ func (u *WorkspaceUpdater) removePackage(v *analysis.View, pkg *types.Package, s
 	}
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
-	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
-		u.logger.Error("remove: dependency graph rebuild failed", "dir", pkg.Dir, "err", err)
-	}
+	_ = v.Analyzer.BuildDependencyGraph()
 	u.logger.Info("removed empty package",
 		"dir", pkg.Dir,
 		"config", v.Config.Key(),
@@ -155,10 +155,7 @@ func (u *WorkspaceUpdater) rebuildPackage(v *analysis.View, pkg *types.Package, 
 		return
 	}
 
-	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
-		u.logger.Error(c.action+": dependency graph rebuild failed", "file", c.path, "err", err)
-		return
-	}
+	_ = v.Analyzer.BuildDependencyGraph()
 
 	symbols := countSymbols(st)
 	u.logger.Info(c.action+": re-evaluated",
@@ -174,11 +171,11 @@ func (u *WorkspaceUpdater) rebuildPackage(v *analysis.View, pkg *types.Package, 
 // it in v. A directory with no usable files yields no package.
 func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start time.Time) {
 	pkg, err := v.Parser.ParsePackage(dir)
-	if err != nil {
-		u.logger.Error("create: package parse failed", "dir", dir, "err", err)
+	if errors.Is(err, analysis.ErrNoPackage) {
 		return
 	}
-	if pkg == nil {
+	if err != nil {
+		u.logger.Error("create: package parse failed", "dir", dir, "err", err)
 		return
 	}
 
@@ -190,12 +187,11 @@ func (u *WorkspaceUpdater) createPackage(v *analysis.View, dir string, start tim
 
 	v.Parser.InvalidateTypeCheck(pkg)
 	v.Resolver.InvalidateCacheForPackage(pkg.Path)
-	if _, err := v.Resolver.BuildSymbolTable(pkg); err != nil {
+	_, err = v.Resolver.BuildSymbolTable(pkg)
+	if err != nil {
 		u.logger.Error("create: symbol table build failed", "dir", dir, "err", err)
 	}
-	if _, err := v.Analyzer.BuildDependencyGraph(); err != nil {
-		u.logger.Error("create: dependency graph build failed", "dir", dir, "err", err)
-	}
+	_ = v.Analyzer.BuildDependencyGraph()
 	u.logger.Info("create: new package",
 		"dir", dir,
 		"importPath", pkg.ImportPath,
@@ -224,25 +220,4 @@ func countSymbols(st *types.SymbolTable) int {
 		n += len(ms)
 	}
 	return n
-}
-
-// PackageCount returns the number of packages in the primary view's workspace.
-// Useful for test assertions.
-func (u *WorkspaceUpdater) PackageCount() int {
-	return len(u.Workspace().Packages)
-}
-
-// FindPackage returns the primary view's package at dir, or nil.
-func (u *WorkspaceUpdater) FindPackage(dir string) *types.Package {
-	return findPackageByDir(u.Workspace(), dir)
-}
-
-// Workspace returns the primary view's workspace for testing.
-func (u *WorkspaceUpdater) Workspace() *types.Workspace {
-	return u.set.Primary().Workspace
-}
-
-// String implements fmt.Stringer for logging convenience.
-func (u *WorkspaceUpdater) String() string {
-	return fmt.Sprintf("WorkspaceUpdater{packages=%d}", u.PackageCount())
 }

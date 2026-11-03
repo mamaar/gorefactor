@@ -49,7 +49,8 @@ func callSafeDelete(ctx context.Context, t *testing.T, sess *mcptest.Session, sy
 	}
 	var text strings.Builder
 	for _, c := range result.Content {
-		if tc, ok := c.(*mcpsdk.TextContent); ok {
+		tc, ok := c.(*mcpsdk.TextContent)
+		if ok {
 			text.WriteString(tc.Text)
 		}
 	}
@@ -210,7 +211,8 @@ func TestSafeDeleteElicit_LegacyProtocolClient(t *testing.T) {
 				&mcpsdk.ClientSessionOptions{ProtocolVersion: "2025-11-25"},
 			), tmpDir)
 			defer sess.Close()
-			if got := sess.InitializeResult().ProtocolVersion; got != "2025-11-25" {
+			got := sess.InitializeResult().ProtocolVersion
+			if got != "2025-11-25" {
 				t.Fatalf("negotiated protocol %s, want 2025-11-25", got)
 			}
 
@@ -248,10 +250,12 @@ func TestSafeDeleteElicit_URLOnlyClient_ExactError(t *testing.T) {
 			defer sess.Close()
 
 			result, text := callSafeDelete(ctx, t, sess, "deprecatedHelper", "main.go", false, false)
-			if want := wantExactBlockedError("deprecatedHelper", 2); !result.IsError || text != want {
+			want := wantExactBlockedError("deprecatedHelper", 2)
+			if !result.IsError || text != want {
 				t.Fatalf("IsError = %v, text = %q, want refusal %q", result.IsError, text, want)
 			}
-			if got := calls.Load(); got != 0 {
+			got := calls.Load()
+			if got != 0 {
 				t.Fatalf("elicitation handler called %d times, want 0", got)
 			}
 		})

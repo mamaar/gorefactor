@@ -54,7 +54,8 @@ func (p *moveSymbolPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (conf
 
 func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) {
 	op := &MoveSymbolOperation{Request: p.req}
-	if err := op.Validate(v.Workspace); err != nil {
+	err := op.Validate(v.Workspace)
+	if err != nil {
 		err = fmt.Errorf("move operation validation failed: %w", err)
 		if isSymbolNotFound(err) {
 			return configResult{absent: err}, nil
@@ -69,7 +70,8 @@ func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) 
 
 	p.moved = make(map[types.SymbolKey]string, len(op.moved))
 	for _, sym := range op.moved {
-		if key, ok := symbolKeyOf(sym); ok {
+		key, ok := symbolKeyOf(sym)
+		if ok {
 			p.moved[key] = sym.File
 		}
 	}
@@ -89,10 +91,13 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 	resolver := quietResolver(ws)
 	if len(p.moved) == 0 {
 		for _, ref := range p.req.Refs() {
-			if pkg := ws.Packages[ref.Package]; pkg != nil && pkg.Symbols != nil {
-				if sym, err := resolver.ResolveSymbol(pkg, ref.Name); err == nil {
-					p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
-				}
+			pkg := ws.Packages[ref.Package]
+			if pkg == nil || pkg.Symbols == nil {
+				continue
+			}
+			sym, err := resolver.ResolveSymbol(pkg, ref.Name)
+			if err == nil {
+				p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
 			}
 		}
 		return configResult{}
@@ -110,8 +115,9 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			p.object(v, "%s is declared in %s instead of %s; the move would leave that declaration behind", key.Name, sym.File, p.moved[key])
 			continue
 		}
-		if target != nil && target.Symbols != nil {
-			if _, err := resolver.ResolveSymbol(target, key.Name); err == nil {
+		if target != nil && target.Symbols != nil && findPackageForFile(ws, sym.File) != target {
+			_, err := resolver.ResolveSymbol(target, key.Name)
+			if err == nil {
 				p.object(v, "symbol %s already exists in target package %s", key.Name, p.req.ToPackage)
 			}
 		}
@@ -120,18 +126,24 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			p.object(v, "references to %s could not be found: %v", key.Name, err)
 			continue
 		}
-		for _, ref := range refs {
-			if generatedFile(ws, ref.File) != nil {
-				p.object(v, "%s is referenced at %s:%d, in a generated file; change the generator's input and regenerate", key.Name, rootRelative(ws, ref.File), ref.Line)
-				continue
-			}
-			if !p.rewritten[refSite{ref.File, ref.Offset}] {
-				res.blockers = append(res.blockers, types.Blocker{Reference: *ref})
-			}
-		}
+		res = p.collectBlockers(refs, ws, v, key, res)
 	}
-	if cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers); cycle != nil {
+	cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers)
+	if cycle != nil {
 		p.object(v, "the move would create an import cycle: %s", strings.Join(cycle, " -> "))
+	}
+	return res
+}
+
+func (p *moveSymbolPlanner) collectBlockers(refs []*types.Reference, ws *types.Workspace, v *analysis.View, key types.SymbolKey, res configResult) configResult {
+	for _, ref := range refs {
+		if generatedFile(ws, ref.File) != nil {
+			p.object(v, "%s is referenced at %s:%d, in a generated file; change the generator's input and regenerate", key.Name, rootRelative(ws, ref.File), ref.Line)
+			continue
+		}
+		if !p.rewritten[refSite{ref.File, ref.Offset}] {
+			res.blockers = append(res.blockers, types.Blocker{Reference: *ref})
+		}
 	}
 	return res
 }

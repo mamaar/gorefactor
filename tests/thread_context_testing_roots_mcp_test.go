@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -19,7 +18,7 @@ func threadVetted(t *testing.T, body string) string {
 		"p/lib.go":    threadSeedLib,
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\n" + body + "\n",
 	})
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	callJSON(t, sess, "add_context_parameter", map[string]any{
 		"function_name": "Seed", "source_file": "p/lib.go", "thread": true,

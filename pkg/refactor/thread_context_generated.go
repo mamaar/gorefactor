@@ -162,7 +162,8 @@ func (op *ThreadContextOperation) generatedAbort(ws *pkgtypes.Workspace, g *gene
 	}
 
 	rel := func(file *pkgtypes.File) string {
-		if r, err := filepath.Rel(ws.RootPath, file.Path); err == nil {
+		r, err := filepath.Rel(ws.RootPath, file.Path)
+		if err == nil {
 			return filepath.ToSlash(r)
 		}
 		return file.Path
@@ -172,7 +173,8 @@ func (op *ThreadContextOperation) generatedAbort(ws *pkgtypes.Workspace, g *gene
 	first := make(map[string]generatedHit)
 	for _, h := range g.hits {
 		path := rel(h.file)
-		if prev, ok := first[path]; !ok || cmp.Or(cmp.Compare(h.line, prev.line), strings.Compare(h.what, prev.what)) < 0 {
+		prev, ok := first[path]
+		if !ok || cmp.Or(cmp.Compare(h.line, prev.line), strings.Compare(h.what, prev.what)) < 0 {
 			first[path] = h
 		}
 	}

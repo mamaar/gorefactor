@@ -150,7 +150,8 @@ func scopeTypes(checked *gotypes.Package) []*gotypes.Named {
 // declareScope records the methods own declares; own is a package's own check.
 func (b *ifaceSurveyor) declareScope(own *gotypes.Package) {
 	for _, named := range scopeTypes(own) {
-		if iface, ok := asInterfaceType(named); ok {
+		iface, ok := asInterfaceType(named)
+		if ok {
 			for method := range iface.ExplicitMethods() {
 				b.declare(method)
 			}
@@ -171,7 +172,8 @@ func (b *ifaceSurveyor) addScope(checked *gotypes.Package) {
 	for _, named := range scopeTypes(checked) {
 		id := analysis.ObjectIDOf(named.Obj())
 		b.survey.views[id] = append(b.survey.views[id], named)
-		if iface, ok := asInterfaceType(named); ok {
+		iface, ok := asInterfaceType(named)
+		if ok {
 			b.add(ifaceCandidate{named: named, iface: iface})
 		} else {
 			b.survey.impls = append(b.survey.impls, named)
@@ -193,7 +195,8 @@ func (b *ifaceSurveyor) addImportedInterfaces(checked *gotypes.Package) {
 			if !named.Obj().Exported() {
 				continue
 			}
-			if iface, ok := asInterfaceType(named); ok {
+			iface, ok := asInterfaceType(named)
+			if ok {
 				b.add(ifaceCandidate{named: named, iface: iface})
 			}
 		}
@@ -266,13 +269,15 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 
 	switch t := t.(type) {
 	case *gotypes.Named:
-		if iface, ok := t.Underlying().(*gotypes.Interface); ok {
+		iface, ok := t.Underlying().(*gotypes.Interface)
+		if ok {
 			add(ifaceCandidate{named: t, iface: iface})
 			return
 		}
 		// A defined non-interface type: only its shape can carry an interface
 		// through (e.g. `type HandlerFunc func(ResponseWriter, *Request)`).
-		if _, isStruct := t.Underlying().(*gotypes.Struct); !isStruct {
+		_, isStruct := t.Underlying().(*gotypes.Struct)
+		if !isStruct {
 			collectIfaceTypes(t.Underlying(), seen, add)
 		}
 	case *gotypes.Pointer:
@@ -303,7 +308,8 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 // io.Writer, sort.Interface — where the damage is silent: nothing warns, the
 // type simply stops satisfying the interface.
 func (op *ThreadContextOperation) externalInterfaceAbort(ws *pkgtypes.Workspace, f *gotypes.Func) error {
-	if ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f); ok {
+	ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f)
+	if ok {
 		return op.externalIfaceError(f, ext)
 	}
 	return nil
@@ -333,7 +339,8 @@ func (s *ifaceSurvey) receiversOf(f *gotypes.Func) []gotypes.Type {
 	out := s.viewsOf(recv)
 	id := analysis.ObjectIDOf(f)
 	for _, named := range s.impls {
-		if m := lookupMethod(named, f.Name()); m != nil && analysis.ObjectIDOf(m) == id {
+		m := lookupMethod(named, f.Name())
+		if m != nil && analysis.ObjectIDOf(m) == id {
 			out = append(out, named)
 		}
 	}
@@ -367,7 +374,8 @@ func (s *ifaceSurvey) implementationsOf(iface *gotypes.Interface, methodName str
 		if !typeImplements(named, iface) {
 			continue
 		}
-		if m := lookupMethod(named, methodName); m != nil {
+		m := lookupMethod(named, methodName)
+		if m != nil {
 			out = append(out, canonicalFunc(m))
 		}
 	}
@@ -406,7 +414,8 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 	}
 	// An interface's own "pointer" has an empty method set, and taking a pointer
 	// to a pointer is never meaningful for satisfaction.
-	if _, isPtr := t.(*gotypes.Pointer); isPtr {
+	_, isPtr := t.(*gotypes.Pointer)
+	if isPtr {
 		return false
 	}
 	if gotypes.IsInterface(t) {
@@ -420,7 +429,8 @@ func typeImplements(t gotypes.Type, iface *gotypes.Interface) bool {
 // interface (io.WriteCloser's Write, from io.Writer) is found.
 func interfaceMethodNamed(iface *gotypes.Interface, name string) *gotypes.Func {
 	for m := range iface.Methods() {
-		if m := m; m.Name() == name {
+		m := m
+		if m.Name() == name {
 			return m
 		}
 	}
@@ -465,7 +475,8 @@ func findInterfaceMethodIdent(file *ast.File, name string) *ast.Ident {
 			if len(field.Names) == 0 || field.Names[0].Name != methodName {
 				continue
 			}
-			if _, ok := field.Type.(*ast.FuncType); ok {
+			_, ok := field.Type.(*ast.FuncType)
+			if ok {
 				found = field.Names[0]
 				return false
 			}
@@ -492,7 +503,8 @@ func asInterfaceType(t gotypes.Type) (*gotypes.Interface, bool) {
 func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
 	var out []*gotypes.Func
 	for _, view := range s.receiversOf(f) {
-		if iface, ok := asInterfaceType(view); ok {
+		iface, ok := asInterfaceType(view)
+		if ok {
 			out = append(out, s.implementationsOf(iface, f.Name())...)
 			continue
 		}
@@ -511,7 +523,8 @@ func (s *ifaceSurvey) expansionOf(f *gotypes.Func) []*gotypes.Func {
 // or recv alone when the workspace does not declare it at package level.
 func (s *ifaceSurvey) viewsOf(recv gotypes.Type) []gotypes.Type {
 	t := gotypes.Unalias(recv)
-	if ptr, ok := t.(*gotypes.Pointer); ok {
+	ptr, ok := t.(*gotypes.Pointer)
+	if ok {
 		t = gotypes.Unalias(ptr.Elem())
 	}
 	named, ok := t.(*gotypes.Named)
@@ -538,7 +551,8 @@ func (s *ifaceSurvey) viewsOf(recv gotypes.Type) []gotypes.Type {
 func (s *ifaceSurvey) declaredFuncs(funcs []*gotypes.Func) []*gotypes.Func {
 	var out []*gotypes.Func
 	for _, f := range funcs {
-		if own, ok := s.declared[analysis.ObjectIDOf(f)]; ok {
+		own, ok := s.declared[analysis.ObjectIDOf(f)]
+		if ok {
 			f = own
 		}
 		if !slices.Contains(out, f) {
@@ -563,7 +577,8 @@ func methodClosure(
 			continue
 		}
 		visited[f] = true
-		if ext, ok := survey.externalInterfaceOf(f); ok {
+		ext, ok := survey.externalInterfaceOf(f)
+		if ok {
 			return nil, refuse(f, ext)
 		}
 		members = append(members, f)

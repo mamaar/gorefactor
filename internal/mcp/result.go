@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -145,7 +146,8 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	// and deliberately leaves pure insertions alone: it requires Start < End,
 	// so a hunk that inserts at a point keeps an empty "old" because there
 	// genuinely is no prior text there.
-	if ws, err := state.GetWorkspace(); err == nil {
+	ws, err := state.GetWorkspace()
+	if err == nil {
 		plan.Changes = analyzers.FillOldText(ws, plan.Changes)
 	}
 
@@ -162,32 +164,29 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	res.UncoveredFiles = planUncoveredFiles(state, plan)
 	res.TypeErrors = planTypeErrors(plan)
 
-	if err := refactor.GeneratedFileEdits(plan.Changes); err != nil {
+	err = refactor.GeneratedFileEdits(plan.Changes)
+	if err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
 		return res
 	}
-	if err := state.GetEngine().ValidateRefactoring(plan); err != nil {
+	err = state.GetEngine().ValidateRefactoring(plan)
+	if err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
 		return res
 	}
 	if plan.Impact != nil {
 		for _, issue := range plan.Impact.PotentialIssues {
-			if issue.Severity == types.Error {
-				res.Success = false
-				res.BlockingIssue = fmt.Sprintf("critical issue: %s", issue.Description)
-				return res
+			if issue.Severity != types.Error {
+				continue
 			}
+			res.Success = false
+			res.BlockingIssue = fmt.Sprintf("critical issue: %s", issue.Description)
+			return res
 		}
 	}
 	return res
-}
-
-// AnalysisResult is the structured output returned by read-only analysis tools.
-type AnalysisResult struct {
-	Description string `json:"description"`
-	Data        any    `json:"data"`
 }
 
 // executePlan validates, executes, and returns a PlanResult for the given plan.
@@ -198,15 +197,13 @@ func executePlan(state *MCPServer, plan *types.RefactoringPlan, desc string, dry
 		return previewPlan(state, plan, desc), nil
 	}
 
-	if err := state.GetEngine().ExecutePlan(plan); err != nil {
+	err := state.GetEngine().ExecutePlan(plan)
+	if err != nil {
 		return nil, fmt.Errorf("execute plan: %w", err)
 	}
 
 	// Synchronously update workspace state with the changes we just wrote
-	if err := state.SyncWorkspaceChanges(plan.AffectedFiles); err != nil {
-		state.logger.Warn("workspace sync failed", "err", err)
-		// Don't fail the operation - changes are already on disk
-	}
+	state.SyncWorkspaceChanges(plan.AffectedFiles)
 
 	return &PlanResult{
 		Description:    desc,
@@ -244,7 +241,8 @@ func planUncoveredFiles(state *MCPServer, plan *types.RefactoringPlan) []Uncover
 		return nil
 	}
 	root := ""
-	if ws, err := state.GetWorkspace(); err == nil {
+	ws, err := state.GetWorkspace()
+	if err == nil {
 		root = ws.RootPath
 	}
 	out := make([]UncoveredFileInfo, len(plan.Coverage.Uncovered))
@@ -269,6 +267,19 @@ func planBuildConfigs(plan *types.RefactoringPlan) []string {
 func executePlanWithUnlock(state *MCPServer, plan *types.RefactoringPlan, desc string, dryRun bool) (*PlanResult, error) {
 	state.RUnlock()
 	return executePlan(state, plan, desc, dryRun)
+}
+
+// verificationBlocker returns why a type-check verification forbids applying
+// its plan: the errors the plan would introduce, or that it could not be
+// checked ("" when verified clean).
+func verificationBlocker(v *refactor.TypeCheckResult) string {
+	if len(v.NewErrors) > 0 {
+		return "applying this plan would introduce type errors: " + strings.Join(v.NewErrors, "; ")
+	}
+	if v.Skipped != "" {
+		return "the plan could not be verified against go/types: " + v.Skipped
+	}
+	return ""
 }
 
 // withDryRun annotates a tool response with preview details when nothing was

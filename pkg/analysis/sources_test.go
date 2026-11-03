@@ -11,12 +11,14 @@ func newTreeWithDir(t *testing.T, files map[string]string) (*SourceTree, string)
 	t.Helper()
 	dir := t.TempDir()
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	tree := NewSourceTree(token.NewFileSet())
-	if err := tree.AddDir(dir); err != nil {
+	err := tree.AddDir(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return tree, dir
@@ -35,7 +37,8 @@ func TestSourceTree_ReplaceRereadsContentAndAST(t *testing.T) {
 	path := filepath.Join(dir, "a.go")
 	before := tree.File(path)
 
-	if err := os.WriteFile(path, []byte("package a\n\nfunc Two() {}\n"), 0o644); err != nil {
+	err := os.WriteFile(path, []byte("package a\n\nfunc Two() {}\n"), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := tree.Replace(path)
@@ -55,7 +58,8 @@ func TestSourceTree_ReplaceRecordsParseError(t *testing.T) {
 	tree, dir := newTreeWithDir(t, map[string]string{"a.go": "package a\n"})
 	path := filepath.Join(dir, "a.go")
 
-	if err := os.WriteFile(path, []byte("package a\n\nfunc {"), 0o644); err != nil {
+	err := os.WriteFile(path, []byte("package a\n\nfunc {"), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 	got, err := tree.Replace(path)
@@ -69,7 +73,8 @@ func TestSourceTree_ReplaceRecordsParseError(t *testing.T) {
 
 func TestSourceTree_ReplaceUnknownFileFails(t *testing.T) {
 	tree, dir := newTreeWithDir(t, map[string]string{"a.go": "package a\n"})
-	if _, err := tree.Replace(filepath.Join(dir, "missing.go")); err == nil {
+	_, err := tree.Replace(filepath.Join(dir, "missing.go"))
+	if err == nil {
 		t.Fatal("expected an error for a file the tree does not record")
 	}
 }
@@ -80,7 +85,8 @@ func TestSourceTree_AddKeepsDirectorySorted(t *testing.T) {
 		"c.go": "package a\n",
 	})
 	path := filepath.Join(dir, "b.go")
-	if err := os.WriteFile(path, []byte("package a\n"), 0o644); err != nil {
+	err := os.WriteFile(path, []byte("package a\n"), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +95,8 @@ func TestSourceTree_AddKeepsDirectorySorted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := dirNames(tree, dir); len(got) != 3 || got[0] != "a.go" || got[1] != "b.go" || got[2] != "c.go" {
+	got := dirNames(tree, dir)
+	if len(got) != 3 || got[0] != "a.go" || got[1] != "b.go" || got[2] != "c.go" {
 		t.Fatalf("directory order = %v", got)
 	}
 	if tree.File(path) != added {
@@ -109,7 +116,8 @@ func TestSourceTree_RemoveDropsFileFromBothLookups(t *testing.T) {
 	if tree.File(path) != nil {
 		t.Fatal("removed file still found by path")
 	}
-	if got := dirNames(tree, dir); len(got) != 1 || got[0] != "b.go" {
+	got := dirNames(tree, dir)
+	if len(got) != 1 || got[0] != "b.go" {
 		t.Fatalf("directory contents = %v", got)
 	}
 }

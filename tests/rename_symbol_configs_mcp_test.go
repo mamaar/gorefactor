@@ -13,7 +13,7 @@ import (
 
 func renameSymbol(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "rename_symbol", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "rename_symbol", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -54,15 +54,18 @@ func TestRenameSymbol_TagSiblingsBothRenamedAndSharedCallerOnce(t *testing.T) {
 
 	out := callJSON(t, sess, "rename_symbol", renameFToG(nil))
 
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "func g(n int) int") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "func g(n int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
-	if got := fileText(t, dir, "p/use.go"); strings.Count(got, "g(1)") != 1 {
+	got := fileText(t, dir, "p/use.go")
+	if strings.Count(got, "g(1)") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
 	goVets(t, dir, "", "tagx")
@@ -122,7 +125,8 @@ func TestRenameSymbol_SingleConfigOmitsBuildConfigs(t *testing.T) {
 
 	for _, dryRun := range []bool{true, false} {
 		out := callJSON(t, sess, "rename_symbol", map[string]any{"symbol": "f", "new_name": "g", "dry_run": dryRun})
-		if _, ok := out["build_configs"]; ok {
+		_, ok := out["build_configs"]
+		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
 		}
 	}

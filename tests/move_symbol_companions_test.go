@@ -169,7 +169,8 @@ func UseCache() {
 	// is the exact condition that triggered bug 1 (ResolvePackagePath falls
 	// through to the raw, unresolved "pkg/memcache" when nothing in
 	// ws.Packages matches yet).
-	if _, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache")); !os.IsNotExist(err) {
+	_, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache"))
+	if !os.IsNotExist(err) {
 		t.Fatalf("test setup invariant violated: pkg/memcache must not exist yet, stat err=%v", err)
 	}
 
@@ -192,88 +193,60 @@ func UseCache() {
 		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
 	}
 
-	// --- Targeted content checks (fast, specific failure messages) ---
-
-	targetPath := filepath.Join(tmpDir, "pkg", "memcache", "memcache.go")
-	target := mustRead(t, targetPath)
-
-	for _, want := range []string{
-		"type MemCache struct",
-		"func NewMemCache(",
-		"func (c *MemCache) Get(",
-		"func (c *MemCache) Port(",
-		"func (c *MemCache) persistValueForKey(",
-	} {
-		if !strings.Contains(target, want) {
-			t.Errorf("expected %s in moved file, missing %q\ngot:\n%s", targetPath, want, target)
+	t.Run("moved file has declarations and imports", func(t *testing.T) {
+		const target = "pkg/memcache/memcache.go"
+		for _, want := range []string{
+			"type MemCache struct",
+			"func NewMemCache(",
+			"func (c *MemCache) Get(",
+			"func (c *MemCache) Port(",
+			"func (c *MemCache) persistValueForKey(",
+			// Bug 2: every import the moved code actually uses must be present.
+			`"net/http"`,
+			`rwmutex "sync"`,
+			`"reprotest/internal/cache"`,
+			`"errors"`,
+		} {
+			assertFileContains(t, tmpDir, target, want)
 		}
-	}
-	// Bug 2: every import the moved code actually uses must be present.
-	for _, wantImport := range []string{
-		`"net/http"`,
-		`rwmutex "sync"`,
-		`"reprotest/internal/cache"`,
-		`"errors"`,
-	} {
-		if !strings.Contains(target, wantImport) {
-			t.Errorf("expected import %s in moved file %s, missing\ngot:\n%s", wantImport, targetPath, target)
+		// There is no "was moved from" banner to leak a filesystem path through.
+		assertFileOmits(t, tmpDir, target, tmpDir)
+		assertFileOmits(t, tmpDir, target, "was moved from")
+	})
+
+	t.Run("source file keeps only unrelated code", func(t *testing.T) {
+		const common = "common/memcache.go"
+		for _, notWant := range []string{
+			"type MemCache struct",
+			"func NewMemCache(",
+			"func (c *MemCache)",
+		} {
+			assertFileOmits(t, tmpDir, common, notWant)
 		}
-	}
-	// Bug 2 (comment leak) no longer applies: the "was moved from" banner
-	// was removed entirely (it was pure diff churn) rather than fixed to
-	// read the import path instead of a raw filesystem path, so there is no
-	// banner left to leak a path through.
-	if strings.Contains(target, tmpDir) {
-		t.Errorf("moved file %s leaks the local filesystem path:\n%s", targetPath, target)
-	}
-	if strings.Contains(target, "was moved from") {
-		t.Errorf("expected no generated banner comment above the moved declaration, got:\n%s", target)
-	}
+		assertFileContains(t, tmpDir, common, "func Unrelated()")
+	})
 
-	commonPath := filepath.Join(tmpDir, "common", "memcache.go")
-	common := mustRead(t, commonPath)
-	for _, notWant := range []string{
-		"type MemCache struct",
-		"func NewMemCache(",
-		"func (c *MemCache)",
-	} {
-		if strings.Contains(common, notWant) {
-			t.Errorf("expected %q to have been removed from %s, still present:\n%s", notWant, commonPath, common)
-		}
-	}
-	if !strings.Contains(common, "func Unrelated()") {
-		t.Errorf("expected unrelated function to remain in %s:\n%s", commonPath, common)
-	}
+	t.Run("same-package leftover gets module-qualified import", func(t *testing.T) {
+		// Bug 1: not the bare "pkg/memcache".
+		const helper = "common/helper.go"
+		assertFileContains(t, tmpDir, helper, `"reprotest/pkg/memcache"`)
+		assertFileContains(t, tmpDir, helper, "memcache.NewMemCache")
+		assertFileContains(t, tmpDir, helper, "*memcache.MemCache")
+	})
 
-	// Bug 1: the same-package leftover reference (helper.go) must get the
-	// correct, module-qualified import — not the bare "pkg/memcache".
-	helperPath := filepath.Join(tmpDir, "common", "helper.go")
-	helper := mustRead(t, helperPath)
-	if !strings.Contains(helper, `"reprotest/pkg/memcache"`) {
-		t.Errorf("expected helper.go to import the module-qualified target package, got:\n%s", helper)
-	}
-	if strings.Contains(helper, `"pkg/memcache"`) && !strings.Contains(helper, `"reprotest/pkg/memcache"`) {
-		t.Errorf("helper.go has the bare unqualified import path (bug 1 regression):\n%s", helper)
-	}
-	if !strings.Contains(helper, "memcache.NewMemCache") || !strings.Contains(helper, "*memcache.MemCache") {
-		t.Errorf("expected helper.go references to be qualified with the new package, got:\n%s", helper)
-	}
-
-	consumerPath := filepath.Join(tmpDir, "consumer", "consumer.go")
-	consumerSrc := mustRead(t, consumerPath)
-	if !strings.Contains(consumerSrc, "memcache.NewMemCache") {
-		t.Errorf("expected consumer.go call site to be updated to the new package, got:\n%s", consumerSrc)
-	}
-	if !strings.Contains(consumerSrc, "common.Unrelated") {
-		t.Errorf("expected consumer.go's unrelated reference to remain qualified to common, got:\n%s", consumerSrc)
-	}
+	t.Run("cross-package consumer is updated", func(t *testing.T) {
+		const consumer = "consumer/consumer.go"
+		assertFileContains(t, tmpDir, consumer, "memcache.NewMemCache")
+		assertFileContains(t, tmpDir, consumer, "common.Unrelated")
+	})
 
 	// --- The acceptance criterion: the whole fixture module must compile. ---
 	// A string-diff-only test would not have caught any of the three bugs
 	// above; only actually building the result does.
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("fixture module does not compile after move_symbol (this is the actual bug):\n%s", out)
 	}
 }

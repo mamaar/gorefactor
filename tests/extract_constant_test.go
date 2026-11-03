@@ -18,7 +18,8 @@ func writeModule(t *testing.T, files map[string]string) string {
 	dir := t.TempDir()
 	files["go.mod"] = "module example.com/ec\n\ngo 1.21\n"
 	for name, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -33,7 +34,8 @@ func callExtractConstant(ctx context.Context, t *testing.T, sess *mcptest.Sessio
 	}
 	var text strings.Builder
 	for _, c := range result.Content {
-		if tc, ok := c.(*mcpsdk.TextContent); ok {
+		tc, ok := c.(*mcpsdk.TextContent)
+		if ok {
 			text.WriteString(tc.Text)
 		}
 	}
@@ -66,18 +68,22 @@ func TestExtractConstantMCP_ReplacesAcrossPackageAndStillCompiles(t *testing.T) 
 		}
 		return string(b)
 	}
-	if got := read("a.go"); !strings.Contains(got, "const Red = \"red\"") || !strings.Contains(got, "var C Color = Red") {
+	got := read("a.go")
+	if !strings.Contains(got, "const Red = \"red\"") || !strings.Contains(got, "var C Color = Red") {
 		t.Errorf("a.go:\n%s", got)
 	}
-	if got := read("b.go"); !strings.Contains(got, "var S string = Red") || !strings.Contains(got, "return \"red\"") {
+	got = read("b.go")
+	if !strings.Contains(got, "var S string = Red") || !strings.Contains(got, "return \"red\"") {
 		t.Errorf("b.go:\n%s", got)
 	}
-	if got := read("a_test.go"); !strings.Contains(got, "C != Red") {
+	got = read("a_test.go")
+	if !strings.Contains(got, "C != Red") {
 		t.Errorf("a_test.go:\n%s", got)
 	}
 	vet := exec.Command("go", "vet", "./...")
 	vet.Dir = dir
-	if out, err := vet.CombinedOutput(); err != nil {
+	out, err := vet.CombinedOutput()
+	if err != nil {
 		t.Errorf("go vet after extract_constant: %v\n%s", err, out)
 	}
 	if !strings.Contains(text, `"skipped_sites"`) || !strings.Contains(text, `"line": 8`) {
@@ -98,7 +104,8 @@ func TestExtractConstantMCP_RefusalWritesNothing(t *testing.T) {
 	if !result.IsError || !strings.Contains(text, "already declared") {
 		t.Fatalf("want a name-conflict error, got IsError=%v: %s", result.IsError, text)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "a.go")); string(b) != src {
+	b, _ := os.ReadFile(filepath.Join(dir, "a.go"))
+	if string(b) != src {
 		t.Errorf("a.go changed:\n%s", b)
 	}
 }

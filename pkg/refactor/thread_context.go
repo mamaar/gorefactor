@@ -147,10 +147,6 @@ type funcDecl struct {
 	IfaceFuncType *ast.FuncType
 }
 
-// IsInterfaceMethod reports whether this declaration is an interface method
-// field rather than an ordinary function declaration.
-func (fd *funcDecl) IsInterfaceMethod() bool { return fd.Decl == nil && fd.IfaceFuncType != nil }
-
 // FuncType returns the signature AST to rewrite, for either kind of
 // declaration. This is the node whose Params.Opening receives the injected ctx.
 func (fd *funcDecl) FuncType() *ast.FuncType {
@@ -310,24 +306,28 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 		add(f, "stop_at")
 	}
 	for f := range op.plan.Outside {
-		if _, gains := op.plan.Funcs[f]; !gains {
+		_, gains := op.plan.Funcs[f]
+		if !gains {
 			add(f, "outside entry")
 		}
 	}
 	for f := range op.plan.OutsideWithin {
-		if _, gains := op.plan.Funcs[f]; !gains {
+		_, gains := op.plan.Funcs[f]
+		if !gains {
 			add(f, "outside within")
 		}
 	}
 	for f, reason := range op.plan.Blocked {
-		if fd := op.declIndex[f]; fd != nil && fd.File != nil {
-			sites = append(sites, pkgtypes.SkippedSite{
-				File:    fd.File.Path,
-				Line:    offsetLine(fd.File, fd.Decl.Pos()),
-				Reason:  reason,
-				Snippet: funcLabel(f),
-			})
+		fd := op.declIndex[f]
+		if fd == nil || fd.File == nil {
+			continue
 		}
+		sites = append(sites, pkgtypes.SkippedSite{
+			File:    fd.File.Path,
+			Line:    offsetLine(fd.File, fd.Decl.Pos()),
+			Reason:  reason,
+			Snippet: funcLabel(f),
+		})
 	}
 	sites = append(sites, op.plan.Notes...)
 	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
@@ -351,15 +351,16 @@ func assertNoOverlappingChanges(changes []pkgtypes.Change) error {
 		for i := range cs {
 			for j := i + 1; j < len(cs); j++ {
 				a, b := cs[i], cs[j]
-				if a.Start < b.End && b.Start < a.End {
-					return &pkgtypes.RefactorError{
-						Type: pkgtypes.InvalidOperation,
-						Message: fmt.Sprintf(
-							"internal error: context threading produced overlapping changes in %s: "+
-								"%q [%d,%d) conflicts with %q [%d,%d)",
-							file, a.Description, a.Start, a.End, b.Description, b.Start, b.End),
-						File: file,
-					}
+				if a.Start >= b.End || b.Start >= a.End {
+					continue
+				}
+				return &pkgtypes.RefactorError{
+					Type: pkgtypes.InvalidOperation,
+					Message: fmt.Sprintf(
+						"internal error: context threading produced overlapping changes in %s: "+
+							"%q [%d,%d) conflicts with %q [%d,%d)",
+						file, a.Description, a.Start, a.End, b.Description, b.Start, b.End),
+					File: file,
 				}
 			}
 		}
@@ -445,12 +446,13 @@ func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace, idx *analysis.Re
 // gains the parameter, so it cannot also be where the climb stops.
 func (op *ThreadContextOperation) rejectStopSeeds(seeds []*gotypes.Func) ([]*gotypes.Func, error) {
 	for _, f := range seeds {
-		if op.isStop(f) {
-			return nil, &pkgtypes.RefactorError{
-				Type: pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("cannot thread context through %s: it is the function that gains the "+
-					"parameter and is also declared as a stop. No changes were made.", funcLabel(f)),
-			}
+		if !op.isStop(f) {
+			continue
+		}
+		return nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("cannot thread context through %s: it is the function that gains the "+
+				"parameter and is also declared as a stop. No changes were made.", funcLabel(f)),
 		}
 	}
 	return seeds, nil
@@ -469,7 +471,8 @@ func (op *ThreadContextOperation) linkedFuncs() []*gotypes.Func {
 	}
 	var out []*gotypes.Func
 	for f := range op.declIndex {
-		if key, ok := pkgtypes.SymbolKeyOf(f); ok && op.Linked.Has(key) {
+		key, ok := pkgtypes.SymbolKeyOf(f)
+		if ok && op.Linked.Has(key) {
 			out = append(out, f)
 		}
 	}
@@ -484,7 +487,8 @@ func (op *ThreadContextOperation) GainedKeys() pkgtypes.SymbolKeySet {
 		return keys
 	}
 	for f := range op.plan.Funcs {
-		if key, ok := pkgtypes.SymbolKeyOf(f); ok {
+		key, ok := pkgtypes.SymbolKeyOf(f)
+		if ok {
 			keys[key] = struct{}{}
 		}
 	}
@@ -524,7 +528,8 @@ func (plan *threadPlan) reachedPackages() []*pkgtypes.Package {
 		}
 	}
 	for _, edit := range plan.ArgFor {
-		if pkg := edit.Site.Pkg; pkg != nil {
+		pkg := edit.Site.Pkg
+		if pkg != nil {
 			byDir[pkg.Path] = pkg
 		}
 	}
@@ -580,7 +585,8 @@ func (op *ThreadContextOperation) discover(
 		f := queue[0]
 		queue = queue[1:]
 		if visited[f] {
-			if reason := plan.Blocked[f]; reason != "" && pinned[f] {
+			reason := plan.Blocked[f]
+			if reason != "" && pinned[f] {
 				return nil, blockedError(f, reason)
 			}
 			continue // the visited set is what terminates cycles and diamonds
@@ -597,7 +603,8 @@ func (op *ThreadContextOperation) discover(
 			continue
 		}
 		if len(op.CallSitesOf) > 0 {
-			if reason := op.gainBlocker(ws, idx, f); reason != "" {
+			reason := op.gainBlocker(ws, idx, f)
+			if reason != "" {
 				if pinned[f] {
 					return nil, blockedError(f, reason)
 				}
@@ -607,30 +614,18 @@ func (op *ThreadContextOperation) discover(
 		}
 		plan.Decls[f] = fd
 
-		if !funcHasContextParam(f) {
-			plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
-			if stmt, ok := isFakeRootCtxCreation(fd.Decl); ok {
-				plan.Fake[f] = stmt
-			}
-			uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
-			if err := op.valueUseAbort(ws, f, uses); err != nil {
-				return nil, err
-			}
-		}
-
-		extra, err := op.expandInterfaces(f, ws, idx)
+		err := op.planCtxParam(f, plan, fd, gen, ws, idx)
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range extra {
-			if op.isStop(e) {
-				return nil, &pkgtypes.RefactorError{
-					Type: pkgtypes.InvalidOperation,
-					Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
-						"declared as a stop; the interface method would gain ctx while %s does not, so the "+
-						"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
-				}
-			}
+
+		extra, err := op.expandInterfaces(f, ws)
+		if err != nil {
+			return nil, err
+		}
+		err = op.checkExpansionAvoidsStops(extra, f)
+		if err != nil {
+			return nil, err
 		}
 		gen.expanded(f, extra)
 		for _, e := range extra {
@@ -638,27 +633,67 @@ func (op *ThreadContextOperation) discover(
 		}
 		queue = append(queue, extra...)
 
-		for _, site := range idx.CallSitesOf(f) {
-			if gen.isCallSite(f, site, op.siteLine(site)) {
-				continue
-			}
-			caller, climb, err := op.climbTarget(idx, plan, site)
-			if err != nil {
-				return nil, err
-			}
-			if climb {
-				gen.climbed(f, caller)
-				queue = append(queue, caller)
-			}
+		queue, err = op.climbCallSites(idx, f, gen, plan, queue)
+		if err != nil {
+			return nil, err
 		}
 	}
-	if err := op.generatedAbort(ws, gen, seeds); err != nil {
+	err := op.generatedAbort(ws, gen, seeds)
+	if err != nil {
 		return nil, err
 	}
 	for f := range plan.Blocked {
 		delete(visited, f)
 	}
 	return visited, nil
+}
+
+func (op *ThreadContextOperation) planCtxParam(f *gotypes.Func, plan *threadPlan, fd *funcDecl, gen *generatedReach, ws *pkgtypes.Workspace, idx *analysis.ReferenceIndex) error {
+	if !funcHasContextParam(f) {
+		plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
+		stmt, ok := isFakeRootCtxCreation(fd.Decl)
+		if ok {
+			plan.Fake[f] = stmt
+		}
+		uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
+		err := op.valueUseAbort(ws, f, uses)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (op *ThreadContextOperation) checkExpansionAvoidsStops(extra []*gotypes.Func, f *gotypes.Func) error {
+	for _, e := range extra {
+		if !op.isStop(e) {
+			continue
+		}
+		return &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
+				"declared as a stop; the interface method would gain ctx while %s does not, so the "+
+				"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
+		}
+	}
+	return nil
+}
+
+func (op *ThreadContextOperation) climbCallSites(idx *analysis.ReferenceIndex, f *gotypes.Func, gen *generatedReach, plan *threadPlan, queue []*gotypes.Func) ([]*gotypes.Func, error) {
+	for _, site := range idx.CallSitesOf(f) {
+		if gen.isCallSite(f, site, op.siteLine(site)) {
+			continue
+		}
+		caller, climb, err := op.climbTarget(idx, plan, site)
+		if err != nil {
+			return queue, err
+		}
+		if climb {
+			gen.climbed(f, caller)
+			queue = append(queue, caller)
+		}
+	}
+	return queue, nil
 }
 
 // missingDeclError reports a worklist entry with no indexed declaration: what
@@ -707,7 +742,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	if site.Lit != nil {
 		// Still consult findCtxSource, purely so that missing type info is caught
 		// here in phase 1 rather than surfacing in phase 2 after Funcs is final.
-		if src, _ := findCtxSource(site.Pkg, site.Fn, site.Call); src.Kind == ctxUnknown {
+		src, _ := findCtxSource(site.Pkg, site.Fn, site.Call)
+		if src.Kind == ctxUnknown {
 			return nil, false, op.unknownCtxAbort(site)
 		}
 		return nil, false, nil
@@ -733,7 +769,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	if err != nil {
 		return nil, false, err
 	}
-	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, cleanupHelper); isRoot {
+	_, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, cleanupHelper)
+	if isRoot {
 		return nil, false, nil
 	}
 
@@ -759,7 +796,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	}
 	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && (op.Reach.outside(caller) || op.Reach.outsideWithin(caller)) {
 		// A conflict only costs the rename here: the caller can pass context.TODO().
-		if renamed, _ := op.renameBlankCtx(plan, caller, site); renamed {
+		renamed, _ := op.renameBlankCtx(plan, caller, site)
+		if renamed {
 			return nil, false, nil
 		}
 		if op.Reach.outside(caller) {
@@ -775,7 +813,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	// named one shadowed by a local cannot be fixed by guessing: abort and let
 	// the user un-shadow it.
 	if funcHasContextParam(caller) {
-		if renamed, err := op.renameBlankCtx(plan, caller, site); err != nil || renamed {
+		renamed, err := op.renameBlankCtx(plan, caller, site)
+		if err != nil || renamed {
 			return nil, false, err
 		}
 		return nil, false, &pkgtypes.RefactorError{
@@ -803,7 +842,7 @@ func (op *ThreadContextOperation) resolve(
 		for _, site := range idx.CallSitesOf(f) {
 			expr, err := op.argFor(idx, plan, site)
 			if err != nil {
-				return err
+				return fmt.Errorf("resolve: %w", err)
 			}
 			plan.ArgFor[site.Call.Lparen] = &callEdit{Expr: expr, Site: site, Callee: f}
 		}
@@ -822,7 +861,8 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 		if err != nil {
 			return "", err
 		}
-		if name, ok := plan.Funcs[caller]; ok {
+		name, ok := plan.Funcs[caller]
+		if ok {
 			return name, nil
 		}
 		if plan.Renamed[caller] {
@@ -834,7 +874,8 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	//      literal. This is also what makes a root with a local ctx (main with
 	//      `ctx := context.Background()`) pass its own ctx rather than a fresh
 	//      context.TODO(), and what lets a closure use a captured outer ctx.
-	if src, ok := findCtxSource(site.Pkg, site.Fn, site.Call); ok {
+	src, ok := findCtxSource(site.Pkg, site.Fn, site.Call)
+	if ok {
 		return src.Expr, nil
 	} else if src.Kind == ctxUnknown {
 		return "", op.unknownCtxAbort(site)
@@ -846,13 +887,15 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	if err != nil {
 		return "", err
 	}
-	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call, cleanupHelper); ok {
+	src, ok = classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call, cleanupHelper)
+	if ok {
 		return src.Expr, nil
 	}
 
 	// 5. A declared stop with no context in scope.
 	if site.Fn != nil && site.Lit == nil {
-		if caller, err := op.callerObject(site); err != nil {
+		caller, err := op.callerObject(site)
+		if err != nil {
 			return "", err
 		} else if op.isStop(caller) || plan.Outside[caller] || plan.OutsideWithin[caller] || plan.Blocked[caller] != "" {
 			return "context.TODO()", nil
@@ -882,7 +925,7 @@ func (op *ThreadContextOperation) calledFromCleanup(idx *analysis.ReferenceIndex
 	}
 	caller, err := op.callerObject(site)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("called from cleanup: %w", err)
 	}
 	return slices.ContainsFunc(idx.CallSitesOf(caller), func(s analysis.CallSite) bool {
 		return inCleanupClosure(s.Pkg, s.Fn, s.Call)
@@ -905,7 +948,6 @@ func (op *ThreadContextOperation) calledFromCleanup(idx *analysis.ReferenceIndex
 func (op *ThreadContextOperation) expandInterfaces(
 	f *gotypes.Func,
 	ws *pkgtypes.Workspace,
-	idx *analysis.ReferenceIndex,
 ) ([]*gotypes.Func, error) {
 	// Checked for every worklist entry, before anything is expanded. Satisfaction
 	// of an interface declared outside the workspace is broken by the signature
@@ -913,10 +955,12 @@ func (op *ThreadContextOperation) expandInterfaces(
 	// ctx to ServeHTTP silently stops the type satisfying http.Handler. This is an
 	// abort rather than a SkippedSite because the product decision is that the
 	// user must never be handed a half-threaded, uncompilable workspace.
-	if err := op.externalInterfaceAbort(ws, f); err != nil {
+	err := op.externalInterfaceAbort(ws, f)
+	if err != nil {
 		return nil, err
 	}
-	if err := stdMethodError("thread context through", f); err != nil {
+	err = stdMethodError("thread context through", f)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1076,7 +1120,8 @@ func funcHasContextParam(f *gotypes.Func) bool {
 // ReferenceIndex canonicalizes the objects it stores and the arguments it is
 // given, so keying every map here on the origin keeps both sides consistent.
 func canonicalFunc(f *gotypes.Func) *gotypes.Func {
-	if orig := f.Origin(); orig != nil {
+	orig := f.Origin()
+	if orig != nil {
 		return orig
 	}
 	return f
@@ -1103,7 +1148,8 @@ func buildFuncDeclIndex(ws *pkgtypes.Workspace) map[*gotypes.Func]*funcDecl {
 				continue
 			}
 			for _, decl := range file.AST.Decls {
-				if fd, ok := decl.(*ast.FuncDecl); ok {
+				fd, ok := decl.(*ast.FuncDecl)
+				if ok {
 					if fd.Name == nil {
 						continue
 					}
@@ -1201,13 +1247,14 @@ func (op *ThreadContextOperation) referenceIndex(ws *pkgtypes.Workspace) *analys
 func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.Func, error) {
 	file, pkg, err := op.findSourceFile(ws)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("resolve seed: %w", err)
 	}
 	// The name identifier to resolve: an ordinary declaration's, or — when the
 	// seed names an interface method such as "Store.Save", which is an *ast.Field
 	// and so invisible to FindFuncDeclByName — that field's.
 	var seedIdent *ast.Ident
-	if fd := analysis.FindFuncDeclByName(file.AST, op.FunctionName); fd != nil {
+	fd := analysis.FindFuncDeclByName(file.AST, op.FunctionName)
+	if fd != nil {
 		seedIdent = fd.Name
 	} else {
 		seedIdent = findInterfaceMethodIdent(file.AST, op.FunctionName)

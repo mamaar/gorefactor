@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,7 +17,8 @@ func DiscoverWorkspaceModules(rootPath string) ([]string, error) {
 	// Walk up to find go.work.
 	for {
 		candidate := filepath.Join(workDir, "go.work")
-		if _, err := os.Stat(candidate); err == nil {
+		_, err := os.Stat(candidate)
+		if err == nil {
 			goWorkPath = candidate
 			break
 		}
@@ -33,7 +35,7 @@ func DiscoverWorkspaceModules(rootPath string) ([]string, error) {
 
 	content, err := os.ReadFile(goWorkPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("discover workspace modules: %w", err)
 	}
 
 	useDirs := parseGoWorkFile(content)
@@ -87,7 +89,8 @@ func parseGoWorkFile(content []byte) []string {
 			continue
 		}
 
-		if after, ok := strings.CutPrefix(trimmed, "use "); ok {
+		after, ok := strings.CutPrefix(trimmed, "use ")
+		if ok {
 			rest := after
 			rest = strings.TrimSpace(rest)
 			if rest == "(" {
@@ -111,7 +114,8 @@ func parseModuleName(content []byte) string {
 	lines := strings.SplitSeq(string(content), "\n")
 	for line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if after, ok := strings.CutPrefix(trimmed, "module "); ok {
+		after, ok := strings.CutPrefix(trimmed, "module ")
+		if ok {
 			return strings.TrimSpace(after)
 		}
 	}

@@ -14,22 +14,25 @@ import (
 
 // writeVerifyTypesWorkspace writes files under a temp module directory and
 // loads a workspace through the engine, mirroring writeRenameFieldWorkspace
-// in rename_field_test.go. SkipCompilation is true because VerifyPlanTypes
+// in rename_field_test.go. SkipCompilation is true because VerifyPlanTypesWithImporter
 // is the thing under test here, not the engine's own (disk-based,
 // destructive) compilation check.
 func writeVerifyTypesWorkspace(t *testing.T, files map[string]string) *types.Workspace {
 	t.Helper()
 	dir := t.TempDir()
 
-	if _, ok := files["go.mod"]; !ok {
+	_, ok := files["go.mod"]
+	if !ok {
 		files["go.mod"] = "module example.com/verifytest\n\ngo 1.21\n"
 	}
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
 		}
 	}
@@ -97,7 +100,7 @@ func g() {
 	change := replaceChange(t, f, "f(1)", `f("oops")`)
 	plan := &types.RefactoringPlan{Changes: []types.Change{change}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -138,7 +141,7 @@ func g() {
 			f := findVerifyFile(t, ws, "foo/lib_ext_test.go")
 			plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "foo.F(1)", tc.newText)}}
 
-			res := VerifyPlanTypes(ws, plan)
+			res := VerifyPlanTypesWithImporter(ws, plan, nil)
 			if res.Skipped != "" {
 				t.Fatalf("unexpected skip: %s", res.Skipped)
 			}
@@ -156,7 +159,7 @@ func TestVerifyPlanTypes_ExternalTestFilesOnly(t *testing.T) {
 	f := findVerifyFile(t, ws, "foo/lib_ext_test.go")
 	plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "f(1)", `f("oops")`)}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -183,7 +186,7 @@ func g() {
 	change := replaceChange(t, f, "f(1)", "f(2)")
 	plan := &types.RefactoringPlan{Changes: []types.Change{change}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -214,7 +217,7 @@ func g() {
 	change := replaceChange(t, f, "f(1)", "f(2)")
 	plan := &types.RefactoringPlan{Changes: []types.Change{change}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -244,7 +247,7 @@ func g() {
 	change := replaceChange(t, f, "f(1)", `f("new")`)
 	plan := &types.RefactoringPlan{Changes: []types.Change{change}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -286,7 +289,7 @@ func f() {}
 		},
 	}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped == "" {
 		t.Fatalf("expected Skipped to be set for a change targeting an unknown file")
 	}
@@ -299,7 +302,7 @@ func f() {}
 // all" entry point.
 func TestVerifyPlanTypes_NilWorkspaceIsSkipped(t *testing.T) {
 	plan := &types.RefactoringPlan{Changes: []types.Change{{File: "x.go", Start: 0, End: 0, NewText: "x"}}}
-	res := VerifyPlanTypes(nil, plan)
+	res := VerifyPlanTypesWithImporter(nil, plan, nil)
 	if res.Skipped == "" {
 		t.Fatalf("expected Skipped to be set for a nil workspace")
 	}
@@ -316,7 +319,7 @@ func f() {}
 `,
 	})
 
-	res := VerifyPlanTypes(ws, &types.RefactoringPlan{})
+	res := VerifyPlanTypesWithImporter(ws, &types.RefactoringPlan{}, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -333,10 +336,9 @@ func f() {}
 // (exactly what EnsureTypeChecked does in the real extract operations), then
 // b's *types.Package gets memoized with a signature for Timeout whose
 // time.Duration was resolved by P's own importer instance. If verification
-// then builds a second, independent importer Q (VerifyPlanTypes's old,
-// only behavior) to check a plan that adds `import "time"` to main, Q
-// resolves that "time" import itself — a second, distinct *types.Package
-// also named "time", because go/types' workspaceImporter.Import returns
+// then builds a second, independent importer Q (what a nil importer does)
+// to check a plan that adds `import "time"` to main, Q resolves that "time"
+// import itself — a second, distinct *types.Package also named "time", because go/types' workspaceImporter.Import returns
 // the already-memoized b.TypesPkg as-is (it never re-checks a package once
 // pkg.TypesChecked is true — see workspaceImporter.Import) without ever
 // reconciling it against Q's own importer. So a call passing b.Timeout()'s
@@ -370,7 +372,7 @@ func main() {
 	// b.TypesPkg — and, buried inside its Timeout signature, this parser's
 	// own resolved "time" package — onto ws.Packages *before* verification
 	// runs. Skipping this step means the bug does not reproduce at all: b
-	// would only ever be resolved by whichever importer VerifyPlanTypes
+	// would only ever be resolved by whichever importer VerifyPlanTypesWithImporter
 	// itself builds, so there would be no second "time" to disagree with.
 	parser := analysis.NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	parser.BindWorkspace(ws)
@@ -417,12 +419,12 @@ func main() {
 	}
 
 	// Prove this test still exercises the bug: the old behavior (a fresh
-	// importer built from scratch, which is what VerifyPlanTypes/a nil
+	// importer built from scratch, which is what a nil
 	// importer does) must fail on this exact plan. If this assertion ever
 	// stops failing, the reproduction has silently broken (e.g. because
 	// EnsureTypeChecked above was skipped, or go/types stopped comparing
 	// packages by identity) and this test is no longer testing anything.
-	buggy := VerifyPlanTypes(ws, plan)
+	buggy := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if buggy.Skipped != "" {
 		t.Fatalf("unexpected skip on the buggy path: %s", buggy.Skipped)
 	}
@@ -465,7 +467,8 @@ func main() {
 `,
 	}
 	for rel, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644); err != nil {
+		err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -478,7 +481,7 @@ func main() {
 	f := findVerifyFile(t, ws, "main.go")
 	plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "f(1)", "f(2)")}}
 
-	res := VerifyPlanTypes(ws, plan)
+	res := VerifyPlanTypesWithImporter(ws, plan, nil)
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
@@ -495,7 +498,7 @@ func TestVerifyPlanTypes_PlanThatCannotBeAppliedIsANewErrorNotSkipped(t *testing
 	f := findVerifyFile(t, ws, "foo/lib.go")
 	change := replaceChange(t, f, "f(x int)", "f()")
 	change.OldText = "f(x  int)" // text the file does not hold
-	res := VerifyPlanTypes(ws, &types.RefactoringPlan{Changes: []types.Change{change}})
+	res := VerifyPlanTypesWithImporter(ws, &types.RefactoringPlan{Changes: []types.Change{change}}, nil)
 
 	if res.Skipped != "" || res.OK() {
 		t.Fatalf("Skipped=%q NewErrors=%v, want a new error and no skip", res.Skipped, res.NewErrors)

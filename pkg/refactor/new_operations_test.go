@@ -162,7 +162,8 @@ func UseGreet() string {
 	// matches what FindReferences will see when it walks the AST.
 	var greetDecl *ast.FuncDecl
 	for _, decl := range astFile.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Greet" {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == "Greet" {
 			greetDecl = fn
 			break
 		}
@@ -243,7 +244,8 @@ func Unused() string {
 
 	var unusedDecl *ast.FuncDecl
 	for _, decl := range astFile.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "Unused" {
+		fn, ok := decl.(*ast.FuncDecl)
+		if ok && fn.Name.Name == "Unused" {
 			unusedDecl = fn
 			break
 		}
@@ -437,11 +439,12 @@ func extractConstantFixture(t *testing.T, files map[string]string) (*DefaultEngi
 	dir := t.TempDir()
 	files["go.mod"] = "module example.com/ec\n\ngo 1.21\n"
 	for rel, content := range files {
-		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644); err != nil {
+		err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
@@ -610,7 +613,8 @@ func TestExtractConstant_GeneratedFiles(t *testing.T) {
 	}
 
 	e, ws, dir = extractConstantFixture(t, map[string]string{"gen.go": gen})
-	if _, err := extractConstantAt(t, e, ws, dir, "gen.go", `"red"`, "Red"); err == nil || !strings.Contains(err.Error(), "generated") {
+	_, err := extractConstantAt(t, e, ws, dir, "gen.go", `"red"`, "Red")
+	if err == nil || !strings.Contains(err.Error(), "generated") {
 		t.Errorf("generated source file: got %v", err)
 	}
 }
@@ -696,7 +700,8 @@ func TestExtractConstant_RefusesPredeclaredNames(t *testing.T) {
 	for _, name := range []string{"iota", "len", "string", "nil", "init", "true"} {
 		t.Run(name, func(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, map[string]string{"a.go": "package p\n\nvar A = \"red\"\n"})
-			if _, err := extractConstantAt(t, e, ws, dir, "a.go", `"red"`, name); err == nil {
+			_, err := extractConstantAt(t, e, ws, dir, "a.go", `"red"`, name)
+			if err == nil {
 				t.Fatal("want a refusal")
 			}
 		})
@@ -736,13 +741,15 @@ func TestExtractConstant_DeclaresInAnUnconstrainedProductionFile(t *testing.T) {
 			e, ws, dir := extractConstantFixture(t, tc.files)
 			_, out := applyExtractConstant(t, e, ws, dir, tc.source, `"red"`, "Red")
 			for name, content := range out {
-				if has := strings.Contains(content, "const Red"); has != (name == tc.wantIn) {
+				has := strings.Contains(content, "const Red")
+				if has != (name == tc.wantIn) {
 					t.Errorf("const Red in %s = %v:\n%s", name, has, content)
 				}
 			}
 			build := exec.Command("go", "build", "./...")
 			build.Dir = dir
-			if b, err := build.CombinedOutput(); err != nil {
+			b, err := build.CombinedOutput()
+			if err != nil {
 				t.Errorf("go build: %v\n%s", err, b)
 			}
 		})
@@ -752,7 +759,8 @@ func TestExtractConstant_DeclaresInAnUnconstrainedProductionFile(t *testing.T) {
 		e, ws, dir := extractConstantFixture(t, map[string]string{
 			"a_test.go": "package p\n\nvar T = \"red\"\n",
 		})
-		if _, err := extractConstantAt(t, e, ws, dir, "a_test.go", `"red"`, "Red"); err == nil {
+		_, err := extractConstantAt(t, e, ws, dir, "a_test.go", `"red"`, "Red")
+		if err == nil {
 			t.Fatal("want a refusal")
 		}
 	})
@@ -783,7 +791,8 @@ func TestExtractConstant_RefusesNamesThatCollideWithImportsOfAnyFile(t *testing.
 				cname = "ToUpper"
 			}
 			e, ws, dir := extractConstantFixture(t, files)
-			if _, err := extractConstantAt(t, e, ws, dir, "a.go", `"red"`, cname); err == nil {
+			_, err := extractConstantAt(t, e, ws, dir, "a.go", `"red"`, cname)
+			if err == nil {
 				t.Fatal("want a refusal")
 			}
 		})

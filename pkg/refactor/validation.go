@@ -5,12 +5,10 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
-	"io"
 	"log/slog"
 	"strings"
 	"unicode"
 
-	"github.com/mamaar/gorefactor/pkg/analysis"
 	refactorTypes "github.com/mamaar/gorefactor/pkg/types"
 )
 
@@ -25,11 +23,6 @@ func NewValidator(logger *slog.Logger) *Validator {
 		typeChecker: &types.Checker{},
 		logger:      logger,
 	}
-}
-
-// ValidatePlan validates a complete refactoring plan
-func (v *Validator) ValidatePlan(plan *refactorTypes.RefactoringPlan) error {
-	return v.ValidatePlanWithConfig(plan, nil)
 }
 
 // ValidatePlanWithConfig validates a complete refactoring plan with configuration options
@@ -80,96 +73,6 @@ func (v *Validator) ValidatePlanWithConfig(plan *refactorTypes.RefactoringPlan, 
 	plan.Impact.PotentialIssues = append(plan.Impact.PotentialIssues, allIssues...)
 
 	return nil
-}
-
-// ValidateRename validates a rename operation specifically
-func (v *Validator) ValidateRename(ws *refactorTypes.Workspace, req refactorTypes.RenameSymbolRequest) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// Check that new name is valid Go identifier
-	if !v.isValidGoIdentifier(req.NewName) {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("invalid Go identifier: %s", req.NewName),
-			Severity:    refactorTypes.Error,
-		})
-		return issues
-	}
-
-	// Check that new name doesn't conflict with Go keywords
-	if v.isGoKeyword(req.NewName) {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("cannot use Go keyword as identifier: %s", req.NewName),
-			Severity:    refactorTypes.Error,
-		})
-		return issues
-	}
-
-	// Find symbols to rename
-	var targetSymbols []*refactorTypes.Symbol
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	if req.Package != "" {
-		// Package-scoped rename
-		if pkg, exists := ws.Packages[req.Package]; exists && pkg.Symbols != nil {
-			symbol, err := resolver.ResolveSymbol(pkg, req.SymbolName)
-			if err != nil {
-				issues = append(issues, refactorTypes.Issue{
-					Type:        refactorTypes.IssueCompilationError,
-					Description: fmt.Sprintf("symbol not found in package %s: %s", req.Package, req.SymbolName),
-					Severity:    refactorTypes.Error,
-				})
-				return issues
-			}
-			targetSymbols = append(targetSymbols, symbol)
-		}
-	} else {
-		// Workspace-wide rename
-		for _, pkg := range ws.Packages {
-			if pkg.Symbols != nil {
-				symbol, err := resolver.ResolveSymbol(pkg, req.SymbolName)
-				if err == nil {
-					targetSymbols = append(targetSymbols, symbol)
-				}
-			}
-		}
-	}
-
-	if len(targetSymbols) == 0 {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueCompilationError,
-			Description: fmt.Sprintf("no symbols found with name: %s", req.SymbolName),
-			Severity:    refactorTypes.Error,
-		})
-		return issues
-	}
-
-	// Check for naming conflicts at each symbol location
-	for _, symbol := range targetSymbols {
-		conflictIssues := v.checkRenameConflicts(ws, symbol, req.NewName)
-		issues = append(issues, conflictIssues...)
-		if refs, err := resolver.FindReferences(symbol); err == nil {
-			if err := checkShadowedAtReferences(ws, symbol, refs, req.NewName); err != nil {
-				issues = append(issues, refactorTypes.Issue{
-					Type:        refactorTypes.IssueNameConflict,
-					Description: err.(*refactorTypes.RefactorError).Message,
-					File:        symbol.File,
-					Severity:    refactorTypes.Error,
-				})
-			}
-		}
-	}
-
-	// Check for interface compliance issues
-	interfaceIssues := v.checkInterfaceCompliance(ws, targetSymbols, req.NewName)
-	issues = append(issues, interfaceIssues...)
-
-	// Check for method set changes
-	methodSetIssues := v.checkMethodSetChanges(ws, targetSymbols, req.NewName)
-	issues = append(issues, methodSetIssues...)
-
-	return issues
 }
 
 // Helper methods for validation
@@ -223,28 +126,30 @@ func (v *Validator) validateChanges(changes []refactorTypes.Change) []refactorTy
 				}
 
 				// Check if changes overlap
-				if v.changesOverlap(change1, change2) {
-					issues = append(issues, refactorTypes.Issue{
-						Type:        refactorTypes.IssueNameConflict,
-						Description: fmt.Sprintf("overlapping changes detected in file %s", fileName),
-						File:        fileName,
-						Severity:    refactorTypes.Error,
-					})
+				if !v.changesOverlap(change1, change2) {
+					continue
 				}
+				issues = append(issues, refactorTypes.Issue{
+					Type:        refactorTypes.IssueNameConflict,
+					Description: fmt.Sprintf("overlapping changes detected in file %s", fileName),
+					File:        fileName,
+					Severity:    refactorTypes.Error,
+				})
 			}
 		}
 	}
 
 	// Validate that changes are syntactically valid
 	for _, change := range changes {
-		if change.Start < 0 || change.End < change.Start {
-			issues = append(issues, refactorTypes.Issue{
-				Type:        refactorTypes.IssueCompilationError,
-				Description: fmt.Sprintf("invalid change bounds: start=%d, end=%d", change.Start, change.End),
-				File:        change.File,
-				Severity:    refactorTypes.Error,
-			})
+		if change.Start >= 0 && change.End >= change.Start {
+			continue
 		}
+		issues = append(issues, refactorTypes.Issue{
+			Type:        refactorTypes.IssueCompilationError,
+			Description: fmt.Sprintf("invalid change bounds: start=%d, end=%d", change.Start, change.End),
+			File:        change.File,
+			Severity:    refactorTypes.Error,
+		})
 	}
 
 	return issues
@@ -260,34 +165,38 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 	for _, change := range plan.Changes {
 		// Basic syntax validation of new text. A relocation is a whole file,
 		// which the serializer refuses to write when it newly fails to parse.
-		if change.NewText != "" && !change.Relocation {
-			// Skip validation for code fragments that aren't valid standalone Go:
-			// - Interface method signatures (method name + signature)
-			// - Parameter list changes (just parameter declarations)
-			// - Call argument changes (just expressions)
-			// - Import additions (just import path strings)
-			desc := change.Description
-			isFragment := strings.Contains(desc, "interface method") ||
-				strings.Contains(desc, "parameters") ||
-				strings.Contains(desc, "parameter") ||
-				strings.Contains(desc, "call to") ||
-				strings.Contains(desc, "argument") ||
-				strings.Contains(desc, "import") ||
-				strings.Contains(desc, "qualified references") ||
-				strings.Contains(desc, "Split") ||
-				strings.Contains(desc, "Replace") ||
-				strings.Contains(desc, "Wrap")
-			if !isFragment {
-				if err := v.validateGoSyntax(change.NewText); err != nil {
-					issues = append(issues, refactorTypes.Issue{
-						Type:        refactorTypes.IssueCompilationError,
-						Description: fmt.Sprintf("syntax error in new text: %v", err),
-						File:        change.File,
-						Severity:    refactorTypes.Error,
-					})
-				}
-			}
+		if change.NewText == "" || change.Relocation {
+			continue
 		}
+		// Skip validation for code fragments that aren't valid standalone Go:
+		// - Interface method signatures (method name + signature)
+		// - Parameter list changes (just parameter declarations)
+		// - Call argument changes (just expressions)
+		// - Import additions (just import path strings)
+		desc := change.Description
+		isFragment := strings.Contains(desc, "interface method") ||
+			strings.Contains(desc, "parameters") ||
+			strings.Contains(desc, "parameter") ||
+			strings.Contains(desc, "call to") ||
+			strings.Contains(desc, "argument") ||
+			strings.Contains(desc, "import") ||
+			strings.Contains(desc, "qualified references") ||
+			strings.Contains(desc, "Split") ||
+			strings.Contains(desc, "Replace") ||
+			strings.Contains(desc, "Wrap")
+		if isFragment {
+			continue
+		}
+		err := v.validateGoSyntax(change.NewText)
+		if err == nil {
+			continue
+		}
+		issues = append(issues, refactorTypes.Issue{
+			Type:        refactorTypes.IssueCompilationError,
+			Description: fmt.Sprintf("syntax error in new text: %v", err),
+			File:        change.File,
+			Severity:    refactorTypes.Error,
+		})
 	}
 
 	return issues
@@ -312,79 +221,6 @@ func (v *Validator) isValidGoIdentifier(name string) bool {
 	}
 
 	return true
-}
-
-func (v *Validator) isGoKeyword(name string) bool {
-	keywords := map[string]bool{
-		"break": true, "case": true, "chan": true, "const": true,
-		"continue": true, "default": true, "defer": true, "else": true,
-		"fallthrough": true, "for": true, "func": true, "go": true,
-		"goto": true, "if": true, "import": true, "interface": true,
-		"map": true, "package": true, "range": true, "return": true,
-		"select": true, "struct": true, "switch": true, "type": true,
-		"var": true,
-	}
-	return keywords[name]
-}
-
-func (v *Validator) checkRenameConflicts(ws *refactorTypes.Workspace, symbol *refactorTypes.Symbol, newName string) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// Find the package containing the symbol
-	pkg := v.findPackageForFile(ws, symbol.File)
-	if pkg == nil || pkg.Symbols == nil {
-		return issues
-	}
-
-	// Check for conflicts in the same package
-	resolver := analysis.NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.ResolveSymbol(pkg, newName); err == nil {
-		issues = append(issues, refactorTypes.Issue{
-			Type:        refactorTypes.IssueNameConflict,
-			Description: fmt.Sprintf("name conflict: symbol %s already exists in package %s", newName, pkg.Path),
-			File:        symbol.File,
-			Severity:    refactorTypes.Error,
-		})
-	}
-
-	return issues
-}
-
-func (v *Validator) checkInterfaceCompliance(ws *refactorTypes.Workspace, symbols []*refactorTypes.Symbol, newName string) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// Check if renaming methods would break interface compliance
-	for _, symbol := range symbols {
-		if symbol.Kind == refactorTypes.MethodSymbol {
-			// This is simplified - would need full interface analysis
-			issues = append(issues, refactorTypes.Issue{
-				Type:        refactorTypes.IssueCompilationError,
-				Description: fmt.Sprintf("renaming method %s to %s may break interface compliance", symbol.Name, newName),
-				File:        symbol.File,
-				Severity:    refactorTypes.Warning,
-			})
-		}
-	}
-
-	return issues
-}
-
-func (v *Validator) checkMethodSetChanges(ws *refactorTypes.Workspace, symbols []*refactorTypes.Symbol, newName string) []refactorTypes.Issue {
-	var issues []refactorTypes.Issue
-
-	// Check if renaming would affect method sets
-	for _, symbol := range symbols {
-		if symbol.Kind == refactorTypes.MethodSymbol && symbol.Exported != v.isExported(newName) {
-			issues = append(issues, refactorTypes.Issue{
-				Type:        refactorTypes.IssueVisibilityError,
-				Description: fmt.Sprintf("renaming %s to %s changes export status and may affect method sets", symbol.Name, newName),
-				File:        symbol.File,
-				Severity:    refactorTypes.Warning,
-			})
-		}
-	}
-
-	return issues
 }
 
 func (v *Validator) validateGoSyntax(code string) error {
@@ -440,29 +276,4 @@ func (v *Validator) filterCriticalIssues(issues []refactorTypes.Issue) []refacto
 		}
 	}
 	return critical
-}
-
-// findPackageForFile locates the package containing filePath, searching both
-// Files and TestFiles. See the package-level findPackageForFile in
-// operations.go for why TestFiles must be included: skipping it makes
-// _test.go reference sites look like they belong to no package, which is
-// silently misread downstream as "nothing to check" rather than "unknown".
-func (v *Validator) findPackageForFile(ws *refactorTypes.Workspace, filePath string) *refactorTypes.Package {
-	for _, pkg := range ws.Packages {
-		for _, file := range pkg.Files {
-			if file.Path == filePath {
-				return pkg
-			}
-		}
-		for _, file := range pkg.TestFiles {
-			if file.Path == filePath {
-				return pkg
-			}
-		}
-	}
-	return nil
-}
-
-func (v *Validator) isExported(name string) bool {
-	return len(name) > 0 && unicode.IsUpper(rune(name[0]))
 }

@@ -31,7 +31,8 @@ func (p *renameSymbolPlanner) planIn(v *analysis.View, linked types.SymbolKeySet
 // method of ws. A bare name that finds a method and other symbols is an error,
 // since those symbols would be renamed without the method's checks.
 func (p *renameSymbolPlanner) methodRequestIn(ws *types.Workspace) (types.RenameMethodRequest, bool, error) {
-	if typeName, method, dotted := strings.Cut(p.req.SymbolName, "."); dotted {
+	typeName, method, dotted := strings.Cut(p.req.SymbolName, ".")
+	if dotted {
 		return types.RenameMethodRequest{TypeName: typeName, MethodName: method, NewMethodName: p.req.NewName, PackagePath: p.req.Package}, true, nil
 	}
 	op := &RenameSymbolOperation{Request: p.req}
@@ -70,7 +71,8 @@ func (p *renameSymbolPlanner) planWorkspace(ws *types.Workspace, _ *analysis.Ref
 	if len(targets) == 0 {
 		return nil, nil, fmt.Errorf("rename operation validation failed: %w", notFound)
 	}
-	if err := op.validateTargets(ws, targets); err != nil {
+	err := op.validateTargets(ws, targets)
+	if err != nil {
 		return nil, nil, fmt.Errorf("rename operation validation failed: %w", err)
 	}
 	plan, err := op.planSymbols(ws, resolver, targets)

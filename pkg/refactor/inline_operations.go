@@ -1,13 +1,13 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -59,13 +59,16 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 	var sourcePackage *types.Package
 
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			if structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
-				if structSymbol.Kind == types.TypeSymbol {
-					sourcePackage = pkg
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
+		}
+		structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if structSymbol.Kind == types.TypeSymbol {
+			sourcePackage = pkg
+			break
 		}
 	}
 
@@ -77,7 +80,8 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check if method exists in the package's symbol table
-	if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
+	methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
+	if exists {
 		for _, method := range methods {
 			if method.Name == op.MethodName {
 				methodSymbol = method
@@ -93,11 +97,15 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	if findPackageForFile(ws, op.TargetFile) == nil {
+	_, _, err := ws.FindFile(op.TargetFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
 		}
+	}
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -126,12 +134,12 @@ func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 			Start:       location.Start,
 			End:         location.End,
 			OldText:     location.CallText,
-			NewText:     op.adaptMethodBodyForInlining(impl, location.Arguments),
+			NewText:     op.adaptMethodBodyForInlining(impl, location.Receiver, location.Arguments),
 			Description: fmt.Sprintf("Inline method call %s", op.MethodName),
 		})
 	}
 
-	sourcePackage := findPackageForFile(ws, op.TargetFile)
+	_, sourcePackage, _ := ws.FindFile(op.TargetFile)
 
 	return &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
@@ -153,6 +161,11 @@ func (op *InlineMethodOperation) Description() string {
 type MethodImpl struct {
 	Body       string
 	ParamNames []string
+	// Receiver is the method's receiver identifier, empty when it has none or is blank.
+	// ReceiverType and ResultType are source text, ResultType empty for no result.
+	Receiver     string
+	ReceiverType string
+	ResultType   string
 }
 
 type MethodCall struct {
@@ -160,6 +173,8 @@ type MethodCall struct {
 	End       int
 	CallText  string
 	Arguments []string
+	// Receiver is the source text of the expression the method is called on.
+	Receiver string
 	// NameOffset is the byte offset of the called identifier.
 	NameOffset int
 }
@@ -187,6 +202,15 @@ func referenceSites(ws *types.Workspace, idx *analysis.ReferenceIndex, sym *type
 	return sites
 }
 
+// count returns the number of sites.
+func (c callSites) count() int {
+	n := 0
+	for _, offsets := range c {
+		n += len(offsets)
+	}
+	return n
+}
+
 // keep returns the calls in file whose called identifier is one of the sites.
 func (c callSites) keep(file string, calls []MethodCall) []MethodCall {
 	if c == nil {
@@ -211,7 +235,8 @@ func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (
 	}
 
 	// Get the method body from the source file (pkg.Files is keyed by basename)
-	if file, exists := sourcePackage.Files[filepath.Base(methodSymbol.File)]; exists {
+	file := findFileContainingSymbol(sourcePackage, methodSymbol)
+	if file != nil {
 		return op.extractMethodBody(string(file.OriginalContent), methodSymbol)
 	}
 
@@ -256,31 +281,45 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 
 	// Find the method declaration
 	for _, decl := range astFile.Decls {
-		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
-			if funcDecl.Name.Name == op.MethodName && funcDecl.Recv != nil {
-				// Extract parameter names
-				var paramNames []string
-				if funcDecl.Type.Params != nil {
-					for _, field := range funcDecl.Type.Params.List {
-						for _, name := range field.Names {
-							paramNames = append(paramNames, name.Name)
-						}
-					}
-				}
-
-				// Extract the body
-				if funcDecl.Body != nil {
-					start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
-					end := fset.Position(funcDecl.Body.Rbrace).Offset
-					if start < len(content) && end <= len(content) {
-						return MethodImpl{
-							Body:       string(content[start:end]),
-							ParamNames: paramNames,
-						}, nil
-					}
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		if funcDecl.Name.Name != op.MethodName || funcDecl.Recv == nil {
+			continue
+		}
+		// Extract parameter names
+		var paramNames []string
+		if funcDecl.Type.Params != nil {
+			for _, field := range funcDecl.Type.Params.List {
+				for _, name := range field.Names {
+					paramNames = append(paramNames, name.Name)
 				}
 			}
 		}
+
+		// Extract the body
+		if funcDecl.Body == nil {
+			continue
+		}
+		start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+		end := fset.Position(funcDecl.Body.Rbrace).Offset
+		if start >= len(content) || end > len(content) {
+			continue
+		}
+		impl := MethodImpl{
+			Body:         string(content[start:end]),
+			ParamNames:   paramNames,
+			ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
+		}
+		names := funcDecl.Recv.List[0].Names
+		if len(names) == 1 && names[0].Name != "_" {
+			impl.Receiver = names[0].Name
+		}
+		if funcDecl.Type.Results != nil {
+			impl.ResultType = sourceText(fset, content, funcDecl.Type.Results)
+		}
+		return impl, nil
 	}
 
 	return MethodImpl{}, &types.RefactorError{
@@ -290,15 +329,15 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 }
 
 func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodCall, error) {
-	var targetFile *types.File
-	if pkg := findPackageForFile(ws, op.TargetFile); pkg != nil {
-		targetFile = findFileByPath(pkg, op.TargetFile)
-	}
-	if targetFile == nil {
+	targetFile, _, err := ws.FindFile(op.TargetFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find method calls: %w", err)
 	}
 
 	// Parse and find method calls
@@ -313,8 +352,10 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 
 	var calls []MethodCall
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if callExpr, ok := n.(*ast.CallExpr); ok {
-			if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+		callExpr, ok := n.(*ast.CallExpr)
+		if ok {
+			selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+			if ok {
 				if selExpr.Sel.Name == op.MethodName {
 					start := fset.Position(callExpr.Pos()).Offset
 					end := fset.Position(callExpr.End()).Offset
@@ -336,6 +377,7 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 							End:        end,
 							CallText:   callText,
 							Arguments:  args,
+							Receiver:   sourceText(fset, string(targetFile.OriginalContent), selExpr.X),
 							NameOffset: fset.Position(selExpr.Sel.Pos()).Offset,
 						})
 					}
@@ -348,7 +390,45 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 	return calls, nil
 }
 
-func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arguments []string) string {
+// sourceText is the text of node in content, which fset positions describe.
+func sourceText(fset *token.FileSet, content string, node ast.Node) string {
+	return content[fset.Position(node.Pos()).Offset:fset.Position(node.End()).Offset]
+}
+
+// receiverOperand is receiver spelled so a selector can follow it.
+func receiverOperand(receiver string) string {
+	expr, err := parser.ParseExpr(receiver)
+	if err != nil {
+		return "(" + receiver + ")"
+	}
+	switch expr.(type) {
+	case *ast.Ident, *ast.SelectorExpr, *ast.CallExpr, *ast.IndexExpr, *ast.ParenExpr:
+		return receiver
+	}
+	return "(" + receiver + ")"
+}
+
+// evaluatesCode reports whether evaluating receiver runs a call or a receive,
+// so that evaluating it twice would not be the same as once.
+func evaluatesCode(receiver string) bool {
+	expr, err := parser.ParseExpr(receiver)
+	if err != nil {
+		return true
+	}
+	found := false
+	ast.Inspect(expr, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			found = true
+		case *ast.UnaryExpr:
+			found = found || n.Op == token.ARROW
+		}
+		return !found
+	})
+	return found
+}
+
+func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, receiver string, arguments []string) string {
 	body := strings.TrimSpace(impl.Body)
 
 	// Build param→arg substitution map
@@ -358,6 +438,9 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 			paramToArg[name] = arguments[i]
 		}
 	}
+	if impl.Receiver != "" {
+		paramToArg[impl.Receiver] = receiverOperand(receiver)
+	}
 
 	// Try to parse the body as a single return expression.
 	// Wrap in a dummy function so it's valid Go.
@@ -365,45 +448,141 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, arg
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
 	if err == nil {
-		if funcDecl, ok := f.Decls[0].(*ast.FuncDecl); ok && funcDecl.Body != nil {
+		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
+		if ok && funcDecl.Body != nil {
 			stmts := funcDecl.Body.List
 			// Single return statement with one result → extract expression
 			if len(stmts) == 1 {
-				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
+				retStmt, ok := stmts[0].(*ast.ReturnStmt)
+				if ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
-					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
-					return result
+					if impl.Receiver != "" && countIdents(expr, impl.Receiver) > 1 && evaluatesCode(receiver) {
+						delete(paramToArg, impl.Receiver)
+						inner := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
+						return fmt.Sprintf("func(%s %s) %s { return %s }(%s)", impl.Receiver, impl.ReceiverType, impl.ResultType, inner, receiver)
+					}
+					return replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
 				}
 			}
 		}
 	}
 
-	// Fallback: do textual param substitution on the whole body
-	result := body
-	for param, arg := range paramToArg {
-		result = replaceIdentToken(result, param, arg)
+	if err != nil {
+		return body
 	}
-	return result
+	return inlineStatements(impl, receiver, arguments, fset, wrapped, f.Decls[0].(*ast.FuncDecl).Body)
+}
+
+// inlineStatements substitutes the receiver and parameters in a statement body in one pass.
+// Operands that run code, and a value receiver whose fields the body writes, are bound once
+// to fresh names in a block.
+func inlineStatements(impl MethodImpl, receiver string, arguments []string, fset *token.FileSet, src string, block *ast.BlockStmt) string {
+	subst := make(map[string]string)
+	var binds []string
+	bind := func(name, expr string, force bool) {
+		if !force && !evaluatesCode(expr) {
+			subst[name] = receiverOperand(expr)
+			return
+		}
+		temp := name + "_"
+		for strings.Contains(src, temp) || strings.Contains(receiver, temp) || strings.Contains(strings.Join(arguments, "\x00"), temp) {
+			temp += "_"
+		}
+		binds = append(binds, temp+" := "+expr)
+		subst[name] = temp
+	}
+	if impl.Receiver != "" {
+		bind(impl.Receiver, receiver, !strings.HasPrefix(impl.ReceiverType, "*") && writesFieldsOf(block, impl.Receiver))
+	}
+	for i, name := range impl.ParamNames {
+		if i < len(arguments) {
+			bind(name, arguments[i], false)
+		}
+	}
+	text := replaceIdentsInExpr(block, subst, fset, src)
+	text = strings.TrimSpace(text[1 : len(text)-1])
+	if len(binds) == 0 {
+		return text
+	}
+	return "{\n" + strings.Join(binds, "\n") + "\n" + text + "\n}"
+}
+
+// writesFieldsOf reports whether block assigns to or increments a field reached through name.
+func writesFieldsOf(block *ast.BlockStmt, name string) bool {
+	rooted := func(e ast.Expr) bool {
+		for {
+			switch x := e.(type) {
+			case *ast.SelectorExpr:
+				e = x.X
+			case *ast.IndexExpr:
+				e = x.X
+			case *ast.ParenExpr:
+				e = x.X
+			case *ast.Ident:
+				return x.Name == name && x.Obj == nil
+			default:
+				return false
+			}
+		}
+	}
+	found := false
+	ast.Inspect(block, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			for _, lhs := range n.Lhs {
+				_, plain := lhs.(*ast.Ident)
+				found = found || !plain && rooted(lhs)
+			}
+		case *ast.IncDecStmt:
+			found = found || rooted(n.X)
+		}
+		return !found
+	})
+	return found
+}
+
+// inspectIdents calls visit for each identifier in expr other than the
+// selected name of a selector, which is not a use of any variable.
+func inspectIdents(expr ast.Node, visit func(*ast.Ident)) {
+	ast.Inspect(expr, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.SelectorExpr:
+			inspectIdents(n.X, visit)
+			return false
+		case *ast.Ident:
+			visit(n)
+		}
+		return true
+	})
+}
+
+func countIdents(expr ast.Expr, name string) int {
+	count := 0
+	inspectIdents(expr, func(id *ast.Ident) {
+		if id.Name == name {
+			count++
+		}
+	})
+	return count
 }
 
 // replaceIdentsInExpr rewrites identifier tokens in an AST expression using the
 // param→arg map and returns the resulting source text.
-func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *token.FileSet, src string) string {
+func replaceIdentsInExpr(expr ast.Node, paramToArg map[string]string, fset *token.FileSet, src string) string {
 	// Collect identifiers that need replacing, in reverse order so offsets stay valid.
 	type replacement struct {
 		start, end int
 		text       string
 	}
 	var replacements []replacement
-	ast.Inspect(expr, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok {
-			if arg, exists := paramToArg[ident.Name]; exists {
-				start := fset.Position(ident.Pos()).Offset
-				end := fset.Position(ident.End()).Offset
-				replacements = append(replacements, replacement{start, end, arg})
-			}
+	inspectIdents(expr, func(ident *ast.Ident) {
+		arg, exists := paramToArg[ident.Name]
+		if !exists || ident.Obj != nil {
+			return
 		}
-		return true
+		start := fset.Position(ident.Pos()).Offset
+		end := fset.Position(ident.End()).Offset
+		replacements = append(replacements, replacement{start, end, arg})
 	})
 
 	// Extract the expression text from src first
@@ -433,7 +612,7 @@ func replaceIdentToken(src, oldIdent, newText string) string {
 			break
 		}
 		// Check that the character before and after are not identifier characters
-		before := idx == 0 || !isIdentChar(remainder[idx-1])
+		before := idx == 0 || !isIdentChar(remainder[idx-1]) && remainder[idx-1] != '.'
 		afterIdx := idx + len(oldIdent)
 		after := afterIdx >= len(remainder) || !isIdentChar(remainder[afterIdx])
 		if before && after {
@@ -523,23 +702,7 @@ func (op *InlineVariableOperation) Execute(ws *types.Workspace) (*types.Refactor
 		})
 	}
 
-	var sourcePackage *types.Package
-	for _, pkg := range ws.Packages {
-		if _, exists := pkg.Files[op.SourceFile]; exists {
-			sourcePackage = pkg
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourcePackage = pkg
-				break
-			}
-		}
-		if sourcePackage != nil {
-			break
-		}
-	}
+	_, sourcePackage, _ := ws.FindFile(op.SourceFile)
 
 	return &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
@@ -565,29 +728,15 @@ type VariableReference struct {
 
 func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (string, error) {
 	// Find the file and parse it
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-
-	if sourceFile == nil {
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return "", &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("find variable value: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -602,38 +751,46 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 	// Find the variable declaration and its value
 	var value string
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if genDecl, ok := n.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+		genDecl, ok := n.(*ast.GenDecl)
+		if ok && genDecl.Tok == token.VAR {
 			for _, spec := range genDecl.Specs {
-				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
-					for i, name := range valueSpec.Names {
-						if name.Name == op.VariableName && i < len(valueSpec.Values) {
-							// Extract the value expression
-							valueExpr := valueSpec.Values[i]
-							start := fset.Position(valueExpr.Pos()).Offset
-							end := fset.Position(valueExpr.End()).Offset
-							if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
-								value = string(sourceFile.OriginalContent[start:end])
-								return false // Stop searching
-							}
-						}
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range valueSpec.Names {
+					if name.Name != op.VariableName || i >= len(valueSpec.Values) {
+						continue
+					}
+					// Extract the value expression
+					valueExpr := valueSpec.Values[i]
+					start := fset.Position(valueExpr.Pos()).Offset
+					end := fset.Position(valueExpr.End()).Offset
+					if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
+						value = string(sourceFile.OriginalContent[start:end])
+						return false // Stop searching
 					}
 				}
 			}
 		}
 
 		// Also check for short variable declarations (var := value)
-		if assignStmt, ok := n.(*ast.AssignStmt); ok && assignStmt.Tok == token.DEFINE {
+		assignStmt, ok := n.(*ast.AssignStmt)
+		if ok && assignStmt.Tok == token.DEFINE {
 			for i, lhs := range assignStmt.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
-					if i < len(assignStmt.Rhs) {
-						valueExpr := assignStmt.Rhs[i]
-						start := fset.Position(valueExpr.Pos()).Offset
-						end := fset.Position(valueExpr.End()).Offset
-						if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
-							value = string(sourceFile.OriginalContent[start:end])
-							return false // Stop searching
-						}
-					}
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || ident.Name != op.VariableName {
+					continue
+				}
+				if i >= len(assignStmt.Rhs) {
+					continue
+				}
+				valueExpr := assignStmt.Rhs[i]
+				start := fset.Position(valueExpr.Pos()).Offset
+				end := fset.Position(valueExpr.End()).Offset
+				if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
+					value = string(sourceFile.OriginalContent[start:end])
+					return false // Stop searching
 				}
 			}
 		}
@@ -653,28 +810,15 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 
 func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) ([]VariableReference, error) {
 	// Find the file and parse it
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			break
-		}
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-
-	if sourceFile == nil {
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find variable references: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -698,12 +842,14 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 				return true
 			}
 			for _, spec := range node.Specs {
-				if vs, ok := spec.(*ast.ValueSpec); ok {
-					for _, name := range vs.Names {
-						if name.Name == op.VariableName {
-							declPos = name.Pos()
-							return false
-						}
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, name := range vs.Names {
+					if name.Name == op.VariableName {
+						declPos = name.Pos()
+						return false
 					}
 				}
 			}
@@ -712,7 +858,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 				return true
 			}
 			for _, lhs := range node.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
+				ident, ok := lhs.(*ast.Ident)
+				if ok && ident.Name == op.VariableName {
 					declPos = ident.Pos()
 					return false
 				}
@@ -724,7 +871,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 	// Second pass: collect all references, skipping the declaration ident.
 	var references []VariableReference
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok && ident.Name == op.VariableName {
+		ident, ok := n.(*ast.Ident)
+		if ok && ident.Name == op.VariableName {
 			if declPos.IsValid() && ident.Pos() == declPos {
 				return true // skip declaration
 			}
@@ -742,28 +890,15 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 }
 
 func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) (int, int, error) {
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			break
-		}
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-
-	if sourceFile == nil {
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return 0, 0, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
+	}
+	if err != nil {
+		return 0, 0, fmt.Errorf("find variable declaration: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -819,15 +954,17 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 				return true
 			}
 			for _, lhs := range node.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
-					declStart = fset.Position(node.Pos()).Offset
-					declEnd = fset.Position(node.End()).Offset
-					if declEnd < len(content) && content[declEnd] == '\n' {
-						declEnd++
-					}
-					found = true
-					return false
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || ident.Name != op.VariableName {
+					continue
 				}
+				declStart = fset.Position(node.Pos()).Offset
+				declEnd = fset.Position(node.End()).Offset
+				if declEnd < len(content) && content[declEnd] == '\n' {
+					declEnd++
+				}
+				found = true
+				return false
 			}
 		}
 		return true
@@ -895,10 +1032,11 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 	affectedFiles := make([]string, 0)
 
 	// A bare call can only name the function from inside its own package.
-	funcSymbol, sourcePackage := op.functionSymbol(ws)
+	funcSymbol, sourcePackage, _ := op.functionSymbol(ws)
 	sites := referenceSites(ws, op.CachedIndex, funcSymbol)
 	for _, targetFile := range op.TargetFiles {
-		if findPackageForFile(ws, targetFile) != sourcePackage {
+		_, targetPackage, _ := ws.FindFile(targetFile)
+		if targetPackage != sourcePackage {
 			continue
 		}
 		calls, err := op.findFunctionCalls(ws, targetFile)
@@ -924,13 +1062,19 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 		}
 	}
 
+	if len(changes) == 0 && sites.count() > 0 {
+		return nil, &types.RefactorError{
+			Type: types.InvalidOperation,
+			Message: fmt.Sprintf("cannot inline %s: it has %d references, but none is a direct call from the same package in the target files",
+				op.FunctionName, sites.count()),
+		}
+	}
+
 	var affectedPackages []string
 	for _, file := range affectedFiles {
-		for _, pkg := range ws.Packages {
-			if _, exists := pkg.Files[file]; exists {
-				affectedPackages = append(affectedPackages, pkg.Path)
-				break
-			}
+		pkg := findPackageForFile(ws, file)
+		if pkg != nil {
+			affectedPackages = append(affectedPackages, pkg.Path)
 		}
 	}
 
@@ -953,16 +1097,22 @@ func (op *InlineFunctionOperation) Description() string {
 
 // functionSymbol returns the function to inline and the package holding
 // op.SourceFile, or nil when that package declares no such function.
-func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.Symbol, *types.Package) {
-	pkg := findPackageForFile(ws, op.SourceFile)
-	if pkg == nil || pkg.Symbols == nil {
-		return nil, pkg
+func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.Symbol, *types.Package, error) {
+	_, pkg, err := ws.FindFile(op.SourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
+		return nil, nil, nil
 	}
-	return pkg.Symbols.Functions[op.FunctionName], pkg
+	if err != nil || pkg.Symbols == nil {
+		return nil, pkg, err
+	}
+	return pkg.Symbols.Functions[op.FunctionName], pkg, nil
 }
 
 func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (MethodImpl, error) {
-	funcSymbol, sourcePackage := op.functionSymbol(ws)
+	funcSymbol, sourcePackage, err := op.functionSymbol(ws)
+	if err != nil {
+		return MethodImpl{}, fmt.Errorf("find function implementation: %w", err)
+	}
 	if funcSymbol == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -971,8 +1121,8 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 	}
 
 	// Get the source file content
-	file, exists := sourcePackage.Files[filepath.Base(funcSymbol.File)]
-	if !exists {
+	file := findFileContainingSymbol(sourcePackage, funcSymbol)
+	if file == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("source file not found for function: %s", op.FunctionName),
@@ -1007,16 +1157,18 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 		}
 
 		// Extract the body
-		if funcDecl.Body != nil {
-			start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
-			end := fset.Position(funcDecl.Body.Rbrace).Offset
-			if start < len(content) && end <= len(content) {
-				return MethodImpl{
-					Body:       content[start:end],
-					ParamNames: paramNames,
-				}, nil
-			}
+		if funcDecl.Body == nil {
+			continue
 		}
+		start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+		end := fset.Position(funcDecl.Body.Rbrace).Offset
+		if start >= len(content) || end > len(content) {
+			continue
+		}
+		return MethodImpl{
+			Body:       content[start:end],
+			ParamNames: paramNames,
+		}, nil
 	}
 
 	return MethodImpl{}, &types.RefactorError{
@@ -1026,15 +1178,15 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 }
 
 func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, targetFile string) ([]MethodCall, error) {
-	var file *types.File
-	if pkg := findPackageForFile(ws, targetFile); pkg != nil {
-		file = findFileByPath(pkg, targetFile)
-	}
-	if file == nil {
+	file, _, err := ws.FindFile(targetFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", targetFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find function calls: %w", err)
 	}
 
 	fset := token.NewFileSet()
@@ -1103,10 +1255,12 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
 	if err == nil {
-		if funcDecl, ok := f.Decls[0].(*ast.FuncDecl); ok && funcDecl.Body != nil {
+		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
+		if ok && funcDecl.Body != nil {
 			stmts := funcDecl.Body.List
 			if len(stmts) == 1 {
-				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
+				retStmt, ok := stmts[0].(*ast.ReturnStmt)
+				if ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
 					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
 					return result
@@ -1121,223 +1275,4 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 		result = replaceIdentToken(result, param, arg)
 	}
 	return result
-}
-
-// InlineConstantOperation implements inlining a constant
-type InlineConstantOperation struct {
-	ConstantName string
-	SourceFile   string
-	Scope        types.RenameScope
-}
-
-func (op *InlineConstantOperation) Type() types.OperationType {
-	return types.InlineOperation
-}
-
-func (op *InlineConstantOperation) Validate(ws *types.Workspace) error {
-	if op.ConstantName == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "constant name cannot be empty",
-		}
-	}
-	if op.SourceFile == "" {
-		return &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: "source file cannot be empty",
-		}
-	}
-
-	return nil
-}
-
-func (op *InlineConstantOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	// Find constant value
-	constantValue, err := op.findConstantValue(ws)
-	if err != nil {
-		return nil, err
-	}
-
-	// Find all references to this constant
-	references, err := op.findConstantReferences(ws)
-	if err != nil {
-		return nil, err
-	}
-
-	var changes []types.Change
-	affectedFiles := make([]string, 0)
-	fileSet := make(map[string]bool)
-
-	// Replace all constant references with the value
-	for _, ref := range references {
-		changes = append(changes, types.Change{
-			File:        ref.File,
-			Start:       ref.Start,
-			End:         ref.End,
-			OldText:     op.ConstantName,
-			NewText:     constantValue,
-			Description: fmt.Sprintf("Inline constant %s", op.ConstantName),
-		})
-
-		if !fileSet[ref.File] {
-			affectedFiles = append(affectedFiles, ref.File)
-			fileSet[ref.File] = true
-		}
-	}
-
-	var affectedPackages []string
-	for _, file := range affectedFiles {
-		for _, pkg := range ws.Packages {
-			if _, exists := pkg.Files[file]; exists {
-				affectedPackages = append(affectedPackages, pkg.Path)
-				break
-			}
-		}
-	}
-
-	return &types.RefactoringPlan{
-		Operations:    []types.Operation{op},
-		Changes:       changes,
-		AffectedFiles: affectedFiles,
-		Impact: &types.ImpactAnalysis{
-			AffectedFiles:    affectedFiles,
-			AffectedPackages: affectedPackages,
-		},
-		Reversible: false,
-	}, nil
-}
-
-func (op *InlineConstantOperation) Description() string {
-	scopeStr := "PackageScope"
-	if op.Scope == types.WorkspaceScope {
-		scopeStr = "WorkspaceScope"
-	}
-	return fmt.Sprintf("Inline constant '%s' from %s with %s scope",
-		op.ConstantName, op.SourceFile, scopeStr)
-}
-
-type ConstantReference struct {
-	File  string
-	Start int
-	End   int
-}
-
-func (op *InlineConstantOperation) findConstantValue(ws *types.Workspace) (string, error) {
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		if f, ok := pkg.Files[op.SourceFile]; ok {
-			sourceFile = f
-			break
-		}
-		for _, f := range pkg.Files {
-			if f.Path == op.SourceFile {
-				sourceFile = f
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-	if sourceFile == nil || sourceFile.AST == nil {
-		return "", fmt.Errorf("source file not found: %s", op.SourceFile)
-	}
-
-	fset := ws.FileSet
-	var value string
-	ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
-		if value != "" {
-			return false
-		}
-		genDecl, ok := n.(*ast.GenDecl)
-		if !ok || genDecl.Tok != token.CONST {
-			return true
-		}
-		for _, spec := range genDecl.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			for i, name := range valueSpec.Names {
-				if name.Name == op.ConstantName && i < len(valueSpec.Values) {
-					expr := valueSpec.Values[i]
-					start := fset.Position(expr.Pos()).Offset
-					end := fset.Position(expr.End()).Offset
-					if start >= 0 && end <= len(sourceFile.OriginalContent) && start < end {
-						value = string(sourceFile.OriginalContent[start:end])
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	if value == "" {
-		return "", fmt.Errorf("constant %s not found in %s", op.ConstantName, op.SourceFile)
-	}
-	return value, nil
-}
-
-func (op *InlineConstantOperation) findConstantReferences(ws *types.Workspace) ([]ConstantReference, error) {
-	// Find source package and constant symbol
-	var sym *types.Symbol
-	var sourcePkg *types.Package
-	for _, pkg := range ws.Packages {
-		inPkg := false
-		if _, ok := pkg.Files[op.SourceFile]; ok {
-			inPkg = true
-		} else {
-			for _, f := range pkg.Files {
-				if f.Path == op.SourceFile {
-					inPkg = true
-					break
-				}
-			}
-		}
-		if !inPkg {
-			continue
-		}
-		sourcePkg = pkg
-		if pkg.Symbols != nil {
-			sym = pkg.Symbols.Constants[op.ConstantName]
-		}
-		break
-	}
-	if sym == nil {
-		return nil, fmt.Errorf("constant %s not found", op.ConstantName)
-	}
-
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	resolver := analysis.NewSymbolResolver(ws, logger)
-	idx := resolver.BuildReferenceIndex()
-	refs, err := resolver.FindReferencesIndexed(sym, idx)
-	if err != nil {
-		return nil, err
-	}
-
-	var result []ConstantReference
-	for _, ref := range refs {
-		if op.Scope == types.PackageScope {
-			inPkg := false
-			if _, ok := sourcePkg.Files[ref.File]; ok {
-				inPkg = true
-			} else {
-				for _, f := range sourcePkg.Files {
-					if f.Path == ref.File {
-						inPkg = true
-						break
-					}
-				}
-			}
-			if !inPkg {
-				continue
-			}
-		}
-		result = append(result, ConstantReference{
-			File:  ref.File,
-			Start: ref.Offset,
-			End:   ref.Offset + len(op.ConstantName),
-		})
-	}
-	return result, nil
 }

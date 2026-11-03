@@ -54,10 +54,12 @@ func TestMoveByDependencies_SymbolWithNoConfigProblemIsMovedAndBuilds(t *testing
 
 	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
 
-	if _, ok := out["skipped_sites"]; ok {
+	_, ok := out["skipped_sites"]
+	if ok {
 		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
 	}
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	assertFileContains(t, dir, "shared/shared.go", "func Shared() int")
@@ -76,14 +78,16 @@ func TestMoveByDependencies_TwoSymbolsFromOnePackageMoveInOneCall(t *testing.T) 
 
 	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
 
-	if _, ok := out["skipped_sites"]; ok {
+	_, ok := out["skipped_sites"]
+	if ok {
 		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
 	}
 	assertFileContains(t, dir, "shared/shared.go", "func One() int")
 	assertFileContains(t, dir, "shared/shared.go", "func Two() int")
 	for _, rel := range []string{"a/a.go", "b/b.go"} {
 		assertFileContains(t, dir, rel, "shared.One() + shared.Two()")
-		if got := fileText(t, dir, rel); strings.Contains(got, "threadmcp/src\"") {
+		got := fileText(t, dir, rel)
+		if strings.Contains(got, "threadmcp/src\"") {
 			t.Errorf("%s still imports src:\n%s", rel, got)
 		}
 	}
@@ -102,7 +106,8 @@ func TestMoveByDependencies_SymbolsFromTwoPackagesMoveToOneTargetInOneCall(t *te
 
 	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
 
-	if _, ok := out["skipped_sites"]; ok {
+	_, ok := out["skipped_sites"]
+	if ok {
 		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
 	}
 	assertFileContains(t, dir, "shared/shared.go", "func One() int")
@@ -134,7 +139,8 @@ func TestMoveByDependencies_RefusedCandidateIsReportedAndTheOthersMove(t *testin
 	for _, name := range []string{"One", "Three"} {
 		assertFileContains(t, dir, "shared/shared.go", "func "+name+"() int")
 	}
-	if got := fileText(t, dir, "shared/shared.go"); strings.Contains(got, "func Two") {
+	got := fileText(t, dir, "shared/shared.go")
+	if strings.Contains(got, "func Two") {
 		t.Errorf("Two moved although a build configuration needs it in src:\n%s", got)
 	}
 	assertFileContains(t, dir, "src/src.go", "func Two() int")
@@ -152,7 +158,8 @@ func TestMoveByDependencies_TypeWithMethodsAndFunctionFromSamePackageMoveTogethe
 
 	out := callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
 
-	if _, ok := out["skipped_sites"]; ok {
+	_, ok := out["skipped_sites"]
+	if ok {
 		t.Errorf("skipped_sites = %v, want none", out["skipped_sites"])
 	}
 	assertFileContains(t, dir, "shared/shared.go", "type Box struct")
@@ -183,7 +190,8 @@ func TestMoveByDependencies_DryRunReturnsCombinedDiffAndWritesNothing(t *testing
 	for rel, content := range files {
 		assertFileUnchanged(t, dir, rel, content)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "shared")); !os.IsNotExist(err) {
+	_, err := os.Stat(filepath.Join(dir, "shared"))
+	if !os.IsNotExist(err) {
 		t.Errorf("dry run left the target directory behind, stat err = %v", err)
 	}
 

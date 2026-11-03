@@ -66,7 +66,7 @@ All call sites are updated automatically, under every build configuration (GOOS/
 func planChangeSignature(state *MCPServer, in ChangeSignatureInput) (*types.RefactoringPlan, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan change signature: %w", err)
 	}
 	newParams := make([]refactor.Parameter, len(in.Params))
 	for i, p := range in.Params {

@@ -53,7 +53,8 @@ func NewMemCache() *MemCache {
 
 	// Sanity check: the target package directory must not exist yet - that's
 	// exactly the condition that triggered the panic.
-	if _, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache")); !os.IsNotExist(err) {
+	_, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache"))
+	if !os.IsNotExist(err) {
 		t.Fatalf("test setup invariant violated: pkg/memcache must not exist yet, stat err=%v", err)
 	}
 
@@ -87,7 +88,7 @@ func NewMemCache() *MemCache {
 
 	commonPath := filepath.Join(tmpDir, "common", "memcache.go")
 	commonContent, err := os.ReadFile(commonPath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading %s: %v", commonPath, err)
 	}
 	if strings.Contains(string(commonContent), "type MemCache struct") {
@@ -148,10 +149,12 @@ type MemCache struct {
 
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
+	if err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+	err = os.WriteFile(path, []byte(content), 0o644)
+	if err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }

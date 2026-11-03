@@ -40,7 +40,8 @@ func moveToShared(t *testing.T, sess *mcptest.Session, symbols ...string) {
 func assertNoSourceImport(t *testing.T, dir string, files ...string) {
 	t.Helper()
 	for _, f := range files {
-		if got := mustRead(t, filepath.Join(dir, f)); strings.Contains(got, "threadmcp/src") {
+		got := mustRead(t, filepath.Join(dir, f))
+		if strings.Contains(got, "threadmcp/src") {
 			t.Errorf("%s still imports src:\n%s", f, got)
 		}
 	}
@@ -66,7 +67,8 @@ func TestMoveSymbol_FileUsingAnotherSourceSymbolKeepsSourceImport(t *testing.T) 
 
 	moveToShared(t, sess, "One", "Two")
 
-	if got := mustRead(t, filepath.Join(dir, "c/c.go")); !strings.Contains(got, "src.Keep()") || !strings.Contains(got, "threadmcp/src\"") {
+	got := mustRead(t, filepath.Join(dir, "c/c.go"))
+	if !strings.Contains(got, "src.Keep()") || !strings.Contains(got, "threadmcp/src\"") {
 		t.Errorf("c/c.go lost the source import:\n%s", got)
 	}
 	assertNoSourceImport(t, dir, "a/a.go")
@@ -97,7 +99,8 @@ func TestMoveSymbol_AliasedSourceImportDroppedWhenLastReferenceIsGone(t *testing
 	moveToShared(t, sess, "One", "Two")
 
 	assertNoSourceImport(t, dir, "d/d.go")
-	if got := mustRead(t, filepath.Join(dir, "e/e.go")); !strings.Contains(got, "s \"example.com/threadmcp/src\"") {
+	got := mustRead(t, filepath.Join(dir, "e/e.go"))
+	if !strings.Contains(got, "s \"example.com/threadmcp/src\"") {
 		t.Errorf("e/e.go lost the aliased source import:\n%s", got)
 	}
 	goVets(t, dir, "")
@@ -113,7 +116,8 @@ func TestMoveSymbol_BlankSourceImportIsLeftAlone(t *testing.T) {
 
 	moveToShared(t, sess, "One", "Two")
 
-	if got := mustRead(t, filepath.Join(dir, "g/g.go")); !strings.Contains(got, "_ \"example.com/threadmcp/src\"") {
+	got := mustRead(t, filepath.Join(dir, "g/g.go"))
+	if !strings.Contains(got, "_ \"example.com/threadmcp/src\"") {
 		t.Errorf("g/g.go lost the blank import:\n%s", got)
 	}
 	goVets(t, dir, "")

@@ -5,9 +5,10 @@ import (
 	"go/token"
 	gotypes "go/types"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/ast/edge"
 	"golang.org/x/tools/go/ast/inspector"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // CallSite is a single call site of some callee, resolved to plain ast/types
@@ -138,7 +139,8 @@ func (idx *ReferenceIndex) NonCallUsesOf(obj gotypes.Object) []ValueUse {
 	var uses []ValueUse
 	for _, pix := range idx.workspaceIdx.packages {
 		for cur := range pix.Uses(obj) {
-			if _, ok := callSiteFor(cur); ok {
+			_, ok := callSiteFor(cur)
+			if ok {
 				continue // it's a call site, reported by CallSitesOf instead
 			}
 			ident, ok := cur.Node().(*ast.Ident)

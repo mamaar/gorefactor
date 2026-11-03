@@ -28,7 +28,8 @@ func UncheckedFiles(views []*View, dirs []string) []UncheckedFile {
 	var out []UncheckedFile
 	for _, dir := range slices.Compact(dirs) {
 		for _, f := range tree.Dir(dir) {
-			if u, ok := uncheckedFile(views, f); ok {
+			u, ok := uncheckedFile(views, f)
+			if ok {
 				out = append(out, u)
 			}
 		}
@@ -78,7 +79,8 @@ func (v *View) uncheckedReason(f *SourceFile) string {
 	if !pkg.TypesChecked {
 		return "the package was not type-checked"
 	}
-	if err := pkg.ExcludedTestFiles[f.Name]; err != nil {
+	err := pkg.ExcludedTestFiles[f.Name]
+	if err != nil {
 		return err.Error()
 	}
 	return ""
@@ -92,7 +94,8 @@ func (v *View) ExcludedTestFiles() map[string]bool {
 	paths := make(map[string]bool)
 	for _, pkg := range v.Workspace.Packages {
 		for name := range pkg.ExcludedTestFiles {
-			if f := pkg.TestFiles[name]; f != nil {
+			f := pkg.TestFiles[name]
+			if f != nil {
 				paths[f.Path] = true
 			}
 		}
@@ -141,7 +144,8 @@ func (v *View) ProductionErrors() []ProductionError {
 	var out []ProductionError
 	for _, pkg := range v.Workspace.Packages {
 		for name, err := range pkg.ProductionErrs {
-			if f := pkg.Files[name]; f != nil {
+			f := pkg.Files[name]
+			if f != nil {
 				out = append(out, ProductionError{Package: pkg, File: f, Err: err})
 			}
 		}

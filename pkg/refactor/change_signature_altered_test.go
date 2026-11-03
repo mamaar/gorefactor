@@ -35,7 +35,8 @@ func executeAltered(t *testing.T, eng *DefaultEngine, dir, fn, file string, prop
 		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	ensureTypeChecked(eng.WorkspaceSet().Primary().Parser, ws)
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		t.Fatal(err)
 	}
 	plan, err := op.Execute(ws)
@@ -50,7 +51,8 @@ func TestChangeSignatureOperation_AlteredDeclsListsFunction(t *testing.T) {
 	op, _ := executeAltered(t, eng, dir, "fn", "p/fn.go", false)
 
 	want := []AlteredDecl{{Key: types.SymbolKey{PkgPath: "example.com/threadtest/p", Name: "fn"}, File: filepath.Join(dir, "p/fn.go")}}
-	if got := op.AlteredDecls(); !slices.Equal(got, want) {
+	got := op.AlteredDecls()
+	if !slices.Equal(got, want) {
 		t.Errorf("AlteredDecls = %+v, want %+v", got, want)
 	}
 }
@@ -81,7 +83,8 @@ func assertNoDuplicateChanges(t *testing.T, plan *types.RefactoringPlan) {
 	t.Helper()
 	seen := make(map[changeIdentity]bool)
 	for _, c := range plan.Changes {
-		if id := identityOf(c); seen[id] {
+		id := identityOf(c)
+		if seen[id] {
 			t.Errorf("duplicate change %q at %s [%d,%d)", c.Description, c.File, c.Start, c.End)
 		} else {
 			seen[id] = true

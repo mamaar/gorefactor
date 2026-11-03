@@ -45,7 +45,8 @@ func TestSafeDeleteBlockingReferences_AttributesEachReferenceToItsConfigs(t *tes
 		if len(b.Configs) != 1 {
 			t.Fatalf("%s: Configs = %v, want the one configuration that includes it", file, b.Configs)
 		}
-		if other, taken := owners[b.Configs[0]]; taken {
+		other, taken := owners[b.Configs[0]]
+		if taken {
 			t.Errorf("%s and %s are both attributed to %s", file, other, b.Configs[0])
 		}
 		owners[b.Configs[0]] = file

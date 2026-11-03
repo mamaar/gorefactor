@@ -319,7 +319,8 @@ func categorize(x int) string {
 		return "zero"
 	}
 	return "positive"`
-	if got := string(fix); got != want {
+	got := string(fix)
+	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -376,7 +377,8 @@ func classify(a bool, x int) string {
 		return "zero"
 	}
 	return "other"`
-	if got := string(fix); got != want {
+	got := string(fix)
+	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -428,7 +430,8 @@ func find(a bool, m map[string]int, x string) int {
 		return k
 	}
 	return -2`
-	if got := string(fix); got != want {
+	got := string(fix)
+	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 	if strings.Contains(string(fix), "!") {
@@ -573,7 +576,8 @@ func process(x int) string {
 	}
 	// odd branch comment
 	return "odd"`
-	if got := string(fix); got != want {
+	got := string(fix)
+	if got != want {
 		t.Errorf("suggested fix text mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -665,7 +669,8 @@ func compare(x, y float64) string {
 	}
 	result := "small"
 	return result`
-	if got := string(fix); got != want {
+	got := string(fix)
+	if got != want {
 		t.Errorf("suggested fix text mismatch (float condition should keep its blanket !, not flip to >=)\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }

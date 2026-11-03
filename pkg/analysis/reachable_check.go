@@ -95,10 +95,12 @@ func (i checkImporter) Import(path string) (*gotypes.Package, error) {
 	if path == "unsafe" {
 		return gotypes.Unsafe, nil
 	}
-	if p := i.override[path]; p != nil {
+	p := i.override[path]
+	if p != nil {
 		return p, nil
 	}
-	if wp := i.sc.byPath[path]; wp != nil {
+	wp := i.sc.byPath[path]
+	if wp != nil {
 		c, err := i.sc.production(wp)
 		if err != nil {
 			return nil, err
@@ -106,20 +108,23 @@ func (i checkImporter) Import(path string) (*gotypes.Package, error) {
 		if len(i.override) == 0 || !i.sc.dependsOn(c.pkg, i.override, map[string]bool{}) {
 			return c.pkg, nil
 		}
-		if r := i.rebuilt[path]; r != nil {
+		r := i.rebuilt[path]
+		if r != nil {
 			return r.pkg, nil
 		}
-		r, err := i.sc.check(wp, sourceFiles(wp, false, false), i)
+		r, err = i.sc.check(wp, sourceFiles(wp, false, false), i)
 		if err != nil {
 			return nil, err
 		}
-		if r.bodiless = bodilessReason(r); r.bodiless != "" {
+		r.bodiless = bodilessReason(r)
+		if r.bodiless != "" {
 			r.files, r.info = nil, nil
 		}
 		i.rebuilt[path] = r
 		return r.pkg, nil
 	}
-	if p := i.sc.outside[path]; p != nil {
+	p = i.sc.outside[path]
+	if p != nil {
 		return p, nil
 	}
 	return nil, fmt.Errorf("cannot import %s", path)
@@ -145,7 +150,8 @@ func (sc *sourceChecker) dependsOn(p *gotypes.Package, paths map[string]*gotypes
 
 // production returns the check of the non-test files of pkg.
 func (sc *sourceChecker) production(pkg *types.Package) (*checkedPkg, error) {
-	if c := sc.prod[pkg]; c != nil {
+	c := sc.prod[pkg]
+	if c != nil {
 		return c, nil
 	}
 	if sc.inFlight[pkg] {
@@ -156,9 +162,10 @@ func (sc *sourceChecker) production(pkg *types.Package) (*checkedPkg, error) {
 
 	c, err := sc.check(pkg, sourceFiles(pkg, false, false), checkImporter{sc: sc})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("production: %w", err)
 	}
-	if c.bodiless = bodilessReason(c); c.bodiless != "" {
+	c.bodiless = bodilessReason(c)
+	if c.bodiless != "" {
 		c.files, c.info = nil, nil
 		sc.report(pkg.ImportPath, c.bodiless)
 	}
@@ -195,7 +202,8 @@ func (sc *sourceChecker) externalTests(pkg *types.Package) (*checkedPkg, []*chec
 		return nil, nil
 	}
 	imp := checkImporter{sc: sc, override: map[string]*gotypes.Package{}, rebuilt: map[string]*checkedPkg{}}
-	if t := sc.withTest[pkg]; t != nil {
+	t := sc.withTest[pkg]
+	if t != nil {
 		imp.override[pkg.ImportPath] = t.pkg
 	}
 	c := sc.checkTests(pkg.ImportPath+" [xtests]", pkg, files, imp)
@@ -211,7 +219,8 @@ func (sc *sourceChecker) checkTests(label string, pkg *types.Package, files []*a
 		sc.report(label, err.Error())
 		return nil
 	}
-	if c.bodiless = bodilessReason(c); c.bodiless != "" {
+	c.bodiless = bodilessReason(c)
+	if c.bodiless != "" {
 		sc.report(label, c.bodiless)
 		return nil
 	}
@@ -254,7 +263,8 @@ func sourceFiles(pkg *types.Package, tests, external bool) []*ast.File {
 	if tests || external {
 		for _, name := range sortedKeys(pkg.TestFiles) {
 			f := pkg.TestFiles[name]
-			if _, excluded := pkg.ExcludedTestFiles[name]; !excluded && isExternalTestFile(f.AST) == external {
+			_, excluded := pkg.ExcludedTestFiles[name]
+			if !excluded && isExternalTestFile(f.AST) == external {
 				files = append(files, f.AST)
 			}
 		}
@@ -280,7 +290,8 @@ func resolved(c *checkedPkg) bool {
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.TypeSwitchStmt:
-				if a, isAssign := n.Assign.(*ast.AssignStmt); isAssign {
+				a, isAssign := n.Assign.(*ast.AssignStmt)
+				if isAssign {
 					guards[a.Lhs[0].(*ast.Ident)] = true
 				}
 			case *ast.Ident:

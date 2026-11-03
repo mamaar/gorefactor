@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"go/ast"
+	gotypes "go/types"
 	"log/slog"
 	"slices"
 
@@ -85,14 +86,15 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	g, idx, m, err := ua.prepare()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("find unused symbols: %w", err)
 	}
 	m.markFrom(g, m.isRoot)
 
 	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live), callers: deadCallers(g, m.live)}
 	var unused []*UnusedSymbol
 	for _, n := range g.nodes {
-		if u := r.symbolOf(n); u != nil {
+		u := r.symbolOf(n)
+		if u != nil {
 			unused = append(unused, u)
 		}
 	}
@@ -108,8 +110,9 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		if pkg.Symbols != nil {
 			continue
 		}
-		if _, err := ua.resolver.BuildSymbolTable(pkg); err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %v", pkg.Path, err)
+		_, err := ua.resolver.BuildSymbolTable(pkg)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
 		}
 	}
 
@@ -124,17 +127,19 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		live:             make(map[*usageNode]bool, len(g.nodes)),
 		from:             make(map[*usageNode]*usageNode),
 		includeExported:  ua.includeExported,
-		ifaceMethodNames: ua.collectInterfaceMethodNames(),
+		ifaceMethodNames: interfaceMethodNames(ua.workspace),
+		conversions:      CollectInterfaceConversions(ua.workspace),
 	}
 	return g, idx, m, nil
 }
 
 func compareUnused(a, b *UnusedSymbol) int { return compareSymbols(a.Symbol, b.Symbol) }
 
-// collectInterfaceMethodNames returns the names of the methods declared by any
-// interface type in the workspace, named or not, plus well-known standard
-// library ones. A method with such a name may be called through an interface.
-func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
+// interfaceMethodNames returns the names of the methods declared by any
+// interface type in the workspace, named or not, plus those of the interfaces
+// the type-checked packages import and well-known standard library ones. A
+// method with such a name may be called through an interface.
+func interfaceMethodNames(ws *types.Workspace) map[string]bool {
 	names := make(map[string]bool)
 
 	for _, common := range []string{
@@ -146,12 +151,44 @@ func (ua *UnusedAnalyzer) collectInterfaceMethodNames() map[string]bool {
 	}
 
 	c := &interfaceMethodCollector{names: names}
-	for _, pkg := range ua.workspace.Packages {
+	for _, pkg := range ws.Packages {
 		for _, file := range indexedFiles(pkg) {
 			ast.Walk(c, file.AST)
 		}
 	}
+	for name := range externalMethodNames(importedPackages(ws)) {
+		names[name] = true
+	}
 	return names
+}
+
+// importedPackages returns the type-checked packages the workspace imports,
+// transitively, that are not themselves in the workspace.
+func importedPackages(ws *types.Workspace) []*gotypes.Package {
+	inWorkspace := make(map[*gotypes.Package]bool)
+	for _, pkg := range ws.Packages {
+		inWorkspace[pkg.TypesPkg] = true
+		inWorkspace[pkg.ExternalTestTypesPkg] = true
+	}
+	var imported []*gotypes.Package
+	seen := make(map[*gotypes.Package]bool)
+	var walk func(p *gotypes.Package)
+	walk = func(p *gotypes.Package) {
+		if p == nil || seen[p] {
+			return
+		}
+		seen[p] = true
+		if !inWorkspace[p] {
+			imported = append(imported, p)
+		}
+		for _, imp := range p.Imports() {
+			walk(imp)
+		}
+	}
+	for p := range inWorkspace {
+		walk(p)
+	}
+	return imported
 }
 
 // interfaceMethodCollector adds the method names of every interface type it
@@ -193,18 +230,6 @@ func (ua *UnusedAnalyzer) isTestFunction(symbol *types.Symbol) bool {
 	return false
 }
 
-// FormatUnusedSymbol formats an unused symbol for display
-func (ua *UnusedAnalyzer) FormatUnusedSymbol(unused *UnusedSymbol) string {
-	symbol := unused.Symbol
-	return fmt.Sprintf("%s %s (%s:%d:%d) - %s",
-		symbol.Kind.String(),
-		symbol.Name,
-		symbol.File,
-		symbol.Line,
-		symbol.Column,
-		unused.Reason)
-}
-
 // marker finds the live declarations of a graph.
 type marker struct {
 	ua               *UnusedAnalyzer
@@ -212,8 +237,9 @@ type marker struct {
 	from             map[*usageNode]*usageNode // first node found to keep a node live; none for roots
 	work             []*usageNode              // FIFO, so from gives shortest paths
 	includeExported  bool
-	followTests      bool // also follow test-to-production edges
-	ifaceMethodNames map[string]bool
+	followTests      bool            // also follow test-to-production edges
+	ifaceMethodNames map[string]bool // for test methods and packages that are not type-checked
+	conversions      *InterfaceConversions
 }
 
 // markFrom marks every declaration reachable from the nodes of g that isRoot accepts.
@@ -281,14 +307,21 @@ func (m *marker) isRoot(n *usageNode) bool {
 }
 
 // isKeptMethod reports whether the method n is live whenever its receiver type
-// is: it is exported and exported symbols are not reported, or it may
-// implement an interface.
+// is: it is exported and exported symbols are not reported, or non-test code
+// can reach it through an interface (by name for test methods and where the
+// package is not type-checked).
 func (m *marker) isKeptMethod(n *usageNode) bool {
 	s := n.symbol
 	if s == nil || s.Kind != types.MethodSymbol {
 		return false
 	}
-	return (s.Exported && !m.includeExported) || m.ifaceMethodNames[s.Name]
+	if s.Exported && !m.includeExported {
+		return true
+	}
+	if n.test || n.pkg.TypesInfo == nil {
+		return m.ifaceMethodNames[s.Name]
+	}
+	return m.conversions.KeepsMethod(s.Position)
 }
 
 // unusedReport turns the dead nodes of a graph into findings.
@@ -378,8 +411,10 @@ func (r *unusedReport) causeOf(n *usageNode) UnusedCause {
 // the symbol.
 func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 	s := n.symbol
-	if targetObj := r.ua.resolver.resolveTypesObject(s); targetObj != nil {
-		if objEntries := r.idx.ObjectEntries(targetObj); len(objEntries) > 0 {
+	targetObj := r.ua.resolver.resolveTypesObject(s)
+	if targetObj != nil {
+		objEntries := r.idx.ObjectEntries(targetObj)
+		if len(objEntries) > 0 {
 			for i := range objEntries {
 				if objEntries[i].Pos != s.Position {
 					return CauseOnlyDeclarations

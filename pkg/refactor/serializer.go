@@ -1,7 +1,6 @@
 package refactor
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"go/format"
@@ -37,7 +36,7 @@ func (s *Serializer) SetModuleInfo(modulePath string, workspaceModules []string)
 }
 
 // ApplyChanges applies a list of changes to the workspace files
-func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refactorTypes.Change) error {
+func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 	if len(changes) == 0 {
 		return nil // No changes to apply
 	}
@@ -50,13 +49,15 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 	//
 	// This runs before anything is touched: rollback restores what a failed
 	// plan wrote, but a stray write outside the workspace is not undone.
-	if err := validateChangePathsAbsolute(changes); err != nil {
+	err := validateChangePathsAbsolute(changes)
+	if err != nil {
 		return err
 	}
 
 	// Generated files are read from disk, not the workspace: ExecutePlan passes
 	// none, and a file regenerated since load would carry a stale flag.
-	if err := GeneratedFileEdits(changes); err != nil {
+	err = GeneratedFileEdits(changes)
+	if err != nil {
 		return err
 	}
 
@@ -87,12 +88,14 @@ func (s *Serializer) ApplyChanges(ws *refactorTypes.Workspace, changes []refacto
 	}
 
 	for i := range steps {
-		if err := steps[i].commit(); err != nil {
-			return errors.Join(&refactorTypes.RefactorError{
-				Type:    refactorTypes.FileSystemError,
-				Message: err.Error(),
-			}, rollback(steps[:i], &steps[i]))
+		err := steps[i].commit()
+		if err == nil {
+			continue
 		}
+		return errors.Join(&refactorTypes.RefactorError{
+			Type:    refactorTypes.FileSystemError,
+			Message: err.Error(),
+		}, rollback(steps[:i], &steps[i]))
 	}
 
 	return nil
@@ -121,11 +124,11 @@ func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change
 	case err == nil:
 		old, err := os.ReadFile(filePath)
 		if err != nil {
-			return step, fmt.Errorf("failed to read file: %v", err)
+			return step, fmt.Errorf("failed to read file: %w", err)
 		}
 		step.existed, step.old, step.mode = true, old, info.Mode().Perm()
 	case !os.IsNotExist(err):
-		return step, fmt.Errorf("failed to read file: %v", err)
+		return step, fmt.Errorf("failed to read file: %w", err)
 	}
 	if step.delete {
 		return step, nil
@@ -137,19 +140,22 @@ func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change
 // commit writes or deletes the step's file.
 func (f *fileStep) commit() error {
 	if f.delete {
-		if err := deleteFile(f.path); err != nil {
-			return fmt.Errorf("failed to delete file %s: %v", f.path, err)
+		err := deleteFile(f.path)
+		if err != nil {
+			return fmt.Errorf("failed to delete file %s: %w", f.path, err)
 		}
 		return nil
 	}
 	if !f.existed {
 		f.createdDir = outermostMissingDir(filepath.Dir(f.path))
 	}
-	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
-		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %v", f.path, err)
+	err := os.MkdirAll(filepath.Dir(f.path), 0755)
+	if err != nil {
+		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %w", f.path, err)
 	}
-	if err := os.WriteFile(f.path, f.content, f.mode); err != nil {
-		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %v", f.path, err)
+	err = os.WriteFile(f.path, f.content, f.mode)
+	if err != nil {
+		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %w", f.path, err)
 	}
 	return nil
 }
@@ -157,13 +163,15 @@ func (f *fileStep) commit() error {
 // undo puts the step's file back as it was before commit.
 func (f *fileStep) undo() error {
 	if !f.existed {
-		if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) {
+		err := os.Remove(f.path)
+		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		removeCreatedDirs(filepath.Dir(f.path), f.createdDir)
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
+	err := os.MkdirAll(filepath.Dir(f.path), 0755)
+	if err != nil {
 		return err
 	}
 	return os.WriteFile(f.path, f.old, f.mode)
@@ -178,7 +186,8 @@ func rollback(committed []fileStep, failed *fileStep) error {
 	}
 	var errs []error
 	for i := len(committed) - 1; i >= 0; i-- {
-		if err := committed[i].undo(); err != nil {
+		err := committed[i].undo()
+		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to restore %s: %v", committed[i].path, err))
 		}
 	}
@@ -190,7 +199,8 @@ func rollback(committed []fileStep, failed *fileStep) error {
 func outermostMissingDir(dir string) string {
 	missing := ""
 	for {
-		if _, err := os.Stat(dir); err == nil {
+		_, err := os.Stat(dir)
+		if err == nil {
 			return missing
 		}
 		missing = dir
@@ -209,7 +219,8 @@ func removeCreatedDirs(dir, top string) {
 		return
 	}
 	for {
-		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) || dir == top {
+		err := os.Remove(dir)
+		if err != nil && !os.IsNotExist(err) || dir == top {
 			return
 		}
 		dir = filepath.Dir(dir)
@@ -226,16 +237,17 @@ func validateChangePathsAbsolute(changes []refactorTypes.Change) error {
 				Message: fmt.Sprintf("refusing to apply a change with no file path (%s)", change.Description),
 			}
 		}
-		if !filepath.IsAbs(change.File) {
-			return &refactorTypes.RefactorError{
-				Type: refactorTypes.FileSystemError,
-				Message: fmt.Sprintf(
-					"refusing to apply a change to the relative path %q (%s): "+
-						"change paths must be absolute, or they resolve against the server's working directory "+
-						"instead of the workspace",
-					change.File, change.Description),
-				File: change.File,
-			}
+		if filepath.IsAbs(change.File) {
+			continue
+		}
+		return &refactorTypes.RefactorError{
+			Type: refactorTypes.FileSystemError,
+			Message: fmt.Sprintf(
+				"refusing to apply a change to the relative path %q (%s): "+
+					"change paths must be absolute, or they resolve against the server's working directory "+
+					"instead of the workspace",
+				change.File, change.Description),
+			File: change.File,
 		}
 	}
 	return nil
@@ -268,7 +280,8 @@ func fileHasDeletion(changes []refactorTypes.Change) bool {
 // package leaves no empty husk behind. Pruning stops at the first non-empty
 // directory.
 func deleteFile(filePath string) error {
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+	err := os.Remove(filePath)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	pruneEmptyDirs(filepath.Dir(filePath))
@@ -293,7 +306,7 @@ func pruneEmptyDirs(dir string) {
 }
 
 // PreviewChanges generates a preview of what changes would be applied
-func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refactorTypes.Change) (string, error) {
+func (s *Serializer) PreviewChanges(changes []refactorTypes.Change) (string, error) {
 	if len(changes) == 0 {
 		return "No changes to preview", nil
 	}
@@ -354,7 +367,7 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 // touching disk. It sorts changes into descending Start order and validates
 // they don't overlap before applying each one via applyChange — the same
 // offset-application semantics ApplyChanges uses, factored out here so
-// callers that never had a real file to read from disk (VerifyPlanTypes'
+// callers that never had a real file to read from disk (VerifyPlanTypesWithImporter'
 // in-memory type-check verification, in particular) can reuse them exactly
 // rather than re-implementing the sort/validate/apply sequence.
 func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTypes.Change) ([]byte, error) {
@@ -367,7 +380,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	})
 
 	if err := s.validateChangePositions(sorted); err != nil {
-		return nil, fmt.Errorf("invalid change positions: %v", err)
+		return nil, fmt.Errorf("invalid change positions: %w", err)
 	}
 
 	modifiedContent := string(content)
@@ -375,7 +388,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	for _, change := range sorted {
 		modifiedContent, err = s.applyChange(modifiedContent, change)
 		if err != nil {
-			return nil, fmt.Errorf("failed to apply change: %v", err)
+			return nil, fmt.Errorf("failed to apply change: %w", err)
 		}
 	}
 	return []byte(modifiedContent), nil
@@ -386,7 +399,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 func (s *Serializer) computeContent(filePath string, content []byte, changes []refactorTypes.Change) ([]byte, error) {
 	modifiedBytes, err := s.ApplyChangesToContent(content, changes)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("compute content: %w", err)
 	}
 	if len(modifiedBytes) == 0 || !strings.HasSuffix(filePath, ".go") || slices.Contains(strings.Split(filepath.ToSlash(filePath), "/"), "testdata") {
 		return modifiedBytes, nil
@@ -401,7 +414,8 @@ func (s *Serializer) computeContent(filePath string, content []byte, changes []r
 	}
 	// A file that already failed to parse can't be made worse by the plan.
 	if len(content) > 0 {
-		if _, parseErr := parser.ParseFile(token.NewFileSet(), "", content, parser.SkipObjectResolution); parseErr != nil {
+		_, parseErr := parser.ParseFile(token.NewFileSet(), "", content, parser.SkipObjectResolution)
+		if parseErr != nil {
 			return []byte(modifiedContent), nil
 		}
 	}
@@ -460,24 +474,21 @@ func (s *Serializer) formatGoCode(code string) (string, error) {
 	// First, try to parse to ensure it's valid Go code
 	_, err := parser.ParseFile(s.fileSet, "", code, parser.ParseComments)
 	if err != nil {
-		return "", fmt.Errorf("invalid Go syntax: %v", err)
+		return "", fmt.Errorf("invalid Go syntax: %w", err)
 	}
 
 	// Format the code
 	formatted, err := format.Source([]byte(code))
 	if err != nil {
-		return "", fmt.Errorf("formatting failed: %v", err)
+		return "", fmt.Errorf("formatting failed: %w", err)
 	}
 
 	return string(formatted), nil
 }
 
 // truncateText truncates text for display in previews
-func (s *Serializer) truncateText(text string, maxLength ...int) string {
-	length := 80 // default max length
-	if len(maxLength) > 0 {
-		length = maxLength[0]
-	}
+func (s *Serializer) truncateText(text string) string {
+	const length = 80
 
 	// Replace newlines with spaces for single-line display
 	text = strings.ReplaceAll(text, "\n", " ")
@@ -495,97 +506,4 @@ func (s *Serializer) truncateText(text string, maxLength ...int) string {
 	}
 
 	return text[:length-3] + "..."
-}
-
-// GenerateDiff generates a unified diff between original and modified content
-func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedContent string) (string, error) {
-	var diff strings.Builder
-
-	fmt.Fprintf(&diff, "--- %s\n", filePath)
-	fmt.Fprintf(&diff, "+++ %s\n", filePath)
-
-	// Split content into lines
-	originalLines := strings.Split(originalContent, "\n")
-	modifiedLines := strings.Split(modifiedContent, "\n")
-
-	// Simple line-by-line diff (in a production system, you'd use a proper diff algorithm)
-	maxLines := max(len(modifiedLines), len(originalLines))
-
-	lineNum := 1
-	for i := range maxLines {
-		var originalLine, modifiedLine string
-
-		if i < len(originalLines) {
-			originalLine = originalLines[i]
-		}
-		if i < len(modifiedLines) {
-			modifiedLine = modifiedLines[i]
-		}
-
-		if originalLine != modifiedLine {
-			if originalLine != "" {
-				fmt.Fprintf(&diff, "@@ -%d,1 +%d,1 @@\n", lineNum, lineNum)
-				fmt.Fprintf(&diff, "-%s\n", originalLine)
-			}
-			if modifiedLine != "" {
-				if originalLine == "" {
-					fmt.Fprintf(&diff, "@@ -%d,0 +%d,1 @@\n", lineNum, lineNum)
-				}
-				fmt.Fprintf(&diff, "+%s\n", modifiedLine)
-			}
-		}
-		lineNum++
-	}
-
-	return diff.String(), nil
-}
-
-// ValidateFileStructure ensures that the file structure is valid after changes
-func (s *Serializer) ValidateFileStructure(filePath string) error {
-	if !strings.HasSuffix(filePath, ".go") {
-		return nil // Only validate Go files
-	}
-
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read file for validation: %v", err)
-	}
-
-	// Try to parse the file to ensure it's valid Go code
-	_, err = parser.ParseFile(s.fileSet, filePath, content, parser.ParseComments)
-	if err != nil {
-		return fmt.Errorf("file structure validation failed: %v", err)
-	}
-
-	return nil
-}
-
-// GetFileLines reads a file and returns its lines with line numbers
-func (s *Serializer) GetFileLines(filePath string, startLine, endLine int) ([]string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %v", err)
-	}
-	defer func() { _ = file.Close() }()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	lineNum := 1
-
-	for scanner.Scan() {
-		if lineNum >= startLine && lineNum <= endLine {
-			lines = append(lines, fmt.Sprintf("%d: %s", lineNum, scanner.Text()))
-		}
-		lineNum++
-
-		if lineNum > endLine {
-			break
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading file: %v", err)
-	}
-
-	return lines, nil
 }

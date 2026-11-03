@@ -14,7 +14,7 @@ import (
 
 type SafeDeleteInput struct {
 	Symbol     string `json:"symbol" jsonschema:"name of the symbol to delete"`
-	SourceFile string `json:"source_file" jsonschema:"file containing the symbol declaration"`
+	SourceFile string `json:"source_file" jsonschema:"file containing the symbol declaration (refused when it does not declare the symbol)"`
 	Force      bool   `json:"force,omitempty" jsonschema:"delete even if references exist (surviving call sites are reported in skipped_sites, not rewritten)"`
 	DryRun     bool   `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
@@ -67,7 +67,7 @@ func safeDeleteBlockers(state *MCPServer, in SafeDeleteInput) ([]types.Blocker, 
 	defer state.RUnlock()
 	req, err := safeDeleteRequest(state, in)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("safe delete blockers: %w", err)
 	}
 	return state.GetEngine().SafeDeleteBlockingReferences(req)
 }
@@ -80,7 +80,7 @@ func planSafeDelete(state *MCPServer, in SafeDeleteInput) (*types.RefactoringPla
 	defer state.RUnlock()
 	req, err := safeDeleteRequest(state, in)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan safe delete: %w", err)
 	}
 	return state.GetEngine().SafeDeleteAcrossConfigs(req)
 }

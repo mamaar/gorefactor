@@ -17,7 +17,8 @@ func moveSymbolsCall(t *testing.T, sess *mcptest.Session, from, to string, symbo
 
 func assertFileOmits(t *testing.T, dir, rel, unwanted string) {
 	t.Helper()
-	if got := fileText(t, dir, rel); strings.Contains(got, unwanted) {
+	got := fileTextOrEmpty(t, dir, rel)
+	if strings.Contains(got, unwanted) {
 		t.Errorf("%s contains %q:\n%s", rel, unwanted, got)
 	}
 }
@@ -44,7 +45,8 @@ func TestMoveSymbol_MovesAConstantAndAVariableWithTheirDocAndRewritesReferrers(t
 	defer sess.Close()
 
 	for _, name := range []string{"Limit", "Counter"} {
-		if res := moveSymbolCall(t, sess, name, "src", "dst"); res.IsError {
+		res := moveSymbolCall(t, sess, name, "src", "dst")
+		if res.IsError {
 			t.Fatalf("move %s: %s", name, errText(res))
 		}
 	}
@@ -65,7 +67,8 @@ func TestMoveSymbol_LiftsOneConstantOutOfASelfContainedGroup(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "A", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "A", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move A: %s", errText(res))
 	}
 
@@ -84,7 +87,8 @@ func TestMoveSymbol_RemovesASelfContainedGroupWhenAllItsConstantsMove(t *testing
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolsCall(t, sess, "src", "dst", "A", "B"); res.IsError {
+	res := moveSymbolsCall(t, sess, "src", "dst", "A", "B")
+	if res.IsError {
 		t.Fatalf("move A, B: %s", errText(res))
 	}
 
@@ -116,7 +120,8 @@ func TestMoveSymbol_MovesAWholeIotaGroupVerbatimAndTheTargetImportsTheTypeLeftBe
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolsCall(t, sess, "src", "dst", "A", "B", "C"); res.IsError {
+	res := moveSymbolsCall(t, sess, "src", "dst", "A", "B", "C")
+	if res.IsError {
 		t.Fatalf("move A, B, C: %s", errText(res))
 	}
 
@@ -148,7 +153,8 @@ func TestMoveSymbol_MovesATypeWithItsMethodAndTheConstantsTheMethodUses(t *testi
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolsCall(t, sess, "src", "dst", "Kind", "A", "B", "C"); res.IsError {
+	res := moveSymbolsCall(t, sess, "src", "dst", "Kind", "A", "B", "C")
+	if res.IsError {
 		t.Fatalf("move Kind, A, B, C: %s", errText(res))
 	}
 
@@ -211,7 +217,8 @@ func TestMoveSymbol_CarriesBlankNamesAlongAndRefusesToMoveThem(t *testing.T) {
 	assertFileUnchanged(t, dir, "src/src.go", src)
 
 	for _, name := range []string{"b", "x"} {
-		if res := moveSymbolCall(t, sess, name, "src", "dst"); res.IsError {
+		res := moveSymbolCall(t, sess, name, "src", "dst")
+		if res.IsError {
 			t.Fatalf("move %s: %s", name, errText(res))
 		}
 	}
@@ -233,7 +240,8 @@ func TestMoveSymbol_RewritesAConstantUsedInInPackageAndExternalTestFiles(t *test
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Limit", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Limit", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Limit: %s", errText(res))
 	}
 
@@ -293,8 +301,10 @@ func skippedReasons(out map[string]any) []string {
 	var reasons []string
 	sites, _ := out["skipped_sites"].([]any)
 	for _, s := range sites {
-		if m, ok := s.(map[string]any); ok {
-			if r, ok := m["reason"].(string); ok {
+		m, ok := s.(map[string]any)
+		if ok {
+			r, ok := m["reason"].(string)
+			if ok {
 				reasons = append(reasons, r)
 			}
 		}

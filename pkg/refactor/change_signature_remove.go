@@ -50,7 +50,7 @@ func (op *ChangeSignatureOperation) planRemoveParam(ws *pkgtypes.Workspace, pkg 
 	}
 	idx, err := removedParamIndex(old, op.NewParams)
 	if err != nil {
-		return err
+		return fmt.Errorf("plan remove param: %w", err)
 	}
 	op.removedIdx, op.removedCount = idx, len(old)
 	op.removedVariadic = strings.HasPrefix(old[len(old)-1].Type, "...")
@@ -102,7 +102,8 @@ func paramUses(info *gotypes.Info, decl *ast.FuncDecl, param *ast.Ident) (uses [
 	}
 	obj := info.Defs[param]
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && info.Uses[id] == obj {
+		id, ok := n.(*ast.Ident)
+		if ok && info.Uses[id] == obj {
 			uses = append(uses, id)
 		}
 		return true
@@ -148,7 +149,8 @@ func (op *ChangeSignatureOperation) subcommandName() string {
 // removeArg drops the argument for the removed parameter from args. It reports
 // why the call cannot be rewritten, or "" when it can.
 func (op *ChangeSignatureOperation) removeArg(callExpr *ast.CallExpr, args []string, info *gotypes.Info) ([]string, string) {
-	if reason := dropArgRefusal(callExpr, info, op.removedIdx, op.removedCount, op.removedVariadic); reason != "" {
+	reason := dropArgRefusal(callExpr, info, op.removedIdx, op.removedCount, op.removedVariadic)
+	if reason != "" {
 		return nil, reason
 	}
 	out := slices.Clone(args)
@@ -164,14 +166,17 @@ func (op *ChangeSignatureOperation) removeArg(callExpr *ast.CallExpr, args []str
 // dropArgRefusal reports why the argument for parameter idx, of n parameters,
 // cannot be dropped from call, or "" when it can.
 func dropArgRefusal(call *ast.CallExpr, info *gotypes.Info, idx, n int, variadic bool) string {
-	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && info != nil {
-		if s := info.Selections[sel]; s != nil && s.Kind() == gotypes.MethodExpr {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if ok && info != nil {
+		s := info.Selections[sel]
+		if s != nil && s.Kind() == gotypes.MethodExpr {
 			return "method expression passes the receiver as an argument"
 		}
 	}
 	args := len(call.Args)
 	if args == 1 && info != nil {
-		if tuple, ok := info.TypeOf(call.Args[0]).(*gotypes.Tuple); ok && tuple.Len() > 1 {
+		tuple, ok := info.TypeOf(call.Args[0]).(*gotypes.Tuple)
+		if ok && tuple.Len() > 1 {
 			return "passes a multi-value call as the arguments"
 		}
 	}
@@ -212,10 +217,8 @@ func (op *ChangeSignatureOperation) pruneRemovedImports(ws *pkgtypes.Workspace, 
 		paths[c.File] = true
 	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
-		file, _ := findSourceFile(ws, path)
-		for _, spec := range unusedImportsAfterRemoval(ws, file, op.removedSpans) {
-			plan.Changes = append(plan.Changes, removeImportSpec(ws, file, spec))
-		}
+		file, _, _ := ws.FindFile(path)
+		plan.Changes = append(plan.Changes, removeImportSpecs(ws, file, unusedImportsAfterRemoval(ws, file, op.removedSpans))...)
 	}
 }
 

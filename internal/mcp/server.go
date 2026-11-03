@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -61,7 +62,8 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 	}
 
 	s.logger.Info("loading workspace", "path", path)
-	if _, err := s.engine.LoadWorkspace(path); err != nil {
+	_, err := s.engine.LoadWorkspace(path)
+	if err != nil {
 		return false, fmt.Errorf("load workspace: %w", err)
 	}
 	s.set = s.engine.WorkspaceSet()
@@ -104,7 +106,8 @@ func (s *MCPServer) LoadWorkspace(ctx context.Context, path string) (bool, error
 // so applyWatchedChanges exits.
 func (s *MCPServer) runWatcher(ctx context.Context, w *watch.Watcher, ch chan<- []watch.ChangeEvent) {
 	defer close(ch)
-	if err := w.Run(ctx, ch); err != nil && ctx.Err() == nil {
+	err := w.Run(ctx, ch)
+	if err != nil && ctx.Err() == nil {
 		s.logger.Error("watcher error", "err", err)
 	}
 }
@@ -134,20 +137,6 @@ func (s *MCPServer) GetEngine() *refactor.DefaultEngine {
 	return s.engine
 }
 
-// viewOf returns the view that owns ws, or the primary view.
-func (s *MCPServer) viewOf(ws *types.Workspace) *analysis.View {
-	if v := s.set.ViewOf(ws); v != nil {
-		return v
-	}
-	return s.set.Primary()
-}
-
-// EnsureReferenceIndex returns the cached reference index of the view that
-// owns ws, building one if necessary.
-func (s *MCPServer) EnsureReferenceIndex(ws *types.Workspace) (*analysis.ReferenceIndex, error) {
-	return s.viewOf(ws).ReferenceIndex()
-}
-
 // InvalidateReferenceIndex marks the cached reference index of every built
 // view as stale.
 func (s *MCPServer) InvalidateReferenceIndex() {
@@ -160,7 +149,8 @@ func (s *MCPServer) InvalidateReferenceIndex() {
 // called with s.mu held). Returns true if successful, false otherwise.
 func (s *MCPServer) buildReferenceIndexLocked() bool {
 	s.logger.Debug("building reference index...")
-	if _, err := s.set.Primary().ReferenceIndex(); err != nil {
+	_, err := s.set.Primary().ReferenceIndex()
+	if err != nil {
 		s.logger.Warn("failed to build reference index")
 		return false
 	}
@@ -169,9 +159,9 @@ func (s *MCPServer) buildReferenceIndexLocked() bool {
 
 // SyncWorkspaceChanges forces an immediate workspace update for the given files.
 // This is called after MCP operations write files to ensure workspace state is current.
-func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
+func (s *MCPServer) SyncWorkspaceChanges(files []string) {
 	if s.updater == nil || len(files) == 0 {
-		return nil
+		return
 	}
 
 	// Create synthetic change events for modified files
@@ -192,7 +182,7 @@ func (s *MCPServer) SyncWorkspaceChanges(files []string) error {
 	// Invalidate cached reference index since files changed
 	s.InvalidateReferenceIndex()
 
-	return nil
+	return
 }
 
 // RefreshStaleFiles re-syncs every .go file whose on-disk content differs from

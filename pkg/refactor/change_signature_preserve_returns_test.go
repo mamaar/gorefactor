@@ -275,7 +275,8 @@ func foo() (int, error) {
 
 	var funcDecl *ast.FuncDecl
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if fd, ok := n.(*ast.FuncDecl); ok && fd.Name.Name == "foo" {
+		fd, ok := n.(*ast.FuncDecl)
+		if ok && fd.Name.Name == "foo" {
 			funcDecl = fd
 			return false
 		}
@@ -313,7 +314,8 @@ func foo() (string, error) {
 
 	var retStmt *ast.ReturnStmt
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if rs, ok := n.(*ast.ReturnStmt); ok {
+		rs, ok := n.(*ast.ReturnStmt)
+		if ok {
 			retStmt = rs
 			return false
 		}
@@ -499,7 +501,8 @@ func getSecret(project string, secretName string) (secret []byte, err error) {
 	// generateNewSignature must emit the named return variables.
 	var funcDecl *ast.FuncDecl
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if fd, ok := n.(*ast.FuncDecl); ok && fd.Name.Name == "getSecret" {
+		fd, ok := n.(*ast.FuncDecl)
+		if ok && fd.Name.Name == "getSecret" {
 			funcDecl = fd
 			return false
 		}

@@ -32,7 +32,8 @@ func goBuilds(t *testing.T, dir string, tagSets ...string) {
 		cmd := exec.Command("go", "build", "-tags="+tags, "./...")
 		cmd.Dir = dir
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Errorf("go build -tags=%q failed: %v\n%s", tags, err, out)
 		}
 	}
@@ -64,11 +65,13 @@ func TestAddContextParameter_ThreadCoversTaggedSiblings(t *testing.T) {
 	defer sess.Close()
 
 	preview := callJSON(t, sess, "add_context_parameter", threadArgs("leaf", true))
-	if configs, _ := preview["build_configs"].([]any); len(configs) != 2 || configs[1] != "tags=tagx" {
+	configs, _ := preview["build_configs"].([]any)
+	if len(configs) != 2 || configs[1] != "tags=tagx" {
 		t.Errorf("dry-run build_configs = %v, want the default config and tags=tagx", preview["build_configs"])
 	}
 	want := []string{"leaf.go", "open_default.go", "open_tagx.go", "use.go"}
-	if got := diffFiles(preview); !slices.Equal(got, want) {
+	got := diffFiles(preview)
+	if !slices.Equal(got, want) {
 		t.Errorf("dry-run diffs touch %v, want %v", got, want)
 	}
 	if got := fileText(t, dir, "p/leaf.go"); strings.Contains(got, "context") {
@@ -76,11 +79,13 @@ func TestAddContextParameter_ThreadCoversTaggedSiblings(t *testing.T) {
 	}
 
 	applied := callJSON(t, sess, "add_context_parameter", threadArgs("leaf", false))
-	if configs, _ := applied["build_configs"].([]any); len(configs) != 2 {
+	configs, _ = applied["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("apply build_configs = %v, want 2 entries", applied["build_configs"])
 	}
 	for _, f := range []string{"p/open_default.go", "p/open_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "func open(ctx context.Context, name string) error") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "func open(ctx context.Context, name string) error") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
@@ -116,7 +121,8 @@ func TestAddContextParameter_ThreadSingleConfigOmitsBuildConfigs(t *testing.T) {
 
 	for _, dryRun := range []bool{true, false} {
 		out := callJSON(t, sess, "add_context_parameter", threadArgs("leaf", dryRun))
-		if _, ok := out["build_configs"]; ok {
+		_, ok := out["build_configs"]
+		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
 		}
 	}

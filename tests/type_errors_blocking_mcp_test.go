@@ -43,7 +43,8 @@ func TestSafeDelete_UnresolvedMentionInErroringProductionFileBlocksUnlessForced(
 		t.Fatalf("forced safe_delete failed: %s", text)
 	}
 	var out typeErrorsJSON
-	if err := json.Unmarshal([]byte(text), &out); err != nil {
+	err := json.Unmarshal([]byte(text), &out)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.SkippedSites) != 1 || !strings.HasSuffix(out.SkippedSites[0].File, "p/bad_tagx.go") || out.SkippedSites[0].Line != 7 {
@@ -52,7 +53,8 @@ func TestSafeDelete_UnresolvedMentionInErroringProductionFileBlocksUnlessForced(
 	if len(out.TypeErrors) != 1 || out.TypeErrors[0].Config != "tags=tagx" {
 		t.Errorf("type_errors = %+v, want package p under tagx", out.TypeErrors)
 	}
-	if got := fileText(t, dir, "p/t.go"); strings.Contains(got, "Run") {
+	got := fileText(t, dir, "p/t.go")
+	if strings.Contains(got, "Run") {
 		t.Errorf("Run still declared after a forced delete:\n%s", got)
 	}
 }
@@ -68,13 +70,15 @@ func TestSafeDelete_ErroringProductionFileThatDoesNotMentionTheNameOnlyReports(t
 		t.Fatalf("safe_delete refused: %s", text)
 	}
 	var out typeErrorsJSON
-	if err := json.Unmarshal([]byte(text), &out); err != nil {
+	err := json.Unmarshal([]byte(text), &out)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.TypeErrors) != 1 || out.TypeErrors[0].Config != "tags=tagx" {
 		t.Errorf("type_errors = %+v, want package p under tagx", out.TypeErrors)
 	}
-	if got := fileText(t, dir, "p/t.go"); strings.Contains(got, "Idle") {
+	got := fileText(t, dir, "p/t.go")
+	if strings.Contains(got, "Idle") {
 		t.Errorf("Idle still declared:\n%s", got)
 	}
 }
@@ -85,13 +89,16 @@ func TestUnused_UnresolvedMentionInErroringProductionFileIsPossiblyUsed(t *testi
 		"p/bad_tagx.go": teBrokenImport + "func Bad() { thirdparty.Make().run() }\n",
 	})
 
-	if got := declarations(out.Unused); len(got) != 1 || got[0] != "t.go:idle" {
+	got := declarations(out.Unused)
+	if len(got) != 1 || got[0] != "t.go:idle" {
 		t.Errorf("unused = %v, want only idle", got)
 	}
-	if got := declarations(out.PossiblyUsed); len(got) != 1 || got[0] != "t.go:run" {
+	got = declarations(out.PossiblyUsed)
+	if len(got) != 1 || got[0] != "t.go:run" {
 		t.Fatalf("possibly_used = %v, want run", got)
 	}
-	if use := out.PossiblyUsed[0].PossibleUse; use == nil || !strings.HasSuffix(use.File, "p/bad_tagx.go") || use.Line != 7 {
+	use := out.PossiblyUsed[0].PossibleUse
+	if use == nil || !strings.HasSuffix(use.File, "p/bad_tagx.go") || use.Line != 7 {
 		t.Errorf("possible_use = %+v, want bad_tagx.go:7", use)
 	}
 }

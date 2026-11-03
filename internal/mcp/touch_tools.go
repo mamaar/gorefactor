@@ -110,7 +110,8 @@ func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 				continue
 			}
 
-			if err := os.WriteFile(absPath, formatted, 0644); err != nil {
+			err = os.WriteFile(absPath, formatted, 0644)
+			if err != nil {
 				results = append(results, TouchFileResult{File: file, Status: "error", Error: err.Error()})
 				continue
 			}
@@ -121,7 +122,7 @@ func registerTouchTools(s *mcpsdk.Server, state *MCPServer) {
 
 		// Sync workspace state for modified files.
 		if len(modifiedFiles) > 0 {
-			_ = state.SyncWorkspaceChanges(modifiedFiles)
+			state.SyncWorkspaceChanges(modifiedFiles)
 		}
 
 		out := TouchOutput{

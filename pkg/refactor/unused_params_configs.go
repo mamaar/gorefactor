@@ -66,11 +66,12 @@ func (e *DefaultEngine) UnusedParamsAcrossConfigs(req UnusedParamsRequest) (*Unu
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unused params across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
@@ -181,13 +182,15 @@ func (r *unusedParamsRun) judge(
 	ws *types.Workspace, idx *analysis.ReferenceIndex, decls map[*gotypes.Func]*funcDecl, survey *ifaceSurvey,
 	fn *gotypes.Func, key declKey, old []Parameter, i int,
 ) (reason string, propagate bool) {
-	if d := decls[fn]; isTestEntryPoint(d.File.Path, d.Decl) {
+	d := decls[fn]
+	if isTestEntryPoint(d.File.Path, d.Decl) {
 		return fn.Name() + " " + testEntryPointRefusal, false
 	}
 	if hasTypeParams(decls[fn].Decl) {
 		return fn.Name() + " " + genericUnsupported, false
 	}
-	if _, err := removedParamIndex(old, slices.Delete(slices.Clone(old), i, i+1)); err != nil {
+	_, err := removedParamIndex(old, slices.Delete(slices.Clone(old), i, i+1))
+	if err != nil {
 		return err.Error(), false
 	}
 	targets := []*gotypes.Func{fn}
@@ -199,7 +202,8 @@ func (r *unusedParamsRun) judge(
 			return err.Error(), false
 		}
 		for _, m := range members {
-			if reason := propagateRefusal(decls, members, m, i); reason != "" {
+			reason := propagateRefusal(decls, members, m, i)
+			if reason != "" {
 				return reason, false
 			}
 		}
@@ -210,7 +214,8 @@ func (r *unusedParamsRun) judge(
 	variadic := strings.HasPrefix(old[len(old)-1].Type, "...")
 	blockers := r.blockersOf(paramKey{key, i})
 	for _, t := range targets {
-		if err := stdMethodError("remove a parameter of", t); err != nil {
+		err := stdMethodError("remove a parameter of", t)
+		if err != nil {
 			return err.Error(), false
 		}
 		for _, u := range idx.NonCallUsesOf(t) {
@@ -218,7 +223,8 @@ func (r *unusedParamsRun) judge(
 			blockers[p.String()] = blocker{p, fmt.Sprintf("%s is used as a func value at %s", t.Name(), p)}
 		}
 		for _, site := range idx.CallSitesOf(t) {
-			if why := dropArgRefusal(site.Call, site.Pkg.TypesInfo, i, len(old), variadic); why != "" {
+			why := dropArgRefusal(site.Call, site.Pkg.TypesInfo, i, len(old), variadic)
+			if why != "" {
 				p := ws.FileSet.Position(site.Call.Pos())
 				blockers[p.String()] = blocker{p, fmt.Sprintf("the call at %s %s", p, why)}
 			}
@@ -241,12 +247,14 @@ func propagateRefusal(decls map[*gotypes.Func]*funcDecl, members []*gotypes.Func
 	if name == nil || name.Name == "_" || d.Decl.Body == nil {
 		return ""
 	}
-	if uses, ok := paramUses(d.Pkg.TypesInfo, d.Decl, name); ok && len(uses) == 0 {
+	uses, ok := paramUses(d.Pkg.TypesInfo, d.Decl, name)
+	if ok && len(uses) == 0 {
 		return ""
 	}
 	var ifaces []*gotypes.Func
 	for _, o := range members {
-		if od := decls[canonicalFunc(o)]; od != nil && od.Decl == nil {
+		od := decls[canonicalFunc(o)]
+		if od != nil && od.Decl == nil {
 			ifaces = append(ifaces, o)
 		}
 	}
@@ -319,7 +327,8 @@ func (r *unusedParamsRun) reasonFor(pk paramKey, site declSite, d *unusedParamDe
 	if p.reason != "" {
 		return p.reason
 	}
-	if reason := r.signatureRefusal(d.key, d.Function, d.File, d.shape); reason != "" {
+	reason := r.signatureRefusal(d.key, d.Function, d.File, d.shape)
+	if reason != "" {
 		return reason
 	}
 	if slices.ContainsFunc(r.readBy[pk], func(s declSite) bool { return s != site }) {

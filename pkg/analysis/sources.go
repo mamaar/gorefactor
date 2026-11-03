@@ -89,7 +89,7 @@ func (t *SourceTree) AddDir(dir string) error {
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("add dir: %w", err)
 	}
 
 	var files []*SourceFile
@@ -102,7 +102,8 @@ func (t *SourceTree) AddDir(dir string) error {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.byDir[dir]; ok {
+	_, ok := t.byDir[dir]
+	if ok {
 		return nil
 	}
 	t.byDir[dir] = files
@@ -165,7 +166,8 @@ func (t *SourceTree) Remove(path string) {
 	}
 	delete(t.byPath, path)
 	files := slices.Clone(t.byDir[f.Dir])
-	if i, ok := slices.BinarySearchFunc(files, f.Name, compareFileName); ok {
+	i, ok := slices.BinarySearchFunc(files, f.Name, compareFileName)
+	if ok {
 		files = slices.Delete(files, i, i+1)
 	}
 	t.byDir[f.Dir] = files
@@ -184,12 +186,13 @@ func (t *SourceTree) readFile(dir, name string) *SourceFile {
 	return f
 }
 
-// Load walks root, skipping dot-directories and vendor, and loads every
+// Load walks root, skipping directories the go tool ignores (see InSkippedDir), and loads every
 // directory it finds in parallel.
 func (t *SourceTree) Load(root string) error {
-	w := &treeWalker{}
-	if err := filepath.WalkDir(root, w.visit); err != nil {
-		return err
+	w := &treeWalker{root: root}
+	err := filepath.WalkDir(root, w.visit)
+	if err != nil {
+		return fmt.Errorf("load: %w", err)
 	}
 
 	l := &treeLoader{tree: t, dirs: make(chan string, len(w.dirs))}
@@ -206,7 +209,10 @@ func (t *SourceTree) Load(root string) error {
 	return l.err
 }
 
-type treeWalker struct{ dirs []string }
+type treeWalker struct {
+	root string
+	dirs []string
+}
 
 func (w *treeWalker) visit(path string, d fs.DirEntry, err error) error {
 	if err != nil {
@@ -215,11 +221,30 @@ func (w *treeWalker) visit(path string, d fs.DirEntry, err error) error {
 	if !d.IsDir() {
 		return nil
 	}
-	if name := d.Name(); strings.HasPrefix(name, ".") || name == "vendor" {
+	if InSkippedDir(w.root, path) {
 		return filepath.SkipDir
 	}
 	w.dirs = append(w.dirs, path)
 	return nil
+}
+
+// InSkippedDir reports whether dir, below root, is or sits inside a directory
+// the go tool ignores: vendor, testdata, or a name starting with "." or "_".
+// The root itself is never skipped.
+func InSkippedDir(root, dir string) bool {
+	rel, err := filepath.Rel(root, dir)
+	if err != nil || rel == "." {
+		return false
+	}
+	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+		if name == ".." {
+			return false
+		}
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "vendor" || name == "testdata" {
+			return true
+		}
+	}
+	return false
 }
 
 type treeLoader struct {
@@ -232,25 +257,29 @@ type treeLoader struct {
 
 func (l *treeLoader) work() {
 	for dir := range l.dirs {
-		if err := l.tree.AddDir(dir); err != nil {
-			l.mu.Lock()
-			if l.err == nil {
-				l.err = fmt.Errorf("load %s: %w", dir, err)
-			}
-			l.mu.Unlock()
+		err := l.tree.AddDir(dir)
+		if err == nil {
+			continue
 		}
+		l.mu.Lock()
+		if l.err == nil {
+			l.err = fmt.Errorf("load %s: %w", dir, err)
+		}
+		l.mu.Unlock()
 	}
 }
 
 func absDir(path string) string {
-	if abs, err := filepath.Abs(path); err == nil {
+	abs, err := filepath.Abs(path)
+	if err == nil {
 		return abs
 	}
 	return filepath.Clean(path)
 }
 
 func workerCount(jobs int) int {
-	if n := runtime.NumCPU(); n < jobs {
+	n := runtime.NumCPU()
+	if n < jobs {
 		return n
 	}
 	return jobs

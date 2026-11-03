@@ -31,10 +31,12 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	maps.Copy(all, files)
 	for rel, content := range all {
 		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatalf("mkdir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatalf("write %s: %v", rel, err)
 		}
 	}
@@ -80,12 +82,13 @@ func markLine(t *testing.T, src, mark string) int {
 	t.Helper()
 	found := 0
 	for i, line := range strings.Split(src, "\n") {
-		if strings.Contains(line, mark) {
-			if found != 0 {
-				t.Fatalf("mark %q appears on lines %d and %d", mark, found, i+1)
-			}
-			found = i + 1
+		if !strings.Contains(line, mark) {
+			continue
 		}
+		if found != 0 {
+			t.Fatalf("mark %q appears on lines %d and %d", mark, found, i+1)
+		}
+		found = i + 1
 	}
 	if found == 0 {
 		t.Fatalf("mark %q not found in source", mark)
@@ -155,7 +158,6 @@ func analyze(auth sourceInfo, feed feedInfo) scanReport {
 			startMark: "res.Checks = append(res.Checks,",
 			endOffset: 3,
 			wantParams: []Param{
-				{Name: "res", Type: "scanReport"},
 				{Name: "auth", Type: "sourceInfo"},
 				{Name: "feed", Type: "feedInfo"},
 			},
@@ -223,7 +225,6 @@ func run(items []string) []string {
 			endOffset: 2,
 			wantParams: []Param{
 				{Name: "items", Type: "[]string"},
-				{Name: "out", Type: "[]string"},
 			},
 			wantResults:    []Result{{Name: "out", Type: "[]string"}},
 			wantBodyAbsent: []string{"\n\tif len"}, // dedented: no leading tab
@@ -325,12 +326,10 @@ func build(parts []string) string {
 			endOffset: 2,
 			wantParams: []Param{
 				{Name: "parts", Type: "[]string"},
-				{Name: "b", Type: "str.Builder"},
+				{Name: "b", Type: "*str.Builder", ByPointer: true},
 			},
-			// WriteString has a pointer receiver and b is an addressable
-			// value, so the call implicitly takes &b — the mutation is lost
-			// unless b travels back out.
-			wantResults: []Result{{Name: "b", Type: "str.Builder"}},
+			// A Builder must not be copied, so it travels by pointer and
+			// the caller's variable sees the writes without a result.
 			wantImports: map[string]string{},
 		},
 		{
@@ -471,9 +470,44 @@ func run(factor int) int {
 			endMark:   "total = apply(2)",
 			wantParams: []Param{
 				{Name: "factor", Type: "int"},
-				{Name: "total", Type: "int"},
 			},
+			// total is assigned before it is read, so it is only a result.
 			wantResults: []Result{{Name: "total", Type: "int"}},
+		},
+		{
+			// x is read earlier in the loop body, so the value the block
+			// assigns is observed by the next iteration: a result.
+			name: "a write-first variable read by the next loop iteration is a result",
+			src: `package app
+
+func use(int) {}
+
+func run() {
+	x := 0
+	for i := 0; i < 3; i++ {
+		use(x)
+		x = i
+	}
+}
+`,
+			startMark:   "x = i",
+			wantParams:  []Param{{Name: "i", Type: "int"}},
+			wantResults: []Result{{Name: "x", Type: "int"}},
+		},
+		{
+			// The closure was built before the block and reads x when it runs.
+			name: "a write-first variable captured by an earlier closure is a result",
+			src: `package app
+
+func run() int {
+	x := 0
+	get := func() int { return x }
+	x = 5
+	return get()
+}
+`,
+			startMark:   "x = 5",
+			wantResults: []Result{{Name: "x", Type: "int"}},
 		},
 		{
 			// Composite-literal keys are field names for a struct literal but
@@ -612,7 +646,7 @@ func run(zebra, alpha, middle int) int {
 	for _, p := range got.Params {
 		names = append(names, p.Name)
 	}
-	want := []string{"sum", "zebra", "alpha", "middle"}
+	want := []string{"zebra", "alpha", "middle"}
 	if !reflect.DeepEqual(names, want) {
 		t.Errorf("param order = %v, want %v", names, want)
 	}
@@ -663,13 +697,11 @@ func TestAnalyzeRefusals(t *testing.T) {
 			name: "early returns with fall-through",
 			src: `package app
 
-import "errors"
-
-func classify(n int) (string, error) {
+func classify(n int) string {
 	if n < 0 {
-		return "", errors.New("negative")
+		return ""
 	}
-	return "positive", nil
+	return "positive"
 }
 `,
 			startMark:  "if n < 0 {",

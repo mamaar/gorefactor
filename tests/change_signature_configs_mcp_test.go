@@ -14,7 +14,7 @@ import (
 
 func changeSig(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "change_signature", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "change_signature", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -75,15 +75,18 @@ func TestChangeSignature_TagSiblingsBothChangeAndSharedCallerOnce(t *testing.T) 
 
 	out := changeSigOK(t, sess, addMArgs("p/f_default.go", nil))
 
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "func f(n int, m int) int") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "func f(n int, m int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
-	if got := fileText(t, dir, "p/use.go"); strings.Count(got, "f(1, 0)") != 1 {
+	got := fileText(t, dir, "p/use.go")
+	if strings.Count(got, "f(1, 0)") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
 	goVets(t, dir, "", "tagx")
@@ -102,7 +105,8 @@ func TestChangeSignature_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 
 	assertFileContains(t, dir, "p/f_tagx.go", "func f(n int, m int) int")
 	assertFileContains(t, dir, "p/use_tagx.go", "f(1, 0)")
-	if got := fileText(t, dir, "p/plain.go"); got != "package p\n\nfunc plain() int { return 1 }\n" {
+	got := fileText(t, dir, "p/plain.go")
+	if got != "package p\n\nfunc plain() int { return 1 }\n" {
 		t.Errorf("plain.go changed:\n%s", got)
 	}
 	goVets(t, dir, "tagx")
@@ -151,7 +155,8 @@ func TestChangeSignature_ReportsBrokenTaggedTestFileAsUncovered(t *testing.T) {
 
 func assertFileUnchanged(t *testing.T, dir, rel, want string) {
 	t.Helper()
-	if got := fileText(t, dir, rel); got != want {
+	got := fileText(t, dir, rel)
+	if got != want {
 		t.Errorf("%s changed:\n%s", rel, got)
 	}
 }
@@ -165,7 +170,8 @@ func TestChangeSignature_SingleConfigOmitsBuildConfigs(t *testing.T) {
 
 	for _, dryRun := range []bool{true, false} {
 		out := changeSigOK(t, sess, addMArgs("p/f.go", map[string]any{"dry_run": dryRun}))
-		if _, ok := out["build_configs"]; ok {
+		_, ok := out["build_configs"]
+		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
 		}
 	}
@@ -259,7 +265,8 @@ func TestChangeSignature_PropagateReachesImplementationOnlyUnderTag(t *testing.T
 	})
 
 	for _, f := range []string{"p/iface.go", "p/a.go", "p/b_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "Run(n int, m int) int") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "Run(n int, m int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}

@@ -60,24 +60,6 @@ func (k SymbolKind) String() string {
 	}
 }
 
-// SymbolRef represents a reference to a symbol
-type SymbolRef struct {
-	Symbol   *Symbol
-	Position token.Pos
-	File     string
-	Context  RefContext
-}
-
-type RefContext int
-
-const (
-	CallRef RefContext = iota
-	AssignRef
-	TypeRef
-	ImportRef
-	DeclarationRef
-)
-
 // SymbolTable holds all symbols for a package
 type SymbolTable struct {
 	Package   *Package
@@ -91,9 +73,6 @@ type SymbolTable struct {
 
 // FindSymbol searches the symbol table for a symbol by name across all categories.
 func (st *SymbolTable) FindSymbol(name string) *Symbol {
-	if st == nil {
-		return nil
-	}
 	// Dotted Type.Member form: resolve methods and struct fields explicitly.
 	// Method first, then field (Go forbids a field and method of the same name
 	// on a type). Fields are reachable ONLY via this dotted form — they are
@@ -117,16 +96,20 @@ func (st *SymbolTable) FindSymbol(name string) *Symbol {
 		}
 		return nil
 	}
-	if s, ok := st.Functions[name]; ok {
+	s, ok := st.Functions[name]
+	if ok {
 		return s
 	}
-	if s, ok := st.Types[name]; ok {
+	s, ok = st.Types[name]
+	if ok {
 		return s
 	}
-	if s, ok := st.Variables[name]; ok {
+	s, ok = st.Variables[name]
+	if ok {
 		return s
 	}
-	if s, ok := st.Constants[name]; ok {
+	s, ok = st.Constants[name]
+	if ok {
 		return s
 	}
 	for _, methods := range st.Methods {

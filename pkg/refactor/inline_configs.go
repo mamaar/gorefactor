@@ -79,13 +79,18 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 		CachedIndex:  p.indexOf(v),
 	}
 	declared := declaredSymbolKeys(ws)
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		return configResult{}, fmt.Errorf("inline function operation validation failed: %w", err)
 	}
 
-	sym, _ := op.functionSymbol(ws)
+	sym, _, err := op.functionSymbol(ws)
+	if err != nil {
+		return configResult{}, err
+	}
 	if sym == nil {
-		if sym = linkedFunction(ws, linked, op.FunctionName); sym != nil {
+		sym = linkedFunction(ws, linked, op.FunctionName)
+		if sym != nil {
 			op.SourceFile = sym.File
 		}
 	}
@@ -114,15 +119,15 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 	}, nil
 }
 
-// targetFiles returns the request's target files, or every non-test file of
-// ws when it names none.
+// targetFiles returns the request's target files, or every file of ws, test
+// files included, when it names none.
 func (p *inlineFunctionPlanner) targetFiles(ws *types.Workspace) []string {
 	if len(p.req.TargetFiles) > 0 {
 		return p.req.TargetFiles
 	}
 	var files []string
 	for _, pkg := range ws.Packages {
-		for _, f := range pkg.Files {
+		for _, f := range packageAllFiles(pkg) {
 			files = append(files, f.Path)
 		}
 	}
@@ -134,7 +139,8 @@ func (p *inlineFunctionPlanner) targetFiles(ws *types.Workspace) []string {
 // names, or nil.
 func linkedFunction(ws *types.Workspace, linked types.SymbolKeySet, name string) *types.Symbol {
 	for _, key := range orderedKeys(linked) {
-		if sym := symbolForKey(ws, key); sym != nil && sym.Kind == types.FunctionSymbol && sym.Name == name {
+		sym := symbolForKey(ws, key)
+		if sym != nil && sym.Kind == types.FunctionSymbol && sym.Name == name {
 			return sym
 		}
 	}
@@ -157,7 +163,8 @@ func (p *inlineMethodPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (co
 		TargetFile:   p.req.TargetFile,
 		CachedIndex:  p.indexOf(v),
 	}
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		err = fmt.Errorf("inline method operation validation failed: %w", err)
 		if !isAbsentTarget(err) {
 			return configResult{}, err

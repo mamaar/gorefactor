@@ -57,7 +57,7 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 	run := &reachableRun{req: req, found: make(map[declSite]*ReachableFinding), bodiless: make(map[analysis.BodilessPackage]*BodilessFinding), resolved: make(map[string]bool), dirs: make(map[string]bool)}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reachable across configs: %w", err)
 	}
 	defer e.endRun(run)
 
@@ -88,6 +88,11 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 		return nil, cmp.Or(run.withinErr, fmt.Errorf("unknown within_function %q", req.Within))
 	}
 
+	collectReportSites(run, views, out)
+	return out, nil
+}
+
+func collectReportSites(run *reachableRun, views []*analysis.View, out *ReachableReport) {
 	for _, f := range run.found {
 		if len(f.Configs) == len(views) {
 			f.Configs = nil
@@ -105,7 +110,6 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.File, b.File), cmp.Compare(a.Pos, b.Pos), cmp.Compare(a.Target, b.Target))
 	})
 	out.Unchecked = analysis.UncheckedFiles(views, slices.Sorted(maps.Keys(run.dirs)))
-	return out, nil
 }
 
 type reachableRun struct {
@@ -133,7 +137,8 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 
 	var specs []string
 	for _, spec := range r.req.Targets {
-		if _, err := analysis.ResolveTargets(v.Workspace, []string{spec}); err == nil {
+		_, err := analysis.ResolveTargets(v.Workspace, []string{spec})
+		if err == nil {
 			r.resolved[spec] = true
 			specs = append(specs, spec)
 		}
@@ -156,7 +161,8 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 		a.SetWithin(key)
 	}
 	sites, bodiless, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
-	if _, ok := errors.AsType[*analysis.WithinUnreachedError](err); ok {
+	_, ok := errors.AsType[*analysis.WithinUnreachedError](err)
+	if ok {
 		r.withinErr = err
 		return true, nil
 	}
@@ -168,6 +174,19 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 	if err != nil {
 		return true, err
 	}
+	r.recordBodiless(bodiless, v)
+	if entryBodiless != nil {
+		return false, nil
+	}
+	r.withinReached = true
+	for _, dir := range a.ReachableDirs(entry, r.req.IncludeTests) {
+		r.dirs[dir] = true
+	}
+	r.recordSites(sites, v)
+	return true, nil
+}
+
+func (r *reachableRun) recordBodiless(bodiless []analysis.BodilessPackage, v *analysis.View) {
 	for _, b := range bodiless {
 		f := r.bodiless[b]
 		if f == nil {
@@ -176,13 +195,9 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 		}
 		f.Configs = append(f.Configs, v.Config.String())
 	}
-	if entryBodiless != nil {
-		return false, nil
-	}
-	r.withinReached = true
-	for _, dir := range a.ReachableDirs(entry, r.req.IncludeTests) {
-		r.dirs[dir] = true
-	}
+}
+
+func (r *reachableRun) recordSites(sites []analysis.ReachableSite, v *analysis.View) {
 	for _, s := range sites {
 		key := declSite{s.File, s.Pos}
 		f := r.found[key]
@@ -192,7 +207,6 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 		}
 		f.Configs = append(f.Configs, v.Config.String())
 	}
-	return true, nil
 }
 
 // withinKey resolves spec, one function or method, to its key in ws. ok is

@@ -81,11 +81,13 @@ func TestPlanAcrossConfigs_PlansLikeKeepingEveryViewLoaded(t *testing.T) {
 				t.Fatal(err)
 			}
 			plan, _, err := planAcrossViews(views, &threadContextPlanner{engine: eng, req: threadReq}, maxConfigRounds)
-			if want := planDump(plan, err); got != want || again != want {
+			want := planDump(plan, err)
+			if got != want || again != want {
 				t.Errorf("thread plans differ:\n got %s\nagain %s\n want %s", got, again, want)
 			}
 			plan, _, err = planAcrossViews(views, &addContextParameterPlanner{engine: eng, req: addReq}, maxConfigRounds)
-			if want := planDump(plan, err); gotAdd != want {
+			want = planDump(plan, err)
+			if gotAdd != want {
 				t.Errorf("add plans differ:\n got %s\nwant %s", gotAdd, want)
 			}
 		})

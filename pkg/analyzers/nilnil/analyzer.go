@@ -45,14 +45,16 @@ func run(pass *analysis.Pass) []*Result {
 		content := fd.Content[pass.Fset.Position(file.Pos()).Filename]
 		for _, decl := range file.Decls {
 			name := ""
-			if fn, ok := decl.(*ast.FuncDecl); ok {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok {
 				name = funcName(fn)
 				if fn.Body != nil {
 					results = append(results, checkFunc(pass, fn.Type, fn.Body, name, false, content)...)
 				}
 			}
 			ast.Inspect(decl, func(n ast.Node) bool {
-				if lit, ok := n.(*ast.FuncLit); ok {
+				lit, ok := n.(*ast.FuncLit)
+				if ok {
 					results = append(results, checkFunc(pass, lit.Type, lit.Body, name, true, content)...)
 				}
 				return true
@@ -129,7 +131,8 @@ var errorType = types.Universe.Lookup("error").Type()
 
 // isError falls back to matching by name in packages without type information.
 func isError(info *types.Info, e ast.Expr) bool {
-	if t := info.TypeOf(e); t != nil {
+	t := info.TypeOf(e)
+	if t != nil {
 		return types.Identical(t, errorType)
 	}
 	id, ok := e.(*ast.Ident)
@@ -144,7 +147,8 @@ func allNil(info *types.Info, exprs []ast.Expr) bool {
 		if !ok || id.Name != "nil" {
 			return false
 		}
-		if obj, ok := info.Uses[id]; ok && obj != nilObj {
+		obj, ok := info.Uses[id]
+		if ok && obj != nilObj {
 			return false
 		}
 	}

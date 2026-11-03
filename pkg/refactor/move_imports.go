@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
 	"go/token"
 	gotypes "go/types"
 	"maps"
@@ -44,7 +45,8 @@ func importLocalName(imp *ast.ImportSpec) (string, bool) {
 	// (packagePathToImportPath, lastPathComponent), and is right for the
 	// overwhelming majority of stdlib and third-party packages.
 	path := strings.Trim(imp.Path.Value, `"`)
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+	idx := strings.LastIndex(path, "/")
+	if idx >= 0 {
 		return path[idx+1:], false
 	}
 	return path, false
@@ -66,10 +68,11 @@ func chooseImportNames(ws *types.Workspace, targetFile *types.File, moving []*mo
 	var wants []*want
 	byPath := make(map[string]*want)
 	get := func(path, realName string) *want {
-		if w, ok := byPath[path]; ok {
+		w, ok := byPath[path]
+		if ok {
 			return w
 		}
-		w := &want{path: path, realName: realName}
+		w = &want{path: path, realName: realName}
 		byPath[path] = w
 		wants = append(wants, w)
 		return w
@@ -185,7 +188,8 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 
 	if targetFile.AST == nil || targetFile.AST.Name == nil || ws.FileSet == nil {
 		// Fallback: assume the file starts with "package <name>\n".
-		if idx := strings.IndexByte(string(content), '\n'); idx >= 0 {
+		idx := strings.IndexByte(string(content), '\n')
+		if idx >= 0 {
 			return idx + 1
 		}
 		return len(content)
@@ -228,7 +232,7 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 //
 // Single-line `import "x"` form (no parentheses) falls through to the
 // new-block path below instead of being converted in place; that mirrors
-// generateAddImportChange's single-line handling being a separate code path
+// GenerateAddImportChange's single-line handling being a separate code path
 // rather than something this helper duplicates.
 func generateNeededImportsChange(ws *types.Workspace, targetFile *types.File, needed []neededImport) *types.Change {
 	if len(needed) == 0 {
@@ -313,6 +317,30 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 	return []byte(result)
 }
 
+// emptiedFileDeletion returns the change deleting file when applying removals
+// leaves it with nothing but a package clause and plain imports. A file with
+// any comment (package doc, build constraint, //go: directive), a blank or "C"
+// import stays: those say something on their own.
+func emptiedFileDeletion(file *types.File, removals []types.Change) (types.Change, bool) {
+	rest := applyChangesInMemory(file.OriginalContent, removals)
+	parsed, err := parser.ParseFile(token.NewFileSet(), file.Path, rest, parser.ParseComments)
+	if err != nil || len(parsed.Comments) > 0 {
+		return types.Change{}, false
+	}
+	for _, decl := range parsed.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.IMPORT {
+			return types.Change{}, false
+		}
+	}
+	for _, imp := range parsed.Imports {
+		if imp.Name != nil && imp.Name.Name == "_" || imp.Path.Value == `"C"` {
+			return types.Change{}, false
+		}
+	}
+	return types.Change{File: file.Path, Delete: true, Description: fmt.Sprintf("Remove file %s: no declarations left", file.Path)}, true
+}
+
 // unusedImportsAfterRemoval returns the imports of sourceFile that nothing
 // uses once removeChanges (the ranges being deleted) are applied. An
 // unused import is a compile error, so the source file must drop them.
@@ -336,7 +364,8 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 		})
 	}
 	var stillUsed func(imp *ast.ImportSpec) bool
-	if info := typeInfoOf(ws, sourceFile); info != nil {
+	info := typeInfoOf(ws, sourceFile)
+	if info != nil {
 		stillUsed = func(imp *ast.ImportSpec) bool {
 			path := strings.Trim(imp.Path.Value, `"`)
 			for ident, obj := range info.Uses {
@@ -357,8 +386,10 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 			}
 			used := false
 			ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok {
-					if id, ok := sel.X.(*ast.Ident); ok && id.Name == imp.Name.Name && remaining(id.Pos()) {
+				sel, ok := n.(*ast.SelectorExpr)
+				if ok {
+					id, ok := sel.X.(*ast.Ident)
+					if ok && id.Name == imp.Name.Name && remaining(id.Pos()) {
 						used = true
 					}
 				}
@@ -385,7 +416,8 @@ func typeInfoOf(ws *types.Workspace, file *types.File) *gotypes.Info {
 	if pkg == nil || pkg.TypesInfo == nil {
 		return nil
 	}
-	if _, ok := pkg.TypesInfo.Defs[file.AST.Name]; !ok {
+	_, ok := pkg.TypesInfo.Defs[file.AST.Name]
+	if !ok {
 		return nil
 	}
 	return pkg.TypesInfo

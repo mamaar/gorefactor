@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -13,9 +12,10 @@ import (
 func moveAndVet(t *testing.T, symbol string, files map[string]string) (srcText, dstText string) {
 	t.Helper()
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	if res := moveSymbolCall(t, sess, symbol, "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, symbol, "src", "dst")
+	if res.IsError {
 		t.Fatalf("move %s: %s", symbol, errText(res))
 	}
 	goVets(t, dir, "")
@@ -77,7 +77,8 @@ func TestMoveSymbol_MethodBlockDocAppearsOnceInTargetAndNotInSource(t *testing.T
 	src, dst := moveAndVet(t, "T", map[string]string{
 		"src/src.go": "package src\n\ntype T struct{}\n\n/* block */\nfunc (T) M() {}\n\nfunc Keep() {}\n",
 	})
-	if n := strings.Count(dst, "/* block */"); n != 1 {
+	n := strings.Count(dst, "/* block */")
+	if n != 1 {
 		t.Errorf("block doc appears %d times in dst:\n%s", n, dst)
 	}
 	if strings.Contains(src, "block") {

@@ -37,10 +37,11 @@ func (c *inspectorCache) get(dir string, files []*ast.File) *inspector.Inspector
 	e := c.entry(dir, files)
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if ins := e.inspect.Value(); ins != nil {
+	ins := e.inspect.Value()
+	if ins != nil {
 		return ins
 	}
-	ins := inspector.New(files)
+	ins = inspector.New(files)
 	e.inspect = weak.Make(ins)
 	return ins
 }

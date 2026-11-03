@@ -41,10 +41,12 @@ func writeStaleFixture(t *testing.T) string {
 		"lib/lib_test.go": staleLibTest,
 	} {
 		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(p), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(p, []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -53,7 +55,7 @@ func writeStaleFixture(t *testing.T) string {
 
 func callJSON(t *testing.T, sess *mcptest.Session, tool string, args map[string]any) map[string]any {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool(%s): %v", tool, err)
 	}
@@ -95,7 +97,8 @@ func TestChangeSignature_ExternalEditAfterLoad(t *testing.T) {
 
 	testPath := filepath.Join(dir, "lib", "lib_test.go")
 	edited := strings.Replace(staleLibTest, "func TestFetch", "var extra = 42\n\nvar extra2 = \"padding\"\n\nfunc TestFetch", 1)
-	if err := os.WriteFile(testPath, []byte(edited), 0o644); err != nil {
+	err := os.WriteFile(testPath, []byte(edited), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,7 +116,8 @@ func TestChangeSignature_ExternalEditAfterLoad(t *testing.T) {
 	if strings.Contains(got, "Fetch(1)") || strings.Contains(got, "Fetch(2)") || !strings.Contains(got, "var extra = 42") {
 		t.Errorf("test file call sites not rewritten or external edit lost:\n%s", got)
 	}
-	if lib := readFile(t, filepath.Join(dir, "lib", "lib.go")); strings.Contains(lib, "Fetch(a)") {
+	lib := readFile(t, filepath.Join(dir, "lib", "lib.go"))
+	if strings.Contains(lib, "Fetch(a)") {
 		t.Errorf("lib.go call site not rewritten:\n%s", lib)
 	}
 }
@@ -143,7 +147,8 @@ func TestChangeSignature_ConsecutiveApplies(t *testing.T) {
 		t.Fatalf("dry=%d apply=%d, want 4/4", changeCount(t, dry), changeCount(t, second))
 	}
 	for _, f := range []string{"lib.go", "lib_test.go"} {
-		if got := readFile(t, filepath.Join(dir, "lib", f)); strings.Contains(got, "Fetch(1, 0)") || strings.Contains(got, "Fetch(a, 0)") {
+		got := readFile(t, filepath.Join(dir, "lib", f))
+		if strings.Contains(got, "Fetch(1, 0)") || strings.Contains(got, "Fetch(a, 0)") {
 			t.Errorf("%s: second apply missed call sites:\n%s", f, got)
 		}
 	}
@@ -156,7 +161,7 @@ const (
 
 func symbolVisible(t *testing.T, sess *mcptest.Session, name string) bool {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "analyze_symbol",
 		Arguments: map[string]any{"symbol": name, "package": "lib"},
 	})
@@ -168,7 +173,8 @@ func symbolVisible(t *testing.T, sess *mcptest.Session, name string) bool {
 
 func writeLibFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, "lib", name), []byte(content), 0o644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "lib", name), []byte(content), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 }

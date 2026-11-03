@@ -56,7 +56,7 @@ func (importsRun) finish()                  {}
 func (e *DefaultEngine) DetectCycles() (*CyclesReport, error) {
 	views, err := e.beginRun(importsRun{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("detect cycles: %w", err)
 	}
 	defer e.endRun(importsRun{})
 
@@ -75,7 +75,7 @@ func (e *DefaultEngine) DetectCycles() (*CyclesReport, error) {
 func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDependenciesRequest) (*DependenciesReport, error) {
 	views, err := e.beginRun(importsRun{})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("analyze dependencies across configs: %w", err)
 	}
 	defer e.endRun(importsRun{})
 
@@ -204,7 +204,8 @@ func importPathCycles(views []*analysis.View, cycles []ImportCycle) []ImportCycl
 // that holds it.
 func importPathIn(views []*analysis.View, fsPath string) string {
 	for _, v := range views {
-		if pkg := v.Workspace.Packages[fsPath]; pkg != nil && pkg.ImportPath != "" {
+		pkg := v.Workspace.Packages[fsPath]
+		if pkg != nil && pkg.ImportPath != "" {
 			return pkg.ImportPath
 		}
 	}
@@ -231,7 +232,8 @@ func unionWorkspace(views []*analysis.View, graph DependencyGraphReport) *types.
 			}
 		}
 		for importPath, path := range v.Workspace.ImportToPath {
-			if _, ok := union.ImportToPath[importPath]; !ok {
+			_, ok := union.ImportToPath[importPath]
+			if !ok {
 				union.ImportToPath[importPath] = path
 			}
 		}

@@ -20,15 +20,18 @@ func writeThreadContextWorkspace(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 
-	if _, ok := files["go.mod"]; !ok {
+	_, ok := files["go.mod"]
+	if !ok {
 		files["go.mod"] = "module example.com/threadtest\n\ngo 1.21\n"
 	}
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
 		}
 	}

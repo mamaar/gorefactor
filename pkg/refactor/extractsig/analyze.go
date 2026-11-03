@@ -34,6 +34,9 @@ import (
 type Param struct {
 	Name string // identifier as it appears in source
 	Type string // rendered type, qualified for the source file's imports
+	// ByPointer marks a value that must not be copied: Type is a pointer
+	// to its type and the call site passes &Name.
+	ByPointer bool
 }
 
 // Result is a value the extracted function must return.
@@ -54,6 +57,35 @@ type Analysis struct {
 	// when TailReturns is true.
 	EnclosingResults []Result
 
+	// LocalDecls are variables the block assigns before reading. They are
+	// not parameters; the extracted function declares them at the top.
+	LocalDecls []Result
+
+	// Hoisted are no-copy variables the block declares and later code
+	// still uses. The caller declares them before the call (`var name Type`)
+	// and passes them by pointer; the declaration leaves the body.
+	Hoisted []Result
+
+	// ErrGuard is true when the block returns (zero..., err) on some paths
+	// and falls through on the others. The extracted function then returns
+	// Results plus an error, and the call site returns GuardZeros plus
+	// that error when it is non-nil.
+	ErrGuard   bool
+	GuardZeros []string
+	// ErrName is the call-site variable receiving the error; ErrExists says
+	// it is already declared there.
+	ErrName   string
+	ErrExists bool
+	// ErrInline is true when the call site can scope the error to the
+	// guard: `if err := f(...); err != nil`. It needs no outputs and no
+	// later reader of an existing variable of that name.
+	ErrInline bool
+
+	// DroppedDecls are `var x T` statements the extraction makes redundant;
+	// the plan deletes them. A dropped variable that is a Result is declared
+	// by the call site's `:=` instead.
+	DroppedDecls []DroppedDecl
+
 	Stmts    []ast.Stmt // selected statements, source order
 	BodyText string     // block source, dedented to zero base indentation
 	// Imports maps import path -> package name for packages referenced by a
@@ -61,6 +93,12 @@ type Analysis struct {
 	Imports map[string]string
 	// EnclosingFunc is the FuncDecl the block was taken from.
 	EnclosingFunc *ast.FuncDecl
+}
+
+// DroppedDecl is a `var Name T` statement spanning byte offsets [Start,End).
+type DroppedDecl struct {
+	Name       string
+	Start, End int
 }
 
 // Refusal reports that extraction cannot be performed soundly. It is returned
@@ -101,6 +139,21 @@ type analyzer struct {
 	// Results are decided by object identity, and a name alone cannot
 	// distinguish two shadowed variables that happen to share one.
 	paramObjs []gotypes.Object
+
+	flow *flowFacts
+	// pointerObjs are the no-copy parameters passed by pointer.
+	pointerObjs objSet
+	// localObjs are the variables declared inside the extracted function
+	// (write-first or known-zero), in order of first appearance.
+	localObjs  []gotypes.Object
+	localDecls []Result
+	hoisted    []Result
+	hoistEdits []edit
+	// earlyOuts holds, per Result, the expression returned for it on an
+	// early error return: the variable itself when the extracted function
+	// has it in scope, else a zero value.
+	earlyOuts    []string
+	guardReturns []*ast.ReturnStmt
 
 	// fileImports maps import path -> local alias for the imports the source
 	// file already has. An empty alias means "imported under its own package
@@ -143,16 +196,25 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 		fset:        ws.FileSet,
 		fileImports: fileImportAliases(file.AST),
 		newImports:  make(map[string]string),
+		pointerObjs: objSet{},
 	}
 
-	if err := a.locate(startLine, endLine); err != nil {
+	err := a.locate(startLine, endLine)
+	if err != nil {
 		return nil, err
 	}
-	if err := a.checkControlFlow(); err != nil {
+	err = a.checkControlFlow()
+	if err != nil {
 		return nil, err
 	}
+
+	a.flow = a.analyzeFlow()
 
 	params, err := a.collectParams()
+	if err != nil {
+		return nil, err
+	}
+	params, err = a.hoistNoCopy(params)
 	if err != nil {
 		return nil, err
 	}
@@ -164,13 +226,17 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	res := &Analysis{
 		Params:        params,
 		Results:       results,
+		LocalDecls:    a.localDecls,
+		Hoisted:       a.hoisted,
 		Stmts:         a.stmts,
 		EnclosingFunc: a.fn,
 	}
 
-	if err := a.analyzeReturns(res); err != nil {
+	err = a.analyzeReturns(res)
+	if err != nil {
 		return nil, err
 	}
+	a.dropRedundantDecls(res)
 
 	body, err := a.bodyText()
 	if err != nil {
@@ -228,7 +294,8 @@ func (a *analyzer) locate(startLine, endLine int) error {
 				// Prefer the tightest match, which is the innermost block:
 				// an enclosing block can only match by covering strictly
 				// more source.
-				if span := list[j].End() - list[i].Pos(); bestSpan < 0 || span < bestSpan {
+				span := list[j].End() - list[i].Pos()
+				if bestSpan < 0 || span < bestSpan {
 					best, bestSpan = list[i:j+1], span
 				}
 			}
@@ -279,7 +346,8 @@ func (a *analyzer) locateInnerFunc() error {
 			return true
 		}
 		if lit.Body.Pos() <= a.blockStart && a.blockEnd <= lit.Body.End() {
-			if litSig, ok := a.info.TypeOf(lit).(*gotypes.Signature); ok {
+			litSig, ok := a.info.TypeOf(lit).(*gotypes.Signature)
+			if ok {
 				a.innerBody = lit.Body
 				a.innerSig = litSig
 			}
@@ -301,7 +369,8 @@ func (a *analyzer) checkControlFlow() error {
 	labels := map[string]bool{}
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
-			if ls, ok := n.(*ast.LabeledStmt); ok {
+			ls, ok := n.(*ast.LabeledStmt)
+			if ok {
 				labels[ls.Label.Name] = true
 			}
 			return true
@@ -324,7 +393,8 @@ func (a *analyzer) checkControlFlow() error {
 			// branch out into the selection's context.
 			return
 		case *ast.DeclStmt:
-			if gd, ok := x.Decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+			gd, ok := x.Decl.(*ast.GenDecl)
+			if ok && gd.Tok == token.TYPE {
 				walkErr = refuse("block declares a named type; extracting it would move the type out of scope of the remaining code")
 				return
 			}
@@ -428,7 +498,8 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 			// Keys of a struct literal are field names; keys of a map or
 			// array literal are ordinary expressions and must be visited.
 			structLit := false
-			if t := a.info.TypeOf(x); t != nil {
+			t := a.info.TypeOf(x)
+			if t != nil {
 				_, structLit = deref(t).Underlying().(*gotypes.Struct)
 			}
 			if x.Type != nil {
@@ -482,7 +553,8 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 // definition. Info.Scopes is not populated by this project's type-checker, so
 // Uses/Defs are the only resolution mechanism available.
 func (a *analyzer) objectOf(id *ast.Ident) gotypes.Object {
-	if obj := a.info.Uses[id]; obj != nil {
+	obj := a.info.Uses[id]
+	if obj != nil {
 		return obj
 	}
 	return a.info.Defs[id]
@@ -547,9 +619,19 @@ func (a *analyzer) collectParams() ([]Param, error) {
 		seen[obj] = true
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("collect params: %w", err)
 		}
-		params = append(params, Param{Name: obj.Name(), Type: typeStr})
+		byPointer := mustNotCopy(obj.Type())
+		if !byPointer && (a.writeFirst(obj) || a.knownZero(obj)) {
+			a.localObjs = append(a.localObjs, obj)
+			a.localDecls = append(a.localDecls, Result{Name: obj.Name(), Type: typeStr})
+			continue
+		}
+		if byPointer {
+			typeStr = "*" + typeStr
+			a.pointerObjs[obj] = true
+		}
+		params = append(params, Param{Name: obj.Name(), Type: typeStr, ByPointer: byPointer})
 		a.paramObjs = append(a.paramObjs, obj)
 	}
 	return params, nil
@@ -558,6 +640,52 @@ func (a *analyzer) collectParams() ([]Param, error) {
 // ---------------------------------------------------------------------------
 // 4. Results
 // ---------------------------------------------------------------------------
+
+// hoistNoCopy moves the declaration of each no-copy variable that the block
+// declares and later code uses out to the call site, so the extracted function
+// receives it by pointer instead of returning a copy. Only a top-level
+// `var x T` can move; anything else is refused.
+func (a *analyzer) hoistNoCopy(params []Param) ([]Param, error) {
+	for _, obj := range a.blockDeclaredVars() {
+		if !mustNotCopy(obj.Type()) || !a.usedAfterBlock(obj) {
+			continue
+		}
+		decl := a.topLevelVarDecl(obj)
+		if decl == nil {
+			return nil, refuse("variable %s is declared in the block and used after it, but its type must not be copied and its declaration is not a plain `var %s T` statement, so it can neither be returned nor hoisted to the call site", obj.Name(), obj.Name())
+		}
+		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("hoist: %w", err)
+		}
+		a.hoisted = append(a.hoisted, Result{Name: obj.Name(), Type: typeStr})
+		a.hoistEdits = append(a.hoistEdits, edit{a.offset(decl.Pos()), a.offset(decl.End()), ""})
+		a.pointerObjs[obj] = true
+		params = append(params, Param{Name: obj.Name(), Type: "*" + typeStr, ByPointer: true})
+		a.paramObjs = append(a.paramObjs, obj)
+	}
+	return params, nil
+}
+
+// topLevelVarDecl returns the `var x T` statement, directly in the selection,
+// that declares obj without an initial value.
+func (a *analyzer) topLevelVarDecl(obj gotypes.Object) ast.Stmt {
+	for _, s := range a.stmts {
+		ds, ok := s.(*ast.DeclStmt)
+		if !ok {
+			continue
+		}
+		gd, ok := ds.Decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR || len(gd.Specs) != 1 {
+			continue
+		}
+		spec := gd.Specs[0].(*ast.ValueSpec)
+		if len(spec.Names) == 1 && len(spec.Values) == 0 && a.info.Defs[spec.Names[0]] == obj {
+			return ds
+		}
+	}
+	return nil
+}
 
 // collectResults determines which values must travel back out of the extracted
 // function: captured variables the block mutates in a way that value-passing
@@ -568,8 +696,16 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 
 	var results []Result
 	for i, p := range params {
-		if mutated[a.paramObjs[i]] {
-			results = append(results, Result(p))
+		if mutated[a.paramObjs[i]] && !p.ByPointer && a.liveOut(a.paramObjs[i]) {
+			results = append(results, Result{Name: p.Name, Type: p.Type})
+			a.earlyOuts = append(a.earlyOuts, p.Name)
+		}
+	}
+
+	for i, obj := range a.localObjs {
+		if a.liveOut(obj) {
+			results = append(results, a.localDecls[i])
+			a.earlyOuts = append(a.earlyOuts, obj.Name())
 		}
 	}
 
@@ -577,9 +713,17 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 		if !a.usedAfterBlock(obj) {
 			continue
 		}
+		if a.pointerObjs[obj] {
+			continue
+		}
+		zero, err := a.zeroExpr(obj.Type())
+		if err != nil {
+			return nil, fmt.Errorf("collect results: %w", err)
+		}
+		a.earlyOuts = append(a.earlyOuts, zero)
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("collect results: %w", err)
 		}
 		results = append(results, Result{Name: obj.Name(), Type: typeStr})
 	}
@@ -636,8 +780,10 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 			if x.Op == token.AND {
 				// The address escapes into something we cannot see; assume
 				// whatever receives it writes through the pointer.
-				if base := baseIdent(x.X); base != nil {
-					if obj := a.objectOf(base); obj != nil && !a.mutationVisibleToCaller(x.X) {
+				base := baseIdent(x.X)
+				if base != nil {
+					obj := a.objectOf(base)
+					if obj != nil && !a.mutationVisibleToCaller(x.X) {
 						out[obj] = true
 					}
 				}
@@ -674,7 +820,8 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if !ok || sig.Recv() == nil {
 		return
 	}
-	if _, ok := sig.Recv().Type().(*gotypes.Pointer); !ok {
+	_, ok = sig.Recv().Type().(*gotypes.Pointer)
+	if !ok {
 		// Value receiver (or an interface method): the callee gets a copy.
 		return
 	}
@@ -682,7 +829,8 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if recvType == nil {
 		return
 	}
-	if _, ok := recvType.Underlying().(*gotypes.Pointer); ok {
+	_, ok = recvType.Underlying().(*gotypes.Pointer)
+	if ok {
 		// Already a pointer, so no address is taken and the mutation is
 		// visible to the caller regardless.
 		return
@@ -691,7 +839,8 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if base == nil {
 		return
 	}
-	if obj := a.objectOf(base); obj != nil && !a.mutationVisibleToCaller(sel.X) {
+	obj := a.objectOf(base)
+	if obj != nil && !a.mutationVisibleToCaller(sel.X) {
 		out[obj] = true
 	}
 }
@@ -718,8 +867,10 @@ func (a *analyzer) mutationVisibleToCaller(lhs ast.Expr) bool {
 		// itself is reached through something shared.
 		return a.mutationVisibleToCaller(e.X)
 	case *ast.SelectorExpr:
-		if t := a.info.TypeOf(e.X); t != nil {
-			if _, ok := t.Underlying().(*gotypes.Pointer); ok {
+		t := a.info.TypeOf(e.X)
+		if t != nil {
+			_, ok := t.Underlying().(*gotypes.Pointer)
+			if ok {
 				return true
 			}
 		}
@@ -758,7 +909,8 @@ func (a *analyzer) blockDeclaredVars() []gotypes.Object {
 	var ids []*ast.Ident
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok {
+			id, ok := n.(*ast.Ident)
+			if ok {
 				ids = append(ids, id)
 			}
 			return true
@@ -811,6 +963,41 @@ func (a *analyzer) usedAfterBlock(obj gotypes.Object) bool {
 	return found
 }
 
+// dropRedundantDecls lists the `var x T` statements of known-zero locals
+// that the extraction leaves without a use. A local the call site must
+// receive is dropped only when every output is new, so one `:=` declares them
+// all.
+func (a *analyzer) dropRedundantDecls(res *Analysis) {
+	existing := map[string]bool{}
+	for _, p := range res.Params {
+		existing[p.Name] = true
+	}
+	decls := map[string]*ast.DeclStmt{}
+	for _, obj := range a.localObjs {
+		ds := a.droppableDecl(obj)
+		if ds != nil && a.knownZero(obj) {
+			decls[obj.Name()] = ds
+			continue
+		}
+		existing[obj.Name()] = true
+	}
+	allFresh := !res.TailReturns && !(res.ErrGuard && res.ErrExists)
+	for _, r := range res.Results {
+		allFresh = allFresh && !existing[r.Name]
+	}
+	resultNames := map[string]bool{}
+	for _, r := range res.Results {
+		resultNames[r.Name] = true
+	}
+	for _, obj := range a.localObjs {
+		ds := decls[obj.Name()]
+		if ds == nil || (resultNames[obj.Name()] && !allFresh) || (!resultNames[obj.Name()] && a.usedAfterBlock(obj)) {
+			continue
+		}
+		res.DroppedDecls = append(res.DroppedDecls, DroppedDecl{obj.Name(), a.offset(ds.Pos()), a.offset(ds.End())})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 5. Return statements
 // ---------------------------------------------------------------------------
@@ -826,7 +1013,7 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 		return refuse("block sits inside a function literal and contains `return`; its returns bind to the literal and cannot be extracted")
 	}
 	if !alwaysTerminates(a.stmts) {
-		return refuse("block mixes early returns with fall-through: some paths return from the enclosing function and others continue past the block, which cannot be expressed by a single extracted call")
+		return a.analyzeErrGuard(res)
 	}
 
 	res.TailReturns = true
@@ -835,7 +1022,7 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 		v := v
 		typeStr, err := a.renderType(v.Type(), "enclosing function result")
 		if err != nil {
-			return err
+			return fmt.Errorf("analyze returns: %w", err)
 		}
 		res.EnclosingResults = append(res.EnclosingResults, Result{Name: v.Name(), Type: typeStr})
 	}
@@ -1064,7 +1251,8 @@ func (a *analyzer) qualifier(p *gotypes.Package) string {
 	if p == nil || p == a.pkg.TypesPkg {
 		return ""
 	}
-	if alias, ok := a.fileImports[p.Path()]; ok {
+	alias, ok := a.fileImports[p.Path()]
+	if ok {
 		if alias != "" {
 			return alias
 		}
@@ -1082,7 +1270,8 @@ func (a *analyzer) renderType(t gotypes.Type, what string) (string, error) {
 	if t == nil {
 		return "", refuse("the type of %s could not be determined", what)
 	}
-	if b, ok := t.(*gotypes.Basic); ok && b.Kind() == gotypes.Invalid {
+	b, ok := t.(*gotypes.Basic)
+	if ok && b.Kind() == gotypes.Invalid {
 		return "", refuse("the type of %s is invalid; the package does not type-check cleanly", what)
 	}
 	s := gotypes.TypeString(t, a.qualifier)
@@ -1096,7 +1285,8 @@ func deref(t gotypes.Type) gotypes.Type {
 	if t == nil {
 		return gotypes.Typ[gotypes.Invalid]
 	}
-	if p, ok := t.Underlying().(*gotypes.Pointer); ok {
+	p, ok := t.Underlying().(*gotypes.Pointer)
+	if ok {
 		return p.Elem()
 	}
 	return t
@@ -1132,7 +1322,84 @@ func (a *analyzer) bodyText() (string, error) {
 		start = lineStart
 	}
 
-	return dedent(string(src[start:end])), nil
+	edits := append(a.pointerEdits(), a.guardEdits()...)
+	edits = append(edits, a.hoistEdits...)
+	return dedent(applyEdits(string(src[start:end]), start, edits)), nil
+}
+
+// edit replaces src[start:end] (file offsets) with text.
+type edit struct {
+	start, end int
+	text       string
+}
+
+// applyEdits applies non-overlapping edits to s, which begins at file offset
+// base.
+func applyEdits(s string, base int, edits []edit) string {
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, e := range edits {
+		s = s[:e.start-base] + e.text + s[e.end-base:]
+	}
+	return s
+}
+
+func (a *analyzer) offset(p token.Pos) int { return a.fset.Position(p).Offset }
+
+// pointerEdits rewrites uses of the by-pointer parameters so the body still
+// compiles with the pointer: `&x` becomes `x`, a selector base stays, and
+// any other use becomes `(*x)`.
+func (a *analyzer) pointerEdits() []edit {
+	if len(a.pointerObjs) == 0 {
+		return nil
+	}
+	var edits []edit
+	var stack []ast.Node
+	for _, s := range a.stmts {
+		ast.Inspect(s, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			stack = append(stack, n)
+			id, ok := n.(*ast.Ident)
+			if !ok || !a.pointerObjs[a.info.Uses[id]] {
+				return true
+			}
+			var parent ast.Node
+			if len(stack) > 1 {
+				parent = stack[len(stack)-2]
+			}
+			switch p := parent.(type) {
+			case *ast.SelectorExpr:
+				if p.X == id {
+					return true
+				}
+			case *ast.UnaryExpr:
+				if p.Op == token.AND {
+					edits = append(edits, edit{a.offset(p.Pos()), a.offset(id.Pos()), ""})
+					return true
+				}
+			}
+			edits = append(edits, edit{a.offset(id.Pos()), a.offset(id.End()), "(*" + id.Name + ")"})
+			return true
+		})
+	}
+	return edits
+}
+
+// guardEdits rewrites each early `return zero..., err` so it also carries
+// the extracted function's outputs.
+func (a *analyzer) guardEdits() []edit {
+	prefix := ""
+	if len(a.earlyOuts) > 0 {
+		prefix = strings.Join(a.earlyOuts, ", ") + ", "
+	}
+	var edits []edit
+	for _, ret := range a.guardReturns {
+		last := ret.Results[len(ret.Results)-1]
+		edits = append(edits, edit{a.offset(ret.Results[0].Pos()), a.offset(last.Pos()), prefix})
+	}
+	return edits
 }
 
 // dedent strips the longest whitespace prefix common to all non-blank lines.

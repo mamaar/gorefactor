@@ -84,7 +84,8 @@ func assertParses(t *testing.T, stmts string) {
 	t.Helper()
 
 	src := "package p\n\nfunc wrapper() {\nfor {\n" + stmts + "\n}\n}\n"
-	if _, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ParseComments); err != nil {
+	_, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ParseComments)
+	if err != nil {
 		t.Fatalf("replacement text does not parse: %v\n%s", err, stmts)
 	}
 }
@@ -217,11 +218,12 @@ func handle(enabled bool) {
 	}
 }
 `
-	if results, _ := run(t, src); len(results) != 0 {
+	results, _ := run(t, src)
+	if len(results) != 0 {
 		t.Errorf("expected no findings below the body-line threshold, got %+v", results)
 	}
 
-	results, _ := run(t, src, earlyreturn.WithMinBodyLines(1))
+	results, _ = run(t, src, earlyreturn.WithMinBodyLines(1))
 	if len(results) != 1 {
 		t.Errorf("expected a finding once the threshold is lowered, got %+v", results)
 	}
@@ -240,7 +242,8 @@ func handle() {
 
 func compute() int { return 1 }
 `
-	if results, _ := run(t, src); len(results) != 0 {
+	results, _ := run(t, src)
+	if len(results) != 0 {
 		t.Errorf("expected no findings for an if with an init statement, got %+v", results)
 	}
 }
@@ -489,7 +492,8 @@ func handle(enabled bool) {
 	}
 }
 `
-	if results, _ := run(t, src); len(results) != 0 {
+	results, _ := run(t, src)
+	if len(results) != 0 {
 		t.Errorf("expected no findings when the if branch falls through, got %+v", results)
 	}
 }
@@ -506,7 +510,8 @@ func handle(x int) int {
 	return 2
 }
 `
-	if results, _ := run(t, src); len(results) != 0 {
+	results, _ := run(t, src)
+	if len(results) != 0 {
 		t.Errorf("expected no findings for an else-if ladder, got %+v", results)
 	}
 }
@@ -524,7 +529,8 @@ func handle() int {
 
 func compute() int { return 1 }
 `
-	if results, _ := run(t, src); len(results) != 0 {
+	results, _ := run(t, src)
+	if len(results) != 0 {
 		t.Errorf("expected no findings for an if with an init statement, got %+v", results)
 	}
 }
@@ -573,10 +579,12 @@ func handle(items []int) {
 	}
 }
 `
-	if results, _ := run(t, src, earlyreturn.WithPatterns(earlyreturn.PatternGuardClause)); len(results) != 0 {
+	results, _ := run(t, src, earlyreturn.WithPatterns(earlyreturn.PatternGuardClause))
+	if len(results) != 0 {
 		t.Errorf("loop_continue should be filtered out, got %+v", results)
 	}
-	if results, _ := run(t, src, earlyreturn.WithPatterns(earlyreturn.PatternLoopContinue)); len(results) != 1 {
+	results, _ = run(t, src, earlyreturn.WithPatterns(earlyreturn.PatternLoopContinue))
+	if len(results) != 1 {
 		t.Errorf("loop_continue should be reported when selected, got %+v", results)
 	}
 }
@@ -619,16 +627,19 @@ func handle(x int, enabled bool) {
 	}
 }
 `
-	if results, _ := run(t, src); len(results) != 0 {
+	results, _ := run(t, src)
+	if len(results) != 0 {
 		t.Errorf("expected no findings inside a case clause, got %+v", results)
 	}
 }
 
 func TestParsePattern(t *testing.T) {
-	if p, ok := earlyreturn.ParsePattern("loop_continue"); !ok || p != earlyreturn.PatternLoopContinue {
+	p, ok := earlyreturn.ParsePattern("loop_continue")
+	if !ok || p != earlyreturn.PatternLoopContinue {
 		t.Errorf("ParsePattern(loop_continue) = %q, %v", p, ok)
 	}
-	if _, ok := earlyreturn.ParsePattern("nonsense"); ok {
+	_, ok = earlyreturn.ParsePattern("nonsense")
+	if ok {
 		t.Error("ParsePattern should reject unknown names")
 	}
 }

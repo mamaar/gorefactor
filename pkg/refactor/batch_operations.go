@@ -23,7 +23,8 @@ type batchStep struct {
 // default configuration only.
 func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep, error) {
 	var raw map[string]string
-	if err := json.Unmarshal([]byte(opStr), &raw); err != nil {
+	err := json.Unmarshal([]byte(opStr), &raw)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse operation JSON: %w", err)
 	}
 
@@ -40,7 +41,8 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 			NewName:    raw["new_name"],
 			Scope:      types.WorkspaceScope,
 		}
-		if pkg := raw["package"]; pkg != "" {
+		pkg := raw["package"]
+		if pkg != "" {
 			req.Package = types.ResolvePackagePath(ws, pkg)
 			req.Scope = types.PackageScope
 		}
@@ -51,6 +53,7 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 			SymbolName:  raw["symbol"],
 			FromPackage: types.ResolvePackagePath(ws, raw["from_package"]),
 			ToPackage:   types.ResolvePackagePath(ws, raw["to_package"]),
+			ToFile:      raw["to_file"],
 		}
 		step.packages = []string{resolveOptionalPackage(ws, raw["from_package"]), resolveOptionalPackage(ws, raw["to_package"])}
 		step.plan = func() (*types.RefactoringPlan, error) { return e.MoveSymbolAcrossConfigs(req) }
@@ -153,7 +156,7 @@ func (e *DefaultEngine) resolveStepPackage(ws *types.Workspace, path string) (st
 	}
 	dir, ok, err := findSourceDir(ws, e.set.Sources(), path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("resolve step package: %w", err)
 	}
 	if !ok {
 		return types.ResolvePackagePath(ws, path), nil
@@ -180,8 +183,9 @@ func (e *DefaultEngine) planSteps(ws *types.Workspace, steps []string) (*types.R
 		}
 		parsed = append(parsed, step)
 	}
-	if err := findPackageStepConflict(parsed); err != nil {
-		return nil, err
+	err := findPackageStepConflict(parsed)
+	if err != nil {
+		return nil, fmt.Errorf("plan steps: %w", err)
 	}
 	plans := make([]*types.RefactoringPlan, 0, len(parsed))
 	for i, step := range parsed {

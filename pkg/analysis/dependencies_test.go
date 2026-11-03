@@ -25,7 +25,8 @@ func TestDependencyGraph_PackageDepsAreTransitiveFilesystemPaths(t *testing.T) {
 	})
 	a, b, c := filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "c")
 
-	if want := []string{b, c}; !slices.Equal(g.PackageDeps[a], want) {
+	want := []string{b, c}
+	if !slices.Equal(g.PackageDeps[a], want) {
 		t.Errorf("PackageDeps[a] = %v, want %v", g.PackageDeps[a], want)
 	}
 	if len(g.ImportCycles) != 0 || len(g.TestImportCycles) != 0 {
@@ -40,7 +41,8 @@ func TestDependencyGraph_ProductionCycleIsReportedOnce(t *testing.T) {
 	})
 	a, b := filepath.Join(root, "a"), filepath.Join(root, "b")
 
-	if want := [][]string{{a, b, a}}; !reflect.DeepEqual(g.ImportCycles, want) {
+	want := [][]string{{a, b, a}}
+	if !reflect.DeepEqual(g.ImportCycles, want) {
 		t.Errorf("ImportCycles = %v, want %v", g.ImportCycles, want)
 	}
 	if len(g.TestImportCycles) != 0 {
@@ -59,7 +61,8 @@ func TestDependencyGraph_InPackageTestImportCycleIsSeparate(t *testing.T) {
 	if len(g.ImportCycles) != 0 {
 		t.Errorf("ImportCycles = %v, want none", g.ImportCycles)
 	}
-	if want := [][]string{{a, b, a}}; !reflect.DeepEqual(g.TestImportCycles, want) {
+	want := [][]string{{a, b, a}}
+	if !reflect.DeepEqual(g.TestImportCycles, want) {
 		t.Errorf("TestImportCycles = %v, want %v", g.TestImportCycles, want)
 	}
 }
@@ -90,10 +93,7 @@ func TestDependencyGraph_ThreeNodeCycleIsDeterministic(t *testing.T) {
 
 	ws := set.Primary().Workspace
 	for range 10 {
-		g, err := NewDependencyAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildDependencyGraph()
-		if err != nil {
-			t.Fatal(err)
-		}
+		g := NewDependencyAnalyzer(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildDependencyGraph()
 		if !reflect.DeepEqual(g.ImportCycles, want) {
 			t.Fatalf("ImportCycles = %v, want %v", g.ImportCycles, want)
 		}
@@ -107,7 +107,8 @@ func TestDependencyGraph_PackageImportsKeepRawImportStrings(t *testing.T) {
 	})
 
 	want := []string{"example.com/w/b", "fmt"}
-	if got := g.PackageImports[filepath.Join(root, "a")]; !slices.Equal(got, want) {
+	got := g.PackageImports[filepath.Join(root, "a")]
+	if !slices.Equal(got, want) {
 		t.Errorf("PackageImports[a] = %v, want %v", got, want)
 	}
 }

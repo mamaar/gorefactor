@@ -7,9 +7,10 @@ import (
 	gotypes "go/types"
 	"iter"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/ast/edge"
 	"golang.org/x/tools/go/ast/inspector"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // uses is a varint-compressed list of inspector.Cursor index values.
@@ -104,21 +105,24 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 		ident := cur.Node().(*ast.Ident)
 
 		// Check if this ident is a definition
-		if obj, ok := info.Defs[ident]; ok && obj != nil {
+		obj, ok := info.Defs[ident]
+		if ok && obj != nil {
 			ix.def[ObjectIDOf(obj)] = cur
 			continue
 		}
 
 		// Check if this ident is a use
-		if obj, ok := info.Uses[ident]; ok && obj != nil {
-			id := ObjectIDOf(obj)
-			u := ix.uses[id]
-			if u == nil {
-				u = newUses()
-				ix.uses[id] = u
-			}
-			u.add(cur.Index())
+		obj, ok = info.Uses[ident]
+		if !ok || obj == nil {
+			continue
 		}
+		id := ObjectIDOf(obj)
+		u := ix.uses[id]
+		if u == nil {
+			u = newUses()
+			ix.uses[id] = u
+		}
+		u.add(cur.Index())
 	}
 
 	return ix
@@ -140,16 +144,6 @@ func (ix *packageIndex) Uses(obj gotypes.Object) iter.Seq[inspector.Cursor] {
 	}
 }
 
-// Used reports whether any of the given objects are referenced in this package.
-func (ix *packageIndex) Used(objs ...gotypes.Object) bool {
-	for _, obj := range objs {
-		if u := ix.uses[ObjectIDOf(obj)]; u != nil && len(u.code) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // Def returns the cursor for the definition of obj in this package, if any.
 func (ix *packageIndex) Def(obj gotypes.Object) (inspector.Cursor, bool) {
 	cur, ok := ix.def[ObjectIDOf(obj)]
@@ -164,10 +158,12 @@ func (ix *packageIndex) Calls(callee gotypes.Object) iter.Seq[inspector.Cursor] 
 			return
 		}
 		for idx := range u.decode() {
-			if call, ok := callSiteFor(ix.inspect.At(idx)); ok {
-				if !yield(call) {
-					return
-				}
+			call, ok := callSiteFor(ix.inspect.At(idx))
+			if !ok {
+				continue
+			}
+			if !yield(call) {
+				return
 			}
 		}
 	}
@@ -228,7 +224,7 @@ func newWorkspaceIndex(fset *token.FileSet) *workspaceIndex {
 // findReferences returns all objectEntry occurrences (defs and uses) for obj
 // across the entire workspace.
 func (wi *workspaceIndex) findReferences(obj gotypes.Object) []objectEntry {
-	if wi == nil || len(wi.packages) == 0 {
+	if len(wi.packages) == 0 {
 		return nil
 	}
 
@@ -236,15 +232,18 @@ func (wi *workspaceIndex) findReferences(obj gotypes.Object) []objectEntry {
 
 	for _, pix := range wi.packages {
 		// Check definition
-		if cur, ok := pix.Def(obj); ok {
-			if entry, ok := wi.cursorToEntry(cur, true); ok {
+		cur, ok := pix.Def(obj)
+		if ok {
+			entry, ok := wi.cursorToEntry(cur, true)
+			if ok {
 				entries = append(entries, entry)
 			}
 		}
 
 		// Check uses
 		for cur := range pix.Uses(obj) {
-			if entry, ok := wi.cursorToEntry(cur, false); ok {
+			entry, ok := wi.cursorToEntry(cur, false)
+			if ok {
 				entries = append(entries, entry)
 			}
 		}
@@ -283,12 +282,14 @@ func (wi *workspaceIndex) cursorToEntry(cur inspector.Cursor, isDecl bool) (obje
 func canonicalObject(obj gotypes.Object) gotypes.Object {
 	switch o := obj.(type) {
 	case *gotypes.Func:
-		if orig := o.Origin(); orig != o {
+		orig := o.Origin()
+		if orig != o {
 			return orig
 		}
 	case *gotypes.Var:
 		if o.IsField() {
-			if orig := o.Origin(); orig != o {
+			orig := o.Origin()
+			if orig != o {
 				return orig
 			}
 		}

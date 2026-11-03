@@ -31,7 +31,7 @@ type alwaysNilReportJSON struct {
 // detectAlwaysNil runs detect_always_nil_errors on an open session.
 func detectAlwaysNil(t *testing.T, sess *mcptest.Session) alwaysNilReportJSON {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "detect_always_nil_errors", Arguments: map[string]any{}})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_always_nil_errors", Arguments: map[string]any{}})
 	if err != nil {
 		t.Fatalf("detect_always_nil_errors: %v", err)
 	}
@@ -53,7 +53,7 @@ func callAlwaysNilErrors(t *testing.T, files map[string]string) alwaysNilReportJ
 	t.Helper()
 	files["go.mod"] = "module example.com/nilerr\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	return detectAlwaysNil(t, sess)
 }
@@ -132,7 +132,8 @@ func use() {
 	for _, name := range []string{"Plain", "Branch", "Pair"} {
 		wantNilFixable(t, findAlwaysNil(t, out, name))
 	}
-	if f := findAlwaysNil(t, out, "Plain"); f.CallSites != 1 || f.File != "a/a.go" || f.Line != 3 {
+	f := findAlwaysNil(t, out, "Plain")
+	if f.CallSites != 1 || f.File != "a/a.go" || f.Line != 3 {
 		t.Errorf("Plain = %+v", f)
 	}
 }
@@ -466,7 +467,8 @@ func TestAlwaysNilErrors_MergesDeclarationsAcrossBuildConfigurations(t *testing.
 	})
 
 	wantNilFixable(t, findAlwaysNil(t, out, "Shared"))
-	if f := findAlwaysNil(t, out, "Shared"); len(f.Configs) != 0 {
+	f := findAlwaysNil(t, out, "Shared")
+	if len(f.Configs) != 0 {
 		t.Errorf("Shared: configs = %v, want none when every configuration declares it", f.Configs)
 	}
 	wantNoAlwaysNil(t, out, "Split")

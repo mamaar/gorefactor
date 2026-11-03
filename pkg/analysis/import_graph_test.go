@@ -21,13 +21,16 @@ func TestImportGraph_SplitsProductionFromInPackageTestEdges(t *testing.T) {
 	g := ImportGraph(set.Primary().Workspace)
 	a, b, c := filepath.Join(root, "a"), filepath.Join(root, "b"), filepath.Join(root, "c")
 
-	if want := []string{b}; !slices.Equal(g.Production[a], want) {
+	want := []string{b}
+	if !slices.Equal(g.Production[a], want) {
 		t.Errorf("Production[a] = %v, want %v", g.Production[a], want)
 	}
-	if want := []string{c}; !slices.Equal(g.Test[a], want) {
+	want = []string{c}
+	if !slices.Equal(g.Test[a], want) {
 		t.Errorf("Test[a] = %v, want %v", g.Test[a], want)
 	}
-	if want := []string{b, c}; !slices.Equal(g.Union()[a], want) {
+	want = []string{b, c}
+	if !slices.Equal(g.Union()[a], want) {
 		t.Errorf("Union()[a] = %v, want %v", g.Union()[a], want)
 	}
 }
@@ -74,14 +77,16 @@ func TestInvalidateImporters_DropsProductionOnlyPackagesOfTheInvalidated(t *test
 	v.Parser.InvalidateImporters(v.Workspace, []string{filepath.Join(root, "a")})
 
 	for _, name := range []string{"a", "b"} {
-		if _, kept := rescued[pkgs[name]]; kept {
+		_, kept := rescued[pkgs[name]]
+		if kept {
 			t.Errorf("production-only package of %s survived the invalidation", name)
 		}
 		if pkgs[name].TypesChecked {
 			t.Errorf("package %s kept its type information", name)
 		}
 	}
-	if _, kept := rescued[pkgs["c"]]; !kept {
+	_, kept := rescued[pkgs["c"]]
+	if !kept {
 		t.Error("production-only package of c, which does not import a, was dropped while c stays checked against it")
 	}
 	if !pkgs["c"].TypesChecked {

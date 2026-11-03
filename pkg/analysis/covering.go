@@ -153,11 +153,13 @@ func fileConstraint(f *SourceFile) constraint.Expr {
 		for _, c := range group.List {
 			switch {
 			case constraint.IsGoBuild(c.Text):
-				if expr, err := constraint.Parse(c.Text); err == nil {
+				expr, err := constraint.Parse(c.Text)
+				if err == nil {
 					return expr
 				}
 			case constraint.IsPlusBuild(c.Text):
-				if expr, err := constraint.Parse(c.Text); err == nil {
+				expr, err := constraint.Parse(c.Text)
+				if err == nil {
 					plus = andExpr(plus, expr)
 				}
 			}
@@ -234,7 +236,8 @@ type mergedConfig struct {
 func mergeRequirements(reqs []requirement) []*mergedConfig {
 	var merged []*mergedConfig
 	for _, r := range reqs {
-		if m := firstFit(merged, r); m != nil {
+		m := firstFit(merged, r)
+		if m != nil {
 			m.cfg = unionTags(m.cfg, r.cfg)
 			m.files = append(m.files, r.file)
 			continue
@@ -302,7 +305,8 @@ func countMatches(cfg BuildConfig, files []*SourceFile) int {
 
 // lessConfig orders by fewer deltas from primary, then Key.
 func lessConfig(a, b, primary BuildConfig) bool {
-	if da, db := deltas(a, primary), deltas(b, primary); da != db {
+	da, db := deltas(a, primary), deltas(b, primary)
+	if da != db {
 		return da < db
 	}
 	return a.Key() < b.Key()

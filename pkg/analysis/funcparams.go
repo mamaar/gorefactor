@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"strings"
@@ -14,41 +15,18 @@ type FuncParam struct {
 	Type string
 }
 
-// ExtractFuncParams finds a function declaration in the workspace and returns its current parameters.
-// A missing file or function is a SymbolNotFound RefactorError.
-func ExtractFuncParams(ws *types.Workspace, sourceFile, functionName string) ([]FuncParam, error) {
-	ft, err := FindFuncType(ws, sourceFile, functionName)
-	if err != nil {
-		return nil, err
-	}
-	return FuncTypeParams(ft), nil
-}
-
 // FindFuncType finds a function declaration in the workspace and returns its signature.
 // A missing file or function is a SymbolNotFound RefactorError.
 func FindFuncType(ws *types.Workspace, sourceFile, functionName string) (*ast.FuncType, error) {
-	// Find the file in the workspace
-	var file *types.File
-	for _, pkg := range ws.Packages {
-		if f, exists := pkg.Files[sourceFile]; exists {
-			file = f
-			break
-		}
-		for filePath, f := range pkg.Files {
-			if filePath == sourceFile || f.Path == sourceFile {
-				file = f
-				break
-			}
-		}
-		if file != nil {
-			break
-		}
-	}
-	if file == nil {
+	file, _, err := ws.FindFile(sourceFile)
+	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("source file not found: %s", sourceFile),
 		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find func type: %w", err)
 	}
 	if file.AST == nil {
 		return nil, fmt.Errorf("source file has no AST: %s", sourceFile)
@@ -110,7 +88,8 @@ func FindFuncDeclByName(astFile *ast.File, name string) *ast.FuncDecl {
 
 	var found *ast.FuncDecl
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if fd, ok := n.(*ast.FuncDecl); ok && fd.Name != nil && fd.Name.Name == name {
+		fd, ok := n.(*ast.FuncDecl)
+		if ok && fd.Name != nil && fd.Name.Name == name {
 			found = fd
 			return false
 		}

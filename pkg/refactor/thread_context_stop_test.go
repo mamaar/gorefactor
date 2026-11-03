@@ -28,7 +28,8 @@ func TestThreadContext_StopDoesNotGainAndPassesTODO(t *testing.T) {
 	plan := threadPlanStopping(t, map[string]string{"p/p.go": stopChain}, "p/p.go", "leaf",
 		stopSet(stopKey("", "mid")))
 	assertNames(t, gainingNames(plan), []string{"leaf"}, "Funcs")
-	if got := argIn(t, plan, "mid"); got != "context.TODO()" {
+	got := argIn(t, plan, "mid")
+	if got != "context.TODO()" {
 		t.Errorf("stop passes %q", got)
 	}
 	if len(plan.Stops) != 1 {
@@ -51,7 +52,8 @@ func mid() {
 `}, "p/p.go", "leaf", stopSet(stopKey("", "mid")))
 	assertNames(t, gainingNames(plan), []string{"leaf"}, "Funcs")
 	assertNames(t, fakeNames(plan), nil, "Fake")
-	if got := argIn(t, plan, "mid"); got != "ctx" {
+	got := argIn(t, plan, "mid")
+	if got != "ctx" {
 		t.Errorf("stop passes %q", got)
 	}
 	if len(plan.Stops) != 1 {
@@ -97,7 +99,8 @@ func work() {}
 func useI(s Store) { s.Save(1) }
 `}, "p/p.go", "work", stopSet(stopKey("A", "Save")))
 	assertNames(t, gainingLabels(plan), []string{"work"}, "Funcs")
-	if got := argIn(t, plan, "Save"); got != "context.TODO()" {
+	got := argIn(t, plan, "Save")
+	if got != "context.TODO()" {
 		t.Errorf("stopped method passes %q", got)
 	}
 }

@@ -219,7 +219,8 @@ func (w *walker) walkStmts(list []ast.Stmt, fnName string, scope map[string]bool
 	names := union(scope, declared)
 
 	for _, stmt := range list {
-		if ifStmt, ok := stmt.(*ast.IfStmt); ok && ifStmt.Else != nil {
+		ifStmt, ok := stmt.(*ast.IfStmt)
+		if ok && ifStmt.Else != nil {
 			if w.tryChain(ifStmt, fnName, dest{list: declared, scope: names}) {
 				// The finding covers this whole chain, and so does its edit.
 				// Descending would report chains inside it a second time.
@@ -379,31 +380,41 @@ func measureIfElseDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 	maxDepth := currentDepth
 
 	for _, stmt := range ifStmt.Body.List {
-		if innerIf, ok := stmt.(*ast.IfStmt); ok {
-			if innerIf.Else != nil {
-				d := measureIfElseDepth(innerIf, currentDepth+1)
-				if d > maxDepth {
-					maxDepth = d
-				}
-			}
+		innerIf, ok := stmt.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		if innerIf.Else == nil {
+			continue
+		}
+		d := measureIfElseDepth(innerIf, currentDepth+1)
+		if d > maxDepth {
+			maxDepth = d
 		}
 	}
 
-	if elseIf, ok := ifStmt.Else.(*ast.IfStmt); ok {
+	elseIf, ok := ifStmt.Else.(*ast.IfStmt)
+	if ok {
 		if elseIf.Else != nil {
 			d := measureIfElseDepth(elseIf, currentDepth+1)
 			if d > maxDepth {
 				maxDepth = d
 			}
 		}
-	} else if elseBlock, ok := ifStmt.Else.(*ast.BlockStmt); ok {
-		for _, stmt := range elseBlock.List {
-			if innerIf, ok := stmt.(*ast.IfStmt); ok {
-				if innerIf.Else != nil {
-					d := measureIfElseDepth(innerIf, currentDepth+1)
-					if d > maxDepth {
-						maxDepth = d
-					}
+	} else {
+		elseBlock, ok := ifStmt.Else.(*ast.BlockStmt)
+		if ok {
+			for _, stmt := range elseBlock.List {
+				innerIf, ok := stmt.(*ast.IfStmt)
+				if !ok {
+					continue
+				}
+				if innerIf.Else == nil {
+					continue
+				}
+				d := measureIfElseDepth(innerIf, currentDepth+1)
+				if d > maxDepth {
+					maxDepth = d
 				}
 			}
 		}
@@ -432,7 +443,8 @@ func countElseLines(fset *token.FileSet, ifStmt *ast.IfStmt) int {
 	}
 
 	for _, stmt := range ifStmt.Body.List {
-		if innerIf, ok := stmt.(*ast.IfStmt); ok {
+		innerIf, ok := stmt.(*ast.IfStmt)
+		if ok {
 			total += countElseLines(fset, innerIf)
 		}
 	}
@@ -455,7 +467,8 @@ func countErrorBranches(ifStmt *ast.IfStmt) int {
 	}
 
 	for _, stmt := range ifStmt.Body.List {
-		if innerIf, ok := stmt.(*ast.IfStmt); ok {
+		innerIf, ok := stmt.(*ast.IfStmt)
+		if ok {
 			count += countErrorBranches(innerIf)
 		}
 	}
@@ -465,7 +478,8 @@ func countErrorBranches(ifStmt *ast.IfStmt) int {
 
 func blockLooksLikeErrorReturn(block *ast.BlockStmt) bool {
 	for _, stmt := range block.List {
-		if _, ok := stmt.(*ast.ReturnStmt); ok {
+		_, ok := stmt.(*ast.ReturnStmt)
+		if ok {
 			return true
 		}
 	}
@@ -476,13 +490,16 @@ func measureHappyPathDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 	maxDepth := currentDepth
 
 	for _, stmt := range ifStmt.Body.List {
-		if innerIf, ok := stmt.(*ast.IfStmt); ok {
-			if innerIf.Else != nil {
-				d := measureHappyPathDepth(innerIf, currentDepth+1)
-				if d > maxDepth {
-					maxDepth = d
-				}
-			}
+		innerIf, ok := stmt.(*ast.IfStmt)
+		if !ok {
+			continue
+		}
+		if innerIf.Else == nil {
+			continue
+		}
+		d := measureHappyPathDepth(innerIf, currentDepth+1)
+		if d > maxDepth {
+			maxDepth = d
 		}
 	}
 
@@ -557,7 +574,8 @@ func (w *walker) flattenChain(root *ast.IfStmt, d dest) flattened {
 			}
 		}
 
-		if why := w.elidable(link); why != "" {
+		why := w.elidable(link)
+		if why != "" {
 			return stop(link, why)
 		}
 
@@ -608,7 +626,8 @@ func (w *walker) invert(link *ast.IfStmt, final *ast.BlockStmt, d dest, read map
 		return flattened{}, false, "the final else branch does not hand control away, so the branches cannot be swapped"
 	}
 
-	if why := w.dedentBlocked(link.Body, d, read); why != "" {
+	why := w.dedentBlocked(link.Body, d, read)
+	if why != "" {
 		return flattened{}, false, why
 	}
 
@@ -753,19 +772,22 @@ func (w *walker) dedentBlocked(block *ast.BlockStmt, d dest, read map[string]boo
 					stmtfacts.FirstClash(names, d.list))
 			}
 			for name := range names {
-				if why := reuse(name); why != "" {
+				why := reuse(name)
+				if why != "" {
 					return why
 				}
 			}
 
 		case *ast.DeclStmt:
 			names := stmtfacts.DeclaredNames([]ast.Stmt{s})
-			if clash := stmtfacts.FirstClash(names, d.list); clash != "" {
+			clash := stmtfacts.FirstClash(names, d.list)
+			if clash != "" {
 				return fmt.Sprintf(
 					"dedenting the branch would redeclare %q in the enclosing scope", clash)
 			}
 			for name := range names {
-				if why := reuse(name); why != "" {
+				why := reuse(name)
+				if why != "" {
 					return why
 				}
 			}
@@ -901,7 +923,8 @@ func (w *walker) stmtText(n ast.Node) string {
 func (w *walker) blockLines(block *ast.BlockStmt) int {
 	start := w.pass.Fset.Position(block.Lbrace).Line
 	end := w.pass.Fset.Position(block.Rbrace).Line
-	if lines := end - start - 1; lines > 0 {
+	lines := end - start - 1
+	if lines > 0 {
 		return lines
 	}
 	return 0

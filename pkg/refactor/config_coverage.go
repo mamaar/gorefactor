@@ -45,13 +45,15 @@ func (r *configRun) reached() (dirs []string, names map[string]bool) {
 // left out.
 func (r *configRun) reportUncovered(plan *types.RefactoringPlan) error {
 	dirs, names := r.reached()
-	if err := r.unattributedAbort(dirs); err != nil {
-		return err
+	err := r.unattributedAbort(dirs)
+	if err != nil {
+		return fmt.Errorf("report uncovered: %w", err)
 	}
 	for _, u := range analysis.UncheckedFiles(r.views, dirs) {
 		file := types.UncoveredFile{Path: u.Source.Path, Configs: configNames(u.Configs), Reason: u.Reason}
 		plan.Coverage.Uncovered = append(plan.Coverage.Uncovered, file)
-		if site, ok := mentionSite(u.Source, names, file); ok {
+		site, ok := mentionSite(u.Source, names, file)
+		if ok {
 			plan.SkippedSites = append(plan.SkippedSites, site)
 		}
 	}
@@ -64,7 +66,8 @@ func (r *configRun) unattributedAbort(dirs []string) error {
 	for _, v := range r.views {
 		var blind []*types.Package
 		for _, dir := range dirs {
-			if pkg := v.Workspace.Packages[dir]; pkg != nil && pkg.UnattributedTestErr != nil {
+			pkg := v.Workspace.Packages[dir]
+			if pkg != nil && pkg.UnattributedTestErr != nil {
 				blind = append(blind, pkg)
 			}
 		}
@@ -182,7 +185,8 @@ func uncheckedWhere(file types.UncoveredFile) string {
 func lineAt(content []byte, offset int) string {
 	start := strings.LastIndexByte(string(content[:offset]), '\n') + 1
 	end := len(content)
-	if i := strings.IndexByte(string(content[offset:]), '\n'); i >= 0 {
+	i := strings.IndexByte(string(content[offset:]), '\n')
+	if i >= 0 {
 		end = offset + i
 	}
 	return strings.TrimSpace(string(content[start:end]))
@@ -386,10 +390,12 @@ func (w *unresolvedWalker) Visit(n ast.Node) ast.Visitor {
 		return w
 	}
 	if w.info != nil {
-		if _, defined := w.info.Defs[id]; defined {
+		_, defined := w.info.Defs[id]
+		if defined {
 			return w
 		}
-		if _, used := w.info.Uses[id]; used {
+		_, used := w.info.Uses[id]
+		if used {
 			return w
 		}
 	}

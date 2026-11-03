@@ -44,8 +44,8 @@ func partialCollision() (int, error) {
 	}
 }
 
-// paramCollision: the if's `err` collides with the function parameter
-// `err`, so it must be downgraded from `:=` to `=`.
+// paramCollision: the if's `err` shadows the function parameter `err`, which
+// is read afterwards, so the site is left alone rather than assign to it.
 func paramCollision(err error) error {
 	if err := doA(); err != nil {
 		return err

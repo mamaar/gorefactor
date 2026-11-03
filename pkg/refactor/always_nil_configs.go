@@ -61,11 +61,12 @@ func (e *DefaultEngine) AlwaysNilErrorsAcrossConfigs(req AlwaysNilErrorsRequest)
 	}
 	views, err := e.beginRun(run)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("always nil errors across configs: %w", err)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
@@ -119,10 +120,7 @@ func (r *alwaysNilRun) visit(v *analysis.View) error {
 			continue
 		}
 		r.nilViews[key]++
-		j, err := r.judge(v, idx, decls, survey, fn, key, decl)
-		if err != nil {
-			return err
-		}
+		j := r.judge(v, idx, decls, survey, fn, key, decl)
 		r.add(v, fn, decl, key, j)
 		if r.calls[key] == nil {
 			r.calls[key] = make(map[token.Pos]bool)
@@ -145,10 +143,7 @@ type nilJudgement struct {
 
 // judge runs the remove_return operation that changes fn, the way change_signature
 // does in a view, and the checks it runs on the finished plan.
-func (r *alwaysNilRun) judge(
-	v *analysis.View, idx *analysis.ReferenceIndex, decls map[*gotypes.Func]*funcDecl, survey *ifaceSurvey,
-	fn *gotypes.Func, key declKey, decl *funcDecl,
-) (nilJudgement, error) {
+func (r *alwaysNilRun) judge(v *analysis.View, idx *analysis.ReferenceIndex, decls map[*gotypes.Func]*funcDecl, survey *ifaceSurvey, fn *gotypes.Func, key declKey, decl *funcDecl) nilJudgement {
 	var members []*gotypes.Func
 	if fn.Signature().Recv() != nil {
 		var err error
@@ -156,11 +151,12 @@ func (r *alwaysNilRun) judge(
 			return externalInterfaceError("change", f, ext)
 		})
 		if err != nil {
-			return nilJudgement{reason: err.Error()}, nil
+			return nilJudgement{reason: err.Error()}
 		}
 		for _, m := range members {
-			if why := propagatedRefusal(decls, m); why != "" {
-				return nilJudgement{reason: why}, nil
+			why := propagatedRefusal(decls, m)
+			if why != "" {
+				return nilJudgement{reason: why}
 			}
 		}
 	}
@@ -172,27 +168,29 @@ func (r *alwaysNilRun) judge(
 		NewReturns: returns[:len(returns)-1], PropagateToInterface: len(members) > 0, CachedIndex: idx,
 	}.operation(r.logger)
 	ws := v.Workspace
-	if err := op.Validate(ws); err != nil {
-		return nilJudgement{reason: err.Error()}, nil
+	err := op.Validate(ws)
+	if err != nil {
+		return nilJudgement{reason: err.Error()}
 	}
 	plan, err := op.Execute(ws)
 	if err != nil {
 		if len(op.refusals) > 0 {
-			return nilJudgement{reason: slices.MinFunc(op.refusals, compareRefusals).String()}, nil
+			return nilJudgement{reason: slices.MinFunc(op.refusals, compareRefusals).String()}
 		}
-		return nilJudgement{reason: err.Error()}, nil
+		return nilJudgement{reason: err.Error()}
 	}
-	if err := GeneratedFileEdits(plan.Changes); err != nil {
-		return nilJudgement{reason: err.Error()}, nil
+	err = GeneratedFileEdits(plan.Changes)
+	if err != nil {
+		return nilJudgement{reason: err.Error()}
 	}
 	check := VerifyPlanTypesWithImporter(ws, plan, v.Parser.Importer())
 	if len(check.NewErrors) > 0 {
-		return nilJudgement{reason: "the change would introduce type errors: " + check.NewErrors[0]}, nil
+		return nilJudgement{reason: "the change would introduce type errors: " + check.NewErrors[0]}
 	}
 	if check.Skipped != "" {
-		return nilJudgement{reason: "the change could not be type-checked and is unverified: " + check.Skipped}, nil
+		return nilJudgement{reason: "the change could not be type-checked and is unverified: " + check.Skipped}
 	}
-	return nilJudgement{propagate: len(members) > 0}, nil
+	return nilJudgement{propagate: len(members) > 0}
 }
 
 // propagatedRefusal returns why propagate cannot change the method m, which fn
@@ -232,7 +230,8 @@ func (r *alwaysNilRun) report(views []*analysis.View) *AlwaysNilErrorsReport {
 			continue // some configuration returns a non-nil error
 		}
 		f := d.AlwaysNilErrorFinding
-		if declaring := r.declaredIn[site]; len(declaring) != len(views) {
+		declaring := r.declaredIn[site]
+		if len(declaring) != len(views) {
 			f.Configs = declaring
 		}
 		f.CallSites = len(r.calls[d.key])
@@ -286,7 +285,8 @@ func mentionsNamedError(info *gotypes.Info, decl *ast.FuncDecl) bool {
 	obj := info.Defs[name]
 	mentioned := false
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && info.Uses[id] == obj {
+		id, ok := n.(*ast.Ident)
+		if ok && info.Uses[id] == obj {
 			mentioned = true
 		}
 		return !mentioned

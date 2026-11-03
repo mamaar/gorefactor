@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -38,7 +39,7 @@ type InlineFunctionInput struct {
 func planInlineMethod(state *MCPServer, in InlineMethodInput) (*types.RefactoringPlan, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan inline method: %w", err)
 	}
 	tgt := in.TargetFile
 	if tgt != "" {
@@ -56,7 +57,7 @@ func planInlineMethod(state *MCPServer, in InlineMethodInput) (*types.Refactorin
 func planInlineFunction(state *MCPServer, in InlineFunctionInput) (*types.RefactoringPlan, error) {
 	ws, err := state.GetWorkspace()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("plan inline function: %w", err)
 	}
 	return state.GetEngine().InlineFunctionAcrossConfigs(types.InlineFunctionRequest{
 		FunctionName: in.FunctionName,
@@ -67,7 +68,7 @@ func planInlineFunction(state *MCPServer, in InlineFunctionInput) (*types.Refact
 func registerInlineTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "inline_method",
-		Description: "Inline a method: replace its call sites in the target file with the method body; the method declaration is kept. " +
+		Description: "Inline a method: replace its call sites in the target file with the method body; the method declaration is kept, and the receiver name in the body becomes the call's receiver expression. " +
 			"The target file is planned under every build configuration (GOOS/GOARCH variants, custom build tags) that includes it; the inline is refused when those configurations declare the method with different bodies.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in InlineMethodInput) (*mcpsdk.CallToolResult, any, error) {
 		// The read lock stays held until the merged plan exists: a watcher

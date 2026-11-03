@@ -21,7 +21,7 @@ func NewDependencyAnalyzer(ws *types.Workspace, logger *slog.Logger) *Dependency
 }
 
 // BuildDependencyGraph builds the dependency graph for the workspace.
-func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, error) {
+func (da *DependencyAnalyzer) BuildDependencyGraph() *types.DependencyGraph {
 	da.logger.Info("building dependency graph", "packages", len(da.workspace.Packages))
 
 	imports := make(map[string][]string)
@@ -37,24 +37,13 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, er
 		TestImportCycles: testImportCycles(edges),
 	}
 
-	if n := len(graph.ImportCycles); n > 0 {
+	n := len(graph.ImportCycles)
+	if n > 0 {
 		da.logger.Warn("detected import cycles", "cycle_count", n)
 	}
 
 	da.workspace.Dependencies = graph
-	return graph, nil
-}
-
-// DetectCycles detects import cycles in package graph
-func (da *DependencyAnalyzer) DetectCycles() ([][]string, error) {
-	if da.workspace.Dependencies == nil {
-		_, err := da.BuildDependencyGraph()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return da.workspace.Dependencies.ImportCycles, nil
+	return graph
 }
 
 func (da *DependencyAnalyzer) collectPackageImports(pkg *types.Package, imports map[string][]string) {
@@ -133,11 +122,12 @@ func shortestPath(edges map[string][]string, starts []string, target string) []s
 			return path
 		}
 		for _, next := range edges[n] {
-			if !seen[next] {
-				seen[next] = true
-				prev[next] = n
-				queue = append(queue, next)
+			if seen[next] {
+				continue
 			}
+			seen[next] = true
+			prev[next] = n
+			queue = append(queue, next)
 		}
 	}
 	return nil
@@ -198,7 +188,8 @@ func testImportCycles(g Imports) [][]string {
 	for _, p := range pkgs {
 		var best []string
 		for _, t := range g.Test[p] {
-			if path := shortestPath(g.Production, []string{t}, p); path != nil && (best == nil || len(path) < len(best)) {
+			path := shortestPath(g.Production, []string{t}, p)
+			if path != nil && (best == nil || len(path) < len(best)) {
 				best = path
 			}
 		}

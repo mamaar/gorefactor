@@ -50,12 +50,14 @@ func (s *externalSet) add(byID map[string]*externalPackage, meta *packages.Packa
 	if meta == nil {
 		return nil
 	}
-	if n := byID[meta.ID]; n != nil {
+	n := byID[meta.ID]
+	if n != nil {
 		return n
 	}
-	n := &externalPackage{meta: meta, imports: make(map[string]*externalPackage, len(meta.Imports))}
+	n = &externalPackage{meta: meta, imports: make(map[string]*externalPackage, len(meta.Imports))}
 	byID[meta.ID] = n
-	if prev := s.byPath[meta.PkgPath]; prev == nil || meta.ID == meta.PkgPath {
+	prev := s.byPath[meta.PkgPath]
+	if prev == nil || meta.ID == meta.PkgPath {
 		s.byPath[meta.PkgPath] = n
 	}
 	for path, dep := range meta.Imports {
@@ -64,24 +66,32 @@ func (s *externalSet) add(byID map[string]*externalPackage, meta *packages.Packa
 	return n
 }
 
-// lookup returns the types of the package listed for path, or nil when the
-// load listed none. A package the load listed but could not read is an error.
+// errNotListed reports that the load gave no types for a path.
+var errNotListed = errors.New("package not listed")
+
+// lookup returns the types of the package listed for path, or errNotListed when
+// the load listed none or carried no complete types for it. A package the load listed but could not read is another
+// error. A nil set lists nothing.
 func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	if s == nil {
-		return nil, nil
+		return nil, errNotListed
 	}
 	n := s.byPath[path]
 	if n == nil {
-		return nil, nil
+		return nil, errNotListed
 	}
-	if err := n.listingError(); err != nil {
-		return nil, err
+	err := n.listingError()
+	if err != nil {
+		return nil, fmt.Errorf("lookup: %w", err)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !n.checked {
 		s.parse(n)
 		s.check(n)
+	}
+	if n.types == nil {
+		return nil, errNotListed
 	}
 	return n.types, nil
 }
@@ -215,8 +225,9 @@ func (i *externalImporter) Import(path string) (*gotypes.Package, error) {
 	if dep == nil {
 		return nil, fmt.Errorf("no metadata for %s", path)
 	}
-	if err := dep.listingError(); err != nil {
-		return nil, err
+	err := dep.listingError()
+	if err != nil {
+		return nil, fmt.Errorf("import: %w", err)
 	}
 	i.set.check(dep)
 	if dep.types == nil {

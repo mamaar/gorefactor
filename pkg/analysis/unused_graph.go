@@ -130,7 +130,8 @@ func (b fileNodes) addGenDecl(d *ast.GenDecl, clause string) {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
 			n := b.newNode(s.Name)
-			if id, ok := s.Type.(*ast.Ident); ok && s.Assign.IsValid() {
+			id, ok := s.Type.(*ast.Ident)
+			if ok && s.Assign.IsValid() {
 				n.aliasOf = id.Name
 			}
 			b.typeNodes[receiverKey{b.pkg, clause, s.Name.Name}] = n
@@ -333,7 +334,8 @@ func (g *usageGraph) addTypedEmbeddedEdges(wi *workspaceIndex) map[*ast.Ident]bo
 func (g *usageGraph) addEmbeddedByName(resolver *SymbolResolver, pkg *types.Package, file *types.File, ref embeddedRef) {
 	if ref.qual == nil {
 		clause := file.AST.Name.Name
-		if target := g.typeNodes[receiverKey{pkg, clause, ref.name.Name}]; target != nil {
+		target := g.typeNodes[receiverKey{pkg, clause, ref.name.Name}]
+		if target != nil {
 			g.addUseAt(ref.name.Pos(), target)
 		}
 		return
@@ -390,7 +392,8 @@ func appendTypeNames(refs []embeddedRef, expr ast.Expr) []embeddedRef {
 	case *ast.Ident:
 		return append(refs, embeddedRef{name: e})
 	case *ast.SelectorExpr:
-		if qual, ok := e.X.(*ast.Ident); ok {
+		qual, ok := e.X.(*ast.Ident)
+		if ok {
 			return append(refs, embeddedRef{name: e.Sel, qual: qual})
 		}
 	case *ast.StarExpr:
@@ -430,14 +433,16 @@ func addUse(referrer, target *usageNode) {
 
 	if referrer.test && !target.test {
 		target.testRefs++
-		if n := len(referrer.testOut); n == 0 || referrer.testOut[n-1] != target {
+		n := len(referrer.testOut)
+		if n == 0 || referrer.testOut[n-1] != target {
 			referrer.testOut = append(referrer.testOut, target)
 		}
 		return
 	}
 
 	target.prodRefs++
-	if n := len(referrer.out); n == 0 || referrer.out[n-1] != target {
+	n := len(referrer.out)
+	if n == 0 || referrer.out[n-1] != target {
 		referrer.out = append(referrer.out, target)
 	}
 }

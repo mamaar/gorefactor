@@ -1,6 +1,7 @@
 package analyzers
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	"go/types"
@@ -48,7 +49,7 @@ func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunRes
 	for _, pkg := range packages {
 		rr, err := RunPackage(ws, a, pkg)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("run: %w", err)
 		}
 		combined.Diagnostics = append(combined.Diagnostics, rr.Diagnostics...)
 		combined.Result = mergeResults(combined.Result, rr.Result)

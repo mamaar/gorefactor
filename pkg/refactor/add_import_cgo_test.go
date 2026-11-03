@@ -13,7 +13,7 @@ func addContextImport(t *testing.T, src string) string {
 	for _, f := range pkg.Files {
 		path = f.Path
 	}
-	c := generateAddImportChange(ws, path, "", "context")
+	c := GenerateAddImportChange(ws, path, "", "context")
 	if c == nil {
 		t.Fatal("no import change")
 	}
@@ -40,7 +40,8 @@ func TestGenerateAddImportChange_KeepsCgoImportStandalone(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := addContextImport(t, tc.src); !strings.Contains(got, tc.want) {
+			got := addContextImport(t, tc.src)
+			if !strings.Contains(got, tc.want) {
 				t.Errorf("want %q in:\n%s", tc.want, got)
 			}
 		})

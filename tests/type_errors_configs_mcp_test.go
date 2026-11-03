@@ -37,7 +37,8 @@ func TestRenameSymbol_ReportsProductionTypeErrorsOfAReachedPackage(t *testing.T)
 		t.Fatalf("rename_symbol failed: %s", errText(res))
 	}
 	var out typeErrorsJSON
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+	err := json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(out.TypeErrors) != 1 {
@@ -59,7 +60,8 @@ func TestRenameSymbol_NoTypeErrorsOmitsTheField(t *testing.T) {
 
 	out := callJSON(t, sess, "rename_symbol", renameFToG(nil))
 
-	if _, ok := out["type_errors"]; ok {
+	_, ok := out["type_errors"]
+	if ok {
 		t.Errorf("type_errors = %v, want the field omitted", out["type_errors"])
 	}
 }

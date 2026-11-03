@@ -38,7 +38,8 @@ func findPackageByName(t *testing.T, ws *pkgtypes.Workspace, name string) *pkgty
 func findFuncDecl(pkg *pkgtypes.Package, name string) *ast.FuncDecl {
 	for _, f := range allScopeTestFiles(pkg) {
 		for _, decl := range f.AST.Decls {
-			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == name && fd.Recv == nil {
+			fd, ok := decl.(*ast.FuncDecl)
+			if ok && fd.Name.Name == name && fd.Recv == nil {
 				return fd
 			}
 		}
@@ -84,7 +85,8 @@ func findFuncLit(root ast.Node) *ast.FuncLit {
 		if found != nil {
 			return false
 		}
-		if lit, ok := n.(*ast.FuncLit); ok {
+		lit, ok := n.(*ast.FuncLit)
+		if ok {
 			found = lit
 			return false
 		}
@@ -97,8 +99,10 @@ func findFuncLit(root ast.Node) *ast.FuncLit {
 func findMarkCall(root ast.Node) *ast.CallExpr {
 	var found *ast.CallExpr
 	ast.Inspect(root, func(n ast.Node) bool {
-		if c, ok := n.(*ast.CallExpr); ok && found == nil {
-			if id, ok := c.Fun.(*ast.Ident); ok && id.Name == "mark" {
+		c, ok := n.(*ast.CallExpr)
+		if ok && found == nil {
+			id, ok := c.Fun.(*ast.Ident)
+			if ok && id.Name == "mark" {
 				found = c
 			}
 		}

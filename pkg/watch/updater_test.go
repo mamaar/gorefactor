@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -71,7 +72,7 @@ func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
 		t.Fatal("expected package at pkg/a")
 	}
 
-	u.set.Primary().Parser.EnsureTypeChecked(u.Workspace(), pkg)
+	u.set.Primary().Parser.EnsureTypeChecked(u.set.Primary().Workspace, pkg)
 	if !pkg.TypesChecked || pkg.TypesInfo == nil {
 		t.Fatal("expected initial type information")
 	}
@@ -82,7 +83,7 @@ func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
 		t.Fatal("reparsed package retained stale type information")
 	}
 
-	u.set.Primary().Parser.EnsureTypeChecked(u.Workspace(), pkg)
+	u.set.Primary().Parser.EnsureTypeChecked(u.set.Primary().Workspace, pkg)
 	var world *ast.FuncDecl
 	for _, file := range pkg.Files {
 		for _, decl := range file.AST.Decls {
@@ -116,7 +117,8 @@ func TestUpdater_CreateAddsToPackage(t *testing.T) {
 	if len(pkg.Files) != initialFiles+1 {
 		t.Fatalf("expected %d files, got %d", initialFiles+1, len(pkg.Files))
 	}
-	if _, ok := pkg.Files["b.go"]; !ok {
+	_, ok := pkg.Files["b.go"]
+	if !ok {
 		t.Fatal("b.go not found in package files")
 	}
 }
@@ -147,7 +149,8 @@ func TestUpdater_DeleteRemovesFromPackage(t *testing.T) {
 	if len(pkg.Files) != 1 {
 		t.Fatalf("expected 1 file after delete, got %d", len(pkg.Files))
 	}
-	if _, ok := pkg.Files["a.go"]; ok {
+	_, ok := pkg.Files["a.go"]
+	if ok {
 		t.Fatal("a.go should have been removed")
 	}
 }
@@ -156,7 +159,7 @@ func TestUpdater_DeleteLastFileRemovesPackage(t *testing.T) {
 	u, dir := setupWorkspace(t)
 	pkgDir := filepath.Join(dir, "pkg", "a")
 
-	initialCount := u.PackageCount()
+	initialCount := len(u.set.Primary().Workspace.Packages)
 
 	// Delete the only file
 	filePath := filepath.Join(pkgDir, "a.go")
@@ -164,8 +167,8 @@ func TestUpdater_DeleteLastFileRemovesPackage(t *testing.T) {
 
 	u.HandleChanges([]ChangeEvent{{Path: filePath, Op: fsnotify.Remove}})
 
-	if u.PackageCount() != initialCount-1 {
-		t.Fatalf("expected package count %d, got %d", initialCount-1, u.PackageCount())
+	if len(u.set.Primary().Workspace.Packages) != initialCount-1 {
+		t.Fatalf("expected package count %d, got %d", initialCount-1, len(u.set.Primary().Workspace.Packages))
 	}
 
 	if u.FindPackage(pkgDir) != nil {
@@ -207,7 +210,7 @@ func TestUpdater_ModifyInTestOnlyDirectoryKeepsPackage(t *testing.T) {
 
 func TestUpdater_NewDirectoryCreatesPackage(t *testing.T) {
 	u, dir := setupWorkspace(t)
-	initialCount := u.PackageCount()
+	initialCount := len(u.set.Primary().Workspace.Packages)
 
 	// Create a new package directory with a Go file
 	newPkgDir := filepath.Join(dir, "pkg", "b")
@@ -217,8 +220,8 @@ func TestUpdater_NewDirectoryCreatesPackage(t *testing.T) {
 
 	u.HandleChanges([]ChangeEvent{{Path: newFile, Op: fsnotify.Create}})
 
-	if u.PackageCount() != initialCount+1 {
-		t.Fatalf("expected package count %d, got %d", initialCount+1, u.PackageCount())
+	if len(u.set.Primary().Workspace.Packages) != initialCount+1 {
+		t.Fatalf("expected package count %d, got %d", initialCount+1, len(u.set.Primary().Workspace.Packages))
 	}
 
 	pkg := u.FindPackage(newPkgDir)
@@ -241,7 +244,8 @@ func TestUpdater_CreateOfNonMatchingFileLeavesPackageUnchanged(t *testing.T) {
 	_ = os.WriteFile(newPath, []byte(neverBuilt+"package a\n\nfunc Hidden() {}\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: newPath, Op: fsnotify.Create}})
 
-	if _, ok := pkg.Files["b.go"]; ok || len(pkg.Files) != 1 {
+	_, ok := pkg.Files["b.go"]
+	if ok || len(pkg.Files) != 1 {
 		t.Fatalf("package files = %v, want only a.go", pkg.Files)
 	}
 	if pkg.Symbols.FindSymbol("Hidden") != nil {
@@ -254,7 +258,7 @@ func TestUpdater_CreateOfNonMatchingFileLeavesPackageUnchanged(t *testing.T) {
 
 func TestUpdater_CreateInNewDirectoryWithOnlyNonMatchingFilesCreatesNoPackage(t *testing.T) {
 	u, dir := setupWorkspace(t)
-	initialCount := u.PackageCount()
+	initialCount := len(u.set.Primary().Workspace.Packages)
 
 	newPkgDir := filepath.Join(dir, "pkg", "b")
 	_ = os.MkdirAll(newPkgDir, 0755)
@@ -263,7 +267,7 @@ func TestUpdater_CreateInNewDirectoryWithOnlyNonMatchingFilesCreatesNoPackage(t 
 
 	u.HandleChanges([]ChangeEvent{{Path: newFile, Op: fsnotify.Create}})
 
-	if u.PackageCount() != initialCount || u.FindPackage(newPkgDir) != nil {
+	if len(u.set.Primary().Workspace.Packages) != initialCount || u.FindPackage(newPkgDir) != nil {
 		t.Fatal("a directory with only excluded files must not become a package")
 	}
 }
@@ -283,7 +287,8 @@ func TestUpdater_ModifyAddingConstraintRemovesFileFromPackage(t *testing.T) {
 	_ = os.WriteFile(extra, []byte(neverBuilt+"package a\n\nfunc Extra() {}\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
 
-	if _, ok := pkg.Files["b.go"]; ok {
+	_, ok := pkg.Files["b.go"]
+	if ok {
 		t.Fatal("b.go should have left the package")
 	}
 	if pkg.Symbols.FindSymbol("Extra") != nil {
@@ -320,10 +325,12 @@ func TestUpdater_ModifyToUnparsableFileRemovesItFromPackage(t *testing.T) {
 	_ = os.WriteFile(extra, []byte("package a\n\nfunc {"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Write}})
 
-	if _, ok := pkg.Files["b.go"]; ok {
+	_, ok := pkg.Files["b.go"]
+	if ok {
 		t.Fatal("unparsable file should not be in the package")
 	}
-	if src := u.set.Sources().File(extra); src == nil || src.Err == nil {
+	src := u.set.Sources().File(extra)
+	if src == nil || src.Err == nil {
 		t.Fatal("parse error should be recorded in the source tree")
 	}
 }
@@ -344,7 +351,7 @@ func TestUpdater_RemovingPackageDropsItFromDependencyGraph(t *testing.T) {
 	_ = os.WriteFile(bFile, []byte("package b\n\nimport _ \"example.com/test/pkg/a\"\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: bFile, Op: fsnotify.Create}})
 
-	g := u.Workspace().Dependencies
+	g := u.set.Primary().Workspace.Dependencies
 	if !slices.Contains(g.PackageDeps[bDir], aDir) {
 		t.Fatalf("PackageDeps[b] = %v, want it to contain %s", g.PackageDeps[bDir], aDir)
 	}
@@ -353,11 +360,13 @@ func TestUpdater_RemovingPackageDropsItFromDependencyGraph(t *testing.T) {
 	_ = os.Remove(aFile)
 	u.HandleChanges([]ChangeEvent{{Path: aFile, Op: fsnotify.Remove}})
 
-	g = u.Workspace().Dependencies
-	if _, ok := g.PackageImports[aDir]; ok {
+	g = u.set.Primary().Workspace.Dependencies
+	_, ok := g.PackageImports[aDir]
+	if ok {
 		t.Errorf("PackageImports still has %s", aDir)
 	}
-	if _, ok := g.PackageDeps[aDir]; ok {
+	_, ok = g.PackageDeps[aDir]
+	if ok {
 		t.Errorf("PackageDeps still has key %s", aDir)
 	}
 	if slices.Contains(g.PackageDeps[bDir], aDir) {
@@ -377,13 +386,18 @@ func TestUpdater_CreatedPackageClosingACycleIsReportedNotRecursed(t *testing.T) 
 
 	write("pkg/a/a.go", "package a\n\nimport \"example.com/test/pkg/b\"\n\nfunc Hello() { b.Bye() }\n", fsnotify.Write)
 	write("pkg/d/d.go", "package d\n\nimport \"example.com/test/pkg/a\"\n\nfunc D() { a.Hello() }\n", fsnotify.Create)
-	parser.EnsureTypeChecked(u.Workspace(), u.FindPackage(filepath.Join(dir, "pkg", "d")))
+	parser.EnsureTypeChecked(u.set.Primary().Workspace, u.FindPackage(filepath.Join(dir, "pkg", "d")))
 	write("pkg/b/b.go", "package b\n\nimport \"example.com/test/pkg/a\"\n\nfunc Bye() { a.Hello() }\n", fsnotify.Create)
 
 	pkgB := u.FindPackage(filepath.Join(dir, "pkg", "b"))
-	parser.EnsureTypeChecked(u.Workspace(), pkgB)
+	parser.EnsureTypeChecked(u.set.Primary().Workspace, pkgB)
 
 	if len(pkgB.ProductionErrs) == 0 {
 		t.Fatal("no production error for the import cycle")
 	}
+}
+
+// FindPackage returns the primary view's package at dir, or nil.
+func (u *WorkspaceUpdater) FindPackage(dir string) *types.Package {
+	return findPackageByDir(u.set.Primary().Workspace, dir)
 }

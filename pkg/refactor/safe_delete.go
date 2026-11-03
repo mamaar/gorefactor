@@ -1,10 +1,14 @@
 package refactor
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/format"
+	"maps"
 	"slices"
+	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
@@ -43,12 +47,14 @@ func (op *SafeDeleteOperation) Type() pkgtypes.OperationType {
 }
 
 func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
-	if err := op.validateRequest(); err != nil {
+	err := op.validateRequest()
+	if err != nil {
 		return err
 	}
 
 	// Confirm the source file and symbol can be resolved before checking references
-	if _, _, _, _, err := op.resolveSourceAndSymbol(ws); err != nil {
+	_, _, _, _, err = op.resolveSourceAndSymbol(ws)
+	if err != nil {
 		return err
 	}
 
@@ -140,9 +146,9 @@ func (op *SafeDeleteOperation) targetsOf(ws *pkgtypes.Workspace, roots []*pkgtyp
 	var targets []deletionTarget
 	seen := make(map[ast.Node]bool)
 	for _, root := range roots {
-		found, err := op.deletionTargets(ws, resolveSymbolPackage(ws, root), root)
+		found, err := op.deletionTargets(resolveSymbolPackage(ws, root), root)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("targets of: %w", err)
 		}
 		for _, t := range found {
 			if !seen[t.node] {
@@ -171,7 +177,7 @@ func (op *SafeDeleteOperation) blockingAmong(ws *pkgtypes.Workspace, targets []d
 				Message: fmt.Sprintf("failed to find references: %v", err),
 			}
 		}
-		scoped := op.filterReferencesByScope(references, resolveSymbolPackage(ws, t.root), ws)
+		scoped := op.filterReferencesByScope(references, resolveSymbolPackage(ws, t.root))
 		for _, ref := range op.filterOutDefinition(scoped, t.symbol) {
 			if !insideTargets(ws, targets, ref) {
 				blocking = append(blocking, *ref)
@@ -202,7 +208,7 @@ func nodeOffsets(ws *pkgtypes.Workspace, n ast.Node) (int, int) {
 
 // deletionTargets returns the declaration of symbol plus, when symbol is a
 // type, the declarations of its methods.
-func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgtypes.Package, symbol *pkgtypes.Symbol) ([]deletionTarget, error) {
+func (op *SafeDeleteOperation) deletionTargets(pkg *pkgtypes.Package, symbol *pkgtypes.Symbol) ([]deletionTarget, error) {
 	symbols := []*pkgtypes.Symbol{symbol}
 	if symbol.Kind == pkgtypes.TypeSymbol && pkg != nil && pkg.Symbols != nil {
 		for _, m := range pkg.Symbols.Methods[symbol.Name] {
@@ -228,7 +234,8 @@ func (op *SafeDeleteOperation) deletionTargets(ws *pkgtypes.Workspace, pkg *pkgt
 		var doc *ast.CommentGroup
 		var field *ast.Field
 		if sym.Kind == pkgtypes.StructFieldSymbol {
-			if field = findFieldDeclaration(file, sym); field != nil {
+			field = findFieldDeclaration(file, sym)
+			if field != nil {
 				node, doc = field, field.Doc
 			}
 		} else {
@@ -260,38 +267,35 @@ func findFileByPath(pkg *pkgtypes.Package, path string) *pkgtypes.File {
 // and resolves op.SymbolName within that package. It is the single place
 // Validate, Execute, and BlockingReferences share for this lookup.
 func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, *analysis.SymbolResolver, *pkgtypes.Symbol, error) {
-	// Check if source file exists
-	var sourceFile *pkgtypes.File
-	var sourcePackage *pkgtypes.Package
-	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
-			sourceFile = file
-			sourcePackage = pkg
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				sourcePackage = pkg
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
-	}
-
+	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
 	resolver := quietResolver(ws)
-
-	if sourceFile == nil {
+	if errors.Is(err, pkgtypes.ErrFileNotFound) {
 		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("resolve source and symbol: %w", err)
+	}
 
-	// Find the symbol to delete
+	declared := declaredInFile(sourcePackage, sourceFile, op.SymbolName)
+	sym, ok := declared[op.SymbolName]
+	if ok {
+		return sourceFile, sourcePackage, resolver, sym, nil
+	}
+	if len(declared) == 1 {
+		return sourceFile, sourcePackage, resolver, slices.Collect(maps.Values(declared))[0], nil
+	}
+	if len(declared) > 1 {
+		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("ambiguous symbol %q: %s declares %s; use Type.Method syntax to pick one",
+				op.SymbolName, op.SourceFile, strings.Join(slices.Sorted(maps.Keys(declared)), ", ")),
+		}
+	}
+
+	// Dotted names (Type.Method, Type.Field) are not in declaredInFile.
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
 	if err != nil {
 		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
@@ -299,8 +303,38 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 			Message: fmt.Sprintf("symbol %s not found: %v", op.SymbolName, err),
 		}
 	}
+	if symbol.File != sourceFile.Path {
+		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
+			Type:    pkgtypes.SymbolNotFound,
+			Message: fmt.Sprintf("%s is not declared in %s", op.SymbolName, op.SourceFile),
+		}
+	}
 
 	return sourceFile, sourcePackage, resolver, symbol, nil
+}
+
+// declaredInFile returns the package-level symbols and methods of pkg that file
+// declares under the bare name, keyed by how to spell each (Type.Method for a
+// method). A dotted name matches none.
+func declaredInFile(pkg *pkgtypes.Package, file *pkgtypes.File, name string) map[string]*pkgtypes.Symbol {
+	found := map[string]*pkgtypes.Symbol{}
+	if pkg.Symbols == nil {
+		return found
+	}
+	for _, byName := range []map[string]*pkgtypes.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
+		sym := byName[name]
+		if sym != nil && sym.File == file.Path {
+			found[name] = sym
+		}
+	}
+	for recv, methods := range pkg.Symbols.Methods {
+		for _, m := range methods {
+			if m.Name == name && m.File == file.Path {
+				found[recv+"."+name] = m
+			}
+		}
+	}
+	return found
 }
 
 func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
@@ -310,7 +344,8 @@ func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Refact
 	}
 	var blocking []pkgtypes.Reference
 	if op.Force {
-		if blocking, err = op.BlockingReferences(ws); err != nil {
+		blocking, err = op.BlockingReferences(ws)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -326,11 +361,26 @@ func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []del
 		AffectedFiles: make([]string, 0),
 		Reversible:    true,
 	}
+	removals := map[*pkgtypes.File][]pkgtypes.Change{}
 	for _, t := range targets {
-		plan.Changes = append(plan.Changes, op.generateRemovalChange(ws, t))
+		change := op.generateRemovalChange(ws, t)
+		plan.Changes = append(plan.Changes, change)
+		removals[t.file] = append(removals[t.file], change)
 		if !slices.Contains(plan.AffectedFiles, t.file.Path) {
 			plan.AffectedFiles = append(plan.AffectedFiles, t.file.Path)
 		}
+	}
+	for _, t := range targets {
+		changes, ok := removals[t.file]
+		if !ok {
+			continue
+		}
+		delete(removals, t.file)
+		if deletion, ok := emptiedFileDeletion(t.file, changes); ok {
+			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c pkgtypes.Change) bool { return c.File == t.file.Path }), deletion)
+			continue
+		}
+		plan.Changes = append(plan.Changes, removeImportSpecs(ws, t.file, unusedImportsAfterRemoval(ws, t.file, changes))...)
 	}
 	if op.Force {
 		for _, ref := range blocking {
@@ -345,7 +395,7 @@ func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []del
 	plan.Impact = &pkgtypes.ImpactAnalysis{
 		AffectedFiles:    plan.AffectedFiles,
 		AffectedPackages: op.getAffectedPackages(ws, plan.AffectedFiles),
-		PotentialIssues:  op.analyzeImpact(ws, targets[0].root, op.Force),
+		PotentialIssues:  op.analyzeImpact(targets[0].root, op.Force),
 	}
 	return plan
 }
@@ -364,12 +414,12 @@ func (op *SafeDeleteOperation) Description() string {
 
 // Helper methods
 
-func (op *SafeDeleteOperation) filterReferencesByScope(references []*pkgtypes.Reference, sourcePackage *pkgtypes.Package, ws *pkgtypes.Workspace) []*pkgtypes.Reference {
+func (op *SafeDeleteOperation) filterReferencesByScope(references []*pkgtypes.Reference, sourcePackage *pkgtypes.Package) []*pkgtypes.Reference {
 	if op.Scope == pkgtypes.PackageScope {
 		// Only include references from the same package
 		var filtered []*pkgtypes.Reference
 		for _, ref := range references {
-			if _, exists := sourcePackage.Files[ref.File]; exists {
+			if findFileByPath(sourcePackage, ref.File) != nil {
 				filtered = append(filtered, ref)
 			}
 		}
@@ -439,7 +489,8 @@ func findFieldDeclaration(file *pkgtypes.File, symbol *pkgtypes.Symbol) *ast.Fie
 	}
 	var found *ast.Field
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if f, ok := n.(*ast.Field); ok {
+		f, ok := n.(*ast.Field)
+		if ok {
 			for _, name := range f.Names {
 				if name.Pos() == symbol.Position {
 					found = f
@@ -545,6 +596,22 @@ func fieldCutRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) {
 	return start, end
 }
 
+// pastTrailingLineComment returns the offset after a // comment that follows
+// offset on the same line, or offset when there is none.
+func pastTrailingLineComment(content []byte, offset int) int {
+	i := offset
+	for i < len(content) && (content[i] == ' ' || content[i] == '\t') {
+		i++
+	}
+	if !bytes.HasPrefix(content[i:], []byte("//")) {
+		return offset
+	}
+	for i < len(content) && content[i] != '\n' && content[i] != '\r' {
+		i++
+	}
+	return i
+}
+
 // calculateRemovalRange returns the byte range to cut: from the start of the
 // line holding the doc comment (or declaration) through trailing newlines.
 func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) {
@@ -556,6 +623,7 @@ func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) 
 	_, end := nodeOffsets(ws, t.node)
 
 	content := t.file.OriginalContent
+	end = pastTrailingLineComment(content, end)
 	for end < len(content) && (content[end] == '\n' || content[end] == '\r') {
 		end++
 	}
@@ -568,11 +636,9 @@ func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) 
 func (op *SafeDeleteOperation) getAffectedPackages(ws *pkgtypes.Workspace, affectedFiles []string) []string {
 	packageMap := make(map[string]bool)
 	for _, filePath := range affectedFiles {
-		for _, pkg := range ws.Packages {
-			if _, exists := pkg.Files[filePath]; exists {
-				packageMap[pkg.Path] = true
-				break
-			}
+		pkg := findPackageForFile(ws, filePath)
+		if pkg != nil {
+			packageMap[pkg.Path] = true
 		}
 	}
 
@@ -583,7 +649,7 @@ func (op *SafeDeleteOperation) getAffectedPackages(ws *pkgtypes.Workspace, affec
 	return packages
 }
 
-func (op *SafeDeleteOperation) analyzeImpact(ws *pkgtypes.Workspace, symbol *pkgtypes.Symbol, forced bool) []pkgtypes.Issue {
+func (op *SafeDeleteOperation) analyzeImpact(symbol *pkgtypes.Symbol, forced bool) []pkgtypes.Issue {
 	var issues []pkgtypes.Issue
 
 	// Check if symbol is exported

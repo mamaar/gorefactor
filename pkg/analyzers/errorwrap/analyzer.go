@@ -4,15 +4,19 @@
 package errorwrap
 
 import (
+	"cmp"
 	"go/ast"
 	"go/token"
+	"path"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
+	"github.com/mamaar/gorefactor/pkg/analyzers/stmtfacts"
 )
 
 // Severity controls which violations are reported.
@@ -41,13 +45,31 @@ type Result struct {
 	CurrentCode       string `json:"current_code"`
 	ContextSuggestion string `json:"context_suggestion"`
 	Severity          string `json:"severity"`
+
+	// Skipped marks a violation the fixer leaves alone, for SkipReason.
+	Skipped    bool   `json:"skipped,omitempty"`
+	SkipReason string `json:"skip_reason,omitempty"`
+	// NeedsFmtImport is set when the fix writes fmt.Errorf into a file that
+	// does not import fmt.
+	NeedsFmtImport bool `json:"-"`
 }
+
+const skipExcluded = "excluded"
 
 // Option configures the analyzer.
 type Option func(*config)
 
 type config struct {
 	severity Severity
+	excluded []string
+}
+
+// WithExcludedFunctions leaves violations inside the named functions, and the
+// function literals within them, unfixed. Names are Func or Type.Method.
+func WithExcludedFunctions(names ...string) Option {
+	return func(c *config) {
+		c.excluded = names
+	}
 }
 
 // WithSeverity returns an Option that sets the minimum severity level to report.
@@ -95,25 +117,36 @@ func makeRun(cfg *config) func(*analysis.Pass) (any, error) {
 func analyzeFile(pass *analysis.Pass, cfg *config, file *ast.File, content []byte) []*Result {
 	var results []*Result
 	var currentFunc string
+	var site siteInfo
 	funcReturnsError := false
+	fmtSkip, needsFmt := fmtAvailability(pass, file)
+	var stack []ast.Node
 
 	ast.Inspect(file, func(n ast.Node) bool {
 		if n == nil {
+			stack = stack[:len(stack)-1]
 			return false
 		}
+		stack = append(stack, n)
 
 		switch node := n.(type) {
 		case *ast.FuncDecl:
 			currentFunc = node.Name.Name
+			site = siteInfo{content: content, funcName: currentFunc, fmtSkip: fmtSkip, needsFmt: needsFmt}
+			if slices.Contains(cfg.excluded, qualifiedName(node)) {
+				site.skip = skipExcluded
+			}
 			funcReturnsError = returnsError(node)
 			if !funcReturnsError {
+				stack = stack[:len(stack)-1]
 				return false
 			}
 		case *ast.ReturnStmt:
 			if !funcReturnsError {
 				return true
 			}
-			violations := checkReturnStmt(pass, cfg, file, content, node, currentFunc)
+			site.stack = stack
+			violations := checkReturnStmt(pass, cfg, site, node)
 			results = append(results, violations...)
 		}
 		return true
@@ -127,21 +160,89 @@ func returnsError(fn *ast.FuncDecl) bool {
 		return false
 	}
 	for _, field := range fn.Type.Results.List {
-		if ident, ok := field.Type.(*ast.Ident); ok && ident.Name == "error" {
+		ident, ok := field.Type.(*ast.Ident)
+		if ok && ident.Name == "error" {
 			return true
 		}
 	}
 	return false
 }
 
-func checkReturnStmt(pass *analysis.Pass, cfg *config, file *ast.File, content []byte, ret *ast.ReturnStmt, funcName string) []*Result {
+// siteInfo is what the checks need to know about the function they are in.
+type siteInfo struct {
+	content  []byte
+	funcName string
+	skip     string     // why every fix in this function is skipped
+	fmtSkip  string     // why fmt.Errorf cannot be written in this file
+	needsFmt bool       // the file does not import fmt
+	stack    []ast.Node // ancestors of the return being checked, outermost first
+}
+
+// qualifiedName returns Func or Type.Method for a declaration.
+func qualifiedName(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return fn.Name.Name
+	}
+	t := fn.Recv.List[0].Type
+	for {
+		switch x := t.(type) {
+		case *ast.StarExpr:
+			t = x.X
+			continue
+		case *ast.IndexExpr:
+			t = x.X
+			continue
+		case *ast.IndexListExpr:
+			t = x.X
+			continue
+		case *ast.ParenExpr:
+			t = x.X
+			continue
+		}
+		break
+	}
+	id, ok := t.(*ast.Ident)
+	if ok {
+		return id.Name + "." + fn.Name.Name
+	}
+	return fn.Name.Name
+}
+
+// fmtAvailability reports why fmt.Errorf cannot be written in file (another
+// package is named fmt there), and whether the file lacks the fmt import.
+func fmtAvailability(pass *analysis.Pass, file *ast.File) (skip string, needsImport bool) {
+	if pass.Pkg.Scope().Lookup("fmt") != nil {
+		return "the package declares an identifier named fmt", false
+	}
+	for _, imp := range file.Imports {
+		importPath, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := path.Base(importPath)
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		if importPath == "fmt" && name == "fmt" {
+			return "", false
+		}
+		if name == "fmt" {
+			return "the file imports " + importPath + " under the name fmt", false
+		}
+	}
+	return "", true
+}
+
+func checkReturnStmt(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.ReturnStmt) []*Result {
 	var results []*Result
 
 	for _, expr := range ret.Results {
-		if r := checkBareReturn(pass, cfg, file, content, ret, expr, funcName); r != nil {
+		r := checkBareReturn(pass, cfg, site, ret, expr)
+		if r != nil {
 			results = append(results, r)
 		}
-		if r := checkFmtErrorf(pass, cfg, file, content, ret, expr, funcName); r != nil {
+		r = checkFmtErrorf(pass, cfg, site, ret, expr)
+		if r != nil {
 			results = append(results, r)
 		}
 	}
@@ -149,13 +250,14 @@ func checkReturnStmt(pass *analysis.Pass, cfg *config, file *ast.File, content [
 	return results
 }
 
-func checkBareReturn(pass *analysis.Pass, cfg *config, file *ast.File, content []byte, ret *ast.ReturnStmt, expr ast.Expr, funcName string) *Result {
+func checkBareReturn(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.ReturnStmt, expr ast.Expr) *Result {
+	content, funcName := site.content, site.funcName
 	ident, ok := expr.(*ast.Ident)
 	if !ok || !isErrorVarName(ident.Name) {
 		return nil
 	}
 
-	if !matchesSeverity(cfg.severity, SeverityCritical) {
+	if !matchesSeverity(cfg.severity, SeverityCritical) || !stmtfacts.ProvablyNonNil(site.stack, ret, ident.Name) {
 		return nil
 	}
 
@@ -187,6 +289,11 @@ func checkBareReturn(pass *analysis.Pass, cfg *config, file *ast.File, content [
 		})
 	}
 
+	skip := cmp.Or(site.skip, site.fmtSkip)
+	if skip != "" {
+		fixes = nil
+	}
+
 	pass.Report(analysis.Diagnostic{
 		Pos:            ret.Pos(),
 		End:            ret.End(),
@@ -203,10 +310,14 @@ func checkBareReturn(pass *analysis.Pass, cfg *config, file *ast.File, content [
 		CurrentCode:       strings.TrimSpace(code),
 		ContextSuggestion: ctx,
 		Severity:          string(SeverityCritical),
+		Skipped:           skip != "",
+		SkipReason:        skip,
+		NeedsFmtImport:    skip == "" && site.needsFmt,
 	}
 }
 
-func checkFmtErrorf(pass *analysis.Pass, cfg *config, file *ast.File, content []byte, ret *ast.ReturnStmt, expr ast.Expr, funcName string) *Result {
+func checkFmtErrorf(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.ReturnStmt, expr ast.Expr) *Result {
+	content, funcName := site.content, site.funcName
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
 		return nil
@@ -310,6 +421,10 @@ func checkFmtErrorf(pass *analysis.Pass, cfg *config, file *ast.File, content []
 				})
 			}
 
+			if site.skip != "" {
+				fixes = nil
+			}
+
 			pass.Report(analysis.Diagnostic{
 				Pos:            ret.Pos(),
 				End:            ret.End(),
@@ -326,6 +441,8 @@ func checkFmtErrorf(pass *analysis.Pass, cfg *config, file *ast.File, content []
 				CurrentCode:       strings.TrimSpace(code),
 				ContextSuggestion: ctx,
 				Severity:          string(SeverityWarning),
+				Skipped:           site.skip != "",
+				SkipReason:        site.skip,
 			}
 		}
 	}

@@ -112,7 +112,7 @@ func carriedByDir(root dirMove, packages []dirMove) ([]fileMove, error) {
 	}
 	entries, err := walkTree(root.source)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("carried by dir: %w", err)
 	}
 	var keep []treeEntry
 	for _, e := range entries {
@@ -141,7 +141,8 @@ func toFileMoves(m dirMove, entries []treeEntry) ([]fileMove, error) {
 			return nil, fmt.Errorf("cannot move %s: it is inside a .git directory", e.path)
 		}
 		target := filepath.Join(m.target, e.rel)
-		if _, err := os.Lstat(target); err == nil {
+		_, err := os.Lstat(target)
+		if err == nil {
 			return nil, fmt.Errorf("cannot move %s: %s already exists", e.path, target)
 		}
 		moves = append(moves, fileMove{source: e.path, target: target, mode: e.mode.Perm()})

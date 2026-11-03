@@ -60,7 +60,8 @@ func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 			dir, result := callToolOnFixture(t, tc.fixture, tc.tool, tc.args)
 
 			// A preview that wrote to disk is not a preview.
-			if after := readFile(t, filepath.Join(dir, "main.go")); after != before {
+			after := readFile(t, filepath.Join(dir, "main.go"))
+			if after != before {
 				t.Errorf("%s: preview modified the file on disk", tc.tool)
 			}
 
@@ -72,7 +73,8 @@ func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 			for _, d := range diffs {
 				file := d.(map[string]any)
 				// A delete carries no hunks by design.
-				if action, _ := file["action"].(string); action == "delete" {
+				action, _ := file["action"].(string)
+				if action == "delete" {
 					continue
 				}
 				hunks, ok := file["hunks"].([]any)

@@ -12,7 +12,7 @@ import (
 
 func callTool(t *testing.T, sess *mcptest.Session, tool string, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool(%s): %v", tool, err)
 	}
@@ -28,7 +28,8 @@ func TestInlineFunction_CallSiteOnlyInTaggedFileIsInlinedAndDeclarationKept(t *t
 
 	assertFileContains(t, dir, "p/use_tagx.go", "func Use() int { return 1 }")
 	assertFileUnchanged(t, dir, "p/f.go", sdcF)
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	goVets(t, dir, "", "tagx")
@@ -88,7 +89,8 @@ func TestInlineFunction_SingleConfigOmitsBuildConfigs(t *testing.T) {
 
 	out := callJSON(t, sess, "inline_function", map[string]any{"function_name": "f", "source_file": "p/f.go"})
 
-	if _, ok := out["build_configs"]; ok {
+	_, ok := out["build_configs"]
+	if ok {
 		t.Errorf("build_configs = %v, want the field omitted", out["build_configs"])
 	}
 	assertFileContains(t, dir, "p/use.go", "return 1")
@@ -156,7 +158,8 @@ func TestInlineMethod_SingleConfigOmitsBuildConfigsAndKeepsErrorText(t *testing.
 	}
 
 	out := callJSON(t, sess, "inline_method", map[string]any{"method_name": "Get", "source_struct": "T", "target_file": "p/use.go"})
-	if _, ok := out["build_configs"]; ok {
+	_, ok := out["build_configs"]
+	if ok {
 		t.Errorf("build_configs = %v, want the field omitted", out["build_configs"])
 	}
 	assertFileContains(t, dir, "p/use.go", "return t.n + 1")

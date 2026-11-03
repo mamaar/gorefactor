@@ -42,7 +42,8 @@ func TestMoveSymbol_RefusesATypeTogetherWithItsMethodInValidate(t *testing.T) {
 
 	res := moveSymbolsCall(t, sess, "src", "dst", "T", "M")
 	assertRefused(t, res, "cannot move M: it is a method of T and moves with its type; move T instead")
-	if got := errText(res); strings.Contains(got, "overlapping") {
+	got := errText(res)
+	if strings.Contains(got, "overlapping") {
 		t.Errorf("refusal comes from the planner, not validation: %s", got)
 	}
 	assertFileUnchanged(t, dir, "src/src.go", memberSrc)
@@ -56,7 +57,8 @@ func TestMoveSymbol_MovesAFunctionSharingItsNameWithAMethod(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "M", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "M", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "func M() int")

@@ -15,7 +15,8 @@ func TestMoveSymbol_MovesASymbolNamedTwiceOnce(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolsCall(t, sess, "src", "dst", "A", "B", "A"); res.IsError {
+	res := moveSymbolsCall(t, sess, "src", "dst", "A", "B", "A")
+	if res.IsError {
 		t.Fatalf("move: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "func A()")
