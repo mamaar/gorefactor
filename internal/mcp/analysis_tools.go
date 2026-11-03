@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -996,7 +997,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_if_init_assignments",
-		Description: "Split if/switch/type-switch init assignments into a separate assignment and check statement. Else-if inits are de-sugared into a nested block, and a `:=` is downgraded to `=` when every declared name already exists in the target scope. Sites the analyzer judges unsafe to rewrite are left unmodified and reported in `skipped` rather than silently dropped; for loops and range statements are never touched.",
+		Description: "Split if/switch/type-switch init assignments into a separate assignment and check statement. Else-if inits are de-sugared into a nested block, and a `:=` is downgraded to `=` only when every declared name was introduced by an earlier split in the same scope with an identical type. A split is skipped when it would redeclare a name later in the scope, capture a later use of an outer name, or overwrite an original variable. The plan is type-checked before it is applied: new type errors refuse the apply and appear as `blocking_issue` in a dry run. Sites the analyzer judges unsafe to rewrite are left unmodified and reported in `skipped` rather than silently dropped; for loops and range statements are never touched.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixIfInitInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 
@@ -1030,7 +1031,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			}
 		}
 
-		changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		if len(changes) == 0 {
 			state.RUnlock()
 			message := "No if-init assignment violations found"
@@ -1047,9 +1048,21 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
+		// The importer must be the one that type-checked ws; see
+		// VerifyPlanTypesWithImporter's doc comment.
+		verification := refactor.VerifyPlanTypesWithImporter(ws, plan, state.GetEngine().Importer(ws))
+		blocking := verificationBlocker(verification)
+		if blocking != "" && !in.DryRun {
+			state.RUnlock()
+			return errResult(errors.New(blocking)), nil, nil
+		}
 		result, err := executePlanWithUnlock(state, plan, "Fix if-init assignments", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
+		}
+		if blocking != "" {
+			result.Success = false
+			result.BlockingIssue = blocking
 		}
 		out := map[string]any{
 			"files_modified": result.ModifiedFiles,

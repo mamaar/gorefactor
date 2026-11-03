@@ -642,38 +642,19 @@ func f() (int, error) { return 0, nil }
 	}
 }
 
-func TestIfInit_ParamCollision(t *testing.T) {
+func TestIfInit_ParamCollision_Skipped(t *testing.T) {
 	src := `package testpkg
 
 func foo(err error) error {
 	if err := doit(); err != nil {
 		return err
 	}
-	return nil
+	return err
 }
 
 func doit() error { return nil }
 `
-	ws := createTypeCheckedWorkspace(t, src)
-	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	results, _ := rr.Result.([]*ifinit.Result)
-	if len(results) != 1 {
-		t.Fatalf("Expected 1 violation, got %d", len(results))
-	}
-	if results[0].Skipped {
-		t.Fatalf("Expected param-collision result not skipped: %+v", results[0])
-	}
-
-	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
-	formatted := mustFormat(t, src, changes)
-
-	if !strings.Contains(formatted, "err = doit()") {
-		t.Errorf("Expected downgrade to 'err = doit()' against the parameter, got:\n%s", formatted)
-	}
+	assertSkipped(t, src, "already declared")
 }
 
 func TestIfInit_TypeIncompatible_Skipped(t *testing.T) {
@@ -928,6 +909,7 @@ func foo(x interface{}) {
 		if v := f(); v > 0 {
 			_ = v
 		}
+		_ = v
 	}
 }
 
@@ -947,15 +929,8 @@ func f() int { return 0 }
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 	formatted := mustCompile(t, src, changes)
 
-	if strings.Contains(formatted, "v := f()") {
-		t.Fatalf("must not emit a bare 'v := f()' inside the type-switch clause body "+
-			"(collides with the clause-scoped guard variable), got:\n%s", formatted)
-	}
-
-	if results[0].Skipped {
-		t.Logf("collision conservatively skipped (reason=%q); acceptable", results[0].SkipReason)
-	} else if !strings.Contains(formatted, "v = f()") {
-		t.Errorf("expected downgrade to 'v = f()' when not skipped, got:\n%s", formatted)
+	if !results[0].Skipped {
+		t.Errorf("expected the site skipped: the clause variable is read after the if, got:\n%s", formatted)
 	}
 }
 
@@ -968,6 +943,7 @@ func foo(ch chan int) {
 		if v := g(); v > 0 {
 			_ = v
 		}
+		_ = v
 	}
 }
 
@@ -987,15 +963,8 @@ func g() int { return 0 }
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
 	formatted := mustCompile(t, src, changes)
 
-	if strings.Contains(formatted, "v := g()") {
-		t.Fatalf("must not emit a bare 'v := g()' inside the select clause body "+
-			"(collides with the clause-scoped receive variable), got:\n%s", formatted)
-	}
-
-	if results[0].Skipped {
-		t.Logf("collision conservatively skipped (reason=%q); acceptable", results[0].SkipReason)
-	} else if !strings.Contains(formatted, "v = g()") {
-		t.Errorf("expected downgrade to 'v = g()' when not skipped, got:\n%s", formatted)
+	if !results[0].Skipped {
+		t.Errorf("expected the site skipped: the clause variable is read after the if, got:\n%s", formatted)
 	}
 }
 
@@ -1011,6 +980,7 @@ func foo(tag int) {
 		if v := f(); v > 0 {
 			_ = v
 		}
+		_ = v
 	}
 }
 
@@ -1350,7 +1320,7 @@ func makeString() string  { return "" }
 	if results[0].SkipReason == "" {
 		t.Errorf("Expected a non-empty SkipReason")
 	}
-	if !strings.Contains(results[0].SkipReason, "cannot be downgraded") {
+	if !strings.Contains(results[0].SkipReason, "reuse the hoisted variable") {
 		t.Errorf("Expected SkipReason to explain the cascade failure, got %q", results[0].SkipReason)
 	}
 
@@ -1439,5 +1409,172 @@ func h() int  { return 0 }
 	}
 	if strings.Contains(formatted, "a := h()") {
 		t.Errorf("must not leave a bare 'a := h()', got:\n%s", formatted)
+	}
+}
+
+// assertSkipped checks that src compiles, that its first if-init site is
+// reported skipped for a reason containing wantReason, and that no edit is
+// produced for that site.
+func assertSkipped(t *testing.T, src, wantReason string) {
+	t.Helper()
+	if errs := typeCheckErrors(t, src); len(errs) > 0 {
+		t.Fatalf("test source does not type-check: %v", errs)
+	}
+	ws := createTypeCheckedWorkspace(t, src)
+	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, _ := rr.Result.([]*ifinit.Result)
+	if len(results) == 0 {
+		t.Fatal("expected a violation")
+	}
+	if !results[0].Skipped {
+		formatted := mustFormat(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		t.Fatalf("expected the first site skipped, got fix:\n%s", formatted)
+	}
+	if !strings.Contains(results[0].SkipReason, wantReason) {
+		t.Errorf("SkipReason = %q, want it to contain %q", results[0].SkipReason, wantReason)
+	}
+	if len(rr.Diagnostics[0].SuggestedFixes) != 0 {
+		t.Errorf("a skipped site must carry no fix")
+	}
+}
+
+// A hoist puts the name into the enclosing scope, so anything the block
+// declares or refers to under the same name later must make it skip.
+func TestIfInit_HoistConflictsWithLaterCode_Skipped(t *testing.T) {
+	cases := []struct{ name, body, reason string }{
+		{"later var", `if err := a(); err != nil {
+		return err
+	}
+	var err error
+	return err`, "redeclare"},
+		{"later const", `if n := f(); n > 0 {
+		return nil
+	}
+	const n = 3
+	_ = n
+	return nil`, "redeclare"},
+		{"later type", `if T := f(); T > 0 {
+		return nil
+	}
+	type T int
+	return nil`, "redeclare"},
+		{"later define of another type", `if n := f(); n > 0 {
+		return nil
+	}
+	n := "s"
+	_ = n
+	return nil`, "reuse the hoisted variable"},
+		{"later partial define of another type", `if s := g(); s != "" {
+		return nil
+	}
+	n, s := f(), 1
+	_, _ = n, s
+	return nil`, "reuse the hoisted variable"},
+		{"outer variable read after", `var n int
+	{
+		if n := f(); n > 0 {
+			return nil
+		}
+		_ = n
+	}
+	return nil`, "refer to the hoisted variable"},
+		{"package variable read after", `if pkgVar := f(); pkgVar > 0 {
+		return nil
+	}
+	_ = pkgVar
+	return nil`, "refer to the hoisted variable"},
+		{"imported package name used after", `if strings := f(); strings > 0 {
+		return nil
+	}
+	_ = strings.ToUpper("x")
+	return nil`, "refer to the hoisted variable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `package testpkg
+
+import "strings"
+
+var pkgVar = 1
+
+func foo() error {
+	` + tc.body + `
+}
+
+func a() error   { return nil }
+func f() int     { return 0 }
+func g() string  { return "" }
+
+var _ = strings.ToUpper
+`
+			assertSkipped(t, src, tc.reason)
+		})
+	}
+}
+
+// Reusing a name with '=' may only touch a variable an earlier hoist put there.
+func TestIfInit_ReuseOverwritesOriginalVariable_Skipped(t *testing.T) {
+	cases := []struct{ name, body string }{
+		{"earlier := read after", `n := f()
+	if n := f(); n > 0 {
+		return nil
+	}
+	_ = n
+	return nil`},
+		{"partial collision with an original variable", `n := f()
+	if n, s := h(); s != "" {
+		_ = n
+	}
+	_ = n
+	return nil`},
+		{"var declaration read after", `var n int
+	if n := f(); n > 0 {
+		return nil
+	}
+	_ = n
+	return nil`},
+		{"hoisted variable of a different type", `if v := e(); v != nil {
+		return nil
+	}
+	if v := m(); v != nil {
+		return nil
+	}
+	return nil`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := `package testpkg
+
+type myErr struct{}
+
+func (*myErr) Error() string { return "" }
+
+func foo() error {
+	` + tc.body + `
+}
+
+func f() int                 { return 0 }
+func e() error               { return nil }
+func m() *myErr              { return nil }
+func h() (int, string)       { return 0, "" }
+`
+			ws := createTypeCheckedWorkspace(t, src)
+			if errs := typeCheckErrors(t, src); len(errs) > 0 {
+				t.Fatalf("test source does not type-check: %v", errs)
+			}
+			rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			results, _ := rr.Result.([]*ifinit.Result)
+			last := results[len(results)-1]
+			if !last.Skipped {
+				t.Fatalf("expected the last site skipped, got %+v", last)
+			}
+			mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+		})
 	}
 }

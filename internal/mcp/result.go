@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -265,6 +266,19 @@ func planBuildConfigs(plan *types.RefactoringPlan) []string {
 func executePlanWithUnlock(state *MCPServer, plan *types.RefactoringPlan, desc string, dryRun bool) (*PlanResult, error) {
 	state.RUnlock()
 	return executePlan(state, plan, desc, dryRun)
+}
+
+// verificationBlocker returns why a type-check verification forbids applying
+// its plan: the errors the plan would introduce, or that it could not be
+// checked ("" when verified clean).
+func verificationBlocker(v *refactor.TypeCheckResult) string {
+	if len(v.NewErrors) > 0 {
+		return "applying this plan would introduce type errors: " + strings.Join(v.NewErrors, "; ")
+	}
+	if v.Skipped != "" {
+		return "the plan could not be verified against go/types: " + v.Skipped
+	}
+	return ""
 }
 
 // withDryRun annotates a tool response with preview details when nothing was
