@@ -258,13 +258,7 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 		if importSpec.Name != nil && (importSpec.Name.Name == "." || importSpec.Name.Name == "_") {
 			continue
 		}
-		var rule *types.AliasRule
-		for i := range op.Request.Rules {
-			if op.matchesPattern(importPath, op.Request.Rules[i].PackagePattern) {
-				rule = &op.Request.Rules[i]
-				break
-			}
-		}
+		rule := op.ruleForImport(importPath)
 		if rule == nil {
 			continue
 		}
@@ -355,6 +349,17 @@ func (op *StandardizeImportsOperation) standardizeFileImports(ws *types.Workspac
 	}
 
 	return changes
+}
+
+func (op *StandardizeImportsOperation) ruleForImport(importPath string) *types.AliasRule {
+	var rule *types.AliasRule
+	for i := range op.Request.Rules {
+		if op.matchesPattern(importPath, op.Request.Rules[i].PackagePattern) {
+			rule = &op.Request.Rules[i]
+			break
+		}
+	}
+	return rule
 }
 
 // nameTakenAt returns the declaration that name would clash with at one of the

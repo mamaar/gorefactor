@@ -297,12 +297,7 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 		rewrites = append(rewrites, rw)
 		rewriteByDir[m.source] = rw
 	}
-	var renames []pkgRename
-	for _, rw := range rewrites {
-		if rw.renamed && rw.oldImportPath != "" {
-			renames = append(renames, pkgRename{oldPath: rw.oldImportPath, oldName: rw.oldName, newName: rw.newName})
-		}
-	}
+	renames := packageRenames(rewrites)
 
 	rewriteImportPaths := func(content string) string {
 		for _, rw := range rewrites {
@@ -386,6 +381,16 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 	}
 
 	return markRelocation(plan), nil
+}
+
+func packageRenames(rewrites []dirPkgRewrite) []pkgRename {
+	var renames []pkgRename
+	for _, rw := range rewrites {
+		if rw.renamed && rw.oldImportPath != "" {
+			renames = append(renames, pkgRename{oldPath: rw.oldImportPath, oldName: rw.oldName, newName: rw.newName})
+		}
+	}
+	return renames
 }
 
 // appendFileMove adds the create and delete changes that move one file.

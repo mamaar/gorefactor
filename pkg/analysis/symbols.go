@@ -532,20 +532,7 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 		// Early package filter: skip entries from files not in allowed packages
 		// This happens BEFORE expensive type resolution
 		if allowedPackages != nil && entry.File != nil {
-			inAllowedPackage := false
-			for _, pkg := range allowedPackages {
-				// Check both absolute and relative paths
-				_, exists := pkg.Files[entry.File.Path]
-				if exists {
-					inAllowedPackage = true
-					break
-				}
-				// Also check if the file's package matches (more reliable than path matching)
-				if entry.File.Package == pkg {
-					inAllowedPackage = true
-					break
-				}
-			}
+			inAllowedPackage := fileInAnyPackage(allowedPackages, entry)
 			if !inAllowedPackage {
 				skippedReasons["not_in_allowed_packages"]++
 				continue
@@ -607,6 +594,24 @@ func (sr *SymbolResolver) FindReferencesIndexedFiltered(symbol *types.Symbol, id
 	}
 
 	return references, nil
+}
+
+func fileInAnyPackage(allowedPackages map[string]*types.Package, entry *indexEntry) bool {
+	inAllowedPackage := false
+	for _, pkg := range allowedPackages {
+		// Check both absolute and relative paths
+		_, exists := pkg.Files[entry.File.Path]
+		if exists {
+			inAllowedPackage = true
+			break
+		}
+		// Also check if the file's package matches (more reliable than path matching)
+		if entry.File.Package == pkg {
+			inAllowedPackage = true
+			break
+		}
+	}
+	return inAllowedPackage
 }
 
 // objectEntriesToReferences converts workspace-index object entries into
@@ -899,15 +904,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 	// fields are far more collision-prone than methods, and a bare match could
 	// silently target the wrong symbol. Suggest the Type.Field form instead
 	// (mirrors the ambiguous-method block above).
-	var fieldSuggestions []string
-	for typeName, fields := range pkg.Symbols.Fields {
-		for _, field := range fields {
-			if field.Name == name {
-				fieldSuggestions = append(fieldSuggestions, typeName+"."+name)
-				break
-			}
-		}
-	}
+	fieldSuggestions := qualifiedFieldsNamed(pkg, name)
 	if len(fieldSuggestions) > 0 {
 		return nil, &types.RefactorError{
 			Type: types.SymbolNotFound,
@@ -923,6 +920,19 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 		Message: fmt.Sprintf("symbol not found: %s", name),
 		File:    pkg.Dir,
 	}
+}
+
+func qualifiedFieldsNamed(pkg *types.Package, name string) []string {
+	var fieldSuggestions []string
+	for typeName, fields := range pkg.Symbols.Fields {
+		for _, field := range fields {
+			if field.Name == name {
+				fieldSuggestions = append(fieldSuggestions, typeName+"."+name)
+				break
+			}
+		}
+	}
+	return fieldSuggestions
 }
 
 // formatMemberList renders a list of member names for error messages, using a
@@ -1969,33 +1979,7 @@ func (sr *SymbolResolver) methodBelongsToType(methodSym *types.Symbol, typeSym *
 
 	// Interface match: check if typeSym implements the interface that methodSym is part of
 	if methodReceiverType.Kind == types.InterfaceSymbol {
-		var methods []*types.Symbol
-		var err error
-
-		sr.logger.Debug("Interface matching",
-			"method_receiver", methodReceiverType.Name,
-			"method_receiver_kind", methodReceiverType.Kind,
-			"type", typeSym.Name,
-			"type_kind", typeSym.Kind)
-
-		// Use appropriate method to get methods based on type kind
-		if typeSym.Kind == types.InterfaceSymbol {
-			// Both are interfaces - check if typeSym embeds methodReceiverType
-			sr.logger.Debug("Both are interfaces, calling getInterfaceMethods", "type", typeSym.Name)
-			methods, err = sr.getInterfaceMethods(typeSym)
-			sr.logger.Debug("getInterfaceMethods returned",
-				"method_count", len(methods),
-				"error", err)
-			for i, m := range methods {
-				sr.logger.Debug("Method",
-					"index", i,
-					"name", m.Name,
-					"package", m.Package)
-			}
-		} else {
-			// typeSym is a concrete type - get its method set
-			methods, err = sr.ResolveMethodSet(typeSym)
-		}
+		methods, err := sr.typeMethods(methodReceiverType, typeSym)
 
 		if err == nil {
 			sr.logger.Debug("Checking if method is in the list",
@@ -2029,6 +2013,37 @@ func (sr *SymbolResolver) methodBelongsToType(methodSym *types.Symbol, typeSym *
 		"type_kind", typeSym.Kind)
 
 	return false
+}
+
+func (sr *SymbolResolver) typeMethods(methodReceiverType *types.Symbol, typeSym *types.Symbol) ([]*types.Symbol, error) {
+	var methods []*types.Symbol
+	var err error
+
+	sr.logger.Debug("Interface matching",
+		"method_receiver", methodReceiverType.Name,
+		"method_receiver_kind", methodReceiverType.Kind,
+		"type", typeSym.Name,
+		"type_kind", typeSym.Kind)
+
+	// Use appropriate method to get methods based on type kind
+	if typeSym.Kind == types.InterfaceSymbol {
+		// Both are interfaces - check if typeSym embeds methodReceiverType
+		sr.logger.Debug("Both are interfaces, calling getInterfaceMethods", "type", typeSym.Name)
+		methods, err = sr.getInterfaceMethods(typeSym)
+		sr.logger.Debug("getInterfaceMethods returned",
+			"method_count", len(methods),
+			"error", err)
+		for i, m := range methods {
+			sr.logger.Debug("Method",
+				"index", i,
+				"name", m.Name,
+				"package", m.Package)
+		}
+	} else {
+		// typeSym is a concrete type - get its method set
+		methods, err = sr.ResolveMethodSet(typeSym)
+	}
+	return methods, err
 }
 
 // resolveTypesObject resolves a Symbol to its go/types.Object by looking up

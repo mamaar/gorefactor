@@ -92,15 +92,7 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 	if mainFn == nil {
 		return nil, fmt.Errorf("entry package %s has no func main", entry.Path)
 	}
-	roots := []*ssa.Function{mainFn}
-	for pkg := range ua.importClosure(entry, includeTests) {
-		roots = append(roots, ssaPkgs[pkg].Func("init"))
-	}
-	for _, sp := range testPkgs {
-		roots = append(roots, sp.Func("init"))
-		roots = append(roots, testFuncs(sp)...)
-	}
-	slices.SortFunc(roots[1:], func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
+	roots := entryRoots(mainFn, ua, entry, includeTests, ssaPkgs, testPkgs)
 
 	names := externalMethodNames(external)
 	rootSet := make(map[*ssa.Function]bool)
@@ -155,6 +147,19 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		slices.SortFunc(added, func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
 		roots = append(roots, added...)
 	}
+}
+
+func entryRoots(mainFn *ssa.Function, ua *UnusedAnalyzer, entry *types.Package, includeTests bool, ssaPkgs map[*types.Package]*ssa.Package, testPkgs []*ssa.Package) []*ssa.Function {
+	roots := []*ssa.Function{mainFn}
+	for pkg := range ua.importClosure(entry, includeTests) {
+		roots = append(roots, ssaPkgs[pkg].Func("init"))
+	}
+	for _, sp := range testPkgs {
+		roots = append(roots, sp.Func("init"))
+		roots = append(roots, testFuncs(sp)...)
+	}
+	slices.SortFunc(roots[1:], func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
+	return roots
 }
 
 // createImports creates bodiless SSA packages for every package the created

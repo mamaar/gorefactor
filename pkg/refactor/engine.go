@@ -476,11 +476,7 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry, within string)
 			withinReached = true
 			maps.Copy(reach.Within, scoped)
 		}
-		for _, b := range bodiless {
-			if !strings.Contains(b.Package, " ") { // not a test variant
-				addImportClosure(reach.Bodiless, v.Workspace, b.Package)
-			}
-		}
+		addBodilessClosures(bodiless, reach, v)
 	}
 	if analysed == 0 {
 		return nil, cmp.Or(entryErr, fmt.Errorf("entry package %q not found in any build configuration", entry))
@@ -489,6 +485,14 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry, within string)
 		return nil, fmt.Errorf("within_function %q is not declared or not reached by the entry program", within)
 	}
 	return reach, nil
+}
+
+func addBodilessClosures(bodiless []analysis.BodilessPackage, reach *EntryReach, v *analysis.View) {
+	for _, b := range bodiless {
+		if !strings.Contains(b.Package, " ") { // not a test variant
+			addImportClosure(reach.Bodiless, v.Workspace, b.Package)
+		}
+	}
 }
 
 // threadContextPlanner plans context threading in one view.

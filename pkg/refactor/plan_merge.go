@@ -211,24 +211,7 @@ func MergeStepPlans(steps []*types.RefactoringPlan) (*types.RefactoringPlan, err
 				out.SkippedSites = append(out.SkippedSites, s)
 			}
 		}
-		for _, c := range p.Coverage.Configs {
-			if !seenConfigs[c] {
-				seenConfigs[c] = true
-				out.Coverage.Configs = append(out.Coverage.Configs, c)
-			}
-		}
-		for _, u := range p.Coverage.Uncovered {
-			if !seenUncovered[u.Path] {
-				seenUncovered[u.Path] = true
-				out.Coverage.Uncovered = append(out.Coverage.Uncovered, u)
-			}
-		}
-		for _, e := range p.Coverage.TypeErrors {
-			if !seenTypeErrors[e] {
-				seenTypeErrors[e] = true
-				out.Coverage.TypeErrors = append(out.Coverage.TypeErrors, e)
-			}
-		}
+		mergeCoverage(p, seenConfigs, out, seenUncovered, seenTypeErrors)
 		if p.Impact == nil {
 			continue
 		}
@@ -244,6 +227,27 @@ func MergeStepPlans(steps []*types.RefactoringPlan) (*types.RefactoringPlan, err
 	impact.AffectedFiles = out.AffectedFiles
 	out.Impact = impact
 	return out, nil
+}
+
+func mergeCoverage(p *types.RefactoringPlan, seenConfigs map[string]bool, out *types.RefactoringPlan, seenUncovered map[string]bool, seenTypeErrors map[types.PackageTypeError]bool) {
+	for _, c := range p.Coverage.Configs {
+		if !seenConfigs[c] {
+			seenConfigs[c] = true
+			out.Coverage.Configs = append(out.Coverage.Configs, c)
+		}
+	}
+	for _, u := range p.Coverage.Uncovered {
+		if !seenUncovered[u.Path] {
+			seenUncovered[u.Path] = true
+			out.Coverage.Uncovered = append(out.Coverage.Uncovered, u)
+		}
+	}
+	for _, e := range p.Coverage.TypeErrors {
+		if !seenTypeErrors[e] {
+			seenTypeErrors[e] = true
+			out.Coverage.TypeErrors = append(out.Coverage.TypeErrors, e)
+		}
+	}
 }
 
 // findStepConflict returns an error naming the first two steps whose changes conflict.

@@ -64,39 +64,43 @@ func scanMovedUses(ws *types.Workspace, moving []*movingSymbol) map[*movingSymbo
 				uses[user].idents[ident.Name] = true
 			}
 		}
-		for ident, obj := range pkg.TypesInfo.Uses {
-			at := ws.FileSet.Position(ident.Pos())
-			user := movingAt(moving, at.Filename, at.Offset)
-			if user == nil {
-				continue
-			}
-			switch o := obj.(type) {
-			case *gotypes.PkgName:
-				path := o.Imported().Path()
-				uses[user].imports[path] = true
-				uses[user].pkgUses = append(uses[user].pkgUses, pkgUse{offset: at.Offset, length: len(ident.Name), path: path, name: o.Name(), pkgName: o.Imported().Name()})
-			default:
-				uses[user].idents[ident.Name] = true
-				if obj.Pkg() != nil && obj.Pkg() != pkg.TypesPkg && obj.Parent() == obj.Pkg().Scope() && !qualified[ident] {
-					if hasDotImport(user.file, obj.Pkg().Path()) {
-						uses[user].dotImport = obj.Pkg().Path()
-					}
-					continue
-				}
-				if obj.Pkg() != pkg.TypesPkg || !obj.Exported() || obj.Parent() != pkg.TypesPkg.Scope() {
-					continue
-				}
-				def := ws.FileSet.Position(obj.Pos())
-				if movingAt(moving, def.Filename, def.Offset) == nil {
-					uses[user].leftBehind = append(uses[user].leftBehind, at.Offset)
-				}
-			}
-		}
+		recordMovedUses(pkg, ws, moving, uses, qualified)
 	}
 	for _, u := range uses {
 		sort.Slice(u.pkgUses, func(i, j int) bool { return u.pkgUses[i].offset < u.pkgUses[j].offset })
 	}
 	return uses
+}
+
+func recordMovedUses(pkg *types.Package, ws *types.Workspace, moving []*movingSymbol, uses map[*movingSymbol]*movedUses, qualified map[*ast.Ident]bool) {
+	for ident, obj := range pkg.TypesInfo.Uses {
+		at := ws.FileSet.Position(ident.Pos())
+		user := movingAt(moving, at.Filename, at.Offset)
+		if user == nil {
+			continue
+		}
+		switch o := obj.(type) {
+		case *gotypes.PkgName:
+			path := o.Imported().Path()
+			uses[user].imports[path] = true
+			uses[user].pkgUses = append(uses[user].pkgUses, pkgUse{offset: at.Offset, length: len(ident.Name), path: path, name: o.Name(), pkgName: o.Imported().Name()})
+		default:
+			uses[user].idents[ident.Name] = true
+			if obj.Pkg() != nil && obj.Pkg() != pkg.TypesPkg && obj.Parent() == obj.Pkg().Scope() && !qualified[ident] {
+				if hasDotImport(user.file, obj.Pkg().Path()) {
+					uses[user].dotImport = obj.Pkg().Path()
+				}
+				continue
+			}
+			if obj.Pkg() != pkg.TypesPkg || !obj.Exported() || obj.Parent() != pkg.TypesPkg.Scope() {
+				continue
+			}
+			def := ws.FileSet.Position(obj.Pos())
+			if movingAt(moving, def.Filename, def.Offset) == nil {
+				uses[user].leftBehind = append(uses[user].leftBehind, at.Offset)
+			}
+		}
+	}
 }
 
 // qualifiedSelectors returns the member identifiers of the package-qualified

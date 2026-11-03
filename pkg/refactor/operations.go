@@ -476,16 +476,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			}
 			continue
 		}
-		var bySource []referenceSource
-		for _, ref := range group.refs {
-			importPath := packagePathToImportPath(ws, refSource[ref].Path)
-			i := slices.IndexFunc(bySource, func(s referenceSource) bool { return s.importPath == importPath })
-			if i < 0 {
-				i = len(bySource)
-				bySource = append(bySource, referenceSource{importPath: importPath, name: refSource[ref].Name})
-			}
-			bySource[i].refs = append(bySource[i].refs, ref)
-		}
+		bySource := groupRefsByPackage(group, ws, refSource)
 		edit := planReferenceFile(ws, group.file, bySource, unusedImports[group.file], targetImportPath, targetPackage.Name)
 		plan.Changes = append(plan.Changes, edit.importChanges...)
 		delete(unusedImports, group.file)
@@ -509,6 +500,20 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 	return plan, nil
+}
+
+func groupRefsByPackage(group fileReferences, ws *types.Workspace, refSource map[*types.Reference]*types.Package) []referenceSource {
+	var bySource []referenceSource
+	for _, ref := range group.refs {
+		importPath := packagePathToImportPath(ws, refSource[ref].Path)
+		i := slices.IndexFunc(bySource, func(s referenceSource) bool { return s.importPath == importPath })
+		if i < 0 {
+			i = len(bySource)
+			bySource = append(bySource, referenceSource{importPath: importPath, name: refSource[ref].Name})
+		}
+		bySource[i].refs = append(bySource[i].refs, ref)
+	}
+	return bySource
 }
 
 // testTargetRefusal refuses moving a symbol into a _test.go file when ref, a
@@ -1121,19 +1126,7 @@ func widenGroupRemovals(moving []*movingSymbol) {
 			if !ok || !d.Lparen.IsValid() || len(d.Specs) < 2 || d.Tok == token.IMPORT || d.Tok != token.TYPE && !selfContained(d) {
 				continue
 			}
-			members := make([]*movingSymbol, 0, len(d.Specs))
-			for _, spec := range d.Specs {
-				var mover *movingSymbol
-				for _, id := range specNames(spec) {
-					if byName[id.Pos()] != nil && byName[id.Pos()].file == m.file {
-						mover = byName[id.Pos()]
-					}
-				}
-				if mover == nil {
-					break
-				}
-				members = append(members, mover)
-			}
+			members := movingSpecs(d, byName, m)
 			if len(members) != len(d.Specs) {
 				continue
 			}
@@ -1160,6 +1153,23 @@ func widenGroupRemovals(moving []*movingSymbol) {
 			}
 		}
 	}
+}
+
+func movingSpecs(d *ast.GenDecl, byName map[token.Pos]*movingSymbol, m *movingSymbol) []*movingSymbol {
+	members := make([]*movingSymbol, 0, len(d.Specs))
+	for _, spec := range d.Specs {
+		var mover *movingSymbol
+		for _, id := range specNames(spec) {
+			if byName[id.Pos()] != nil && byName[id.Pos()].file == m.file {
+				mover = byName[id.Pos()]
+			}
+		}
+		if mover == nil {
+			break
+		}
+		members = append(members, mover)
+	}
+	return members
 }
 
 // specFirst is the first position of spec, including its doc comment.

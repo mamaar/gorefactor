@@ -77,17 +77,7 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 	}
 
 	// Find the enclosing function for this position
-	var enclosingFunc *ast.FuncDecl
-	ast.Inspect(file.AST, func(n ast.Node) bool {
-		funcDecl, ok := n.(*ast.FuncDecl)
-		if ok {
-			if funcDecl.Pos() <= pos && pos <= funcDecl.End() {
-				enclosingFunc = funcDecl
-				return false // Stop once we find it
-			}
-		}
-		return true
-	})
+	enclosingFunc := sa.enclosingFuncDecl(file, pos)
 
 	if enclosingFunc == nil {
 		// Not inside a function - check package-level variables
@@ -99,38 +89,7 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 	}
 
 	// Search for variable declarations in the function BY NAME (not position)
-	var typeExpr ast.Expr
-	ast.Inspect(enclosingFunc, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.AssignStmt:
-			// Handle := and = assignments
-			for i, lhs := range node.Lhs {
-				ident, ok := lhs.(*ast.Ident)
-				if !ok || ident.Name != identName {
-					continue
-				}
-				// Found declaration! Extract type from RHS
-				if i < len(node.Rhs) {
-					typeExpr = sa.extractTypeFromExpression(node.Rhs[i])
-					return false
-				}
-			}
-		case *ast.ValueSpec:
-			// Handle var declarations
-			for _, name := range node.Names {
-				if name.Name != identName {
-					continue
-				}
-				if node.Type != nil {
-					typeExpr = node.Type // Explicit type
-				} else if len(node.Values) > 0 {
-					typeExpr = sa.extractTypeFromExpression(node.Values[0]) // Infer from RHS
-				}
-				return false
-			}
-		}
-		return true
-	})
+	typeExpr := sa.localDeclarationType(enclosingFunc, identName)
 
 	// If not found in function body, check function parameters and receiver
 	if typeExpr == nil {
@@ -166,6 +125,57 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 		sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
 	}
 	return typeSymbol
+}
+
+func (sa *ScopeAnalyzer) enclosingFuncDecl(file *types.File, pos token.Pos) *ast.FuncDecl {
+	var enclosingFunc *ast.FuncDecl
+	ast.Inspect(file.AST, func(n ast.Node) bool {
+		funcDecl, ok := n.(*ast.FuncDecl)
+		if ok {
+			if funcDecl.Pos() <= pos && pos <= funcDecl.End() {
+				enclosingFunc = funcDecl
+				return false // Stop once we find it
+			}
+		}
+		return true
+	})
+	return enclosingFunc
+}
+
+func (sa *ScopeAnalyzer) localDeclarationType(enclosingFunc *ast.FuncDecl, identName string) ast.Expr {
+	var typeExpr ast.Expr
+	ast.Inspect(enclosingFunc, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.AssignStmt:
+			// Handle := and = assignments
+			for i, lhs := range node.Lhs {
+				ident, ok := lhs.(*ast.Ident)
+				if !ok || ident.Name != identName {
+					continue
+				}
+				// Found declaration! Extract type from RHS
+				if i < len(node.Rhs) {
+					typeExpr = sa.extractTypeFromExpression(node.Rhs[i])
+					return false
+				}
+			}
+		case *ast.ValueSpec:
+			// Handle var declarations
+			for _, name := range node.Names {
+				if name.Name != identName {
+					continue
+				}
+				if node.Type != nil {
+					typeExpr = node.Type // Explicit type
+				} else if len(node.Values) > 0 {
+					typeExpr = sa.extractTypeFromExpression(node.Values[0]) // Infer from RHS
+				}
+				return false
+			}
+		}
+		return true
+	})
+	return typeExpr
 }
 
 // findPackageLevelVarType finds the type of a package-level variable by name.

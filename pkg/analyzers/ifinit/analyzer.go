@@ -135,20 +135,7 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 		w.recordDeclStmt(s, declared)
 		w.processFuncLitsIn(s)
 	case *ast.AssignStmt:
-		if s.Tok == token.DEFINE {
-			for _, lhs := range s.Lhs {
-				id, ok := lhs.(*ast.Ident)
-				if !ok || id.Name == "_" {
-					continue
-				}
-				// A redeclaring ':=' assigns the existing variable, so the
-				// first declaration (possibly a hoist) stays authoritative.
-				_, exists := declared[id.Name]
-				if !exists {
-					declared[id.Name] = declaredName{ident: id}
-				}
-			}
-		}
+		w.recordDefinedNames(s, declared)
 		w.processFuncLitsIn(s)
 	case *ast.IfStmt:
 		w.handleIfChain(s, declared, false, false, list, idx, cascaded)
@@ -186,6 +173,23 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 		w.walkLabeled(s, list, idx, declared, cascaded)
 	default:
 		w.processFuncLitsIn(stmt)
+	}
+}
+
+func (w *walker) recordDefinedNames(s *ast.AssignStmt, declared scope) {
+	if s.Tok == token.DEFINE {
+		for _, lhs := range s.Lhs {
+			id, ok := lhs.(*ast.Ident)
+			if !ok || id.Name == "_" {
+				continue
+			}
+			// A redeclaring ':=' assigns the existing variable, so the
+			// first declaration (possibly a hoist) stays authoritative.
+			_, exists := declared[id.Name]
+			if !exists {
+				declared[id.Name] = declaredName{ident: id}
+			}
+		}
 	}
 }
 

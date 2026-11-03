@@ -97,6 +97,23 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	}
 
 	plan := &pkgtypes.RefactoringPlan{Reversible: true}
+	op.replaceEqualLiterals(files, pkg, selected, plan, ws, name)
+
+	insert := constantInsertOffset(ws, home)
+	plan.Changes = append(plan.Changes, pkgtypes.Change{
+		File:        home.Path,
+		Start:       insert,
+		End:         insert,
+		NewText:     fmt.Sprintf("\n\nconst %s = %s\n", name, selected.Value),
+		Description: fmt.Sprintf("Add constant declaration %s", name),
+	})
+	if !slices.Contains(plan.AffectedFiles, home.Path) {
+		plan.AffectedFiles = append(plan.AffectedFiles, home.Path)
+	}
+	return plan, nil
+}
+
+func (op *ExtractConstantOperation) replaceEqualLiterals(files []*pkgtypes.File, pkg *pkgtypes.Package, selected *ast.BasicLit, plan *pkgtypes.RefactoringPlan, ws *pkgtypes.Workspace, name string) {
 	for _, file := range files {
 		lits := op.equalLiterals(pkg, file, selected)
 		if len(lits) == 0 {
@@ -129,19 +146,6 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 			plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
 		}
 	}
-
-	insert := constantInsertOffset(ws, home)
-	plan.Changes = append(plan.Changes, pkgtypes.Change{
-		File:        home.Path,
-		Start:       insert,
-		End:         insert,
-		NewText:     fmt.Sprintf("\n\nconst %s = %s\n", name, selected.Value),
-		Description: fmt.Sprintf("Add constant declaration %s", name),
-	})
-	if !slices.Contains(plan.AffectedFiles, home.Path) {
-		plan.AffectedFiles = append(plan.AffectedFiles, home.Path)
-	}
-	return plan, nil
 }
 
 func (op *ExtractConstantOperation) Description() string {

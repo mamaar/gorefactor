@@ -72,15 +72,7 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 	// full-filesystem-path identity Change.File is populated with throughout
 	// the operations in this package (see e.g. alias_operations.go,
 	// bulk_operations.go: File: file.Path).
-	fileToPkg := make(map[string]*types.Package)
-	for _, pkg := range ws.Packages {
-		for _, f := range pkg.Files {
-			fileToPkg[f.Path] = pkg
-		}
-		for _, f := range pkg.TestFiles {
-			fileToPkg[f.Path] = pkg
-		}
-	}
+	fileToPkg := packagesByFile(ws)
 
 	touched := make(map[*types.Package]bool)
 	var untracked []string
@@ -145,6 +137,19 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 		result.Skipped = strings.Join(skipped, "; ")
 	}
 	return result
+}
+
+func packagesByFile(ws *types.Workspace) map[string]*types.Package {
+	fileToPkg := make(map[string]*types.Package)
+	for _, pkg := range ws.Packages {
+		for _, f := range pkg.Files {
+			fileToPkg[f.Path] = pkg
+		}
+		for _, f := range pkg.TestFiles {
+			fileToPkg[f.Path] = pkg
+		}
+	}
+	return fileToPkg
 }
 
 // packageVerifyResult is verifyPackageTypes' internal result: either newErrors

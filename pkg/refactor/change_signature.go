@@ -801,36 +801,7 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 
 	// Find the file containing the reference
 	// pkg.Files and pkg.TestFiles use just the filename as key, not the full path
-	refFileName := filepath.Base(ref.File)
-	var refFile *pkgtypes.File
-	for _, pkg := range ws.Packages {
-		// Check regular files first
-		file, exists := pkg.Files[refFileName]
-		if exists {
-			// Verify this is the right file by checking the full path
-			if file.Path == ref.File {
-				refFile = file
-				if op.Logger != nil {
-					op.Logger.Debug("Found reference file in package Files", "pkg", pkg.Path, "file", refFileName)
-				}
-				break
-			}
-		}
-		// Also check test files
-		file, exists = pkg.TestFiles[refFileName]
-		if !exists {
-			continue
-		}
-		// Verify this is the right file by checking the full path
-		if file.Path != ref.File {
-			continue
-		}
-		refFile = file
-		if op.Logger != nil {
-			op.Logger.Debug("Found reference file in package TestFiles", "pkg", pkg.Path, "file", refFileName)
-		}
-		break
-	}
+	refFile := op.findFileByPath(ref, ws)
 	if refFile == nil {
 		// Debug: show what files are available
 		if op.Logger != nil {
@@ -924,6 +895,40 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 	return changes
 }
 
+func (op *ChangeSignatureOperation) findFileByPath(ref *pkgtypes.Reference, ws *pkgtypes.Workspace) *pkgtypes.File {
+	refFileName := filepath.Base(ref.File)
+	var refFile *pkgtypes.File
+	for _, pkg := range ws.Packages {
+		// Check regular files first
+		file, exists := pkg.Files[refFileName]
+		if exists {
+			// Verify this is the right file by checking the full path
+			if file.Path == ref.File {
+				refFile = file
+				if op.Logger != nil {
+					op.Logger.Debug("Found reference file in package Files", "pkg", pkg.Path, "file", refFileName)
+				}
+				break
+			}
+		}
+		// Also check test files
+		file, exists = pkg.TestFiles[refFileName]
+		if !exists {
+			continue
+		}
+		// Verify this is the right file by checking the full path
+		if file.Path != ref.File {
+			continue
+		}
+		refFile = file
+		if op.Logger != nil {
+			op.Logger.Debug("Found reference file in package TestFiles", "pkg", pkg.Path, "file", refFileName)
+		}
+		break
+	}
+	return refFile
+}
+
 func (op *ChangeSignatureOperation) containsReference(callExpr *ast.CallExpr, pos token.Pos) bool {
 	// Check the specific identifier that names the called function,
 	// not the entire Fun expression. This prevents matching outer
@@ -943,12 +948,7 @@ func (op *ChangeSignatureOperation) containsReference(callExpr *ast.CallExpr, po
 
 func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref *pkgtypes.Reference, ws *pkgtypes.Workspace, fileContent []byte, info *gotypes.Info) string {
 	// Extract existing arguments from source text to preserve original formatting
-	existingArgs := make([]string, len(callExpr.Args))
-	for i, arg := range callExpr.Args {
-		start := op.tokenPosToOffset(ws, arg.Pos())
-		end := op.tokenPosToOffset(ws, arg.End())
-		existingArgs[i] = string(fileContent[start:end])
-	}
+	existingArgs := op.argSourceTexts(callExpr, ws, fileContent)
 
 	if op.DerefParam {
 		reason := op.derefArgs(existingArgs, callExpr, ws, fileContent, info)
@@ -985,6 +985,36 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 
 	// If this is an add-param operation (DefaultValue is set and NewParamPosition >= 0),
 	// insert the default value at the specified position
+	op.mapFixedArgs(newArgCount, existingArgs, newArgs)
+
+	if op.isVariadic() {
+		start := newArgCount
+		if op.DefaultValue != "" && op.NewParamPosition >= 0 && op.NewParamPosition < newArgCount {
+			start-- // the added parameter shifted the variadic one
+		}
+		if start < len(existingArgs) {
+			tail := slices.Clone(existingArgs[start:])
+			if callExpr.Ellipsis.IsValid() {
+				tail[len(tail)-1] += "..."
+			}
+			newArgs = append(newArgs, tail...)
+		}
+	}
+
+	return op.callText(callExpr, ws, fileContent, strings.Join(newArgs, ", "))
+}
+
+func (op *ChangeSignatureOperation) argSourceTexts(callExpr *ast.CallExpr, ws *pkgtypes.Workspace, fileContent []byte) []string {
+	existingArgs := make([]string, len(callExpr.Args))
+	for i, arg := range callExpr.Args {
+		start := op.tokenPosToOffset(ws, arg.Pos())
+		end := op.tokenPosToOffset(ws, arg.End())
+		existingArgs[i] = string(fileContent[start:end])
+	}
+	return existingArgs
+}
+
+func (op *ChangeSignatureOperation) mapFixedArgs(newArgCount int, existingArgs []string, newArgs []string) {
 	if op.DefaultValue != "" && op.NewParamPosition >= 0 {
 		// Insert default value at the new parameter position
 		for i := range newArgCount {
@@ -1019,22 +1049,6 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 			}
 		}
 	}
-
-	if op.isVariadic() {
-		start := newArgCount
-		if op.DefaultValue != "" && op.NewParamPosition >= 0 && op.NewParamPosition < newArgCount {
-			start-- // the added parameter shifted the variadic one
-		}
-		if start < len(existingArgs) {
-			tail := slices.Clone(existingArgs[start:])
-			if callExpr.Ellipsis.IsValid() {
-				tail[len(tail)-1] += "..."
-			}
-			newArgs = append(newArgs, tail...)
-		}
-	}
-
-	return op.callText(callExpr, ws, fileContent, strings.Join(newArgs, ", "))
 }
 
 // callText returns the call with its arguments replaced by argStr.

@@ -60,14 +60,7 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		recvIdx, recvName, recvDecl = recv.paramIdx, recv.name, recv.decl
 	}
 
-	var sigParams, args []string
-	for i, p := range an.Params {
-		if i == recvIdx {
-			continue
-		}
-		sigParams = append(sigParams, p.Name+" "+p.Type)
-		args = append(args, p.Name)
-	}
+	sigParams, args := splitParamsAndArgs(an, recvIdx)
 
 	results := an.Results
 	if an.TailReturns {
@@ -159,6 +152,18 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 	}
 	lines = append(lines, strings.Join(lhs, ", ")+" = "+callExpr)
 	return decl, strings.Join(lines, "\n"), nil
+}
+
+func splitParamsAndArgs(an *extractsig.Analysis, recvIdx int) ([]string, []string) {
+	var sigParams, args []string
+	for i, p := range an.Params {
+		if i == recvIdx {
+			continue
+		}
+		sigParams = append(sigParams, p.Name+" "+p.Type)
+		args = append(args, p.Name)
+	}
+	return sigParams, args
 }
 
 // formatDeclaration gofmts a single top-level declaration by wrapping it in a
