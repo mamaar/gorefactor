@@ -44,7 +44,10 @@ func (op *ExtractConstantOperation) Validate(ws *pkgtypes.Workspace) error {
 	case req.Line < 1 || req.Column < 1:
 		return invalidExtractConstant("line and column must be 1-based positions")
 	}
-	pkg, _ := findWorkspaceFile(ws, req.SourceFile)
+	_, pkg, err := ws.FindFile(req.SourceFile)
+	if err != nil {
+		return err
+	}
 	if pkg == nil {
 		return &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
@@ -56,7 +59,10 @@ func (op *ExtractConstantOperation) Validate(ws *pkgtypes.Workspace) error {
 
 func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
 	name := op.Request.ConstantName
-	pkg, src := findWorkspaceFile(ws, op.Request.SourceFile)
+	src, pkg, err := ws.FindFile(op.Request.SourceFile)
+	if err != nil {
+		return nil, err
+	}
 	if pkg == nil {
 		return nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
@@ -154,20 +160,6 @@ func (op *ExtractConstantOperation) Description() string {
 
 func invalidExtractConstant(format string, args ...any) error {
 	return &pkgtypes.RefactorError{Type: pkgtypes.InvalidOperation, Message: fmt.Sprintf(format, args...)}
-}
-
-// findWorkspaceFile returns the package and file loaded from path.
-func findWorkspaceFile(ws *pkgtypes.Workspace, path string) (*pkgtypes.Package, *pkgtypes.File) {
-	for _, pkg := range ws.Packages {
-		for _, files := range []map[string]*pkgtypes.File{pkg.Files, pkg.TestFiles} {
-			for key, f := range files {
-				if key == path || f.Path == path {
-					return pkg, f
-				}
-			}
-		}
-	}
-	return nil, nil
 }
 
 // constantScopeFiles returns the parsed non-external files of pkg ordered by path.

@@ -1,9 +1,14 @@
 package types
 
 import (
+	"fmt"
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // Workspace represents a complete Go workspace (module or GOPATH)
@@ -124,4 +129,61 @@ type DependencyGraph struct {
 	// in-package test import of P leads back to P through production edges.
 	// They break go vet and go test but not go build.
 	TestImportCycles [][]string
+}
+
+// FindFile returns the file a caller named, test files included, and its
+// package. path may be absolute, workspace-relative, or a bare file name. A
+// bare name must match exactly one file in the workspace: more is an
+// InvalidOperation error naming the matches. No match is nil, nil, nil.
+func (ws *Workspace) FindFile(path string) (*File, *Package, error) {
+	clean := filepath.Clean(path)
+	exact := []func(f *File) bool{
+		func(f *File) bool { return f.Path == path || f.Path == clean },
+		func(f *File) bool {
+			rel, err := filepath.Rel(ws.RootPath, f.Path)
+			return err == nil && rel == clean
+		},
+	}
+	type hit struct {
+		file *File
+		pkg  *Package
+	}
+	var named []hit
+	for _, dir := range slices.Sorted(maps.Keys(ws.Packages)) {
+		pkg := ws.Packages[dir]
+		for _, files := range []map[string]*File{pkg.Files, pkg.TestFiles} {
+			for _, f := range files {
+				if filepath.Base(f.Path) == path {
+					named = append(named, hit{f, pkg})
+				}
+			}
+		}
+	}
+	for _, match := range exact {
+		for _, dir := range slices.Sorted(maps.Keys(ws.Packages)) {
+			pkg := ws.Packages[dir]
+			for _, files := range []map[string]*File{pkg.Files, pkg.TestFiles} {
+				for _, f := range files {
+					if match(f) {
+						return f, pkg, nil
+					}
+				}
+			}
+		}
+	}
+	switch len(named) {
+	case 0:
+		return nil, nil, nil
+	case 1:
+		return named[0].file, named[0].pkg, nil
+	}
+	paths := make([]string, len(named))
+	for i, h := range named {
+		paths[i] = h.file.Path
+	}
+	slices.Sort(paths)
+	return nil, nil, &RefactorError{
+		Type:    InvalidOperation,
+		Message: fmt.Sprintf("ambiguous source file %s: matches %s; pass a full path", path, strings.Join(paths, ", ")),
+	}
 }

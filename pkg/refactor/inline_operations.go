@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -97,7 +96,11 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	if findPackageForFile(ws, op.TargetFile) == nil {
+	_, targetPackage, err := ws.FindFile(op.TargetFile)
+	if err != nil {
+		return err
+	}
+	if targetPackage == nil {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
@@ -135,7 +138,7 @@ func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 		})
 	}
 
-	sourcePackage := findPackageForFile(ws, op.TargetFile)
+	_, sourcePackage, _ := ws.FindFile(op.TargetFile)
 
 	return &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
@@ -231,8 +234,8 @@ func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (
 	}
 
 	// Get the method body from the source file (pkg.Files is keyed by basename)
-	file, exists := sourcePackage.Files[filepath.Base(methodSymbol.File)]
-	if exists {
+	file := findFileContainingSymbol(sourcePackage, methodSymbol)
+	if file != nil {
 		return op.extractMethodBody(string(file.OriginalContent), methodSymbol)
 	}
 
@@ -325,10 +328,9 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 }
 
 func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodCall, error) {
-	var targetFile *types.File
-	pkg := findPackageForFile(ws, op.TargetFile)
-	if pkg != nil {
-		targetFile = findFileByPath(pkg, op.TargetFile)
+	targetFile, _, err := ws.FindFile(op.TargetFile)
+	if err != nil {
+		return nil, err
 	}
 	if targetFile == nil {
 		return nil, &types.RefactorError{
@@ -633,24 +635,7 @@ func (op *InlineVariableOperation) Execute(ws *types.Workspace) (*types.Refactor
 		})
 	}
 
-	var sourcePackage *types.Package
-	for _, pkg := range ws.Packages {
-		_, exists := pkg.Files[op.SourceFile]
-		if exists {
-			sourcePackage = pkg
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourcePackage = pkg
-				break
-			}
-		}
-		if sourcePackage != nil {
-			break
-		}
-	}
+	_, sourcePackage, _ := ws.FindFile(op.SourceFile)
 
 	return &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
@@ -676,25 +661,10 @@ type VariableReference struct {
 
 func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (string, error) {
 	// Find the file and parse it
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			sourceFile = file
-			break
-		}
-		// Also try to match by comparing file paths (for absolute paths from MCP)
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return "", err
 	}
-
 	if sourceFile == nil {
 		return "", &types.RefactorError{
 			Type:    types.FileSystemError,
@@ -773,24 +743,10 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 
 func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) ([]VariableReference, error) {
 	// Find the file and parse it
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			sourceFile = file
-			break
-		}
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return nil, err
 	}
-
 	if sourceFile == nil {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
@@ -867,24 +823,10 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 }
 
 func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) (int, int, error) {
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			sourceFile = file
-			break
-		}
-		for _, file := range pkg.Files {
-			if file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return 0, 0, err
 	}
-
 	if sourceFile == nil {
 		return 0, 0, &types.RefactorError{
 			Type:    types.FileSystemError,
@@ -1023,10 +965,11 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 	affectedFiles := make([]string, 0)
 
 	// A bare call can only name the function from inside its own package.
-	funcSymbol, sourcePackage := op.functionSymbol(ws)
+	funcSymbol, sourcePackage, _ := op.functionSymbol(ws)
 	sites := referenceSites(ws, op.CachedIndex, funcSymbol)
 	for _, targetFile := range op.TargetFiles {
-		if findPackageForFile(ws, targetFile) != sourcePackage {
+		_, targetPackage, _ := ws.FindFile(targetFile)
+		if targetPackage != sourcePackage {
 			continue
 		}
 		calls, err := op.findFunctionCalls(ws, targetFile)
@@ -1087,16 +1030,19 @@ func (op *InlineFunctionOperation) Description() string {
 
 // functionSymbol returns the function to inline and the package holding
 // op.SourceFile, or nil when that package declares no such function.
-func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.Symbol, *types.Package) {
-	pkg := findPackageForFile(ws, op.SourceFile)
-	if pkg == nil || pkg.Symbols == nil {
-		return nil, pkg
+func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.Symbol, *types.Package, error) {
+	_, pkg, err := ws.FindFile(op.SourceFile)
+	if err != nil || pkg == nil || pkg.Symbols == nil {
+		return nil, pkg, err
 	}
-	return pkg.Symbols.Functions[op.FunctionName], pkg
+	return pkg.Symbols.Functions[op.FunctionName], pkg, nil
 }
 
 func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspace) (MethodImpl, error) {
-	funcSymbol, sourcePackage := op.functionSymbol(ws)
+	funcSymbol, sourcePackage, err := op.functionSymbol(ws)
+	if err != nil {
+		return MethodImpl{}, err
+	}
 	if funcSymbol == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -1105,8 +1051,8 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 	}
 
 	// Get the source file content
-	file, exists := sourcePackage.Files[filepath.Base(funcSymbol.File)]
-	if !exists {
+	file := findFileContainingSymbol(sourcePackage, funcSymbol)
+	if file == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
 			Message: fmt.Sprintf("source file not found for function: %s", op.FunctionName),
@@ -1162,10 +1108,9 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 }
 
 func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, targetFile string) ([]MethodCall, error) {
-	var file *types.File
-	pkg := findPackageForFile(ws, targetFile)
-	if pkg != nil {
-		file = findFileByPath(pkg, targetFile)
+	file, _, err := ws.FindFile(targetFile)
+	if err != nil {
+		return nil, err
 	}
 	if file == nil {
 		return nil, &types.RefactorError{

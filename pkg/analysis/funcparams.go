@@ -17,23 +17,9 @@ type FuncParam struct {
 // FindFuncType finds a function declaration in the workspace and returns its signature.
 // A missing file or function is a SymbolNotFound RefactorError.
 func FindFuncType(ws *types.Workspace, sourceFile, functionName string) (*ast.FuncType, error) {
-	// Find the file in the workspace
-	var file *types.File
-	for _, pkg := range ws.Packages {
-		f, exists := pkg.Files[sourceFile]
-		if exists {
-			file = f
-			break
-		}
-		for filePath, f := range pkg.Files {
-			if filePath == sourceFile || f.Path == sourceFile {
-				file = f
-				break
-			}
-		}
-		if file != nil {
-			break
-		}
+	file, _, err := ws.FindFile(sourceFile)
+	if err != nil {
+		return nil, err
 	}
 	if file == nil {
 		return nil, &types.RefactorError{

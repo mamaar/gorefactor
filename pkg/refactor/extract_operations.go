@@ -56,25 +56,9 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	// Check if source file exists
-	var sourceFile *types.File
-	for _, pkg := range ws.Packages {
-		// Try exact match first
-		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			sourceFile = file
-			break
-		}
-		// Try filepath base match and full path match
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				sourceFile = file
-				break
-			}
-		}
-		if sourceFile != nil {
-			break
-		}
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return err
 	}
 	if sourceFile == nil {
 		return &types.RefactorError{
@@ -95,16 +79,12 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
-	for _, pkg := range ws.Packages {
-		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			return file, pkg, nil
-		}
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				return file, pkg, nil
-			}
-		}
+	file, pkg, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	if file != nil {
+		return file, pkg, nil
 	}
 	return nil, nil, &types.RefactorError{
 		Type:    types.FileSystemError,
@@ -294,45 +274,13 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 	return nil
 }
 
-// resolveSourceFile locates op.SourceFile in the workspace, preferring the
-// root package and accepting an exact key, a base name, a workspace-relative
-// path or an absolute path.
 func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
-	match := func(pkg *types.Package) (*types.File, bool) {
-		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			return file, true
-		}
-		for filename, file := range pkg.Files {
-			if filename == op.SourceFile || filepath.Base(file.Path) == op.SourceFile || file.Path == op.SourceFile {
-				return file, true
-			}
-			if file.Path == filepath.Clean(op.SourceFile) {
-				return file, true
-			}
-			rel, err := filepath.Rel(ws.RootPath, file.Path)
-			if err != nil {
-				continue
-			}
-			if rel == op.SourceFile || rel == filepath.Clean(op.SourceFile) {
-				return file, true
-			}
-		}
-		return nil, false
+	file, pkg, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	rootPkg, exists := ws.Packages[ws.RootPath]
-	if exists {
-		file, ok := match(rootPkg)
-		if ok {
-			return file, rootPkg, nil
-		}
-	}
-	for _, pkg := range ws.Packages {
-		file, ok := match(pkg)
-		if ok {
-			return file, pkg, nil
-		}
+	if file != nil {
+		return file, pkg, nil
 	}
 	return nil, nil, &types.RefactorError{
 		Type:    types.FileSystemError,
@@ -760,19 +708,10 @@ func (op *ExtractVariableOperation) Validate(ws *types.Workspace) error {
 }
 
 func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
-	// Find the source file
-	var sourceFile *types.File
-	var sourcePackage *types.Package
-	for _, pkg := range ws.Packages {
-		file, exists := pkg.Files[op.SourceFile]
-		if !exists {
-			continue
-		}
-		sourceFile = file
-		sourcePackage = pkg
-		break
+	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return nil, err
 	}
-
 	if sourceFile == nil {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
@@ -781,7 +720,7 @@ func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.Refacto
 	}
 
 	// Resolve absolute path for the serializer
-	absPath := filepath.Join(sourcePackage.Dir, op.SourceFile)
+	absPath := sourceFile.Path
 
 	// Find insertion point for variable declaration (before the expression usage)
 	insertionPoint := op.findVariableInsertionPoint(string(sourceFile.OriginalContent), op.StartLine)

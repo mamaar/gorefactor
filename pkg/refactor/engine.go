@@ -723,7 +723,7 @@ func (e *DefaultEngine) ExtractConstant(ws *types.Workspace, req types.ExtractCo
 		return nil, fmt.Errorf("extract constant operation validation failed: %w", err)
 	}
 
-	pkg, _ := findWorkspaceFile(ws, req.SourceFile)
+	_, pkg, _ := ws.FindFile(req.SourceFile)
 	if pkg != nil {
 		e.EnsureTypeCheckedPackage(ws, pkg.ImportPath)
 	}

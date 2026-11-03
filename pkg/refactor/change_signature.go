@@ -181,7 +181,10 @@ func (op *ChangeSignatureOperation) Validate(ws *pkgtypes.Workspace) error {
 		}
 	}
 
-	sourceFile, _ := findSourceFile(ws, op.SourceFile)
+	sourceFile, _, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return err
+	}
 	if sourceFile == nil {
 		return &pkgtypes.RefactorError{
 			Type:    pkgtypes.SymbolNotFound,
@@ -296,22 +299,11 @@ func isTestEntryPoint(path string, decl *ast.FuncDecl) bool {
 // genericUnsupported is why change_signature refuses a generic declaration.
 const genericUnsupported = "declares type parameters or has a generic receiver, which change_signature does not support"
 
-// findSourceFile returns the file at path, test files included, and its package.
-func findSourceFile(ws *pkgtypes.Workspace, path string) (*pkgtypes.File, *pkgtypes.Package) {
-	for _, pkg := range ws.Packages {
-		for _, files := range []map[string]*pkgtypes.File{pkg.Files, pkg.TestFiles} {
-			for filePath, file := range files {
-				if filePath == path || file.Path == path {
-					return file, pkg
-				}
-			}
-		}
-	}
-	return nil, nil
-}
-
 func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
-	sourceFile, sourcePackage := findSourceFile(ws, op.SourceFile)
+	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return nil, err
+	}
 
 	// Preserve existing return types if not explicitly provided (fixes add_param/remove_param dropping returns)
 	// A return change gives the full list, which is empty when the only result is removed.
@@ -357,7 +349,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 			return nil, err
 		}
 	}
-	err := op.planDerefParam(isIface, sourceFile, ws, sourcePackage, plan)
+	err = op.planDerefParam(isIface, sourceFile, ws, sourcePackage, plan)
 	if err != nil {
 		return nil, err
 	}

@@ -84,7 +84,10 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 		return configResult{}, fmt.Errorf("inline function operation validation failed: %w", err)
 	}
 
-	sym, _ := op.functionSymbol(ws)
+	sym, _, err := op.functionSymbol(ws)
+	if err != nil {
+		return configResult{}, err
+	}
 	if sym == nil {
 		sym = linkedFunction(ws, linked, op.FunctionName)
 		if sym != nil {

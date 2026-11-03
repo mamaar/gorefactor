@@ -266,7 +266,10 @@ func findFileByPath(pkg *pkgtypes.Package, path string) *pkgtypes.File {
 // and resolves op.SymbolName within that package. It is the single place
 // Validate, Execute, and BlockingReferences share for this lookup.
 func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*pkgtypes.File, *pkgtypes.Package, *analysis.SymbolResolver, *pkgtypes.Symbol, error) {
-	sourceFile, sourcePackage := findSourceFile(ws, op.SourceFile)
+	sourceFile, sourcePackage, err := ws.FindFile(op.SourceFile)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
 	resolver := quietResolver(ws)
 
