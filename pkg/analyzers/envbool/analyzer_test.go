@@ -62,11 +62,12 @@ func doStuff(isProd bool) {}
 	// doStuff also has isProd but does not propagate it further (depth=0), so only serve is flagged.
 	found := false
 	for _, v := range results {
-		if v.Function == "serve" && v.ParameterName == "isProd" {
-			found = true
-			if v.PropagationDepth < 1 {
-				t.Errorf("Expected PropagationDepth >= 1 for serve, got %d", v.PropagationDepth)
-			}
+		if v.Function != "serve" || v.ParameterName != "isProd" {
+			continue
+		}
+		found = true
+		if v.PropagationDepth < 1 {
+			t.Errorf("Expected PropagationDepth >= 1 for serve, got %d", v.PropagationDepth)
 		}
 	}
 	if !found {
@@ -120,11 +121,12 @@ func execute(isTest bool) {}
 
 	found := false
 	for _, v := range results {
-		if v.Function == "run" && v.ParameterName == "isTest" {
-			found = true
-			if v.PropagationDepth < 1 {
-				t.Errorf("Expected PropagationDepth >= 1, got %d", v.PropagationDepth)
-			}
+		if v.Function != "run" || v.ParameterName != "isTest" {
+			continue
+		}
+		found = true
+		if v.PropagationDepth < 1 {
+			t.Errorf("Expected PropagationDepth >= 1, got %d", v.PropagationDepth)
 		}
 	}
 	if !found {

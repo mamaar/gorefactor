@@ -137,12 +137,13 @@ func (sr *SymbolResolver) BuildSymbolTable(pkg *types.Package) (*types.SymbolTab
 	// This handles cases where methods appear before their receiver types in source order
 	for recvTypeName, methods := range symbolTable.Methods {
 		for _, method := range methods {
-			if method.Parent == nil {
-				// Try to resolve the receiver type now that all types are extracted
-				typeSymbol, exists := symbolTable.Types[recvTypeName]
-				if exists {
-					method.Parent = typeSymbol
-				}
+			if method.Parent != nil {
+				continue
+			}
+			// Try to resolve the receiver type now that all types are extracted
+			typeSymbol, exists := symbolTable.Types[recvTypeName]
+			if exists {
+				method.Parent = typeSymbol
 			}
 		}
 	}
@@ -861,11 +862,12 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 					var matchingReceivers []string
 					for recvType, methods := range pkg.Symbols.Methods {
 						for _, method := range methods {
-							if method.Name == name {
-								symbol = method
-								matchingReceivers = append(matchingReceivers, recvType)
-								break
+							if method.Name != name {
+								continue
 							}
+							symbol = method
+							matchingReceivers = append(matchingReceivers, recvType)
+							break
 						}
 					}
 					if len(matchingReceivers) > 1 {
@@ -1401,26 +1403,27 @@ func (sr *SymbolResolver) importAliasRefersToPackage(alias string, file *types.F
 			importAlias = parts[len(parts)-1]
 		}
 
-		if importAlias == alias {
-			// Check if this import path matches the target package
-			// Try direct match with import path
-			if importPath == targetPkg {
-				return true
-			}
-			// Try looking up the filesystem path via ImportToPath
-			if sr.workspace != nil && sr.workspace.ImportToPath != nil {
-				fsPath, ok := sr.workspace.ImportToPath[importPath]
-				if ok {
-					if fsPath == targetPkg {
-						return true
-					}
+		if importAlias != alias {
+			continue
+		}
+		// Check if this import path matches the target package
+		// Try direct match with import path
+		if importPath == targetPkg {
+			return true
+		}
+		// Try looking up the filesystem path via ImportToPath
+		if sr.workspace != nil && sr.workspace.ImportToPath != nil {
+			fsPath, ok := sr.workspace.ImportToPath[importPath]
+			if ok {
+				if fsPath == targetPkg {
+					return true
 				}
 			}
-			// Check if target package's import path matches
-			pkg := sr.workspace.Packages[targetPkg]
-			if pkg != nil && pkg.ImportPath == importPath {
-				return true
-			}
+		}
+		// Check if target package's import path matches
+		pkg := sr.workspace.Packages[targetPkg]
+		if pkg != nil && pkg.ImportPath == importPath {
+			return true
 		}
 	}
 	return false
@@ -1618,11 +1621,12 @@ func (sr *SymbolResolver) ResolveEmbeddedFields(symbol *types.Symbol) ([]*types.
 			if ok {
 				for _, field := range structType.Fields.List {
 					// Embedded field has no name
-					if len(field.Names) == 0 {
-						embeddedSymbol := sr.resolveFieldType(field.Type, file)
-						if embeddedSymbol != nil {
-							embeddedFields = append(embeddedFields, embeddedSymbol)
-						}
+					if len(field.Names) != 0 {
+						continue
+					}
+					embeddedSymbol := sr.resolveFieldType(field.Type, file)
+					if embeddedSymbol != nil {
+						embeddedFields = append(embeddedFields, embeddedSymbol)
 					}
 				}
 			}
@@ -1868,11 +1872,12 @@ func (sr *SymbolResolver) resolveFieldType(expr ast.Expr, file *types.File) *typ
 		if ok {
 			// Find the package
 			for _, pkg := range sr.workspace.Packages {
-				if strings.HasSuffix(pkg.Path, pkgIdent.Name) {
-					symbol, err := sr.ResolveSymbol(pkg, t.Sel.Name)
-					if err == nil {
-						return symbol
-					}
+				if !strings.HasSuffix(pkg.Path, pkgIdent.Name) {
+					continue
+				}
+				symbol, err := sr.ResolveSymbol(pkg, t.Sel.Name)
+				if err == nil {
+					return symbol
 				}
 			}
 		}
@@ -2002,11 +2007,12 @@ func (sr *SymbolResolver) methodBelongsToType(methodSym *types.Symbol, typeSym *
 					"method_name", methodSym.Name,
 					"m_package", m.Package,
 					"method_package", methodSym.Package)
-				if m.Name == methodSym.Name && m.Package == methodSym.Package {
-					// Also check signature match (rough check: same name)
-					sr.logger.Debug("MATCH FOUND")
-					return true
+				if m.Name != methodSym.Name || m.Package != methodSym.Package {
+					continue
 				}
+				// Also check signature match (rough check: same name)
+				sr.logger.Debug("MATCH FOUND")
+				return true
 			}
 			sr.logger.Debug("No match found in method list")
 		} else {

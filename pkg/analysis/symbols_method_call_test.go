@@ -149,10 +149,11 @@ func TestMethodCallMatching(t *testing.T) {
 
 			// For this basic test, we expect false when method kind is not MethodSymbol
 			// or when not a method call, because type resolution will fail
-			if tt.methodKind != types.MethodSymbol || !tt.isCall {
-				if result {
-					t.Errorf("Expected no match for invalid condition, got true")
-				}
+			if tt.methodKind == types.MethodSymbol && tt.isCall {
+				return
+			}
+			if result {
+				t.Errorf("Expected no match for invalid condition, got true")
 			}
 		})
 	}
@@ -205,11 +206,12 @@ func main() {
 	// Check for method call entry
 	hasMethodCall := false
 	for _, entry := range saveEntries {
-		if entry.IsMethodCall {
-			hasMethodCall = true
-			if entry.ReceiverName != "repo" {
-				t.Errorf("Expected receiver name 'repo', got %q", entry.ReceiverName)
-			}
+		if !entry.IsMethodCall {
+			continue
+		}
+		hasMethodCall = true
+		if entry.ReceiverName != "repo" {
+			t.Errorf("Expected receiver name 'repo', got %q", entry.ReceiverName)
 		}
 	}
 

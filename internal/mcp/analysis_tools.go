@@ -281,13 +281,14 @@ func addDetectHeader(out map[string]any, ws *types.Workspace, h refactor.DetectH
 	if len(h.Unchecked) > 0 {
 		out["uncovered_files"] = uncheckedFileInfos(h.Unchecked, ws.RootPath)
 	}
-	if len(h.TypeErrors) > 0 {
-		typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
-		for i, e := range h.TypeErrors {
-			typeErrors[i] = TypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
-		}
-		out["type_error_files"] = typeErrors
+	if len(h.TypeErrors) <= 0 {
+		return
 	}
+	typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
+	for i, e := range h.TypeErrors {
+		typeErrors[i] = TypeErrorItem{File: relativeTo(ws.RootPath, e.File.Path), Error: e.Err.Error()}
+	}
+	out["type_error_files"] = typeErrors
 }
 
 // --- detect_variadics ---
@@ -1019,15 +1020,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		results, ok := rr.Result.([]*ifinit.Result)
 		if ok {
 			for _, v := range results {
-				if v.Skipped {
-					skipped = append(skipped, IfInitSkippedItem{
-						File:       v.File,
-						Line:       v.Line,
-						Function:   v.Function,
-						Snippet:    v.Snippet,
-						SkipReason: v.SkipReason,
-					})
+				if !v.Skipped {
+					continue
 				}
+				skipped = append(skipped, IfInitSkippedItem{
+					File:       v.File,
+					Line:       v.Line,
+					Function:   v.Function,
+					Snippet:    v.Snippet,
+					SkipReason: v.SkipReason,
+				})
 			}
 		}
 
@@ -1500,15 +1502,16 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		for _, r := range appliedResults {
 			functionsFixed = append(functionsFixed, r.Function)
 			totalEarlyReturns += r.EarlyReturns
-			if r.Reason != "" {
-				partial = append(partial, DeepIfElseUnfixableItem{
-					File:         r.File,
-					Line:         r.Line,
-					Function:     r.Function,
-					NestingDepth: r.NestingDepth,
-					Reason:       r.Reason,
-				})
+			if r.Reason == "" {
+				continue
 			}
+			partial = append(partial, DeepIfElseUnfixableItem{
+				File:         r.File,
+				Line:         r.Line,
+				Function:     r.Function,
+				NestingDepth: r.NestingDepth,
+				Reason:       r.Reason,
+			})
 		}
 
 		plan = analyzers.ChangesToPlan(appliedChanges)

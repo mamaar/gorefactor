@@ -122,11 +122,12 @@ func shortestPath(edges map[string][]string, starts []string, target string) []s
 			return path
 		}
 		for _, next := range edges[n] {
-			if !seen[next] {
-				seen[next] = true
-				prev[next] = n
-				queue = append(queue, next)
+			if seen[next] {
+				continue
 			}
+			seen[next] = true
+			prev[next] = n
+			queue = append(queue, next)
 		}
 	}
 	return nil

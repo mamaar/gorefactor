@@ -111,17 +111,18 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in MoveSymbolInput) (result *mcpsdk.CallToolResult, _ any, retErr error) {
 		defer func() {
 			r := recover()
-			if r != nil {
-				stack := debug.Stack()
-				state.logger.Error("panic in move_symbol handler",
-					"symbol", in.label(),
-					"from", in.FromPackage,
-					"to", in.ToPackage,
-					"panic", fmt.Sprintf("%v", r),
-					"stack", string(stack),
-				)
-				result = errResult(fmt.Errorf("internal error (panic) in move_symbol: %v", r))
+			if r == nil {
+				return
 			}
+			stack := debug.Stack()
+			state.logger.Error("panic in move_symbol handler",
+				"symbol", in.label(),
+				"from", in.FromPackage,
+				"to", in.ToPackage,
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(stack),
+			)
+			result = errResult(fmt.Errorf("internal error (panic) in move_symbol: %v", r))
 		}()
 
 		plan, err := planMoveSymbol(state, in)

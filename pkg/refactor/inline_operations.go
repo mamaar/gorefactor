@@ -59,14 +59,16 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 	var sourcePackage *types.Package
 
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
-			if err == nil {
-				if structSymbol.Kind == types.TypeSymbol {
-					sourcePackage = pkg
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
+		}
+		structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if structSymbol.Kind == types.TypeSymbol {
+			sourcePackage = pkg
+			break
 		}
 	}
 
@@ -276,40 +278,44 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 	// Find the method declaration
 	for _, decl := range astFile.Decls {
 		funcDecl, ok := decl.(*ast.FuncDecl)
-		if ok {
-			if funcDecl.Name.Name == op.MethodName && funcDecl.Recv != nil {
-				// Extract parameter names
-				var paramNames []string
-				if funcDecl.Type.Params != nil {
-					for _, field := range funcDecl.Type.Params.List {
-						for _, name := range field.Names {
-							paramNames = append(paramNames, name.Name)
-						}
-					}
-				}
-
-				// Extract the body
-				if funcDecl.Body != nil {
-					start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
-					end := fset.Position(funcDecl.Body.Rbrace).Offset
-					if start < len(content) && end <= len(content) {
-						impl := MethodImpl{
-							Body:         string(content[start:end]),
-							ParamNames:   paramNames,
-							ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
-						}
-						names := funcDecl.Recv.List[0].Names
-						if len(names) == 1 && names[0].Name != "_" {
-							impl.Receiver = names[0].Name
-						}
-						if funcDecl.Type.Results != nil {
-							impl.ResultType = sourceText(fset, content, funcDecl.Type.Results)
-						}
-						return impl, nil
-					}
+		if !ok {
+			continue
+		}
+		if funcDecl.Name.Name != op.MethodName || funcDecl.Recv == nil {
+			continue
+		}
+		// Extract parameter names
+		var paramNames []string
+		if funcDecl.Type.Params != nil {
+			for _, field := range funcDecl.Type.Params.List {
+				for _, name := range field.Names {
+					paramNames = append(paramNames, name.Name)
 				}
 			}
 		}
+
+		// Extract the body
+		if funcDecl.Body == nil {
+			continue
+		}
+		start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+		end := fset.Position(funcDecl.Body.Rbrace).Offset
+		if start >= len(content) || end > len(content) {
+			continue
+		}
+		impl := MethodImpl{
+			Body:         string(content[start:end]),
+			ParamNames:   paramNames,
+			ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
+		}
+		names := funcDecl.Recv.List[0].Names
+		if len(names) == 1 && names[0].Name != "_" {
+			impl.Receiver = names[0].Name
+		}
+		if funcDecl.Type.Results != nil {
+			impl.ResultType = sourceText(fset, content, funcDecl.Type.Results)
+		}
+		return impl, nil
 	}
 
 	return MethodImpl{}, &types.RefactorError{
@@ -502,11 +508,12 @@ func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *toke
 	var replacements []replacement
 	inspectIdents(expr, func(ident *ast.Ident) {
 		arg, exists := paramToArg[ident.Name]
-		if exists {
-			start := fset.Position(ident.Pos()).Offset
-			end := fset.Position(ident.End()).Offset
-			replacements = append(replacements, replacement{start, end, arg})
+		if !exists {
+			return
 		}
+		start := fset.Position(ident.Pos()).Offset
+		end := fset.Position(ident.End()).Offset
+		replacements = append(replacements, replacement{start, end, arg})
 	})
 
 	// Extract the expression text from src first
@@ -711,18 +718,20 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 		if ok && genDecl.Tok == token.VAR {
 			for _, spec := range genDecl.Specs {
 				valueSpec, ok := spec.(*ast.ValueSpec)
-				if ok {
-					for i, name := range valueSpec.Names {
-						if name.Name == op.VariableName && i < len(valueSpec.Values) {
-							// Extract the value expression
-							valueExpr := valueSpec.Values[i]
-							start := fset.Position(valueExpr.Pos()).Offset
-							end := fset.Position(valueExpr.End()).Offset
-							if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
-								value = string(sourceFile.OriginalContent[start:end])
-								return false // Stop searching
-							}
-						}
+				if !ok {
+					continue
+				}
+				for i, name := range valueSpec.Names {
+					if name.Name != op.VariableName || i >= len(valueSpec.Values) {
+						continue
+					}
+					// Extract the value expression
+					valueExpr := valueSpec.Values[i]
+					start := fset.Position(valueExpr.Pos()).Offset
+					end := fset.Position(valueExpr.End()).Offset
+					if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
+						value = string(sourceFile.OriginalContent[start:end])
+						return false // Stop searching
 					}
 				}
 			}
@@ -733,16 +742,18 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 		if ok && assignStmt.Tok == token.DEFINE {
 			for i, lhs := range assignStmt.Lhs {
 				ident, ok := lhs.(*ast.Ident)
-				if ok && ident.Name == op.VariableName {
-					if i < len(assignStmt.Rhs) {
-						valueExpr := assignStmt.Rhs[i]
-						start := fset.Position(valueExpr.Pos()).Offset
-						end := fset.Position(valueExpr.End()).Offset
-						if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
-							value = string(sourceFile.OriginalContent[start:end])
-							return false // Stop searching
-						}
-					}
+				if !ok || ident.Name != op.VariableName {
+					continue
+				}
+				if i >= len(assignStmt.Rhs) {
+					continue
+				}
+				valueExpr := assignStmt.Rhs[i]
+				start := fset.Position(valueExpr.Pos()).Offset
+				end := fset.Position(valueExpr.End()).Offset
+				if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
+					value = string(sourceFile.OriginalContent[start:end])
+					return false // Stop searching
 				}
 			}
 		}
@@ -809,12 +820,13 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 			}
 			for _, spec := range node.Specs {
 				vs, ok := spec.(*ast.ValueSpec)
-				if ok {
-					for _, name := range vs.Names {
-						if name.Name == op.VariableName {
-							declPos = name.Pos()
-							return false
-						}
+				if !ok {
+					continue
+				}
+				for _, name := range vs.Names {
+					if name.Name == op.VariableName {
+						declPos = name.Pos()
+						return false
 					}
 				}
 			}
@@ -934,15 +946,16 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 			}
 			for _, lhs := range node.Lhs {
 				ident, ok := lhs.(*ast.Ident)
-				if ok && ident.Name == op.VariableName {
-					declStart = fset.Position(node.Pos()).Offset
-					declEnd = fset.Position(node.End()).Offset
-					if declEnd < len(content) && content[declEnd] == '\n' {
-						declEnd++
-					}
-					found = true
-					return false
+				if !ok || ident.Name != op.VariableName {
+					continue
 				}
+				declStart = fset.Position(node.Pos()).Offset
+				declEnd = fset.Position(node.End()).Offset
+				if declEnd < len(content) && content[declEnd] == '\n' {
+					declEnd++
+				}
+				found = true
+				return false
 			}
 		}
 		return true
@@ -1128,16 +1141,18 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 		}
 
 		// Extract the body
-		if funcDecl.Body != nil {
-			start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
-			end := fset.Position(funcDecl.Body.Rbrace).Offset
-			if start < len(content) && end <= len(content) {
-				return MethodImpl{
-					Body:       content[start:end],
-					ParamNames: paramNames,
-				}, nil
-			}
+		if funcDecl.Body == nil {
+			continue
 		}
+		start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+		end := fset.Position(funcDecl.Body.Rbrace).Offset
+		if start >= len(content) || end > len(content) {
+			continue
+		}
+		return MethodImpl{
+			Body:       content[start:end],
+			ParamNames: paramNames,
+		}, nil
 	}
 
 	return MethodImpl{}, &types.RefactorError{

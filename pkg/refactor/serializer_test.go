@@ -460,11 +460,12 @@ func main() {
 				return
 			}
 
-			if !tc.expectError {
-				// Check that result is valid Go code
-				if !strings.HasPrefix(result, "package main") {
-					t.Error("Expected formatted result to start with package declaration")
-				}
+			if tc.expectError {
+				return
+			}
+			// Check that result is valid Go code
+			if !strings.HasPrefix(result, "package main") {
+				t.Error("Expected formatted result to start with package declaration")
 			}
 		})
 	}

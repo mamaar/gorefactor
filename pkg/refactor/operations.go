@@ -43,12 +43,13 @@ func (op *MoveSymbolOperation) Validate(ws *types.Workspace) error {
 	refs := op.Request.Refs()
 	for i, ref := range refs {
 		err := op.validateSymbol(ws, ref)
-		if err != nil {
-			if len(refs) > 1 {
-				return &groupMemberError{index: i, err: err}
-			}
-			return err
+		if err == nil {
+			continue
 		}
+		if len(refs) > 1 {
+			return &groupMemberError{index: i, err: err}
+		}
+		return err
 	}
 	return validateDistinctNames(refs)
 }
@@ -269,11 +270,12 @@ func embedRefusal(pkg *types.Package, symbol *types.Symbol) error {
 			continue
 		}
 		for _, c := range doc.List {
-			if strings.HasPrefix(c.Text, "//go:embed") {
-				return &types.RefactorError{
-					Type:    types.InvalidOperation,
-					Message: fmt.Sprintf("cannot move %s: it carries a //go:embed directive, whose files are relative to package %s; move it by hand", symbol.Name, pkg.Name),
-				}
+			if !strings.HasPrefix(c.Text, "//go:embed") {
+				continue
+			}
+			return &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("cannot move %s: it carries a //go:embed directive, whose files are relative to package %s; move it by hand", symbol.Name, pkg.Name),
 			}
 		}
 	}
@@ -390,12 +392,13 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		}
 	}
 	for _, m := range moving {
-		if m.typ == nil && m.file == targetFile {
-			return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("%s is already declared in %s", m.sym.Name, rootRelative(ws, targetFile.Path)),
-			}}
+		if m.typ != nil || m.file != targetFile {
+			continue
 		}
+		return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("%s is already declared in %s", m.sym.Name, rootRelative(ws, targetFile.Path)),
+		}}
 	}
 	for _, f := range sourceFiles {
 		if f == targetFile {
@@ -438,14 +441,15 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			}
 			continue
 		}
-		if refSource[ref].Path != owner.pkg.Path {
-			// The copied declaration would keep a qualifier for a package
-			// whose symbol has moved.
-			return nil, &groupMemberError{index: owner.owner, err: &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.name(), ref.Symbol.Name),
-			}}
+		if refSource[ref].Path == owner.pkg.Path {
+			continue
 		}
+		// The copied declaration would keep a qualifier for a package
+		// whose symbol has moved.
+		return nil, &groupMemberError{index: owner.owner, err: &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.name(), ref.Symbol.Name),
+		}}
 	}
 
 	op.target = targetPackage.Path
@@ -667,18 +671,19 @@ func methodEntries(ws *types.Workspace, typ *movingSymbol) ([]*movingSymbol, err
 		}
 		for _, decl := range file.AST.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
-			if ok && receiverTypeName(fd) == typeName {
-				rel, err := filepath.Rel(ws.RootPath, file.Path)
-				if err != nil {
-					rel = file.Path
-				}
-				line := ws.FileSet.Position(fd.Name.Pos()).Line
-				return nil, &types.RefactorError{
-					Type:    types.InvalidOperation,
-					Message: fmt.Sprintf("cannot move %s: its method %s is declared in the test file %s:%d; move or remove it first", typeName, fd.Name.Name, filepath.ToSlash(rel), line),
-					File:    file.Path,
-					Line:    line,
-				}
+			if !ok || receiverTypeName(fd) != typeName {
+				continue
+			}
+			rel, err := filepath.Rel(ws.RootPath, file.Path)
+			if err != nil {
+				rel = file.Path
+			}
+			line := ws.FileSet.Position(fd.Name.Pos()).Line
+			return nil, &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("cannot move %s: its method %s is declared in the test file %s:%d; move or remove it first", typeName, fd.Name.Name, filepath.ToSlash(rel), line),
+				File:    file.Path,
+				Line:    line,
 			}
 		}
 	}
@@ -841,11 +846,12 @@ func (op *RenameSymbolOperation) findTargetSymbols(ws *types.Workspace, resolver
 	} else {
 		// Workspace-wide rename
 		for _, pkg := range ws.Packages {
-			if pkg.Symbols != nil {
-				symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
-				if err == nil {
-					targetSymbols = append(targetSymbols, symbol)
-				}
+			if pkg.Symbols == nil {
+				continue
+			}
+			symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
+			if err == nil {
+				targetSymbols = append(targetSymbols, symbol)
 			}
 		}
 	}
@@ -877,11 +883,12 @@ func (op *RenameSymbolOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	} else {
 		// Workspace-wide rename
 		for _, pkg := range ws.Packages {
-			if pkg.Symbols != nil {
-				symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
-				if err == nil {
-					targetSymbols = append(targetSymbols, symbol)
-				}
+			if pkg.Symbols == nil {
+				continue
+			}
+			symbol, err := resolver.ResolveSymbol(pkg, op.Request.SymbolName)
+			if err == nil {
+				targetSymbols = append(targetSymbols, symbol)
 			}
 		}
 	}
@@ -1279,12 +1286,13 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 			return nil, fmt.Errorf("source file %s has no content loaded", m.file.Path)
 		}
 		path := uses[m].dotImport
-		if path != "" {
-			return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("cannot move %s: it uses names from the dot import %q in %s; qualify them first", m.name(), path, filepath.Base(m.file.Path)),
-			}}
+		if path == "" {
+			continue
 		}
+		return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("cannot move %s: it uses names from the dot import %q in %s; qualify them first", m.name(), path, filepath.Base(m.file.Path)),
+		}}
 	}
 
 	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
@@ -1668,15 +1676,16 @@ func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath st
 
 			// Find the next newline after the import
 			for i := byteOffset; i < len(content); i++ {
-				if content[i] == '\n' {
-					return &types.Change{
-						File:        filePath,
-						Start:       i + 1,
-						End:         i + 1,
-						OldText:     "",
-						NewText:     "\t" + importSpecText(alias, importPath) + "\n",
-						Description: fmt.Sprintf("Add import for %s", importPath),
-					}
+				if content[i] != '\n' {
+					continue
+				}
+				return &types.Change{
+					File:        filePath,
+					Start:       i + 1,
+					End:         i + 1,
+					OldText:     "",
+					NewText:     "\t" + importSpecText(alias, importPath) + "\n",
+					Description: fmt.Sprintf("Add import for %s", importPath),
 				}
 			}
 		}
@@ -1695,15 +1704,16 @@ func generateAddImportChange(ws *types.Workspace, filePath, alias, importPath st
 
 		// Find the next newline after package declaration
 		for i := byteOffset; i < len(content); i++ {
-			if content[i] == '\n' {
-				return &types.Change{
-					File:        filePath,
-					Start:       i + 1,
-					End:         i + 1,
-					OldText:     "",
-					NewText:     "\nimport " + importSpecText(alias, importPath) + "\n",
-					Description: fmt.Sprintf("Add import for %s", importPath),
-				}
+			if content[i] != '\n' {
+				continue
+			}
+			return &types.Change{
+				File:        filePath,
+				Start:       i + 1,
+				End:         i + 1,
+				OldText:     "",
+				NewText:     "\nimport " + importSpecText(alias, importPath) + "\n",
+				Description: fmt.Sprintf("Add import for %s", importPath),
 			}
 		}
 	}
@@ -1785,43 +1795,44 @@ func convertSingleLineImportToMultiLine(content []byte, filePath, newAlias, newI
 	// Find the single-line import statement
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "import ") && !strings.Contains(trimmed, "(") {
-			// Extract the import path from the line
-			// Format: import "path" or import alias "path"
-			parts := strings.Fields(trimmed)
-			if len(parts) < 2 {
-				continue
-			}
+		if !strings.HasPrefix(trimmed, "import ") || strings.Contains(trimmed, "(") {
+			continue
+		}
+		// Extract the import path from the line
+		// Format: import "path" or import alias "path"
+		parts := strings.Fields(trimmed)
+		if len(parts) < 2 {
+			continue
+		}
 
-			// Calculate byte position of the import line
-			startByte := 0
-			for j := range i {
-				startByte += len(lines[j]) + 1 // +1 for newline
-			}
-			endByte := startByte + len(lines[i]) + 1 // +1 for newline
+		// Calculate byte position of the import line
+		startByte := 0
+		for j := range i {
+			startByte += len(lines[j]) + 1 // +1 for newline
+		}
+		endByte := startByte + len(lines[i]) + 1 // +1 for newline
 
-			// Get the import path (last part, with quotes)
-			oldImportPath := parts[len(parts)-1]
+		// Get the import path (last part, with quotes)
+		oldImportPath := parts[len(parts)-1]
 
-			// Build new multi-line import block
-			var newImport string
-			if len(parts) == 3 {
-				// Has alias: import alias "path"
-				alias := parts[1]
-				newImport = fmt.Sprintf("import (\n\t%s %s\n\t%s\n)", alias, oldImportPath, importSpecText(newAlias, newImportPath))
-			} else {
-				// No alias: import "path"
-				newImport = fmt.Sprintf("import (\n\t%s\n\t%s\n)", oldImportPath, importSpecText(newAlias, newImportPath))
-			}
+		// Build new multi-line import block
+		var newImport string
+		if len(parts) == 3 {
+			// Has alias: import alias "path"
+			alias := parts[1]
+			newImport = fmt.Sprintf("import (\n\t%s %s\n\t%s\n)", alias, oldImportPath, importSpecText(newAlias, newImportPath))
+		} else {
+			// No alias: import "path"
+			newImport = fmt.Sprintf("import (\n\t%s\n\t%s\n)", oldImportPath, importSpecText(newAlias, newImportPath))
+		}
 
-			return &types.Change{
-				File:        filePath,
-				Start:       startByte,
-				End:         endByte,
-				OldText:     lines[i] + "\n",
-				NewText:     newImport + "\n",
-				Description: fmt.Sprintf("Convert single-line import to multi-line and add %s", newImportPath),
-			}
+		return &types.Change{
+			File:        filePath,
+			Start:       startByte,
+			End:         endByte,
+			OldText:     lines[i] + "\n",
+			NewText:     newImport + "\n",
+			Description: fmt.Sprintf("Convert single-line import to multi-line and add %s", newImportPath),
 		}
 	}
 
@@ -2169,11 +2180,12 @@ func (op *RenameMethodOperation) checkMethodNameConflict(ws *types.Workspace, ty
 	methods, exists := pkg.Symbols.Methods[typeSymbol.Name]
 	if exists {
 		for _, method := range methods {
-			if method.Name == op.Request.NewMethodName {
-				return &types.RefactorError{
-					Type:    types.NameConflict,
-					Message: fmt.Sprintf("method %s already exists on type %s", op.Request.NewMethodName, typeSymbol.Name),
-				}
+			if method.Name != op.Request.NewMethodName {
+				continue
+			}
+			return &types.RefactorError{
+				Type:    types.NameConflict,
+				Message: fmt.Sprintf("method %s already exists on type %s", op.Request.NewMethodName, typeSymbol.Name),
 			}
 		}
 	}

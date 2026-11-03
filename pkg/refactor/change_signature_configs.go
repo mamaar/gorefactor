@@ -141,12 +141,13 @@ func (p *changeSignaturePlanner) reportTypeChecks(plan *types.RefactoringPlan) {
 			}
 			newErrors = append(newErrors, e)
 		}
-		if c.result.Skipped != "" {
-			// PlanResult has no field for an unverified plan; a site without a file is the closest.
-			plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
-				Reason: "the plan could not be type-checked and is unverified: " + c.result.Skipped,
-			})
+		if c.result.Skipped == "" {
+			continue
 		}
+		// PlanResult has no field for an unverified plan; a site without a file is the closest.
+		plan.SkippedSites = append(plan.SkippedSites, types.SkippedSite{
+			Reason: "the plan could not be type-checked and is unverified: " + c.result.Skipped,
+		})
 	}
 	if len(newErrors) == 0 {
 		return

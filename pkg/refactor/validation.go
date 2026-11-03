@@ -126,28 +126,30 @@ func (v *Validator) validateChanges(changes []refactorTypes.Change) []refactorTy
 				}
 
 				// Check if changes overlap
-				if v.changesOverlap(change1, change2) {
-					issues = append(issues, refactorTypes.Issue{
-						Type:        refactorTypes.IssueNameConflict,
-						Description: fmt.Sprintf("overlapping changes detected in file %s", fileName),
-						File:        fileName,
-						Severity:    refactorTypes.Error,
-					})
+				if !v.changesOverlap(change1, change2) {
+					continue
 				}
+				issues = append(issues, refactorTypes.Issue{
+					Type:        refactorTypes.IssueNameConflict,
+					Description: fmt.Sprintf("overlapping changes detected in file %s", fileName),
+					File:        fileName,
+					Severity:    refactorTypes.Error,
+				})
 			}
 		}
 	}
 
 	// Validate that changes are syntactically valid
 	for _, change := range changes {
-		if change.Start < 0 || change.End < change.Start {
-			issues = append(issues, refactorTypes.Issue{
-				Type:        refactorTypes.IssueCompilationError,
-				Description: fmt.Sprintf("invalid change bounds: start=%d, end=%d", change.Start, change.End),
-				File:        change.File,
-				Severity:    refactorTypes.Error,
-			})
+		if change.Start >= 0 && change.End >= change.Start {
+			continue
 		}
+		issues = append(issues, refactorTypes.Issue{
+			Type:        refactorTypes.IssueCompilationError,
+			Description: fmt.Sprintf("invalid change bounds: start=%d, end=%d", change.Start, change.End),
+			File:        change.File,
+			Severity:    refactorTypes.Error,
+		})
 	}
 
 	return issues
@@ -163,35 +165,38 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 	for _, change := range plan.Changes {
 		// Basic syntax validation of new text. A relocation is a whole file,
 		// which the serializer refuses to write when it newly fails to parse.
-		if change.NewText != "" && !change.Relocation {
-			// Skip validation for code fragments that aren't valid standalone Go:
-			// - Interface method signatures (method name + signature)
-			// - Parameter list changes (just parameter declarations)
-			// - Call argument changes (just expressions)
-			// - Import additions (just import path strings)
-			desc := change.Description
-			isFragment := strings.Contains(desc, "interface method") ||
-				strings.Contains(desc, "parameters") ||
-				strings.Contains(desc, "parameter") ||
-				strings.Contains(desc, "call to") ||
-				strings.Contains(desc, "argument") ||
-				strings.Contains(desc, "import") ||
-				strings.Contains(desc, "qualified references") ||
-				strings.Contains(desc, "Split") ||
-				strings.Contains(desc, "Replace") ||
-				strings.Contains(desc, "Wrap")
-			if !isFragment {
-				err := v.validateGoSyntax(change.NewText)
-				if err != nil {
-					issues = append(issues, refactorTypes.Issue{
-						Type:        refactorTypes.IssueCompilationError,
-						Description: fmt.Sprintf("syntax error in new text: %v", err),
-						File:        change.File,
-						Severity:    refactorTypes.Error,
-					})
-				}
-			}
+		if change.NewText == "" || change.Relocation {
+			continue
 		}
+		// Skip validation for code fragments that aren't valid standalone Go:
+		// - Interface method signatures (method name + signature)
+		// - Parameter list changes (just parameter declarations)
+		// - Call argument changes (just expressions)
+		// - Import additions (just import path strings)
+		desc := change.Description
+		isFragment := strings.Contains(desc, "interface method") ||
+			strings.Contains(desc, "parameters") ||
+			strings.Contains(desc, "parameter") ||
+			strings.Contains(desc, "call to") ||
+			strings.Contains(desc, "argument") ||
+			strings.Contains(desc, "import") ||
+			strings.Contains(desc, "qualified references") ||
+			strings.Contains(desc, "Split") ||
+			strings.Contains(desc, "Replace") ||
+			strings.Contains(desc, "Wrap")
+		if isFragment {
+			continue
+		}
+		err := v.validateGoSyntax(change.NewText)
+		if err == nil {
+			continue
+		}
+		issues = append(issues, refactorTypes.Issue{
+			Type:        refactorTypes.IssueCompilationError,
+			Description: fmt.Sprintf("syntax error in new text: %v", err),
+			File:        change.File,
+			Severity:    refactorTypes.Error,
+		})
 	}
 
 	return issues

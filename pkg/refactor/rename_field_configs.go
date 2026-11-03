@@ -80,12 +80,13 @@ func refuseUnresolvedMembers(v *analysis.View, renamed types.SymbolKeySet, kind,
 	for _, m := range unresolvedMentions(v, map[string]bool{name: true}) {
 		for key := range renamed {
 			sym := symbolForKey(v.Workspace, key)
-			if sym != nil && mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(sym.File)) {
-				b := m.blocker()
-				b.Configs = []string{v.Config.String()}
-				blockers = append(blockers, b)
-				break
+			if sym == nil || !mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(sym.File)) {
+				continue
 			}
+			b := m.blocker()
+			b.Configs = []string{v.Config.String()}
+			blockers = append(blockers, b)
+			break
 		}
 	}
 	if len(blockers) == 0 {

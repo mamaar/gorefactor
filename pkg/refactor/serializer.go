@@ -89,12 +89,13 @@ func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 
 	for i := range steps {
 		err := steps[i].commit()
-		if err != nil {
-			return errors.Join(&refactorTypes.RefactorError{
-				Type:    refactorTypes.FileSystemError,
-				Message: err.Error(),
-			}, rollback(steps[:i], &steps[i]))
+		if err == nil {
+			continue
 		}
+		return errors.Join(&refactorTypes.RefactorError{
+			Type:    refactorTypes.FileSystemError,
+			Message: err.Error(),
+		}, rollback(steps[:i], &steps[i]))
 	}
 
 	return nil
@@ -236,16 +237,17 @@ func validateChangePathsAbsolute(changes []refactorTypes.Change) error {
 				Message: fmt.Sprintf("refusing to apply a change with no file path (%s)", change.Description),
 			}
 		}
-		if !filepath.IsAbs(change.File) {
-			return &refactorTypes.RefactorError{
-				Type: refactorTypes.FileSystemError,
-				Message: fmt.Sprintf(
-					"refusing to apply a change to the relative path %q (%s): "+
-						"change paths must be absolute, or they resolve against the server's working directory "+
-						"instead of the workspace",
-					change.File, change.Description),
-				File: change.File,
-			}
+		if filepath.IsAbs(change.File) {
+			continue
+		}
+		return &refactorTypes.RefactorError{
+			Type: refactorTypes.FileSystemError,
+			Message: fmt.Sprintf(
+				"refusing to apply a change to the relative path %q (%s): "+
+					"change paths must be absolute, or they resolve against the server's working directory "+
+					"instead of the workspace",
+				change.File, change.Description),
+			File: change.File,
 		}
 	}
 	return nil

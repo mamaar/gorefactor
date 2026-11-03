@@ -54,12 +54,13 @@ func ResolvePackagePath(workspace *Workspace, userPath string) string {
 	var matchedPath string
 	matchCount := 0
 	for pkgPath, pkg := range workspace.Packages {
-		if pkg.Name == userPath {
-			matchedPath = pkgPath
-			matchCount++
-			if matchCount > 1 {
-				break
-			}
+		if pkg.Name != userPath {
+			continue
+		}
+		matchedPath = pkgPath
+		matchCount++
+		if matchCount > 1 {
+			break
 		}
 	}
 	if matchCount == 1 {

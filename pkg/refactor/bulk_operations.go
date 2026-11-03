@@ -237,13 +237,14 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	// "internal/foo" from also matching a sibling "internal/foobar".
 	var moves []dirMove
 	for _, dir := range op.Sources.Dirs() {
-		if (dir == sourceDirPath || strings.HasPrefix(dir, sourceDirPath+string(filepath.Separator))) && len(op.Sources.Dir(dir)) > 0 {
-			rel, err := filepath.Rel(sourceDirPath, dir)
-			if err != nil {
-				return nil, fmt.Errorf("computing target path for package %s: %w", dir, err)
-			}
-			moves = append(moves, dirMove{source: dir, target: filepath.Join(targetDirPath, rel)})
+		if dir != sourceDirPath && !strings.HasPrefix(dir, sourceDirPath+string(filepath.Separator)) || len(op.Sources.Dir(dir)) <= 0 {
+			continue
 		}
+		rel, err := filepath.Rel(sourceDirPath, dir)
+		if err != nil {
+			return nil, fmt.Errorf("computing target path for package %s: %w", dir, err)
+		}
+		moves = append(moves, dirMove{source: dir, target: filepath.Join(targetDirPath, rel)})
 	}
 	if len(moves) == 0 {
 		return nil, fmt.Errorf("no packages found in source directory %s", op.Request.SourceDir)

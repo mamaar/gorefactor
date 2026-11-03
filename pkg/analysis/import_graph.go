@@ -93,11 +93,12 @@ func Importers(ws *types.Workspace, paths []string) []string {
 	var out []string
 	for work := slices.Clone(paths); len(work) > 0; work = work[1:] {
 		for _, from := range importedBy[work[0]] {
-			if !seen[from] {
-				seen[from] = true
-				out = append(out, from)
-				work = append(work, from)
+			if seen[from] {
+				continue
 			}
+			seen[from] = true
+			out = append(out, from)
+			work = append(work, from)
 		}
 	}
 	sort.Strings(out)

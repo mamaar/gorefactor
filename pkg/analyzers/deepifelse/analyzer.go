@@ -381,13 +381,15 @@ func measureIfElseDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 
 	for _, stmt := range ifStmt.Body.List {
 		innerIf, ok := stmt.(*ast.IfStmt)
-		if ok {
-			if innerIf.Else != nil {
-				d := measureIfElseDepth(innerIf, currentDepth+1)
-				if d > maxDepth {
-					maxDepth = d
-				}
-			}
+		if !ok {
+			continue
+		}
+		if innerIf.Else == nil {
+			continue
+		}
+		d := measureIfElseDepth(innerIf, currentDepth+1)
+		if d > maxDepth {
+			maxDepth = d
 		}
 	}
 
@@ -404,13 +406,15 @@ func measureIfElseDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 		if ok {
 			for _, stmt := range elseBlock.List {
 				innerIf, ok := stmt.(*ast.IfStmt)
-				if ok {
-					if innerIf.Else != nil {
-						d := measureIfElseDepth(innerIf, currentDepth+1)
-						if d > maxDepth {
-							maxDepth = d
-						}
-					}
+				if !ok {
+					continue
+				}
+				if innerIf.Else == nil {
+					continue
+				}
+				d := measureIfElseDepth(innerIf, currentDepth+1)
+				if d > maxDepth {
+					maxDepth = d
 				}
 			}
 		}
@@ -487,13 +491,15 @@ func measureHappyPathDepth(ifStmt *ast.IfStmt, currentDepth int) int {
 
 	for _, stmt := range ifStmt.Body.List {
 		innerIf, ok := stmt.(*ast.IfStmt)
-		if ok {
-			if innerIf.Else != nil {
-				d := measureHappyPathDepth(innerIf, currentDepth+1)
-				if d > maxDepth {
-					maxDepth = d
-				}
-			}
+		if !ok {
+			continue
+		}
+		if innerIf.Else == nil {
+			continue
+		}
+		d := measureHappyPathDepth(innerIf, currentDepth+1)
+		if d > maxDepth {
+			maxDepth = d
 		}
 	}
 

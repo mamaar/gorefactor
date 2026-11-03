@@ -216,11 +216,12 @@ func planMemberRenames(ws *types.Workspace, idx *analysis.ReferenceIndex, s memb
 			continue
 		}
 		op := s.linkedOp(ws, idx, key)
-		if op != nil {
-			err := run.validate(ws, op, false)
-			if err != nil {
-				return nil, nil, err
-			}
+		if op == nil {
+			continue
+		}
+		err := run.validate(ws, op, false)
+		if err != nil {
+			return nil, nil, err
 		}
 	}
 	if len(run.ops) == 0 {

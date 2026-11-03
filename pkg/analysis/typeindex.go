@@ -113,15 +113,16 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 
 		// Check if this ident is a use
 		obj, ok = info.Uses[ident]
-		if ok && obj != nil {
-			id := ObjectIDOf(obj)
-			u := ix.uses[id]
-			if u == nil {
-				u = newUses()
-				ix.uses[id] = u
-			}
-			u.add(cur.Index())
+		if !ok || obj == nil {
+			continue
 		}
+		id := ObjectIDOf(obj)
+		u := ix.uses[id]
+		if u == nil {
+			u = newUses()
+			ix.uses[id] = u
+		}
+		u.add(cur.Index())
 	}
 
 	return ix
@@ -158,10 +159,11 @@ func (ix *packageIndex) Calls(callee gotypes.Object) iter.Seq[inspector.Cursor] 
 		}
 		for idx := range u.decode() {
 			call, ok := callSiteFor(ix.inspect.At(idx))
-			if ok {
-				if !yield(call) {
-					return
-				}
+			if !ok {
+				continue
+			}
+			if !yield(call) {
+				return
 			}
 		}
 	}

@@ -215,11 +215,12 @@ validateParams:
 	}
 	// Validate parameter names are valid Go identifiers
 	for _, param := range op.NewParams {
-		if param.Name != "" && !isValidGoIdentifierExtract(param.Name) {
-			return &pkgtypes.RefactorError{
-				Type:    pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("invalid parameter name: %s", param.Name),
-			}
+		if param.Name == "" || isValidGoIdentifierExtract(param.Name) {
+			continue
+		}
+		return &pkgtypes.RefactorError{
+			Type:    pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("invalid parameter name: %s", param.Name),
 		}
 	}
 
@@ -586,11 +587,12 @@ func (op *ChangeSignatureOperation) addDefaultValueImports(ws *pkgtypes.Workspac
 		}
 	}
 	for filePath := range filesNeedingImport {
-		if !hasImport(ws, filePath, requiredImport) {
-			importChange := generateAddImportChange(ws, filePath, "", requiredImport)
-			if importChange != nil {
-				plan.Changes = append(plan.Changes, *importChange)
-			}
+		if hasImport(ws, filePath, requiredImport) {
+			continue
+		}
+		importChange := generateAddImportChange(ws, filePath, "", requiredImport)
+		if importChange != nil {
+			plan.Changes = append(plan.Changes, *importChange)
 		}
 	}
 }
@@ -816,16 +818,18 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 		}
 		// Also check test files
 		file, exists = pkg.TestFiles[refFileName]
-		if exists {
-			// Verify this is the right file by checking the full path
-			if file.Path == ref.File {
-				refFile = file
-				if op.Logger != nil {
-					op.Logger.Debug("Found reference file in package TestFiles", "pkg", pkg.Path, "file", refFileName)
-				}
-				break
-			}
+		if !exists {
+			continue
 		}
+		// Verify this is the right file by checking the full path
+		if file.Path != ref.File {
+			continue
+		}
+		refFile = file
+		if op.Logger != nil {
+			op.Logger.Debug("Found reference file in package TestFiles", "pkg", pkg.Path, "file", refFileName)
+		}
+		break
 	}
 	if refFile == nil {
 		// Debug: show what files are available
@@ -1281,13 +1285,14 @@ func (op *ChangeSignatureOperation) extractInterfaceMethodParams(file *pkgtypes.
 			return false
 		}
 		for _, field := range ifaceType.Methods.List {
-			if len(field.Names) > 0 && field.Names[0].Name == methodName {
-				funcType, ok := field.Type.(*ast.FuncType)
-				if ok {
-					result = op.extractParamList(funcType.Params)
-				}
-				return false
+			if len(field.Names) <= 0 || field.Names[0].Name != methodName {
+				continue
 			}
+			funcType, ok := field.Type.(*ast.FuncType)
+			if ok {
+				result = op.extractParamList(funcType.Params)
+			}
+			return false
 		}
 		return false
 	})
@@ -1307,13 +1312,14 @@ func (op *ChangeSignatureOperation) extractInterfaceMethodReturns(file *pkgtypes
 			return false
 		}
 		for _, field := range ifaceType.Methods.List {
-			if len(field.Names) > 0 && field.Names[0].Name == methodName {
-				funcType, ok := field.Type.(*ast.FuncType)
-				if ok {
-					returns = op.extractReturnTypes(funcType)
-				}
-				return false
+			if len(field.Names) <= 0 || field.Names[0].Name != methodName {
+				continue
 			}
+			funcType, ok := field.Type.(*ast.FuncType)
+			if ok {
+				returns = op.extractReturnTypes(funcType)
+			}
+			return false
 		}
 		return false
 	})

@@ -238,11 +238,12 @@ func typedGraph(t *testing.T, files map[string]string) graphFixture {
 	v := set.Primary()
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
-		if pkg.Symbols == nil {
-			_, err := v.Resolver.BuildSymbolTable(pkg)
-			if err != nil {
-				t.Fatal(err)
-			}
+		if pkg.Symbols != nil {
+			continue
+		}
+		_, err := v.Resolver.BuildSymbolTable(pkg)
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 	idx, err := v.ReferenceIndex()

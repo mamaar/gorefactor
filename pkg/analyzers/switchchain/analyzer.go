@@ -668,11 +668,12 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 			return p, reasonNoText
 		}
 		for j := range i {
-			if w.sameType(chain.asserted[j], typeExpr) {
-				// The chain merely had a dead branch; a type switch repeating a
-				// type does not compile at all.
-				return p, fmt.Sprintf("two branches assert the same type %s, which a type switch cannot repeat; remove the dead branch first", text)
+			if !w.sameType(chain.asserted[j], typeExpr) {
+				continue
 			}
+			// The chain merely had a dead branch; a type switch repeating a
+			// type does not compile at all.
+			return p, fmt.Sprintf("two branches assert the same type %s, which a type switch cannot repeat; remove the dead branch first", text)
 		}
 		p.cases = append(p.cases, text)
 	}

@@ -258,13 +258,14 @@ type treeLoader struct {
 func (l *treeLoader) work() {
 	for dir := range l.dirs {
 		err := l.tree.AddDir(dir)
-		if err != nil {
-			l.mu.Lock()
-			if l.err == nil {
-				l.err = fmt.Errorf("load %s: %w", dir, err)
-			}
-			l.mu.Unlock()
+		if err == nil {
+			continue
 		}
+		l.mu.Lock()
+		if l.err == nil {
+			l.err = fmt.Errorf("load %s: %w", dir, err)
+		}
+		l.mu.Unlock()
 	}
 }
 

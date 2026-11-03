@@ -147,20 +147,21 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 				externalSet[pkgID] = true
 			}
 
-			if len(externalSet) >= 2 {
-				refPkgs := make([]string, 0, len(externalSet))
-				for pkgID := range externalSet {
-					refPkgs = append(refPkgs, pkgID)
-				}
-				sort.Strings(refPkgs)
-				candidates = append(candidates, sharedSymbolCandidate{
-					symbol:              sym,
-					pkg:                 pkg,
-					referencingPackages: refPkgs,
-					targetFSPath:        targetFSPath,
-					targetImportPath:    targetImportPath,
-				})
+			if len(externalSet) < 2 {
+				continue
 			}
+			refPkgs := make([]string, 0, len(externalSet))
+			for pkgID := range externalSet {
+				refPkgs = append(refPkgs, pkgID)
+			}
+			sort.Strings(refPkgs)
+			candidates = append(candidates, sharedSymbolCandidate{
+				symbol:              sym,
+				pkg:                 pkg,
+				referencingPackages: refPkgs,
+				targetFSPath:        targetFSPath,
+				targetImportPath:    targetImportPath,
+			})
 		}
 	}
 
@@ -599,17 +600,18 @@ func detectBackwardsDependencies(ws *types.Workspace) []types.BackwardDependency
 		}
 		for _, importPath := range importPaths {
 			toTier := packageTier(importPath)
-			if toTier > fromTier {
-				from := fromPkg.ImportPath
-				if from == "" {
-					from = fromPkg.Path
-				}
-				deps = append(deps, types.BackwardDependency{
-					From:   from,
-					To:     importPath,
-					Reason: fmt.Sprintf("inner layer (tier %d) imports outer layer (tier %d)", fromTier, toTier),
-				})
+			if toTier <= fromTier {
+				continue
 			}
+			from := fromPkg.ImportPath
+			if from == "" {
+				from = fromPkg.Path
+			}
+			deps = append(deps, types.BackwardDependency{
+				From:   from,
+				To:     importPath,
+				Reason: fmt.Sprintf("inner layer (tier %d) imports outer layer (tier %d)", fromTier, toTier),
+			})
 		}
 	}
 	return deps
@@ -643,20 +645,21 @@ func (op *AnalyzeDependenciesOperation) generateSuggestedMoves(ws *types.Workspa
 				}
 				externalSet[pkgID] = true
 			}
-			if len(externalSet) >= 2 {
-				from := pkg.ImportPath
-				if from == "" {
-					from = pkg.Path
-				}
-				referrers := slices.Sorted(maps.Keys(externalSet))
-				moves = append(moves, types.SuggestedMove{
-					Symbol:              sym.Name,
-					FromPackage:         from,
-					ToPackage:           "pkg/shared",
-					Reason:              fmt.Sprintf("referenced by %d packages: %s", len(referrers), strings.Join(referrers, ", ")),
-					ReferencingPackages: referrers,
-				})
+			if len(externalSet) < 2 {
+				continue
 			}
+			from := pkg.ImportPath
+			if from == "" {
+				from = pkg.Path
+			}
+			referrers := slices.Sorted(maps.Keys(externalSet))
+			moves = append(moves, types.SuggestedMove{
+				Symbol:              sym.Name,
+				FromPackage:         from,
+				ToPackage:           "pkg/shared",
+				Reason:              fmt.Sprintf("referenced by %d packages: %s", len(referrers), strings.Join(referrers, ", ")),
+				ReferencingPackages: referrers,
+			})
 		}
 	}
 	sort.Slice(moves, func(i, j int) bool {

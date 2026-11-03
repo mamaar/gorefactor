@@ -82,12 +82,13 @@ func markLine(t *testing.T, src, mark string) int {
 	t.Helper()
 	found := 0
 	for i, line := range strings.Split(src, "\n") {
-		if strings.Contains(line, mark) {
-			if found != 0 {
-				t.Fatalf("mark %q appears on lines %d and %d", mark, found, i+1)
-			}
-			found = i + 1
+		if !strings.Contains(line, mark) {
+			continue
 		}
+		if found != 0 {
+			t.Fatalf("mark %q appears on lines %d and %d", mark, found, i+1)
+		}
+		found = i + 1
 	}
 	if found == 0 {
 		t.Fatalf("mark %q not found in source", mark)

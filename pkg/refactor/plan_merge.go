@@ -101,12 +101,13 @@ func mergeConfigChanges(plans []ConfigPlan) []*mergedChange {
 		for _, c := range p.Plan.Changes {
 			id := identityOf(c)
 			local[id]++
-			if local[id] > keptCount[id] {
-				m := &mergedChange{change: c, id: id}
-				kept = append(kept, m)
-				keptCount[id]++
-				firstOfID[id] = append(firstOfID[id], m)
+			if local[id] <= keptCount[id] {
+				continue
 			}
+			m := &mergedChange{change: c, id: id}
+			kept = append(kept, m)
+			keptCount[id]++
+			firstOfID[id] = append(firstOfID[id], m)
 		}
 		for id := range local {
 			for _, m := range firstOfID[id] {

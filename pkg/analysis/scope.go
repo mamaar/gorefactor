@@ -106,25 +106,27 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 			// Handle := and = assignments
 			for i, lhs := range node.Lhs {
 				ident, ok := lhs.(*ast.Ident)
-				if ok && ident.Name == identName {
-					// Found declaration! Extract type from RHS
-					if i < len(node.Rhs) {
-						typeExpr = sa.extractTypeFromExpression(node.Rhs[i])
-						return false
-					}
+				if !ok || ident.Name != identName {
+					continue
+				}
+				// Found declaration! Extract type from RHS
+				if i < len(node.Rhs) {
+					typeExpr = sa.extractTypeFromExpression(node.Rhs[i])
+					return false
 				}
 			}
 		case *ast.ValueSpec:
 			// Handle var declarations
 			for _, name := range node.Names {
-				if name.Name == identName {
-					if node.Type != nil {
-						typeExpr = node.Type // Explicit type
-					} else if len(node.Values) > 0 {
-						typeExpr = sa.extractTypeFromExpression(node.Values[0]) // Infer from RHS
-					}
-					return false
+				if name.Name != identName {
+					continue
 				}
+				if node.Type != nil {
+					typeExpr = node.Type // Explicit type
+				} else if len(node.Values) > 0 {
+					typeExpr = sa.extractTypeFromExpression(node.Values[0]) // Infer from RHS
+				}
+				return false
 			}
 		}
 		return true
@@ -175,17 +177,19 @@ func (sa *ScopeAnalyzer) findPackageLevelVarType(identName string, file *types.F
 		if ok && genDecl.Tok == token.VAR {
 			for _, spec := range genDecl.Specs {
 				valueSpec, ok := spec.(*ast.ValueSpec)
-				if ok {
-					for _, name := range valueSpec.Names {
-						if name.Name == identName {
-							if valueSpec.Type != nil {
-								typeExpr = valueSpec.Type
-							} else if len(valueSpec.Values) > 0 {
-								typeExpr = sa.extractTypeFromExpression(valueSpec.Values[0])
-							}
-							return false
-						}
+				if !ok {
+					continue
+				}
+				for _, name := range valueSpec.Names {
+					if name.Name != identName {
+						continue
 					}
+					if valueSpec.Type != nil {
+						typeExpr = valueSpec.Type
+					} else if len(valueSpec.Values) > 0 {
+						typeExpr = sa.extractTypeFromExpression(valueSpec.Values[0])
+					}
+					return false
 				}
 			}
 		}
@@ -264,19 +268,22 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 					importAlias = parts[len(parts)-1]
 				}
 
-				if importAlias == pkgIdent.Name {
-					importPath := strings.Trim(imp.Path.Value, `"`)
-					// Try to find package by import path
-					if sa.resolver.workspace != nil {
-						fsPath, ok := sa.resolver.workspace.ImportToPath[importPath]
-						if ok {
-							pkg := sa.resolver.workspace.Packages[fsPath]
-							if pkg != nil {
-								sym, _ := sa.resolver.ResolveSymbol(pkg, expr.Sel.Name)
-								return sym
-							}
-						}
-					}
+				if importAlias != pkgIdent.Name {
+					continue
+				}
+				importPath := strings.Trim(imp.Path.Value, `"`)
+				// Try to find package by import path
+				if sa.resolver.workspace == nil {
+					continue
+				}
+				fsPath, ok := sa.resolver.workspace.ImportToPath[importPath]
+				if !ok {
+					continue
+				}
+				pkg := sa.resolver.workspace.Packages[fsPath]
+				if pkg != nil {
+					sym, _ := sa.resolver.ResolveSymbol(pkg, expr.Sel.Name)
+					return sym
 				}
 			}
 		}

@@ -92,11 +92,12 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 	if len(p.moved) == 0 {
 		for _, ref := range p.req.Refs() {
 			pkg := ws.Packages[ref.Package]
-			if pkg != nil && pkg.Symbols != nil {
-				sym, err := resolver.ResolveSymbol(pkg, ref.Name)
-				if err == nil {
-					p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
-				}
+			if pkg == nil || pkg.Symbols == nil {
+				continue
+			}
+			sym, err := resolver.ResolveSymbol(pkg, ref.Name)
+			if err == nil {
+				p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
 			}
 		}
 		return configResult{}

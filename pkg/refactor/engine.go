@@ -985,13 +985,14 @@ func (e *DefaultEngine) ExecutePlan(plan *types.RefactoringPlan) error {
 
 	// Check for critical issues
 	for _, issue := range plan.Impact.PotentialIssues {
-		if issue.Severity == types.Error {
-			return &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("cannot execute plan due to critical issue: %s", issue.Description),
-				File:    issue.File,
-				Line:    issue.Line,
-			}
+		if issue.Severity != types.Error {
+			continue
+		}
+		return &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("cannot execute plan due to critical issue: %s", issue.Description),
+			File:    issue.File,
+			Line:    issue.Line,
 		}
 	}
 

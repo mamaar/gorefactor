@@ -853,11 +853,12 @@ func Use() dep.T {
 			t.Errorf("expected %s to be marked TypesChecked", pkg.ImportPath)
 			continue
 		}
-		if pkg.TypesErr != nil {
-			t.Errorf("package %s failed to type-check against the shared dependency: %v\n"+
-				"this means Import handed it a placeholder for test/conc/dep instead of the real package",
-				pkg.ImportPath, pkg.TypesErr)
+		if pkg.TypesErr == nil {
+			continue
 		}
+		t.Errorf("package %s failed to type-check against the shared dependency: %v\n"+
+			"this means Import handed it a placeholder for test/conc/dep instead of the real package",
+			pkg.ImportPath, pkg.TypesErr)
 	}
 }
 

@@ -529,9 +529,8 @@ func (op *ConvertAliasesOperation) Type() types.OperationType {
 func (op *ConvertAliasesOperation) Description() string {
 	if op.Request.ToFullNames {
 		return fmt.Sprintf("Convert aliases to full package names in workspace %s", op.Request.Workspace)
-	} else {
-		return fmt.Sprintf("Convert full package names to aliases in workspace %s", op.Request.Workspace)
 	}
+	return fmt.Sprintf("Convert full package names to aliases in workspace %s", op.Request.Workspace)
 }
 
 func (op *ConvertAliasesOperation) Validate(ws *types.Workspace) error {

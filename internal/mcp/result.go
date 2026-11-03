@@ -178,11 +178,12 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	}
 	if plan.Impact != nil {
 		for _, issue := range plan.Impact.PotentialIssues {
-			if issue.Severity == types.Error {
-				res.Success = false
-				res.BlockingIssue = fmt.Sprintf("critical issue: %s", issue.Description)
-				return res
+			if issue.Severity != types.Error {
+				continue
 			}
+			res.Success = false
+			res.BlockingIssue = fmt.Sprintf("critical issue: %s", issue.Description)
+			return res
 		}
 	}
 	return res

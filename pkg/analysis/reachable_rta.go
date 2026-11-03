@@ -137,10 +137,11 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 			}
 		}
 		for n := range live.pred {
-			if n.Func != nil {
-				for _, fn := range scans.of(n.Func).taken {
-					addRoot(fn, &addedTaken)
-				}
+			if n.Func == nil {
+				continue
+			}
+			for _, fn := range scans.of(n.Func).taken {
+				addRoot(fn, &addedTaken)
 			}
 		}
 		if len(added)+len(addedTaken) == 0 {
@@ -163,12 +164,13 @@ func createImports(prog *ssa.Program, created map[*gotypes.Package]bool) []*goty
 	var walk func(p *gotypes.Package)
 	walk = func(p *gotypes.Package) {
 		for _, imp := range p.Imports() {
-			if !created[imp] {
-				created[imp] = true
-				prog.CreatePackage(imp, nil, nil, prog.ImportedPackage(imp.Path()) == nil)
-				external = append(external, imp)
-				walk(imp)
+			if created[imp] {
+				continue
 			}
+			created[imp] = true
+			prog.CreatePackage(imp, nil, nil, prog.ImportedPackage(imp.Path()) == nil)
+			external = append(external, imp)
+			walk(imp)
 		}
 	}
 	for _, sp := range prog.AllPackages() {

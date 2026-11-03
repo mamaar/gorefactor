@@ -114,15 +114,16 @@ func (op *MoveSymbolOperation) checkGeneratedEdits(ws *refactorTypes.Workspace, 
 				continue
 			}
 			for _, m := range moving {
-				if m.typ == nil && m.sym == ref.Symbol {
-					return op.blame(n, m.owner, &refactorTypes.RefactorError{
-						Type: refactorTypes.InvalidOperation,
-						Message: fmt.Sprintf("cannot move %s: it is referenced at %s:%d, in a generated file; change the generator's input and regenerate",
-							m.name(), rootRelative(ws, ref.File), ref.Line),
-						File: ref.File,
-						Line: ref.Line,
-					})
+				if m.typ != nil || m.sym != ref.Symbol {
+					continue
 				}
+				return op.blame(n, m.owner, &refactorTypes.RefactorError{
+					Type: refactorTypes.InvalidOperation,
+					Message: fmt.Sprintf("cannot move %s: it is referenced at %s:%d, in a generated file; change the generator's input and regenerate",
+						m.name(), rootRelative(ws, ref.File), ref.Line),
+					File: ref.File,
+					Line: ref.Line,
+				})
 			}
 		}
 		return &refactorTypes.RefactorError{

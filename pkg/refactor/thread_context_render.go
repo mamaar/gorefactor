@@ -147,12 +147,12 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		// is what every insertion offset points at — can lexically sit
 		// inside it. Assert rather than assume.
 		for _, existing := range changes {
-			if existing.File == del.File && existing.Start == existing.End &&
-				existing.Start >= del.Start && existing.Start < del.End {
-				return nil, fmt.Errorf(
-					"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
-					del.File, del.Start, del.End, existing.Start)
+			if existing.File != del.File || existing.Start != existing.End || existing.Start < del.Start || existing.Start >= del.End {
+				continue
 			}
+			return nil, fmt.Errorf(
+				"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
+				del.File, del.Start, del.End, existing.Start)
 		}
 		changes = append(changes, del)
 	}

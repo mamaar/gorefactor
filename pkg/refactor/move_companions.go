@@ -288,16 +288,17 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		}
 		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
 		stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving)
-		if len(stranded) > 0 {
-			return &groupMemberError{index: m.owner, err: &types.RefactorError{
-				Type: types.VisibilityViolation,
-				Message: fmt.Sprintf(
-					"moving %s would strand code that constructs it via unexported fields (%s) and cannot be safely auto-moved: %s\n"+
-						"Refactor these to only set exported fields (or move them manually alongside %s first), then retry.",
-					m.sym.Name, joinFieldNames(unexportedFields), joinLocations(stranded), m.sym.Name,
-				),
-			}}
+		if len(stranded) <= 0 {
+			continue
 		}
+		return &groupMemberError{index: m.owner, err: &types.RefactorError{
+			Type: types.VisibilityViolation,
+			Message: fmt.Sprintf(
+				"moving %s would strand code that constructs it via unexported fields (%s) and cannot be safely auto-moved: %s\n"+
+					"Refactor these to only set exported fields (or move them manually alongside %s first), then retry.",
+				m.sym.Name, joinFieldNames(unexportedFields), joinLocations(stranded), m.sym.Name,
+			),
+		}}
 	}
 
 	checked := make(map[*types.Package]bool)

@@ -319,14 +319,15 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 	}
 	for f, reason := range op.plan.Blocked {
 		fd := op.declIndex[f]
-		if fd != nil && fd.File != nil {
-			sites = append(sites, pkgtypes.SkippedSite{
-				File:    fd.File.Path,
-				Line:    offsetLine(fd.File, fd.Decl.Pos()),
-				Reason:  reason,
-				Snippet: funcLabel(f),
-			})
+		if fd == nil || fd.File == nil {
+			continue
 		}
+		sites = append(sites, pkgtypes.SkippedSite{
+			File:    fd.File.Path,
+			Line:    offsetLine(fd.File, fd.Decl.Pos()),
+			Reason:  reason,
+			Snippet: funcLabel(f),
+		})
 	}
 	sites = append(sites, op.plan.Notes...)
 	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
@@ -350,15 +351,16 @@ func assertNoOverlappingChanges(changes []pkgtypes.Change) error {
 		for i := range cs {
 			for j := i + 1; j < len(cs); j++ {
 				a, b := cs[i], cs[j]
-				if a.Start < b.End && b.Start < a.End {
-					return &pkgtypes.RefactorError{
-						Type: pkgtypes.InvalidOperation,
-						Message: fmt.Sprintf(
-							"internal error: context threading produced overlapping changes in %s: "+
-								"%q [%d,%d) conflicts with %q [%d,%d)",
-							file, a.Description, a.Start, a.End, b.Description, b.Start, b.End),
-						File: file,
-					}
+				if a.Start >= b.End || b.Start >= a.End {
+					continue
+				}
+				return &pkgtypes.RefactorError{
+					Type: pkgtypes.InvalidOperation,
+					Message: fmt.Sprintf(
+						"internal error: context threading produced overlapping changes in %s: "+
+							"%q [%d,%d) conflicts with %q [%d,%d)",
+						file, a.Description, a.Start, a.End, b.Description, b.Start, b.End),
+					File: file,
 				}
 			}
 		}
@@ -444,12 +446,13 @@ func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace, idx *analysis.Re
 // gains the parameter, so it cannot also be where the climb stops.
 func (op *ThreadContextOperation) rejectStopSeeds(seeds []*gotypes.Func) ([]*gotypes.Func, error) {
 	for _, f := range seeds {
-		if op.isStop(f) {
-			return nil, &pkgtypes.RefactorError{
-				Type: pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("cannot thread context through %s: it is the function that gains the "+
-					"parameter and is also declared as a stop. No changes were made.", funcLabel(f)),
-			}
+		if !op.isStop(f) {
+			continue
+		}
+		return nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("cannot thread context through %s: it is the function that gains the "+
+				"parameter and is also declared as a stop. No changes were made.", funcLabel(f)),
 		}
 	}
 	return seeds, nil
@@ -629,13 +632,14 @@ func (op *ThreadContextOperation) discover(
 			return nil, err
 		}
 		for _, e := range extra {
-			if op.isStop(e) {
-				return nil, &pkgtypes.RefactorError{
-					Type: pkgtypes.InvalidOperation,
-					Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
-						"declared as a stop; the interface method would gain ctx while %s does not, so the "+
-						"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
-				}
+			if !op.isStop(e) {
+				continue
+			}
+			return nil, &pkgtypes.RefactorError{
+				Type: pkgtypes.InvalidOperation,
+				Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
+					"declared as a stop; the interface method would gain ctx while %s does not, so the "+
+					"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
 			}
 		}
 		gen.expanded(f, extra)

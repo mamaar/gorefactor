@@ -248,16 +248,18 @@ func (w *walker) handleSwitch(node *ast.SwitchStmt, declared scope, guarded bool
 		}
 	}
 
-	if node.Body != nil {
-		for _, c := range node.Body.List {
-			cc, ok := c.(*ast.CaseClause)
-			if ok {
-				for _, e := range cc.List {
-					w.processFuncLitsIn(e)
-				}
-				w.walkList(cc.Body, make(scope))
-			}
+	if node.Body == nil {
+		return
+	}
+	for _, c := range node.Body.List {
+		cc, ok := c.(*ast.CaseClause)
+		if !ok {
+			continue
 		}
+		for _, e := range cc.List {
+			w.processFuncLitsIn(e)
+		}
+		w.walkList(cc.Body, make(scope))
 	}
 }
 
@@ -269,12 +271,13 @@ func (w *walker) handleTypeSwitch(node *ast.TypeSwitchStmt, declared scope, guar
 		w.emitTypeSwitchFix(node, declared, list, idx, cascaded)
 	}
 
-	if node.Body != nil {
-		for _, c := range node.Body.List {
-			cc, ok := c.(*ast.CaseClause)
-			if ok {
-				w.walkList(cc.Body, w.typeSwitchClauseScope(node, cc))
-			}
+	if node.Body == nil {
+		return
+	}
+	for _, c := range node.Body.List {
+		cc, ok := c.(*ast.CaseClause)
+		if ok {
+			w.walkList(cc.Body, w.typeSwitchClauseScope(node, cc))
 		}
 	}
 }

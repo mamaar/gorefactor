@@ -294,7 +294,7 @@ func (f *errFold) checkBreaks(c inspector.Cursor, gone ast.Node) {
 			continue
 		}
 		other := slices.ContainsFunc(leavingBreaks(loop.Body), func(o *ast.BranchStmt) bool {
-			return (o.Label == nil || o.Label.Name == label) && !(gone.Pos() <= o.Pos() && o.Pos() < gone.End())
+			return (o.Label == nil || o.Label.Name == label) && (gone.Pos() > o.Pos() || o.Pos() >= gone.End())
 		})
 		if !other {
 			f.refusal(b.Pos(), "folding the nil check would remove the only break of an endless loop, leaving the code after it unreachable")

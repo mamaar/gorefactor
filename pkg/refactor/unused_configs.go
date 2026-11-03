@@ -165,11 +165,12 @@ func (r *unusedRun) markUnresolved(v *analysis.View, unused []*analysis.UnusedSy
 			if u.Symbol.Name != m.name || !d.keyed || d.unresolved != nil || m.Position == u.Symbol.Position {
 				continue
 			}
-			if mayUse(filepath.Dir(m.File), m.file.AST, d.key, filepath.Dir(u.Symbol.File)) {
-				use := m.blocker()
-				use.Configs = []string{v.Config.String()}
-				d.unresolved = &use
+			if !mayUse(filepath.Dir(m.File), m.file.AST, d.key, filepath.Dir(u.Symbol.File)) {
+				continue
 			}
+			use := m.blocker()
+			use.Configs = []string{v.Config.String()}
+			d.unresolved = &use
 		}
 	}
 }

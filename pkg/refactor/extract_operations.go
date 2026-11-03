@@ -166,18 +166,19 @@ func receiverBaseTypeName(expr ast.Expr) string {
 func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	defer func() {
 		r := recover()
-		if r != nil {
-			logFile, _ := os.Create("/tmp/gorefactor-panic.log")
-			if logFile != nil {
-				_, _ = fmt.Fprintf(logFile, "PANIC in ExtractMethodOperation.Execute: %v\n", r)
-				_, _ = fmt.Fprintf(logFile, "SourceFile: %s\n", op.SourceFile)
-				_, _ = fmt.Fprintf(logFile, "StartLine: %d, EndLine: %d\n", op.StartLine, op.EndLine)
-				_, _ = fmt.Fprintf(logFile, "NewMethodName: %s\n", op.NewMethodName)
-				_, _ = fmt.Fprintf(logFile, "TargetStruct: %s\n", op.TargetStruct)
-				_ = logFile.Close()
-			}
-			panic(fmt.Sprintf("ExtractMethodOperation panic: %v", r))
+		if r == nil {
+			return
 		}
+		logFile, _ := os.Create("/tmp/gorefactor-panic.log")
+		if logFile != nil {
+			_, _ = fmt.Fprintf(logFile, "PANIC in ExtractMethodOperation.Execute: %v\n", r)
+			_, _ = fmt.Fprintf(logFile, "SourceFile: %s\n", op.SourceFile)
+			_, _ = fmt.Fprintf(logFile, "StartLine: %d, EndLine: %d\n", op.StartLine, op.EndLine)
+			_, _ = fmt.Fprintf(logFile, "NewMethodName: %s\n", op.NewMethodName)
+			_, _ = fmt.Fprintf(logFile, "TargetStruct: %s\n", op.TargetStruct)
+			_ = logFile.Close()
+		}
+		panic(fmt.Sprintf("ExtractMethodOperation panic: %v", r))
 	}()
 
 	sourceFile, sourcePackage, err := op.resolveSourceFile(ws)
@@ -310,10 +311,11 @@ func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*typ
 				return file, true
 			}
 			rel, err := filepath.Rel(ws.RootPath, file.Path)
-			if err == nil {
-				if rel == op.SourceFile || rel == filepath.Clean(op.SourceFile) {
-					return file, true
-				}
+			if err != nil {
+				continue
+			}
+			if rel == op.SourceFile || rel == filepath.Clean(op.SourceFile) {
+				return file, true
 			}
 		}
 		return nil, false
@@ -431,14 +433,16 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	var structSymbol *types.Symbol
 
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
-			if err == nil {
-				if symbol.Kind == types.TypeSymbol {
-					structSymbol = symbol
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
+		}
+		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if symbol.Kind == types.TypeSymbol {
+			structSymbol = symbol
+			break
 		}
 	}
 
@@ -453,14 +457,16 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	// Find the package containing the struct
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
-			if err == nil {
-				if symbol.Kind == types.TypeSymbol {
-					sourcePackage = pkg
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
+		}
+		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if symbol.Kind == types.TypeSymbol {
+			sourcePackage = pkg
+			break
 		}
 	}
 
@@ -483,11 +489,12 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 				}
 			}
 		}
-		if !found {
-			return &types.RefactorError{
-				Type:    types.SymbolNotFound,
-				Message: fmt.Sprintf("method %s not found on struct %s", methodName, op.SourceStruct),
-			}
+		if found {
+			continue
+		}
+		return &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: fmt.Sprintf("method %s not found on struct %s", methodName, op.SourceStruct),
 		}
 	}
 
@@ -501,16 +508,19 @@ func (op *ExtractInterfaceOperation) Execute(ws *types.Workspace) (*types.Refact
 	var sourcePackage *types.Package
 
 	for _, pkg := range ws.Packages {
-		if pkg.Symbols != nil {
-			symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
-			if err == nil {
-				if symbol.Kind == types.TypeSymbol {
-					structSymbol = symbol
-					sourcePackage = pkg
-					break
-				}
-			}
+		if pkg.Symbols == nil {
+			continue
 		}
+		symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+		if err != nil {
+			continue
+		}
+		if symbol.Kind != types.TypeSymbol {
+			continue
+		}
+		structSymbol = symbol
+		sourcePackage = pkg
+		break
 	}
 
 	if structSymbol == nil {
@@ -571,15 +581,17 @@ func (op *ExtractInterfaceOperation) generateInterface(sourcePackage *types.Pack
 
 	for _, methodName := range op.Methods {
 		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
-		if exists {
-			for _, method := range methods {
-				if method.Name == methodName {
-					// Extract method signature without receiver
-					signature := op.extractMethodSignature(method.Signature)
-					fmt.Fprintf(&interfaceCode, "\t%s%s\n", methodName, signature)
-					break
-				}
+		if !exists {
+			continue
+		}
+		for _, method := range methods {
+			if method.Name != methodName {
+				continue
 			}
+			// Extract method signature without receiver
+			signature := op.extractMethodSignature(method.Signature)
+			fmt.Fprintf(&interfaceCode, "\t%s%s\n", methodName, signature)
+			break
 		}
 	}
 
@@ -730,11 +742,12 @@ func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.Refacto
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
 		file, exists := pkg.Files[op.SourceFile]
-		if exists {
-			sourceFile = file
-			sourcePackage = pkg
-			break
+		if !exists {
+			continue
 		}
+		sourceFile = file
+		sourcePackage = pkg
+		break
 	}
 
 	if sourceFile == nil {
