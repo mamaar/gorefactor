@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -230,11 +231,6 @@ func countSymbols(st *types.SymbolTable) int {
 // Useful for test assertions.
 func (u *WorkspaceUpdater) PackageCount() int {
 	return len(u.Workspace().Packages)
-}
-
-// FindPackage returns the primary view's package at dir, or nil.
-func (u *WorkspaceUpdater) FindPackage(dir string) *types.Package {
-	return findPackageByDir(u.Workspace(), dir)
 }
 
 // Workspace returns the primary view's workspace for testing.

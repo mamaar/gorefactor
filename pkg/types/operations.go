@@ -347,7 +347,6 @@ type ImpactAnalysis struct {
 	AffectedFiles         []string
 	AffectedSymbols       []*Symbol
 	PotentialIssues       []Issue
-	ImportChanges         []ImportChange
 	SuggestedMoves        []SuggestedMove                `json:"suggested_moves,omitempty"`
 	PackageCoupling       map[string]PackageCouplingInfo `json:"package_coupling,omitempty"`
 	BackwardsDependencies []BackwardDependency           `json:"backwards_dependencies,omitempty"`
@@ -392,21 +391,6 @@ func (s IssueSeverity) String() string {
 		return "Unknown"
 	}
 }
-
-type ImportChange struct {
-	File      string
-	OldImport string
-	NewImport string
-	Action    ImportAction
-}
-
-type ImportAction int
-
-const (
-	AddImport ImportAction = iota
-	RemoveImport
-	UpdateImport
-)
 
 // SafeDeleteRequest represents safely deleting a symbol
 type SafeDeleteRequest struct {

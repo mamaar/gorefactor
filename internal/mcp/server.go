@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -132,20 +133,6 @@ func (s *MCPServer) Covering() analysis.Covering { return s.set.Covering() }
 // GetEngine returns the refactoring engine.
 func (s *MCPServer) GetEngine() *refactor.DefaultEngine {
 	return s.engine
-}
-
-// viewOf returns the view that owns ws, or the primary view.
-func (s *MCPServer) viewOf(ws *types.Workspace) *analysis.View {
-	if v := s.set.ViewOf(ws); v != nil {
-		return v
-	}
-	return s.set.Primary()
-}
-
-// EnsureReferenceIndex returns the cached reference index of the view that
-// owns ws, building one if necessary.
-func (s *MCPServer) EnsureReferenceIndex(ws *types.Workspace) (*analysis.ReferenceIndex, error) {
-	return s.viewOf(ws).ReferenceIndex()
 }
 
 // InvalidateReferenceIndex marks the cached reference index of every built

@@ -1,7 +1,6 @@
 package refactor
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"go/format"
@@ -495,97 +494,4 @@ func (s *Serializer) truncateText(text string, maxLength ...int) string {
 	}
 
 	return text[:length-3] + "..."
-}
-
-// GenerateDiff generates a unified diff between original and modified content
-func (s *Serializer) GenerateDiff(filePath string, originalContent, modifiedContent string) (string, error) {
-	var diff strings.Builder
-
-	fmt.Fprintf(&diff, "--- %s\n", filePath)
-	fmt.Fprintf(&diff, "+++ %s\n", filePath)
-
-	// Split content into lines
-	originalLines := strings.Split(originalContent, "\n")
-	modifiedLines := strings.Split(modifiedContent, "\n")
-
-	// Simple line-by-line diff (in a production system, you'd use a proper diff algorithm)
-	maxLines := max(len(modifiedLines), len(originalLines))
-
-	lineNum := 1
-	for i := range maxLines {
-		var originalLine, modifiedLine string
-
-		if i < len(originalLines) {
-			originalLine = originalLines[i]
-		}
-		if i < len(modifiedLines) {
-			modifiedLine = modifiedLines[i]
-		}
-
-		if originalLine != modifiedLine {
-			if originalLine != "" {
-				fmt.Fprintf(&diff, "@@ -%d,1 +%d,1 @@\n", lineNum, lineNum)
-				fmt.Fprintf(&diff, "-%s\n", originalLine)
-			}
-			if modifiedLine != "" {
-				if originalLine == "" {
-					fmt.Fprintf(&diff, "@@ -%d,0 +%d,1 @@\n", lineNum, lineNum)
-				}
-				fmt.Fprintf(&diff, "+%s\n", modifiedLine)
-			}
-		}
-		lineNum++
-	}
-
-	return diff.String(), nil
-}
-
-// ValidateFileStructure ensures that the file structure is valid after changes
-func (s *Serializer) ValidateFileStructure(filePath string) error {
-	if !strings.HasSuffix(filePath, ".go") {
-		return nil // Only validate Go files
-	}
-
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return fmt.Errorf("failed to read file for validation: %v", err)
-	}
-
-	// Try to parse the file to ensure it's valid Go code
-	_, err = parser.ParseFile(s.fileSet, filePath, content, parser.ParseComments)
-	if err != nil {
-		return fmt.Errorf("file structure validation failed: %v", err)
-	}
-
-	return nil
-}
-
-// GetFileLines reads a file and returns its lines with line numbers
-func (s *Serializer) GetFileLines(filePath string, startLine, endLine int) ([]string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file: %v", err)
-	}
-	defer func() { _ = file.Close() }()
-
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	lineNum := 1
-
-	for scanner.Scan() {
-		if lineNum >= startLine && lineNum <= endLine {
-			lines = append(lines, fmt.Sprintf("%d: %s", lineNum, scanner.Text()))
-		}
-		lineNum++
-
-		if lineNum > endLine {
-			break
-		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading file: %v", err)
-	}
-
-	return lines, nil
 }

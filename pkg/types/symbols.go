@@ -60,24 +60,6 @@ func (k SymbolKind) String() string {
 	}
 }
 
-// SymbolRef represents a reference to a symbol
-type SymbolRef struct {
-	Symbol   *Symbol
-	Position token.Pos
-	File     string
-	Context  RefContext
-}
-
-type RefContext int
-
-const (
-	CallRef RefContext = iota
-	AssignRef
-	TypeRef
-	ImportRef
-	DeclarationRef
-)
-
 // SymbolTable holds all symbols for a package
 type SymbolTable struct {
 	Package   *Package

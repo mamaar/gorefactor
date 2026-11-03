@@ -184,12 +184,6 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	return res
 }
 
-// AnalysisResult is the structured output returned by read-only analysis tools.
-type AnalysisResult struct {
-	Description string `json:"description"`
-	Data        any    `json:"data"`
-}
-
 // executePlan validates, executes, and returns a PlanResult for the given plan.
 // When dryRun is true it returns the preview instead: no file is written and no
 // workspace sync happens.

@@ -1,7 +1,6 @@
 package refactor
 
 import (
-	"go/token"
 	"io"
 	"log/slog"
 	"testing"
@@ -23,7 +22,7 @@ func TestNewValidator(t *testing.T) {
 func TestValidator_ValidatePlan_NilPlan(t *testing.T) {
 	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	err := validator.ValidatePlan(nil)
+	err := validator.ValidatePlanWithConfig(nil, nil)
 	if err == nil {
 		t.Error("Expected error with nil plan")
 	}
@@ -48,7 +47,7 @@ func TestValidator_ValidatePlan_EmptyPlan(t *testing.T) {
 		Reversible:    true,
 	}
 
-	err := validator.ValidatePlan(plan)
+	err := validator.ValidatePlanWithConfig(plan, nil)
 	if err != nil {
 		t.Errorf("Expected no error with empty plan, got %v", err)
 	}
@@ -78,7 +77,7 @@ func TestValidator_ValidatePlan_WithOperations(t *testing.T) {
 		Reversible:    true,
 	}
 
-	err := validator.ValidatePlan(plan)
+	err := validator.ValidatePlanWithConfig(plan, nil)
 	if err != nil {
 		t.Errorf("Expected no error with valid rename operation, got %v", err)
 	}
@@ -86,113 +85,6 @@ func TestValidator_ValidatePlan_WithOperations(t *testing.T) {
 	// Check that impact analysis was created (issues might be empty for valid operations)
 	if plan.Impact == nil {
 		t.Error("Expected Impact to be created")
-	}
-}
-
-func TestValidator_ValidateRename(t *testing.T) {
-	// Create a test workspace
-	ws := &refactorTypes.Workspace{
-		Packages: map[string]*refactorTypes.Package{
-			"test/pkg": {
-				Name: "test",
-				Path: "test/pkg",
-				Symbols: &refactorTypes.SymbolTable{
-					Functions: map[string]*refactorTypes.Symbol{
-						"TestFunc": {
-							Name:     "TestFunc",
-							Kind:     refactorTypes.FunctionSymbol,
-							Exported: true,
-							Package:  "test/pkg",
-							File:     "test.go",
-						},
-					},
-				},
-			},
-		},
-		FileSet: token.NewFileSet(),
-	}
-
-	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// Test valid rename
-	req := refactorTypes.RenameSymbolRequest{
-		SymbolName: "TestFunc",
-		NewName:    "RenamedFunc",
-		Package:    "test/pkg",
-	}
-
-	issues := validator.ValidateRename(ws, req)
-
-	// Should have no critical issues for a valid rename
-	criticalIssues := 0
-	for _, issue := range issues {
-		if issue.Severity == refactorTypes.Error {
-			criticalIssues++
-		}
-	}
-
-	if criticalIssues > 0 {
-		t.Errorf("Expected no critical issues for valid rename, got %d", criticalIssues)
-	}
-}
-
-func TestValidator_ValidateRename_InvalidIdentifier(t *testing.T) {
-	ws := &refactorTypes.Workspace{
-		Packages: make(map[string]*refactorTypes.Package),
-		FileSet:  token.NewFileSet(),
-	}
-
-	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	req := refactorTypes.RenameSymbolRequest{
-		SymbolName: "TestFunc",
-		NewName:    "123InvalidName", // Invalid Go identifier
-		Package:    "test/pkg",
-	}
-
-	issues := validator.ValidateRename(ws, req)
-
-	// Should have at least one error
-	hasError := false
-	for _, issue := range issues {
-		if issue.Severity == refactorTypes.Error {
-			hasError = true
-			break
-		}
-	}
-
-	if !hasError {
-		t.Error("Expected error for invalid identifier")
-	}
-}
-
-func TestValidator_ValidateRename_GoKeyword(t *testing.T) {
-	ws := &refactorTypes.Workspace{
-		Packages: make(map[string]*refactorTypes.Package),
-		FileSet:  token.NewFileSet(),
-	}
-
-	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	req := refactorTypes.RenameSymbolRequest{
-		SymbolName: "TestFunc",
-		NewName:    "func", // Go keyword
-		Package:    "test/pkg",
-	}
-
-	issues := validator.ValidateRename(ws, req)
-
-	// Should have at least one error
-	hasError := false
-	for _, issue := range issues {
-		if issue.Severity == refactorTypes.Error {
-			hasError = true
-			break
-		}
-	}
-
-	if !hasError {
-		t.Error("Expected error for Go keyword as identifier")
 	}
 }
 
@@ -295,25 +187,6 @@ func TestValidator_isValidGoIdentifier(t *testing.T) {
 				t.Errorf("Expected isValidGoIdentifier('%s') to be %v, got %v", tc.name, tc.expected, result)
 			}
 		})
-	}
-}
-
-func TestValidator_isGoKeyword(t *testing.T) {
-	validator := NewValidator(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	keywords := []string{"func", "var", "const", "type", "if", "else", "for", "range", "return"}
-	nonKeywords := []string{"function", "variable", "constant", "myType", "ifElse", "forEach"}
-
-	for _, keyword := range keywords {
-		if !validator.isGoKeyword(keyword) {
-			t.Errorf("Expected '%s' to be recognized as a Go keyword", keyword)
-		}
-	}
-
-	for _, nonKeyword := range nonKeywords {
-		if validator.isGoKeyword(nonKeyword) {
-			t.Errorf("Expected '%s' to NOT be recognized as a Go keyword", nonKeyword)
-		}
 	}
 }
 

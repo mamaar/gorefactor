@@ -147,10 +147,6 @@ type funcDecl struct {
 	IfaceFuncType *ast.FuncType
 }
 
-// IsInterfaceMethod reports whether this declaration is an interface method
-// field rather than an ordinary function declaration.
-func (fd *funcDecl) IsInterfaceMethod() bool { return fd.Decl == nil && fd.IfaceFuncType != nil }
-
 // FuncType returns the signature AST to rewrite, for either kind of
 // declaration. This is the node whose Params.Opening receives the injected ctx.
 func (fd *funcDecl) FuncType() *ast.FuncType {

@@ -303,11 +303,6 @@ func countSelectCases(body *ast.BlockStmt) int {
 	return count
 }
 
-// ClassifyComplexity classifies a cyclomatic complexity value into a level string.
-func ClassifyComplexity(complexity int) string {
-	return classifyComplexity(complexity)
-}
-
 func classifyComplexity(complexity int) string {
 	switch {
 	case complexity >= 20:

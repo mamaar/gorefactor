@@ -230,7 +230,6 @@ func MergeStepPlans(steps []*types.RefactoringPlan) (*types.RefactoringPlan, err
 		}
 		impact.AffectedSymbols = append(impact.AffectedSymbols, p.Impact.AffectedSymbols...)
 		impact.PotentialIssues = append(impact.PotentialIssues, p.Impact.PotentialIssues...)
-		impact.ImportChanges = append(impact.ImportChanges, p.Impact.ImportChanges...)
 		for _, pkg := range p.Impact.AffectedPackages {
 			if !seenPkgs[pkg] {
 				seenPkgs[pkg] = true

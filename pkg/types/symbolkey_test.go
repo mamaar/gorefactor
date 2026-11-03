@@ -133,3 +133,13 @@ func TestSymbolKeySet(t *testing.T) {
 		t.Errorf("String = %q", got)
 	}
 }
+
+// ContainsAll reports whether every key of other is in s.
+func (s SymbolKeySet) ContainsAll(other SymbolKeySet) bool {
+	for k := range other {
+		if !s.Has(k) {
+			return false
+		}
+	}
+	return true
+}

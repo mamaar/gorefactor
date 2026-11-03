@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -386,4 +387,9 @@ func TestUpdater_CreatedPackageClosingACycleIsReportedNotRecursed(t *testing.T) 
 	if len(pkgB.ProductionErrs) == 0 {
 		t.Fatal("no production error for the import cycle")
 	}
+}
+
+// FindPackage returns the primary view's package at dir, or nil.
+func (u *WorkspaceUpdater) FindPackage(dir string) *types.Package {
+	return findPackageByDir(u.Workspace(), dir)
 }

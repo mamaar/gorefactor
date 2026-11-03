@@ -64,50 +64,6 @@ func TestSymbolKind(t *testing.T) {
 	}
 }
 
-func TestSymbolRef(t *testing.T) {
-	symbol := &Symbol{Name: "TestSymbol", Kind: FunctionSymbol}
-	ref := &SymbolRef{
-		Symbol:   symbol,
-		Position: token.Pos(150),
-		File:     "/test/file.go",
-		Context:  CallRef,
-	}
-
-	if ref.Symbol.Name != "TestSymbol" {
-		t.Errorf("Expected Symbol.Name to be 'TestSymbol', got '%s'", ref.Symbol.Name)
-	}
-
-	if ref.Position != token.Pos(150) {
-		t.Errorf("Expected Position to be 150, got %v", ref.Position)
-	}
-
-	if ref.Context != CallRef {
-		t.Errorf("Expected Context to be CallRef, got %v", ref.Context)
-	}
-}
-
-func TestRefContext(t *testing.T) {
-	testCases := []struct {
-		name     string
-		context  RefContext
-		expected RefContext
-	}{
-		{"CallRef", CallRef, 0},
-		{"AssignRef", AssignRef, 1},
-		{"TypeRef", TypeRef, 2},
-		{"ImportRef", ImportRef, 3},
-		{"DeclarationRef", DeclarationRef, 4},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.context != tc.expected {
-				t.Errorf("Expected %s to be %d, got %d", tc.name, tc.expected, tc.context)
-			}
-		})
-	}
-}
-
 func TestSymbolTable(t *testing.T) {
 	pkg := &Package{Name: "testpkg", Path: "test/package"}
 	symbolTable := &SymbolTable{

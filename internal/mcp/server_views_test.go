@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/mamaar/gorefactor/pkg/analysis"
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 func TestSyncWorkspaceChanges_ReachesBuiltSecondaryViews(t *testing.T) {
@@ -68,4 +71,18 @@ func TestSyncWorkspaceChanges_ReachesBuiltSecondaryViews(t *testing.T) {
 	if fresh, _ := s.EnsureReferenceIndex(views[1].Workspace); fresh == stale {
 		t.Error("secondary view kept its reference index")
 	}
+}
+
+// EnsureReferenceIndex returns the cached reference index of the view that
+// owns ws, building one if necessary.
+func (s *MCPServer) EnsureReferenceIndex(ws *types.Workspace) (*analysis.ReferenceIndex, error) {
+	return s.viewOf(ws).ReferenceIndex()
+}
+
+// viewOf returns the view that owns ws, or the primary view.
+func (s *MCPServer) viewOf(ws *types.Workspace) *analysis.View {
+	if v := s.set.ViewOf(ws); v != nil {
+		return v
+	}
+	return s.set.Primary()
 }

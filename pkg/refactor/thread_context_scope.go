@@ -24,7 +24,6 @@ const (
 	ctxUnknown     ctxSourceKind = iota // type info missing — caller must abort, never guess
 	ctxInScope                          // a real context.Context is in scope
 	ctxFromRequest                      // derived via r.Context()
-	ctxFakeRoot                         // only a local `ctx := context.Background()/TODO()` — caller should hoist
 	ctxRootLiteral                      // a root: context.TODO() / t.Context()
 	ctxNeedsParam                       // nothing available; enclosing func must gain a param
 )

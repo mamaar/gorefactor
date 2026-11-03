@@ -471,3 +471,7 @@ func use() {
 		t.Errorf("error must not guess at a failed type-check, got: %v", err)
 	}
 }
+
+// IsInterfaceMethod reports whether this declaration is an interface method
+// field rather than an ordinary function declaration.
+func (fd *funcDecl) IsInterfaceMethod() bool { return fd.Decl == nil && fd.IfaceFuncType != nil }

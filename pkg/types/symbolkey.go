@@ -79,16 +79,6 @@ func (s SymbolKeySet) AddAll(other SymbolKeySet) bool {
 	return len(s) > before
 }
 
-// ContainsAll reports whether every key of other is in s.
-func (s SymbolKeySet) ContainsAll(other SymbolKeySet) bool {
-	for k := range other {
-		if !s.Has(k) {
-			return false
-		}
-	}
-	return true
-}
-
 // Clone returns an independent copy.
 func (s SymbolKeySet) Clone() SymbolKeySet {
 	out := make(SymbolKeySet, len(s))
