@@ -320,10 +320,7 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	// Preserve existing return types if not explicitly provided (fixes add_param/remove_param dropping returns)
 	// A return change gives the full list, which is empty when the only result is removed.
 	if !op.changesReturns() {
-		err := op.preserveExistingReturnsIfNeeded(sourceFile)
-		if err != nil {
-			return nil, err
-		}
+		op.preserveExistingReturnsIfNeeded(sourceFile)
 	}
 
 	// Preserve existing params if not explicitly provided (fixes add_return/remove_return dropping params)
@@ -1304,9 +1301,9 @@ func (op *ChangeSignatureOperation) extractReturnTypes(funcType *ast.FuncType) [
 // existing function uses named result variables) from the existing signature when
 // the caller did not explicitly provide return types.  This prevents add_param and
 // remove_param from accidentally dropping return types or stripping named results.
-func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *pkgtypes.File) error {
+func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *pkgtypes.File) {
 	if len(op.NewReturns) > 0 {
-		return nil // User explicitly provided returns
+		return // User explicitly provided returns
 	}
 
 	// Check if this is an interface method
@@ -1316,7 +1313,7 @@ func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *
 
 		if isInterfaceMethod(sourceFile, typeName, methodName) {
 			op.NewReturns = op.extractInterfaceMethodReturns(sourceFile, typeName, methodName)
-			return nil
+			return
 		}
 	}
 
@@ -1332,8 +1329,6 @@ func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *
 			op.NamedReturns = op.extractNamedReturnParams(funcDecl.Type)
 		}
 	}
-
-	return nil
 }
 
 // hasNamedResults reports whether any result field in funcType has an explicit name.
