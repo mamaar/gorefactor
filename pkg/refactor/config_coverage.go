@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/scanner"
@@ -183,9 +184,9 @@ func uncheckedWhere(file types.UncoveredFile) string {
 
 // lineAt returns the line of content that holds offset, without surrounding space.
 func lineAt(content []byte, offset int) string {
-	start := strings.LastIndexByte(string(content[:offset]), '\n') + 1
+	start := bytes.LastIndexByte(content[:offset], '\n') + 1
 	end := len(content)
-	i := strings.IndexByte(string(content[offset:]), '\n')
+	i := bytes.IndexByte(content[offset:], '\n')
 	if i >= 0 {
 		end = offset + i
 	}

@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -188,7 +189,7 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 
 	if targetFile.AST == nil || targetFile.AST.Name == nil || ws.FileSet == nil {
 		// Fallback: assume the file starts with "package <name>\n".
-		idx := strings.IndexByte(string(content), '\n')
+		idx := bytes.IndexByte(content, '\n')
 		if idx >= 0 {
 			return idx + 1
 		}
