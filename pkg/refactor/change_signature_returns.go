@@ -429,8 +429,15 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	var reads []returnRefusal
 	var writes []token.Pos
 
-	for _, u := range refs.NonCallUsesOf(obj) {
+	uses := refs.NonCallUsesOf(obj)
+	kill := killingWrite(site.Cursor, uses)
+
+	for _, u := range uses {
 		if u.Pos == id.Pos() || cannotReach(site.Cursor, u.Cursor) {
+			continue
+		}
+
+		if kill != nil && (u.Pos >= kill.End() || isAssignTarget(u.Cursor) && u.Cursor.Parent().Node() == kill) {
 			continue
 		}
 
@@ -484,6 +491,50 @@ func enclosingFunc(c inspector.Cursor) ast.Node {
 	}
 
 	return nil
+}
+
+// killingWrite returns the first plain assignment to the variable in the same
+// block as the call's assignment and after it. Whenever a later read executes
+// after the call, this assignment has run in between, so the read never sees
+// the call's value. It is nil when a loop holds the call or the function has a
+// goto, where a read could be reached without passing it.
+func killingWrite(call inspector.Cursor, uses []analysis.ValueUse) *ast.AssignStmt {
+	block := call.Parent().Parent().Node()
+	if _, ok := block.(*ast.BlockStmt); !ok {
+		return nil
+	}
+
+	for c := range call.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil), (*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)) {
+		switch c.Node().(type) {
+		case *ast.ForStmt, *ast.RangeStmt:
+			return nil
+		}
+
+		if hasGoto(c.Node()) {
+			return nil
+		}
+
+		break
+	}
+
+	var best *ast.AssignStmt
+
+	for _, u := range uses {
+		if !isAssignTarget(u.Cursor) {
+			continue
+		}
+
+		stmt := u.Cursor.Parent()
+		if stmt.Parent().Node() != block || stmt.Node().Pos() <= call.Parent().Node().End() {
+			continue
+		}
+
+		if best == nil || stmt.Node().Pos() < best.Pos() {
+			best = stmt.Node().(*ast.AssignStmt)
+		}
+	}
+
+	return best
 }
 
 func hasGoto(fn ast.Node) bool {

@@ -98,6 +98,11 @@ func TestChangeSignature_RemoveReturnFoldsDeadErrorChecks(t *testing.T) {
 			want: []string{"x := f()\n", "return x + n, nil"},
 			omit: []string{"x, err := f()"},
 		},
+		"later unconditional write with its own check": {
+			use:  "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() (int, error) {\n\tx, err := f()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\ty, err := h()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\treturn x + y, nil\n}\n",
+			want: []string{"x := f()\n", "y, err := h()"},
+			omit: []string{"x, err"},
+		},
 		"no blank line before the closing brace of a wrapped init": {
 			use:  "package p\n\nfunc Use() int {\n\tx := 5\n\tif x, err := f(); err == nil {\n\t\tprintln(x)\n\t}\n\treturn x\n}\n",
 			want: []string{"println(x)\n\t}\n"},
@@ -155,6 +160,8 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 		"read before the call in a loop that holds it":  "package p\n\nfunc Use() int {\n\tvar err error\n\ts := 0\n\tfor i := 0; i < 2; i++ {\n\t\tif err != nil {\n\t\t\treturn -1\n\t\t}\n\t\tvar x int\n\t\tx, err = f()\n\t\ts += x\n\t}\n\treturn s\n}\n",
 		"read after the call that is not a nil check":   "package p\n\nfunc Use() error {\n\tvar x int\n\tvar err error\n\tx, err = f()\n\tprintln(x)\n\treturn err\n}\n",
 		"define that reuses an err read after the call": "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tn, err := h()\n\tprintln(n)\n\tx, err := f()\n\tprintln(x)\n\treturn err\n}\n",
+		"read between the call and a later write":       "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tx, err := f()\n\tprintln(x, err)\n\t_, err = h()\n\treturn err\n}\n",
+		"later write in a loop with the call":           "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() error {\n\tvar err error\n\tfor i := 0; i < 2; i++ {\n\t\tvar x int\n\t\tif i > 0 {\n\t\t\tx, err = f()\n\t\t}\n\t\tprintln(x)\n\t\tif err != nil {\n\t\t\treturn err\n\t\t}\n\t\t_, err = h()\n\t}\n\treturn nil\n}\n",
 		"stored in a bool":                              "package p\n\nfunc Use() bool {\n\t_, err := f()\n\tok := err == nil\n\treturn ok\n}\n",
 		"code after a terminating kept branch":          "package p\n\nfunc Use() int {\n\tx, err := f()\n\tif err == nil {\n\t\treturn x\n\t}\n\tprintln(\"tail\")\n\treturn 0\n}\n",
 		"variable used only by the dead branch":         "package p\n\nfunc Use() int {\n\tvar msg string\n\tx, err := f()\n\tif err != nil {\n\t\tmsg = err.Error()\n\t\tprintln(msg)\n\t\treturn 0\n\t}\n\treturn x\n}\n",
