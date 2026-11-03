@@ -107,8 +107,7 @@ func TestDefaultEngine_ExecutePlan_WithErrors(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	var refErr *types.RefactorError
-	if errors.As(err, &refErr) {
+	if refErr, ok := errors.AsType[*types.RefactorError](err); ok {
 		if refErr.Type != types.InvalidOperation {
 			t.Errorf("Expected InvalidOperation error, got %v", refErr.Type)
 		}

@@ -1,6 +1,7 @@
 package tests_test
 
 import (
+	"maps"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -100,9 +101,7 @@ func TestOperationsAcceptTestFileSources(t *testing.T) {
 
 			args := tc.args(t)
 			dry := map[string]any{"dry_run": true}
-			for k, v := range args {
-				dry[k] = v
-			}
+			maps.Copy(dry, args)
 			callJSON(t, sess, tc.tool, dry)
 			path := filepath.Join(dir, "p", "p_test.go")
 			if readFile(t, path) != tfsTest {

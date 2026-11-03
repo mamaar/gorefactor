@@ -46,9 +46,9 @@ func importLocalName(imp *ast.ImportSpec) (string, bool) {
 	// (packagePathToImportPath, lastPathComponent), and is right for the
 	// overwhelming majority of stdlib and third-party packages.
 	path := strings.Trim(imp.Path.Value, `"`)
-	idx := strings.LastIndex(path, "/")
-	if idx >= 0 {
-		return path[idx+1:], false
+	_, after, ok := strings.CutLast(path, "/")
+	if ok {
+		return after, false
 	}
 	return path, false
 }

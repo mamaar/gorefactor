@@ -23,9 +23,9 @@ func resolveStopAt(wss []*pkgtypes.Workspace, entries []string) (pkgtypes.Symbol
 	out := make(pkgtypes.SymbolKeySet)
 	for _, entry := range entries {
 		file, name := "", entry
-		i := strings.LastIndex(entry, ":")
-		if i >= 0 {
-			file, name = entry[:i], entry[i+1:]
+		before, after, ok := strings.CutLast(entry, ":")
+		if ok {
+			file, name = before, after
 		}
 		matches := stopMatches(wss, file, name)
 		keys := make(map[pkgtypes.SymbolKey]string)

@@ -236,7 +236,7 @@ func InSkippedDir(root, dir string) bool {
 	if err != nil || rel == "." {
 		return false
 	}
-	for _, name := range strings.Split(rel, string(filepath.Separator)) {
+	for name := range strings.SplitSeq(rel, string(filepath.Separator)) {
 		if name == ".." {
 			return false
 		}

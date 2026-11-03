@@ -50,7 +50,7 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	pkgDir := filepath.Join(dir, filepath.Dir(target))
 	pkg, ok := ws.Packages[pkgDir]
 	if !ok {
-		t.Fatalf("package %s not found in workspace (have %v)", pkgDir, slices(ws))
+		t.Fatalf("package %s not found in workspace (have %v)", pkgDir, pkgDirs(ws))
 	}
 	parser.EnsureTypeChecked(ws, pkg)
 	if pkg.TypesErr != nil {
@@ -67,7 +67,7 @@ func setup(t *testing.T, target string, files map[string]string) (*types.Workspa
 	return ws, pkg, file
 }
 
-func slices(ws *types.Workspace) []string {
+func pkgDirs(ws *types.Workspace) []string {
 	var out []string
 	for p := range ws.Packages {
 		out = append(out, p)

@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -48,12 +49,7 @@ func pathParts(rel string) []string { return strings.Split(rel, string(filepath.
 // hasPart reports whether any directory component of rel is name.
 func hasPart(rel, name string) bool {
 	parts := pathParts(rel)
-	for _, p := range parts[:len(parts)-1] {
-		if p == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(parts[:len(parts)-1], name)
 }
 
 // isGoSource reports whether e is a non-empty .go file, which the Go-file path

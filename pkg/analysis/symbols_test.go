@@ -270,8 +270,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	var refErr *types.RefactorError
-	if errors.As(err, &refErr) {
+	if refErr, ok := errors.AsType[*types.RefactorError](err); ok {
 		if refErr.Type != types.SymbolNotFound {
 			t.Errorf("Expected SymbolNotFound error, got %v", refErr.Type)
 		}
@@ -1257,8 +1256,7 @@ func TestFindMemberReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	if refs != nil {
 		t.Errorf("expected nil refs on error, got %d references", len(refs))
 	}
-	var refErr *types.RefactorError
-	if !errors.As(err, &refErr) {
+	if _, ok := errors.AsType[*types.RefactorError](err); !ok {
 		t.Errorf("expected *types.RefactorError, got %T", err)
 	}
 }

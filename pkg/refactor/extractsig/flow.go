@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	gotypes "go/types"
+	"slices"
 )
 
 type objSet map[gotypes.Object]bool
@@ -441,10 +442,8 @@ func (a *analyzer) droppableDecl(obj gotypes.Object) *ast.DeclStmt {
 	}
 	path := a.pathTo(a.stmts[0])
 	parent := path[len(path)-2]
-	for _, c := range children(parent) {
-		if c == ast.Node(ds) {
-			return ds
-		}
+	if slices.Contains(children(parent), ast.Node(ds)) {
+		return ds
 	}
 	return nil
 }

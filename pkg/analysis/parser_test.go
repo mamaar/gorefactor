@@ -121,8 +121,7 @@ func TestParser_ParsePackage_Empty(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	var refErr *types.RefactorError
-	if errors.As(err, &refErr) {
+	if refErr, ok := errors.AsType[*types.RefactorError](err); ok {
 		if refErr.Type != types.ParseError {
 			t.Errorf("Expected ParseError, got %v", refErr.Type)
 		}

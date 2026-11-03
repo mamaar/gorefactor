@@ -357,9 +357,9 @@ func (b *conversionCollector) keepKnown(t gotypes.Type, seen map[gotypes.Type]bo
 	}
 	seen[t] = true
 	ms := gotypes.NewMethodSet(t)
-	for i := range ms.Len() {
-		if b.names[ms.At(i).Obj().Name()] {
-			b.keep(ms.At(i).Obj())
+	for method := range ms.Methods() {
+		if b.names[method.Obj().Name()] {
+			b.keep(method.Obj())
 		}
 	}
 	switch u := t.Underlying().(type) {

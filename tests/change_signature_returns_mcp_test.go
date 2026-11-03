@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"context"
+	"maps"
 	"strings"
 	"testing"
 
@@ -247,9 +248,7 @@ func TestChangeSignature_AddParamWithIllTypedDefaultIsRefusedByTheTypeCheck(t *t
 
 	t.Run("dry run", func(t *testing.T) {
 		dry := map[string]any{"dry_run": true}
-		for k, v := range args {
-			dry[k] = v
-		}
+		maps.Copy(dry, args)
 
 		out := decodePlanResult(t, changeSig(t, sess, dry))
 
