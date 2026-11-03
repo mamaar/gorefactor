@@ -288,7 +288,7 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		}
 		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
 		stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving)
-		if len(stranded) <= 0 {
+		if len(stranded) == 0 {
 			continue
 		}
 		return &groupMemberError{index: m.owner, err: &types.RefactorError{

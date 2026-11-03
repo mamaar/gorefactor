@@ -1316,7 +1316,7 @@ func (op *ChangeSignatureOperation) extractInterfaceMethodParams(file *pkgtypes.
 			return false
 		}
 		for _, field := range ifaceType.Methods.List {
-			if len(field.Names) <= 0 || field.Names[0].Name != methodName {
+			if len(field.Names) == 0 || field.Names[0].Name != methodName {
 				continue
 			}
 			funcType, ok := field.Type.(*ast.FuncType)
@@ -1343,7 +1343,7 @@ func (op *ChangeSignatureOperation) extractInterfaceMethodReturns(file *pkgtypes
 			return false
 		}
 		for _, field := range ifaceType.Methods.List {
-			if len(field.Names) <= 0 || field.Names[0].Name != methodName {
+			if len(field.Names) == 0 || field.Names[0].Name != methodName {
 				continue
 			}
 			funcType, ok := field.Type.(*ast.FuncType)

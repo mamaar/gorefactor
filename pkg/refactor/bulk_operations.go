@@ -237,7 +237,7 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	// "internal/foo" from also matching a sibling "internal/foobar".
 	var moves []dirMove
 	for _, dir := range op.Sources.Dirs() {
-		if dir != sourceDirPath && !strings.HasPrefix(dir, sourceDirPath+string(filepath.Separator)) || len(op.Sources.Dir(dir)) <= 0 {
+		if dir != sourceDirPath && !strings.HasPrefix(dir, sourceDirPath+string(filepath.Separator)) || len(op.Sources.Dir(dir)) == 0 {
 			continue
 		}
 		rel, err := filepath.Rel(sourceDirPath, dir)

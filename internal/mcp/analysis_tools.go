@@ -282,7 +282,7 @@ func addDetectHeader(out map[string]any, ws *types.Workspace, h refactor.DetectH
 	if len(h.Unchecked) > 0 {
 		out["uncovered_files"] = uncheckedFileInfos(h.Unchecked, ws.RootPath)
 	}
-	if len(h.TypeErrors) <= 0 {
+	if len(h.TypeErrors) == 0 {
 		return
 	}
 	typeErrors := make([]TypeErrorItem, len(h.TypeErrors))
