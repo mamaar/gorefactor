@@ -264,53 +264,72 @@ func TestCallSitesOf_ClosuresAndTestFile(t *testing.T) {
 
 	sites := idx.CallSitesOf(seed)
 
-	var sawDirect, sawGo, sawDefer, sawTestFile bool
+	var direct, goSites, deferSites, testFileSites []CallSite
 	for _, s := range sites {
 		switch {
 		case s.File.Path == "main_test.go":
-			sawTestFile = true
-			if s.Fn == nil || s.Fn.Name.Name != "testHelperCallsSeed" {
-				t.Errorf("test-file site Fn = %v, want testHelperCallsSeed", s.Fn)
-			}
-			if s.Lit != nil {
-				t.Errorf("test-file site Lit = %v, want nil", s.Lit)
-			}
+			testFileSites = append(testFileSites, s)
 		case s.Lit != nil && s.InGo:
-			sawGo = true
+			goSites = append(goSites, s)
+		case s.Lit != nil && s.InDefer:
+			deferSites = append(deferSites, s)
+		case s.Fn != nil && s.Fn.Name.Name == "direct":
+			direct = append(direct, s)
+		}
+	}
+
+	t.Run("direct call", func(t *testing.T) {
+		if len(direct) == 0 {
+			t.Error("did not find the direct call site in direct()")
+		}
+		for _, s := range direct {
+			if s.Lit != nil {
+				t.Errorf("direct-call site Lit = %v, want nil", s.Lit)
+			}
+		}
+	})
+
+	t.Run("go closure", func(t *testing.T) {
+		if len(goSites) == 0 {
+			t.Error("did not find the go func(){...}() call site")
+		}
+		for _, s := range goSites {
 			if s.Fn == nil || s.Fn.Name.Name != "closures" {
 				t.Errorf("go-closure site Fn = %v, want closures", s.Fn)
 			}
 			if s.InDefer {
 				t.Errorf("go-closure site has InDefer == true, want false")
 			}
-		case s.Lit != nil && s.InDefer:
-			sawDefer = true
+		}
+	})
+
+	t.Run("defer closure", func(t *testing.T) {
+		if len(deferSites) == 0 {
+			t.Error("did not find the defer func(){...}() call site")
+		}
+		for _, s := range deferSites {
 			if s.Fn == nil || s.Fn.Name.Name != "closures" {
 				t.Errorf("defer-closure site Fn = %v, want closures", s.Fn)
 			}
 			if s.InGo {
 				t.Errorf("defer-closure site has InGo == true, want false")
 			}
-		case s.Fn != nil && s.Fn.Name.Name == "direct":
-			sawDirect = true
+		}
+	})
+
+	t.Run("test file", func(t *testing.T) {
+		if len(testFileSites) == 0 {
+			t.Error("did not find the call site in main_test.go")
+		}
+		for _, s := range testFileSites {
+			if s.Fn == nil || s.Fn.Name.Name != "testHelperCallsSeed" {
+				t.Errorf("test-file site Fn = %v, want testHelperCallsSeed", s.Fn)
+			}
 			if s.Lit != nil {
-				t.Errorf("direct-call site Lit = %v, want nil", s.Lit)
+				t.Errorf("test-file site Lit = %v, want nil", s.Lit)
 			}
 		}
-	}
-
-	if !sawDirect {
-		t.Error("did not find the direct call site in direct()")
-	}
-	if !sawGo {
-		t.Error("did not find the go func(){...}() call site")
-	}
-	if !sawDefer {
-		t.Error("did not find the defer func(){...}() call site")
-	}
-	if !sawTestFile {
-		t.Error("did not find the call site in main_test.go")
-	}
+	})
 }
 
 // TestNonCallUsesOf covers method values, func values, and a symbol passed

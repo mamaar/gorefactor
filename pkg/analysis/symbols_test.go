@@ -90,24 +90,23 @@ var TestVar = "test"
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
-	// Build symbol table
 	symbolTable, err := resolver.BuildSymbolTable(pkg)
 	if err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
 	}
 
-	// Check that symbol table was assigned to package
 	if pkg.Symbols != symbolTable {
 		t.Error("Expected symbol table to be assigned to package")
 	}
 
-	// Validate functions
-	if len(symbolTable.Functions) != 1 {
-		t.Errorf("Expected 1 function, got %d", len(symbolTable.Functions))
-	}
-
-	testFunc, exists := symbolTable.Functions["TestFunction"]
-	if exists {
+	t.Run("functions", func(t *testing.T) {
+		if len(symbolTable.Functions) != 1 {
+			t.Errorf("Expected 1 function, got %d", len(symbolTable.Functions))
+		}
+		testFunc, exists := symbolTable.Functions["TestFunction"]
+		if !exists {
+			t.Fatal("Expected to find TestFunction in symbol table")
+		}
 		if testFunc.Name != "TestFunction" {
 			t.Errorf("Expected function name 'TestFunction', got '%s'", testFunc.Name)
 		}
@@ -117,102 +116,93 @@ var TestVar = "test"
 		if !testFunc.Exported {
 			t.Error("Expected TestFunction to be exported")
 		}
-	} else {
-		t.Error("Expected to find TestFunction in symbol table")
-	}
+	})
 
-	// Validate types
-	if len(symbolTable.Types) < 2 {
-		t.Errorf("Expected at least 2 types, got %d", len(symbolTable.Types))
-	}
-
-	testType, exists := symbolTable.Types["TestType"]
-	if exists {
-		if testType.Kind != types.TypeSymbol {
-			t.Errorf("Expected TypeSymbol, got %v", testType.Kind)
+	t.Run("types", func(t *testing.T) {
+		if len(symbolTable.Types) < 2 {
+			t.Errorf("Expected at least 2 types, got %d", len(symbolTable.Types))
 		}
-		if !testType.Exported {
-			t.Error("Expected TestType to be exported")
+		testType, exists := symbolTable.Types["TestType"]
+		if !exists {
+			t.Error("Expected to find TestType in symbol table")
+		} else {
+			if testType.Kind != types.TypeSymbol {
+				t.Errorf("Expected TypeSymbol, got %v", testType.Kind)
+			}
+			if !testType.Exported {
+				t.Error("Expected TestType to be exported")
+			}
 		}
-	} else {
-		t.Error("Expected to find TestType in symbol table")
-	}
-
-	testInterface, exists := symbolTable.Types["TestInterface"]
-	if exists {
-		if testInterface.Kind != types.InterfaceSymbol {
+		testInterface, exists := symbolTable.Types["TestInterface"]
+		if !exists {
+			t.Error("Expected to find TestInterface in symbol table")
+		} else if testInterface.Kind != types.InterfaceSymbol {
 			t.Errorf("Expected InterfaceSymbol, got %v", testInterface.Kind)
 		}
-	} else {
-		t.Error("Expected to find TestInterface in symbol table")
-	}
+	})
 
-	// Validate variables
-	if len(symbolTable.Variables) != 1 {
-		t.Errorf("Expected 1 variable, got %d", len(symbolTable.Variables))
-	}
-
-	testVar, exists := symbolTable.Variables["TestVar"]
-	if exists {
+	t.Run("variables", func(t *testing.T) {
+		if len(symbolTable.Variables) != 1 {
+			t.Errorf("Expected 1 variable, got %d", len(symbolTable.Variables))
+		}
+		testVar, exists := symbolTable.Variables["TestVar"]
+		if !exists {
+			t.Fatal("Expected to find TestVar in symbol table")
+		}
 		if testVar.Kind != types.VariableSymbol {
 			t.Errorf("Expected VariableSymbol, got %v", testVar.Kind)
 		}
 		if !testVar.Exported {
 			t.Error("Expected TestVar to be exported")
 		}
-	} else {
-		t.Error("Expected to find TestVar in symbol table")
-	}
+	})
 
-	// Validate constants
-	if len(symbolTable.Constants) != 1 {
-		t.Errorf("Expected 1 constant, got %d", len(symbolTable.Constants))
-	}
-
-	testConst, exists := symbolTable.Constants["TestConst"]
-	if exists {
+	t.Run("constants", func(t *testing.T) {
+		if len(symbolTable.Constants) != 1 {
+			t.Errorf("Expected 1 constant, got %d", len(symbolTable.Constants))
+		}
+		testConst, exists := symbolTable.Constants["TestConst"]
+		if !exists {
+			t.Fatal("Expected to find TestConst in symbol table")
+		}
 		if testConst.Kind != types.ConstantSymbol {
 			t.Errorf("Expected ConstantSymbol, got %v", testConst.Kind)
 		}
 		if !testConst.Exported {
 			t.Error("Expected TestConst to be exported")
 		}
-	} else {
-		t.Error("Expected to find TestConst in symbol table")
-	}
+	})
 
-	// Validate methods (includes both receiver methods and interface methods)
-	if len(symbolTable.Methods) != 2 {
-		t.Errorf("Expected 2 method groups (TestType + TestInterface), got %d", len(symbolTable.Methods))
-	}
-
-	methods, exists := symbolTable.Methods["TestType"]
-	if exists {
-		if len(methods) != 1 {
-			t.Errorf("Expected 1 method for TestType, got %d", len(methods))
+	t.Run("receiver and interface methods", func(t *testing.T) {
+		if len(symbolTable.Methods) != 2 {
+			t.Errorf("Expected 2 method groups (TestType + TestInterface), got %d", len(symbolTable.Methods))
 		}
-		if methods[0].Name != "TestMethod" {
-			t.Errorf("Expected method name 'TestMethod', got '%s'", methods[0].Name)
+		methods, exists := symbolTable.Methods["TestType"]
+		if !exists {
+			t.Error("Expected to find methods for TestType")
+		} else {
+			if len(methods) != 1 {
+				t.Fatalf("Expected 1 method for TestType, got %d", len(methods))
+			}
+			if methods[0].Name != "TestMethod" {
+				t.Errorf("Expected method name 'TestMethod', got '%s'", methods[0].Name)
+			}
+			if methods[0].Kind != types.MethodSymbol {
+				t.Errorf("Expected MethodSymbol, got %v", methods[0].Kind)
+			}
 		}
-		if methods[0].Kind != types.MethodSymbol {
-			t.Errorf("Expected MethodSymbol, got %v", methods[0].Kind)
+		methods, exists = symbolTable.Methods["TestInterface"]
+		if !exists {
+			t.Error("Expected to find methods for TestInterface")
+		} else {
+			if len(methods) != 1 {
+				t.Fatalf("Expected 1 method for TestInterface, got %d", len(methods))
+			}
+			if methods[0].Name != "Method" {
+				t.Errorf("Expected interface method name 'Method', got '%s'", methods[0].Name)
+			}
 		}
-	} else {
-		t.Error("Expected to find methods for TestType")
-	}
-
-	// Validate interface methods are also discovered
-	methods, exists = symbolTable.Methods["TestInterface"]
-	if exists {
-		if len(methods) != 1 {
-			t.Errorf("Expected 1 method for TestInterface, got %d", len(methods))
-		}
-		if methods[0].Name != "Method" {
-			t.Errorf("Expected interface method name 'Method', got '%s'", methods[0].Name)
-		}
-	} else {
-		t.Error("Expected to find methods for TestInterface")
-	}
+	})
 }
 
 func TestSymbolResolver_ResolveSymbol(t *testing.T) {
@@ -858,58 +848,64 @@ type Greeter interface {
 	}
 
 	var nameField *types.Symbol
-	for _, f := range userFields {
-		if f.Name == "Embedded" {
-			t.Error("Expected embedded field 'Embedded' to NOT be indexed")
+	t.Run("embedded field is not indexed", func(t *testing.T) {
+		for _, f := range userFields {
+			if f.Name == "Embedded" {
+				t.Error("Expected embedded field 'Embedded' to NOT be indexed")
+			}
+			if f.Name == "Name" {
+				nameField = f
+			}
 		}
-		if f.Name == "Name" {
-			nameField = f
-		}
-	}
+	})
 	if nameField == nil {
 		t.Fatal("Expected to find Name field symbol for User")
 	}
 
-	if nameField.Kind != types.StructFieldSymbol {
-		t.Errorf("Expected StructFieldSymbol, got %v", nameField.Kind)
-	}
-	if !nameField.Exported {
-		t.Error("Expected Name field to be exported")
-	}
-	if nameField.Parent == nil || nameField.Parent.Name != "User" {
-		t.Error("Expected Name field's Parent to be the User type symbol")
-	}
-
-	// The recorded Position must resolve, via pkg.TypesInfo.Defs, to a
-	// *go/types.Var with IsField() == true.
-	var resolvedObj gotypes.Object
-	for ident, obj := range info.Defs {
-		if ident.Pos() == nameField.Position {
-			resolvedObj = obj
-			break
+	t.Run("field symbol attributes", func(t *testing.T) {
+		if nameField.Kind != types.StructFieldSymbol {
+			t.Errorf("Expected StructFieldSymbol, got %v", nameField.Kind)
 		}
-	}
-	if resolvedObj == nil {
-		t.Fatal("Expected Name field's Position to resolve via TypesInfo.Defs")
-	}
-	fieldVar, ok := resolvedObj.(*gotypes.Var)
-	if !ok {
-		t.Fatalf("Expected resolved object to be *go/types.Var, got %T", resolvedObj)
-	}
-	if !fieldVar.IsField() {
-		t.Error("Expected resolved *go/types.Var to have IsField() == true")
-	}
+		if !nameField.Exported {
+			t.Error("Expected Name field to be exported")
+		}
+		if nameField.Parent == nil || nameField.Parent.Name != "User" {
+			t.Error("Expected Name field's Parent to be the User type symbol")
+		}
+	})
 
-	// Interfaces must contribute no fields.
-	if _, exists := symbolTable.Fields["Greeter"]; exists {
-		t.Error("Expected interface type 'Greeter' to have no entry in symbolTable.Fields")
-	}
+	t.Run("position resolves to a struct field var", func(t *testing.T) {
+		var resolvedObj gotypes.Object
+		for ident, obj := range info.Defs {
+			if ident.Pos() == nameField.Position {
+				resolvedObj = obj
+				break
+			}
+		}
+		if resolvedObj == nil {
+			t.Fatal("Expected Name field's Position to resolve via TypesInfo.Defs")
+		}
+		fieldVar, ok := resolvedObj.(*gotypes.Var)
+		if !ok {
+			t.Fatalf("Expected resolved object to be *go/types.Var, got %T", resolvedObj)
+		}
+		if !fieldVar.IsField() {
+			t.Error("Expected resolved *go/types.Var to have IsField() == true")
+		}
+	})
 
-	// Embedded struct's own field (X) should still be indexed under "Embedded".
-	embeddedFields, exists := symbolTable.Fields["Embedded"]
-	if !exists || len(embeddedFields) != 1 || embeddedFields[0].Name != "X" {
-		t.Error("Expected symbolTable.Fields[\"Embedded\"] to contain field X")
-	}
+	t.Run("interfaces contribute no fields", func(t *testing.T) {
+		if _, exists := symbolTable.Fields["Greeter"]; exists {
+			t.Error("Expected interface type 'Greeter' to have no entry in symbolTable.Fields")
+		}
+	})
+
+	t.Run("embedded struct keeps its own fields", func(t *testing.T) {
+		embeddedFields, exists := symbolTable.Fields["Embedded"]
+		if !exists || len(embeddedFields) != 1 || embeddedFields[0].Name != "X" {
+			t.Error("Expected symbolTable.Fields[\"Embedded\"] to contain field X")
+		}
+	})
 }
 
 // importerFunc adapts a function to the go/types.Importer interface.

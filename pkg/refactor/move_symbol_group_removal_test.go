@@ -36,18 +36,36 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 			dst = c.NewText
 		}
 	}
-	for i, a := range srcChanges {
-		for _, b := range srcChanges[i+1:] {
+	assertNoOverlap(t, srcChanges)
+	src = string(applyChangesInMemory([]byte(srcText), srcChanges))
+	writeAndVet(t, dir, src, dst)
+	if formatted, err := format.Source([]byte(src)); err == nil {
+		src = string(formatted)
+	}
+	return src, dst
+}
+
+// assertNoOverlap fails the test for each pair of overlapping changes.
+func assertNoOverlap(t *testing.T, changes []types.Change) {
+	t.Helper()
+	for i, a := range changes {
+		for _, b := range changes[i+1:] {
 			if a.Start < b.End && b.Start < a.End {
 				t.Errorf("overlapping source changes %+v and %+v", a, b)
 			}
 		}
 	}
-	src = string(applyChangesInMemory([]byte(srcText), srcChanges))
-	if err := os.MkdirAll(filepath.Join(dir, "dst"), 0o755); err != nil {
+}
+
+// writeAndVet writes the moved source and target under dir and fails the test
+// if go vet rejects the result.
+func writeAndVet(t *testing.T, dir, src, dst string) {
+	t.Helper()
+	err := os.MkdirAll(filepath.Join(dir, "dst"), 0o755)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for p, text := range map[string]string{srcPath: src, filepath.Join(dir, "dst", "dst.go"): dst} {
+	for p, text := range map[string]string{filepath.Join(dir, "src", "src.go"): src, filepath.Join(dir, "dst", "dst.go"): dst} {
 		err := os.WriteFile(p, []byte(text), 0o644)
 		if err != nil {
 			t.Fatal(err)
@@ -59,10 +77,6 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("go vet failed: %v\n%s\nsrc:\n%s\ndst:\n%s", err, out, src, dst)
 	}
-	if formatted, err := format.Source([]byte(src)); err == nil {
-		src = string(formatted)
-	}
-	return src, dst
 }
 
 func TestMoveSymbol_GroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {

@@ -32,40 +32,25 @@ func TestNewParser(t *testing.T) {
 
 func TestParser_ParsePackage(t *testing.T) {
 	parser := NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
-
-	// Create a temporary package directory
 	tempDir := t.TempDir()
 
-	// Create main.go
-	mainContent := `package main
+	writeTestFile(t, tempDir, "main.go", `package main
 
 import "fmt"
 
 func main() {
 	fmt.Println("Hello, World!")
 }
-`
-	err := os.WriteFile(filepath.Join(tempDir, "main.go"), []byte(mainContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create main.go: %v", err)
-	}
-
-	// Create utils.go
-	utilsContent := `package main
+`)
+	writeTestFile(t, tempDir, "utils.go", `package main
 
 import "strings"
 
 func ToUpper(s string) string {
 	return strings.ToUpper(s)
 }
-`
-	err = os.WriteFile(filepath.Join(tempDir, "utils.go"), []byte(utilsContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create utils.go: %v", err)
-	}
-
-	// Create a test file
-	testContent := `package main
+`)
+	writeTestFile(t, tempDir, "main_test.go", `package main
 
 import "testing"
 
@@ -75,60 +60,52 @@ func TestToUpper(t *testing.T) {
 		t.Errorf("Expected HELLO, got %s", result)
 	}
 }
-`
-	err = os.WriteFile(filepath.Join(tempDir, "main_test.go"), []byte(testContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create main_test.go: %v", err)
-	}
+`)
 
-	// Parse the package
 	pkg, err := parser.ParsePackage(tempDir)
 	if err != nil {
 		t.Fatalf("Failed to parse package: %v", err)
 	}
 
-	// Validate the package
-	if pkg.Name != "main" {
-		t.Errorf("Expected package name to be 'main', got '%s'", pkg.Name)
-	}
-
-	if pkg.Dir != tempDir {
-		t.Errorf("Expected Dir to be '%s', got '%s'", tempDir, pkg.Dir)
-	}
-
-	if len(pkg.Files) != 2 {
-		t.Errorf("Expected 2 regular files, got %d", len(pkg.Files))
-	}
-
-	if len(pkg.TestFiles) != 1 {
-		t.Errorf("Expected 1 test file, got %d", len(pkg.TestFiles))
-	}
-
-	// Check imports
-	expectedImports := []string{"fmt", "strings"}
-	if len(pkg.Imports) != len(expectedImports) {
-		t.Errorf("Expected %d imports, got %d", len(expectedImports), len(pkg.Imports))
-	}
-
-	for _, expectedImport := range expectedImports {
-		found := slices.Contains(pkg.Imports, expectedImport)
-		if !found {
-			t.Errorf("Expected import '%s' not found", expectedImport)
+	t.Run("name, dir and file split", func(t *testing.T) {
+		if pkg.Name != "main" {
+			t.Errorf("Expected package name to be 'main', got '%s'", pkg.Name)
 		}
-	}
-
-	// Check that files have back-references to package
-	for _, file := range pkg.Files {
-		if file.Package != pkg {
-			t.Error("Expected file to have back-reference to package")
+		if pkg.Dir != tempDir {
+			t.Errorf("Expected Dir to be '%s', got '%s'", tempDir, pkg.Dir)
 		}
-	}
-
-	for _, file := range pkg.TestFiles {
-		if file.Package != pkg {
-			t.Error("Expected test file to have back-reference to package")
+		if len(pkg.Files) != 2 {
+			t.Errorf("Expected 2 regular files, got %d", len(pkg.Files))
 		}
-	}
+		if len(pkg.TestFiles) != 1 {
+			t.Errorf("Expected 1 test file, got %d", len(pkg.TestFiles))
+		}
+	})
+
+	t.Run("imports", func(t *testing.T) {
+		expectedImports := []string{"fmt", "strings"}
+		if len(pkg.Imports) != len(expectedImports) {
+			t.Errorf("Expected %d imports, got %d", len(expectedImports), len(pkg.Imports))
+		}
+		for _, expectedImport := range expectedImports {
+			if !slices.Contains(pkg.Imports, expectedImport) {
+				t.Errorf("Expected import '%s' not found", expectedImport)
+			}
+		}
+	})
+
+	t.Run("files link back to package", func(t *testing.T) {
+		for _, file := range pkg.Files {
+			if file.Package != pkg {
+				t.Error("Expected file to have back-reference to package")
+			}
+		}
+		for _, file := range pkg.TestFiles {
+			if file.Package != pkg {
+				t.Error("Expected test file to have back-reference to package")
+			}
+		}
+	})
 }
 
 func TestParser_ParsePackage_Empty(t *testing.T) {
@@ -155,91 +132,56 @@ func TestParser_ParsePackage_Empty(t *testing.T) {
 }
 
 func TestParser_ParseWorkspace(t *testing.T) {
-	// Create a temporary workspace
 	tempDir := t.TempDir()
 
-	// Create go.mod
-	goModContent := `module test/workspace
-
-go 1.21
-`
-	err := os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte(goModContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create go.mod: %v", err)
-	}
-
-	// Create main package
-	mainDir := filepath.Join(tempDir, "cmd", "main")
-	err = os.MkdirAll(mainDir, 0755)
-	if err != nil {
-		t.Fatalf("Failed to create main directory: %v", err)
-	}
-
-	mainContent := `package main
+	writeTestFile(t, tempDir, "go.mod", "module test/workspace\n\ngo 1.21\n")
+	writeTestFile(t, tempDir, "cmd/main/main.go", `package main
 
 import "fmt"
 
 func main() {
 	fmt.Println("Hello, World!")
 }
-`
-	err = os.WriteFile(filepath.Join(mainDir, "main.go"), []byte(mainContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create main.go: %v", err)
-	}
-
-	// Create a library package
-	libDir := filepath.Join(tempDir, "pkg", "lib")
-	err = os.MkdirAll(libDir, 0755)
-	if err != nil {
-		t.Fatalf("Failed to create lib directory: %v", err)
-	}
-
-	libContent := `package lib
+`)
+	writeTestFile(t, tempDir, "pkg/lib/lib.go", `package lib
 
 func Add(a, b int) int {
 	return a + b
 }
-`
-	err = os.WriteFile(filepath.Join(libDir, "lib.go"), []byte(libContent), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create lib.go: %v", err)
-	}
+`)
 
-	// Parse the workspace
 	_, ws, err := parseWorkspace(tempDir)
 	if err != nil {
 		t.Fatalf("Failed to parse workspace: %v", err)
 	}
 
-	// Validate the workspace
-	if ws.RootPath != tempDir {
-		t.Errorf("Expected RootPath to be '%s', got '%s'", tempDir, ws.RootPath)
-	}
-
-	if ws.Module == nil {
-		t.Error("Expected Module to be non-nil")
-	} else if ws.Module.Path != "test/workspace" {
-		t.Errorf("Expected module path to be 'test/workspace', got '%s'", ws.Module.Path)
-	}
-
-	if len(ws.Packages) < 2 {
-		t.Errorf("Expected at least 2 packages, got %d", len(ws.Packages))
-	}
-
-	if ws.FileSet == nil {
-		t.Error("Expected FileSet to be non-nil")
-	}
-
-	// Check that packages are properly linked
-	for _, pkg := range ws.Packages {
-		if pkg.Name == "" {
-			t.Error("Expected package to have a name")
+	t.Run("root, module and file set", func(t *testing.T) {
+		if ws.RootPath != tempDir {
+			t.Errorf("Expected RootPath to be '%s', got '%s'", tempDir, ws.RootPath)
 		}
-		if len(pkg.Files) == 0 {
-			t.Error("Expected package to have files")
+		if ws.Module == nil {
+			t.Error("Expected Module to be non-nil")
+		} else if ws.Module.Path != "test/workspace" {
+			t.Errorf("Expected module path to be 'test/workspace', got '%s'", ws.Module.Path)
 		}
-	}
+		if ws.FileSet == nil {
+			t.Error("Expected FileSet to be non-nil")
+		}
+	})
+
+	t.Run("packages are named and populated", func(t *testing.T) {
+		if len(ws.Packages) < 2 {
+			t.Errorf("Expected at least 2 packages, got %d", len(ws.Packages))
+		}
+		for _, pkg := range ws.Packages {
+			if pkg.Name == "" {
+				t.Error("Expected package to have a name")
+			}
+			if len(pkg.Files) == 0 {
+				t.Error("Expected package to have files")
+			}
+		}
+	})
 }
 
 // TestParser_TypeCheckPackage_DiamondMemoization is a regression test for the
@@ -472,25 +414,13 @@ func G() {
 func TestParser_TypeCheckPackage_DiamondRescueIsConsistentAcrossImporters(t *testing.T) {
 	tempDir := t.TempDir()
 
-	writeFile := func(rel, content string) {
-		full := filepath.Join(tempDir, rel)
-		err := os.MkdirAll(filepath.Dir(full), 0755)
-		if err != nil {
-			t.Fatalf("failed to create dir for %s: %v", rel, err)
-		}
-		err = os.WriteFile(full, []byte(content), 0644)
-		if err != nil {
-			t.Fatalf("failed to write %s: %v", rel, err)
-		}
-	}
+	writeTestFile(t, tempDir, "go.mod", "module test/diamond2\n\ngo 1.21\n")
 
-	writeFile("go.mod", "module test/diamond2\n\ngo 1.21\n")
-
-	writeFile("dep/dep.go", `package dep
+	writeTestFile(t, tempDir, "dep/dep.go", `package dep
 
 type Thing struct{}
 `)
-	writeFile("dep/dep_test.go", `package dep
+	writeTestFile(t, tempDir, "dep/dep_test.go", `package dep
 
 import (
 	"testing"
@@ -502,17 +432,17 @@ func TestDep(t *testing.T) {
 	slow.Ping()
 }
 `)
-	writeFile("slow/slow.go", `package slow
+	writeTestFile(t, tempDir, "slow/slow.go", `package slow
 
 import "test/diamond2/mid"
 
 func Ping() { mid.Noop() }
 `)
-	writeFile("mid/mid.go", `package mid
+	writeTestFile(t, tempDir, "mid/mid.go", `package mid
 
 func Noop() {}
 `)
-	writeFile("mid/mid_test.go", `package mid
+	writeTestFile(t, tempDir, "mid/mid_test.go", `package mid
 
 import (
 	"testing"
@@ -524,7 +454,7 @@ func TestMid(t *testing.T) {
 	bridge.Run(&bridge.Bridge{})
 }
 `)
-	writeFile("bridge/bridge.go", `package bridge
+	writeTestFile(t, tempDir, "bridge/bridge.go", `package bridge
 
 import (
 	"test/diamond2/dep"
@@ -539,7 +469,7 @@ func Run(b *Bridge) {
 	other.Use(b.Field)
 }
 `)
-	writeFile("other/other.go", `package other
+	writeTestFile(t, tempDir, "other/other.go", `package other
 
 import "test/diamond2/dep"
 
@@ -555,7 +485,7 @@ func Use(t *dep.Thing) {}
 	// dep's real, post-cycle view while other.Use (resolved earlier,
 	// nested inside bridge's own check while dep was still in progress)
 	// keeps the rescue view — the two-views-of-dep mismatch.
-	writeFile("entry/entry.go", `package entry
+	writeTestFile(t, tempDir, "entry/entry.go", `package entry
 
 import (
 	"test/diamond2/dep"
@@ -576,14 +506,7 @@ func Run(e *Entry) {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
 
-	fsPath, ok := ws.ImportToPath["test/diamond2/dep"]
-	if !ok {
-		t.Fatal("expected test/diamond2/dep to be in ImportToPath")
-	}
-	pkgDep, ok := ws.Packages[fsPath]
-	if !ok {
-		t.Fatal("expected package dep to be parsed")
-	}
+	pkgDep := packageByImportPath(t, ws, "test/diamond2/dep")
 
 	// dep is the entry point deliberately: its own combined check is what
 	// starts the chain that reaches bridge nested (via slow, then mid's
@@ -606,27 +529,13 @@ func Run(e *Entry) {
 		t.Errorf("expected dep's test files to be included, got excluded (cause: %v)", pkgDep.ExcludedTestFiles)
 	}
 
-	fsPathBridge, ok := ws.ImportToPath["test/diamond2/bridge"]
-	if !ok {
-		t.Fatal("expected test/diamond2/bridge to be in ImportToPath")
-	}
-	pkgBridge, ok := ws.Packages[fsPathBridge]
-	if !ok {
-		t.Fatal("expected package bridge to be parsed")
-	}
+	pkgBridge := packageByImportPath(t, ws, "test/diamond2/bridge")
 	if pkgBridge.TypesErr != nil {
 		t.Fatalf("expected bridge to type-check cleanly, got: %v (this is the two-views-of-dep "+
 			"inconsistency if it mentions dep.Thing / other.Use)", pkgBridge.TypesErr)
 	}
 
-	fsPathEntry, ok := ws.ImportToPath["test/diamond2/entry"]
-	if !ok {
-		t.Fatal("expected test/diamond2/entry to be in ImportToPath")
-	}
-	pkgEntry, ok := ws.Packages[fsPathEntry]
-	if !ok {
-		t.Fatal("expected package entry to be parsed")
-	}
+	pkgEntry := packageByImportPath(t, ws, "test/diamond2/entry")
 	// Checked as a separate, later EnsureTypeChecked call, deliberately: by
 	// now dep.TypesChecked is already true (dep's own check, above, has
 	// fully returned), so entry's own direct import of dep takes the
@@ -643,25 +552,10 @@ func Run(e *Entry) {
 	// test file call to slow.Ping must still be findable via CallSitesOf,
 	// exactly like TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport
 	// checks for the unresolved-third-party-import trigger.
-	fsPathSlow, ok := ws.ImportToPath["test/diamond2/slow"]
-	if !ok {
-		t.Fatal("expected test/diamond2/slow to be in ImportToPath")
-	}
-	pkgSlow, ok := ws.Packages[fsPathSlow]
-	if !ok {
-		t.Fatal("expected package slow to be parsed")
-	}
+	pkgSlow := packageByImportPath(t, ws, "test/diamond2/slow")
 	parser.EnsureTypeChecked(ws, pkgSlow)
 
-	var seed *gotypes.Func
-	for ident, obj := range pkgSlow.TypesInfo.Defs {
-		if ident.Name == "Ping" {
-			seed, _ = obj.(*gotypes.Func)
-		}
-	}
-	if seed == nil {
-		t.Fatal("expected slow.Ping to resolve to a go/types object")
-	}
+	seed := funcDefNamed(t, pkgSlow, "Ping")
 	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
 	var sawTest bool
 	for _, site := range idx.CallSitesOf(seed) {
@@ -972,35 +866,24 @@ func TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport(t *testing.T) {
 	version, sum, goModSum := fields[1], fields[2], fields[3]
 
 	tempDir := t.TempDir()
-	writeFile := func(rel, content string) {
-		full := filepath.Join(tempDir, rel)
-		err := os.MkdirAll(filepath.Dir(full), 0755)
-		if err != nil {
-			t.Fatalf("failed to create dir for %s: %v", rel, err)
-		}
-		err = os.WriteFile(full, []byte(content), 0644)
-		if err != nil {
-			t.Fatalf("failed to write %s: %v", rel, err)
-		}
-	}
 
-	writeFile("go.mod", "module example.com/testws\n\ngo 1.26.0\n\nrequire golang.org/x/tools "+version+"\n")
-	writeFile("go.sum",
+	writeTestFile(t, tempDir, "go.mod", "module example.com/testws\n\ngo 1.26.0\n\nrequire golang.org/x/tools "+version+"\n")
+	writeTestFile(t, tempDir, "go.sum",
 		"golang.org/x/tools "+version+" "+sum+"\n"+
 			"golang.org/x/tools "+version+"/go.mod "+goModSum+"\n")
-	writeFile("foo/foo.go", `package foo
+	writeTestFile(t, tempDir, "foo/foo.go", `package foo
 
 func Process(name string) string { return name }
 `)
 	// A normal production call site, so this test also confirms the fix does
 	// not somehow cost the package its non-test call sites.
-	writeFile("foo/bar.go", `package foo
+	writeTestFile(t, tempDir, "foo/bar.go", `package foo
 
 func Run() string { return Process("prod") }
 `)
 	// The test-only third-party import that triggers the bug: nothing in
 	// foo's production files imports golang.org/x/tools, only this file does.
-	writeFile("foo/foo_test.go", `package foo
+	writeTestFile(t, tempDir, "foo/foo_test.go", `package foo
 
 import (
 	"testing"
@@ -1019,14 +902,7 @@ func TestProcess(t *testing.T) {
 		t.Fatalf("failed to parse workspace: %v", err)
 	}
 
-	fsPath, ok := ws.ImportToPath["example.com/testws/foo"]
-	if !ok {
-		t.Fatal("expected example.com/testws/foo to be in ImportToPath")
-	}
-	pkg, ok := ws.Packages[fsPath]
-	if !ok {
-		t.Fatal("expected package foo to be parsed")
-	}
+	pkg := packageByImportPath(t, ws, "example.com/testws/foo")
 
 	parser.EnsureTypeChecked(ws, pkg)
 	if len(pkg.ExcludedTestFiles) > 0 {
@@ -1037,15 +913,7 @@ func TestProcess(t *testing.T) {
 		t.Fatalf("expected foo to type-check cleanly, got: %v", pkg.TypesErr)
 	}
 
-	var seed *gotypes.Func
-	for ident, obj := range pkg.TypesInfo.Defs {
-		if ident.Name == "Process" {
-			seed, _ = obj.(*gotypes.Func)
-		}
-	}
-	if seed == nil {
-		t.Fatal("expected Process to resolve to a go/types object")
-	}
+	seed := funcDefNamed(t, pkg, "Process")
 
 	idx := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil))).BuildReferenceIndex()
 	if !idx.HasTypeInfo() {
@@ -1161,6 +1029,48 @@ func writeWorkspace(t *testing.T, files map[string]string) string {
 		}
 	}
 	return root
+}
+
+func writeTestFile(t *testing.T, root, rel, content string) {
+	t.Helper()
+	full := filepath.Join(root, rel)
+	err := os.MkdirAll(filepath.Dir(full), 0o755)
+	if err != nil {
+		t.Fatalf("failed to create dir for %s: %v", rel, err)
+	}
+	err = os.WriteFile(full, []byte(content), 0o644)
+	if err != nil {
+		t.Fatalf("failed to write %s: %v", rel, err)
+	}
+}
+
+// packageByImportPath returns the parsed workspace package for importPath.
+func packageByImportPath(t *testing.T, ws *types.Workspace, importPath string) *types.Package {
+	t.Helper()
+	fsPath, ok := ws.ImportToPath[importPath]
+	if !ok {
+		t.Fatalf("expected %s to be in ImportToPath", importPath)
+	}
+	pkg, ok := ws.Packages[fsPath]
+	if !ok {
+		t.Fatalf("expected package %s to be parsed", importPath)
+	}
+	return pkg
+}
+
+// funcDefNamed returns the go/types function declared as name in pkg.
+func funcDefNamed(t *testing.T, pkg *types.Package, name string) *gotypes.Func {
+	t.Helper()
+	for ident, obj := range pkg.TypesInfo.Defs {
+		if ident.Name != name {
+			continue
+		}
+		if fn, ok := obj.(*gotypes.Func); ok {
+			return fn
+		}
+	}
+	t.Fatalf("expected %s to resolve to a go/types object", name)
+	return nil
 }
 
 func loadWithConfig(t *testing.T, root string, cfg BuildConfig) (*GoParser, *types.Workspace) {
