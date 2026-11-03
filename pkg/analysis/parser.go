@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/importer"
-	"go/parser"
 	"go/token"
 	gotypes "go/types"
 	"log/slog"
@@ -91,39 +90,6 @@ func NewParser(logger *slog.Logger) *GoParser {
 // newViewParser returns a parser that selects files from tree under cfg.
 func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoParser {
 	return &GoParser{fileSet: tree.fset, logger: logger, buildConfig: cfg, sources: tree, loadPackages: packages.Load}
-}
-
-// ParseFile parses a single Go file
-func (p *GoParser) ParseFile(filename string) (*types.File, error) {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, &types.RefactorError{
-			Type:    types.FileSystemError,
-			Message: fmt.Sprintf("failed to read file: %v", err),
-			File:    filename,
-			Cause:   err,
-		}
-	}
-
-	astFile, err := parser.ParseFile(p.fileSet, filename, content, parser.ParseComments)
-	if err != nil {
-		return nil, &types.RefactorError{
-			Type:    types.ParseError,
-			Message: fmt.Sprintf("failed to parse file: %v", err),
-			File:    filename,
-			Cause:   err,
-		}
-	}
-
-	file := &types.File{
-		Path:            filename,
-		AST:             astFile,
-		OriginalContent: content,
-		Modifications:   make([]types.Modification, 0),
-		Generated:       ast.IsGenerated(astFile),
-	}
-
-	return file, nil
 }
 
 // ParsePackage builds the package in dir from the files that match the parser's

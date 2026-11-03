@@ -40,11 +40,6 @@ func TestGeneratedFlag(t *testing.T) {
 	if pkg.Files["late.go"].Generated {
 		t.Error("late.go: header after the package clause must not count")
 	}
-
-	one, err := parser.ParseFile(filepath.Join(dir, "gen.go"))
-	if err != nil || !one.Generated {
-		t.Errorf("ParseFile gen.go: Generated=%v err=%v", one != nil && one.Generated, err)
-	}
 }
 
 func TestSourceTree_ReplaceRefreshesGenerated(t *testing.T) {
