@@ -1,10 +1,13 @@
 package refactor
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
+	"maps"
 	"slices"
+	"strings"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	pkgtypes "github.com/mamaar/gorefactor/pkg/types"
@@ -271,6 +274,21 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 		}
 	}
 
+	declared := declaredInFile(sourcePackage, sourceFile, op.SymbolName)
+	if sym, ok := declared[op.SymbolName]; ok {
+		return sourceFile, sourcePackage, resolver, sym, nil
+	}
+	if len(declared) == 1 {
+		return sourceFile, sourcePackage, resolver, slices.Collect(maps.Values(declared))[0], nil
+	}
+	if len(declared) > 1 {
+		return nil, nil, resolver, nil, &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("ambiguous symbol %q: %s declares %s; use Type.Method syntax to pick one",
+				op.SymbolName, op.SourceFile, strings.Join(slices.Sorted(maps.Keys(declared)), ", ")),
+		}
+	}
+
 	// Find the symbol to delete
 	symbol, err := resolver.ResolveSymbol(sourcePackage, op.SymbolName)
 	if err != nil {
@@ -281,6 +299,29 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 	}
 
 	return sourceFile, sourcePackage, resolver, symbol, nil
+}
+
+// declaredInFile returns the package-level symbols and methods of pkg that file
+// declares under the bare name, keyed by how to spell each (Type.Method for a
+// method). A dotted name matches none.
+func declaredInFile(pkg *pkgtypes.Package, file *pkgtypes.File, name string) map[string]*pkgtypes.Symbol {
+	found := map[string]*pkgtypes.Symbol{}
+	if pkg.Symbols == nil {
+		return found
+	}
+	for _, byName := range []map[string]*pkgtypes.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
+		if sym := byName[name]; sym != nil && sym.File == file.Path {
+			found[name] = sym
+		}
+	}
+	for recv, methods := range pkg.Symbols.Methods {
+		for _, m := range methods {
+			if m.Name == name && m.File == file.Path {
+				found[recv+"."+name] = m
+			}
+		}
+	}
+	return found
 }
 
 func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
@@ -540,6 +581,22 @@ func fieldCutRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) {
 	return start, end
 }
 
+// pastTrailingLineComment returns the offset after a // comment that follows
+// offset on the same line, or offset when there is none.
+func pastTrailingLineComment(content []byte, offset int) int {
+	i := offset
+	for i < len(content) && (content[i] == ' ' || content[i] == '\t') {
+		i++
+	}
+	if !bytes.HasPrefix(content[i:], []byte("//")) {
+		return offset
+	}
+	for i < len(content) && content[i] != '\n' && content[i] != '\r' {
+		i++
+	}
+	return i
+}
+
 // calculateRemovalRange returns the byte range to cut: from the start of the
 // line holding the doc comment (or declaration) through trailing newlines.
 func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) {
@@ -551,6 +608,7 @@ func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) 
 	_, end := nodeOffsets(ws, t.node)
 
 	content := t.file.OriginalContent
+	end = pastTrailingLineComment(content, end)
 	for end < len(content) && (content[end] == '\n' || content[end] == '\r') {
 		end++
 	}

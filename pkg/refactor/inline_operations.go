@@ -194,6 +194,15 @@ func referenceSites(ws *types.Workspace, idx *analysis.ReferenceIndex, sym *type
 	return sites
 }
 
+// count returns the number of sites.
+func (c callSites) count() int {
+	n := 0
+	for _, offsets := range c {
+		n += len(offsets)
+	}
+	return n
+}
+
 // keep returns the calls in file whose called identifier is one of the sites.
 func (c callSites) keep(file string, calls []MethodCall) []MethodCall {
 	if c == nil {
@@ -1007,13 +1016,18 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 		}
 	}
 
+	if len(changes) == 0 && sites.count() > 0 {
+		return nil, &types.RefactorError{
+			Type: types.InvalidOperation,
+			Message: fmt.Sprintf("cannot inline %s: it has %d references, but none is a direct call from the same package in the target files",
+				op.FunctionName, sites.count()),
+		}
+	}
+
 	var affectedPackages []string
 	for _, file := range affectedFiles {
-		for _, pkg := range ws.Packages {
-			if _, exists := pkg.Files[file]; exists {
-				affectedPackages = append(affectedPackages, pkg.Path)
-				break
-			}
+		if pkg := findPackageForFile(ws, file); pkg != nil {
+			affectedPackages = append(affectedPackages, pkg.Path)
 		}
 	}
 

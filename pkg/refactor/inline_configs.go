@@ -114,15 +114,15 @@ func (p *inlineFunctionPlanner) planIn(v *analysis.View, linked types.SymbolKeyS
 	}, nil
 }
 
-// targetFiles returns the request's target files, or every non-test file of
-// ws when it names none.
+// targetFiles returns the request's target files, or every file of ws, test
+// files included, when it names none.
 func (p *inlineFunctionPlanner) targetFiles(ws *types.Workspace) []string {
 	if len(p.req.TargetFiles) > 0 {
 		return p.req.TargetFiles
 	}
 	var files []string
 	for _, pkg := range ws.Packages {
-		for _, f := range pkg.Files {
+		for _, f := range packageAllFiles(pkg) {
 			files = append(files, f.Path)
 		}
 	}

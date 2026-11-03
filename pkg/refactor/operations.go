@@ -1303,8 +1303,11 @@ func (op *MoveSymbolOperation) generateSymbolAdditionChanges(ws *types.Workspace
 func symbolNames(moving []*movingSymbol) string {
 	var names []string
 	for _, m := range moving {
-		if m.typ == nil {
+		switch {
+		case m.typ == nil:
 			names = append(names, m.sym.Name)
+		case m.lone:
+			names = append(names, m.name()+"."+m.sym.Name)
 		}
 	}
 	return strings.Join(names, ", ")
