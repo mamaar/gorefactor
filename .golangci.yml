@@ -13,6 +13,7 @@ linters:
     - ineffassign
     - gocritic
     - misspell
+    - nolintlint
     - predeclared
     - thelper
     - errorlint
