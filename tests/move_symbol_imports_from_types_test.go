@@ -17,7 +17,7 @@ func moveImportsFixture(t *testing.T, files map[string]string, symbol string) st
 	t.Helper()
 	files["o/o.go"] = importsOPkg
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")
 	if res.IsError {

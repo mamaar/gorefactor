@@ -31,7 +31,7 @@ type alwaysNilReportJSON struct {
 // detectAlwaysNil runs detect_always_nil_errors on an open session.
 func detectAlwaysNil(t *testing.T, sess *mcptest.Session) alwaysNilReportJSON {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "detect_always_nil_errors", Arguments: map[string]any{}})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_always_nil_errors", Arguments: map[string]any{}})
 	if err != nil {
 		t.Fatalf("detect_always_nil_errors: %v", err)
 	}
@@ -53,7 +53,7 @@ func callAlwaysNilErrors(t *testing.T, files map[string]string) alwaysNilReportJ
 	t.Helper()
 	files["go.mod"] = "module example.com/nilerr\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	return detectAlwaysNil(t, sess)
 }

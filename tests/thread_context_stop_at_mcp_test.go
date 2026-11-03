@@ -18,7 +18,7 @@ func stopAtArgs(stopAt ...string) map[string]any {
 
 func callExpectingError(t *testing.T, sess *mcptest.Session, args map[string]any) string {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}

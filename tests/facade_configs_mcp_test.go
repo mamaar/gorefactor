@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -33,7 +32,7 @@ func writeFacadeSource(t *testing.T, dir string) {
 
 func callFacadeTool(t *testing.T, dir, tool string, args map[string]any) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := t.Context()
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{Name: tool, Arguments: args})

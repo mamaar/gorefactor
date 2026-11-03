@@ -13,7 +13,7 @@ const shaperSrc = "package src\n\ntype shaper interface{ area() int }\n\ntype Sq
 
 func assertMoveRefused(t *testing.T, dir, src, symbol string, want ...string) {
 	t.Helper()
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")

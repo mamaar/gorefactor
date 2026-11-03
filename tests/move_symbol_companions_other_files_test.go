@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -11,7 +10,7 @@ import (
 func moveTypeAcrossFiles(t *testing.T, files map[string]string, symbol string) (string, bool, string) {
 	t.Helper()
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")
 	return dir, res.IsError, errText(res)

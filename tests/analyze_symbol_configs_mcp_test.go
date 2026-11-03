@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -15,9 +14,9 @@ func analyzeSymbolIn(t *testing.T, files map[string]string, args map[string]any)
 	t.Helper()
 	files["go.mod"] = "module example.com/asym\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "analyze_symbol", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "analyze_symbol", Arguments: args})
 	if err != nil {
 		t.Fatalf("analyze_symbol: %v", err)
 	}

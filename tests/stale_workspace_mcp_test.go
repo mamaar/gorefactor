@@ -55,7 +55,7 @@ func writeStaleFixture(t *testing.T) string {
 
 func callJSON(t *testing.T, sess *mcptest.Session, tool string, args map[string]any) map[string]any {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool(%s): %v", tool, err)
 	}
@@ -161,7 +161,7 @@ const (
 
 func symbolVisible(t *testing.T, sess *mcptest.Session, name string) bool {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "analyze_symbol",
 		Arguments: map[string]any{"symbol": name, "package": "lib"},
 	})

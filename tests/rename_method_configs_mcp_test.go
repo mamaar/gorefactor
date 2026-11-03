@@ -18,7 +18,7 @@ const (
 
 func renameMethod(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "rename_method", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "rename_method", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}

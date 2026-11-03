@@ -14,7 +14,7 @@ const foldF = "package p\n\nfunc f() (int, error) { return 1, nil }\n\nfunc g() 
 func removeErrorFolds(t *testing.T, use string) string {
 	t.Helper()
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": foldF, "p/use.go": use})
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
 	goVets(t, dir, "")

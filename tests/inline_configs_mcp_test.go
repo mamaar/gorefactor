@@ -12,7 +12,7 @@ import (
 
 func callTool(t *testing.T, sess *mcptest.Session, tool string, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool(%s): %v", tool, err)
 	}

@@ -148,7 +148,7 @@ func addContextParameter(t *testing.T, sess *mcptest.Session, args map[string]an
 	t.Helper()
 	args["function_name"] = "Process"
 	args["source_file"] = "foo/foo.go"
-	result, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
+	result, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
@@ -172,7 +172,7 @@ func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSO
 // path of add_context_parameter does not type-check by itself.
 func typeCheckFoo(t *testing.T, sess *mcptest.Session) {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "detect_if_init_assignments",
 		Arguments: map[string]any{"package": "example.com/threadmcp/foo"},
 	})

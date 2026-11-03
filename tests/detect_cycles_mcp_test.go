@@ -126,9 +126,9 @@ type cyclesJSON struct {
 func callDetectCycles(t *testing.T, files map[string]string) cyclesJSON {
 	t.Helper()
 	files["go.mod"] = dcModule
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), writeInlineWorkspace(t, files))
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), writeInlineWorkspace(t, files))
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "detect_cycles", Arguments: map[string]any{}})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_cycles", Arguments: map[string]any{}})
 	if err != nil || res.IsError {
 		t.Fatalf("detect_cycles: %v %s", err, errText(res))
 	}

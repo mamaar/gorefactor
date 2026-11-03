@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -51,7 +50,7 @@ func sdfSession(t *testing.T) (*mcptest.Session, string) {
 		"model/model.go": sdfModel,
 		"model/uses.go":  sdfUses,
 	})
-	return mcptest.Dial(context.Background(), t, mcpTransport(), dir), filepath.Join(dir, "model", "model.go")
+	return mcptest.Dial(t.Context(), t, mcpTransport(), dir), filepath.Join(dir, "model", "model.go")
 }
 
 func TestSafeDelete_FieldUnreferenced_GofmtClean(t *testing.T) {

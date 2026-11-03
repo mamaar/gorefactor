@@ -19,7 +19,7 @@ func callToolOnFixture(t *testing.T, fixture, tool string, args map[string]any) 
 
 	dir := copyFixture(t, fixture)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 

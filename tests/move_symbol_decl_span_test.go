@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"strings"
 	"testing"
 
@@ -13,7 +12,7 @@ import (
 func moveAndVet(t *testing.T, symbol string, files map[string]string) (srcText, dstText string) {
 	t.Helper()
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 	res := moveSymbolCall(t, sess, symbol, "src", "dst")
 	if res.IsError {

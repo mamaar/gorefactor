@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"slices"
@@ -17,9 +16,9 @@ func findImplementations(t *testing.T, files map[string]string, args map[string]
 	t.Helper()
 	files["go.mod"] = "module example.com/fimpl\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "find_implementations", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "find_implementations", Arguments: args})
 	if err != nil {
 		t.Fatalf("find_implementations: %v", err)
 	}

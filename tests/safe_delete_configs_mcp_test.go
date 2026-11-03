@@ -23,7 +23,7 @@ func safeDeleteDeclined(t *testing.T, dir, symbol, file string) (*mcpsdk.CallToo
 		message = req.Params.Message
 		return &mcpsdk.ElicitResult{Action: "decline"}
 	})
-	ctx := context.Background()
+	ctx := t.Context()
 	sess := mcptest.Dial(ctx, t, mcptest.InProcessWithElicitation(handler), dir)
 	defer sess.Close()
 	res, _ := callSafeDelete(ctx, t, sess, symbol, file, false, false)

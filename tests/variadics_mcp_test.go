@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"slices"
@@ -52,9 +51,9 @@ func callVariadics(t *testing.T, args map[string]any, files map[string]string) v
 	}
 	files["go.mod"] = variadicsModule
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "detect_variadics", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_variadics", Arguments: args})
 	if err != nil {
 		t.Fatalf("detect_variadics: %v", err)
 	}

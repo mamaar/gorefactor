@@ -13,7 +13,7 @@ import (
 
 func moveSymbolCall(t *testing.T, sess *mcptest.Session, symbol, from, to string) *mcpsdk.CallToolResult {
 	t.Helper()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{
 		Name:      "move_symbol",
 		Arguments: map[string]any{"symbol": symbol, "from_package": from, "to_package": to},
 	})

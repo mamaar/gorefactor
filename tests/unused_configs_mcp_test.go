@@ -1,7 +1,6 @@
 package tests_test
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"reflect"
@@ -46,9 +45,9 @@ func callUnused(t *testing.T, args map[string]any, files map[string]string) (unu
 		args = map[string]any{}
 	}
 	dir := writeInlineWorkspace(t, files)
-	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
-	res, err := sess.CallTool(context.Background(), &mcpsdk.CallToolParams{Name: "unused", Arguments: args})
+	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "unused", Arguments: args})
 	if err != nil || res.IsError {
 		t.Fatalf("unused: %v %s", err, errText(res))
 	}
