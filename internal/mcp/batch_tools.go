@@ -11,7 +11,7 @@ import (
 // --- batch_operations ---
 
 type BatchOperationsInput struct {
-	Operations []string `json:"operations" jsonschema:"steps, each a JSON object string with a type and that type's keys: rename_symbol (symbol, new_name, package optional); move_symbol (symbol, from_package, to_package); rename_method (type_name, method_name, new_method_name, package_path optional); rename_field (type_name, field_name, new_field_name, package_path optional); rename_package (package_path, new_name, old_name optional); move_package (source, target)"`
+	Operations []string `json:"operations" jsonschema:"steps, each a JSON object string with a type and that type's keys: rename_symbol (symbol, new_name, package optional); move_symbol (symbol, from_package, to_package, to_file optional); rename_method (type_name, method_name, new_method_name, package_path optional); rename_field (type_name, field_name, new_field_name, package_path optional); rename_package (package_path, new_name, old_name optional); move_package (source, target)"`
 	DryRun     bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 

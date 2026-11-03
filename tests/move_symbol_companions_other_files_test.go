@@ -28,7 +28,7 @@ func TestMoveSymbolMovesConstructorDeclaredInAnotherFile(t *testing.T) {
 	}
 	assertFileContains(t, dir, "dst/dst.go", "type T struct")
 	assertFileContains(t, dir, "dst/dst.go", "func NewT()")
-	if got := fileText(t, dir, "src/new.go"); strings.Contains(got, "NewT") {
+	if got := fileTextOrEmpty(t, dir, "src/new.go"); strings.Contains(got, "NewT") {
 		t.Errorf("NewT remains in src/new.go:\n%s", got)
 	}
 	assertFileContains(t, dir, "use/use.go", "dst.NewT()")
@@ -45,7 +45,7 @@ func TestMoveSymbolBringsImportOfConstructorInAnotherFile(t *testing.T) {
 	}
 	assertFileContains(t, dir, "dst/dst.go", "\"strings\"")
 	assertFileContains(t, dir, "dst/dst.go", "func NewT(")
-	if got := fileText(t, dir, "src/new.go"); strings.Contains(got, "strings") {
+	if got := fileTextOrEmpty(t, dir, "src/new.go"); strings.Contains(got, "strings") {
 		t.Errorf("unused import remains in src/new.go:\n%s", got)
 	}
 	goVets(t, dir, "")

@@ -3,6 +3,7 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"maps"
 	"slices"
 	"strings"
@@ -73,11 +74,7 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 		}
 	}
 	removeDropped := func(specs []*ast.ImportSpec) []types.Change {
-		var changes []types.Change
-		for _, spec := range specs {
-			changes = append(changes, removeImportSpec(ws, file, spec))
-		}
-		return changes
+		return removeImportSpecs(ws, file, specs)
 	}
 
 	for _, imp := range file.AST.Imports {
@@ -291,4 +288,50 @@ func removeImportSpec(ws *types.Workspace, file *types.File, spec *ast.ImportSpe
 		OldText:     string(content[start:end]),
 		Description: fmt.Sprintf("Remove now-unused import %q from %s", path, file.Path),
 	}
+}
+
+// removeImportSpecs deletes each of specs from file, taking a whole import
+// declaration when none of its specs would remain so no empty `import ()` stays.
+func removeImportSpecs(ws *types.Workspace, file *types.File, specs []*ast.ImportSpec) []types.Change {
+	if len(specs) == 0 {
+		return nil
+	}
+	var changes []types.Change
+	for _, decl := range file.AST.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.IMPORT {
+			continue
+		}
+		var mine []*ast.ImportSpec
+		for _, s := range gen.Specs {
+			if spec := s.(*ast.ImportSpec); slices.Contains(specs, spec) {
+				mine = append(mine, spec)
+			}
+		}
+		if len(mine) < len(gen.Specs) {
+			for _, spec := range mine {
+				changes = append(changes, removeImportSpec(ws, file, spec))
+			}
+			continue
+		}
+		start, _ := lineRange(ws, file.OriginalContent, gen.Pos())
+		_, end := lineRange(ws, file.OriginalContent, gen.End()-1)
+		// Of the blank lines around the declaration, keep one.
+		content := file.OriginalContent
+		if start >= 2 && content[start-2] == '\n' && end < len(content) && content[end] == '\n' {
+			end++
+		}
+		paths := make([]string, len(mine))
+		for i, spec := range mine {
+			paths[i] = spec.Path.Value
+		}
+		changes = append(changes, types.Change{
+			File:        file.Path,
+			Start:       start,
+			End:         end,
+			OldText:     string(file.OriginalContent[start:end]),
+			Description: fmt.Sprintf("Remove now-unused import %s from %s", strings.Join(paths, ", "), file.Path),
+		})
+	}
+	return changes
 }

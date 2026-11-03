@@ -110,7 +110,7 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			p.object(v, "%s is declared in %s instead of %s; the move would leave that declaration behind", key.Name, sym.File, p.moved[key])
 			continue
 		}
-		if target != nil && target.Symbols != nil {
+		if target != nil && target.Symbols != nil && findPackageForFile(ws, sym.File) != target {
 			if _, err := resolver.ResolveSymbol(target, key.Name); err == nil {
 				p.object(v, "symbol %s already exists in target package %s", key.Name, p.req.ToPackage)
 			}

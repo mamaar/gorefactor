@@ -51,6 +51,7 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 			SymbolName:  raw["symbol"],
 			FromPackage: types.ResolvePackagePath(ws, raw["from_package"]),
 			ToPackage:   types.ResolvePackagePath(ws, raw["to_package"]),
+			ToFile:      raw["to_file"],
 		}
 		step.packages = []string{resolveOptionalPackage(ws, raw["from_package"]), resolveOptionalPackage(ws, raw["to_package"])}
 		step.plan = func() (*types.RefactoringPlan, error) { return e.MoveSymbolAcrossConfigs(req) }

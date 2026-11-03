@@ -281,7 +281,7 @@ func (op *MoveSymbolOperation) resolveCompanionSymbols(resolver *analysis.Symbol
 func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, moving []*movingSymbol) error {
 	for _, m := range moving {
 		file := m.file
-		if m.sym.Kind != types.TypeSymbol || file == nil || file.AST == nil {
+		if m.sym.Kind != types.TypeSymbol || file == nil || file.AST == nil || op.staysInPackage(ws, m.pkg) {
 			continue
 		}
 		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
@@ -299,7 +299,7 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 
 	checked := make(map[*types.Package]bool)
 	for _, m := range moving {
-		if checked[m.pkg] || m.pkg.TypesInfo == nil || m.pkg.TypesPkg == nil {
+		if checked[m.pkg] || m.pkg.TypesInfo == nil || m.pkg.TypesPkg == nil || op.staysInPackage(ws, m.pkg) {
 			continue
 		}
 		checked[m.pkg] = true

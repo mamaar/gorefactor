@@ -17,7 +17,7 @@ func moveSymbolsCall(t *testing.T, sess *mcptest.Session, from, to string, symbo
 
 func assertFileOmits(t *testing.T, dir, rel, unwanted string) {
 	t.Helper()
-	if got := fileText(t, dir, rel); strings.Contains(got, unwanted) {
+	if got := fileTextOrEmpty(t, dir, rel); strings.Contains(got, unwanted) {
 		t.Errorf("%s contains %q:\n%s", rel, unwanted, got)
 	}
 }

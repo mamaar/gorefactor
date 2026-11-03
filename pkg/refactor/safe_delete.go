@@ -321,9 +321,11 @@ func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []del
 			continue
 		}
 		delete(removals, t.file)
-		for _, spec := range unusedImportsAfterRemoval(ws, t.file, changes) {
-			plan.Changes = append(plan.Changes, removeImportSpec(ws, t.file, spec))
+		if deletion, ok := emptiedFileDeletion(t.file, changes); ok {
+			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c pkgtypes.Change) bool { return c.File == t.file.Path }), deletion)
+			continue
 		}
+		plan.Changes = append(plan.Changes, removeImportSpecs(ws, t.file, unusedImportsAfterRemoval(ws, t.file, changes))...)
 	}
 	if op.Force {
 		for _, ref := range blocking {

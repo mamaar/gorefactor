@@ -54,6 +54,11 @@ type MoveSymbolRequest struct {
 	CreateTarget bool // Create target package if it doesn't exist
 	UpdateTests  bool // Update test files as well
 
+	// ToFile, when set, is the file of ToPackage the symbols land in, as an
+	// absolute path or one relative to the workspace root; a missing file is
+	// created. ToPackage may then equal the source package.
+	ToFile string
+
 	// Symbols, when set, replaces SymbolName and FromPackage: all of them move
 	// to ToPackage in one plan.
 	Symbols []QualifiedSymbol

@@ -213,9 +213,7 @@ func (op *ChangeSignatureOperation) pruneRemovedImports(ws *pkgtypes.Workspace, 
 	}
 	for _, path := range slices.Sorted(maps.Keys(paths)) {
 		file, _ := findSourceFile(ws, path)
-		for _, spec := range unusedImportsAfterRemoval(ws, file, op.removedSpans) {
-			plan.Changes = append(plan.Changes, removeImportSpec(ws, file, spec))
-		}
+		plan.Changes = append(plan.Changes, removeImportSpecs(ws, file, unusedImportsAfterRemoval(ws, file, op.removedSpans))...)
 	}
 }
 

@@ -3,6 +3,8 @@ package refactor
 import (
 	"fmt"
 	"go/ast"
+	"go/build/constraint"
+	"go/parser"
 	"go/token"
 	gotypes "go/types"
 	"maps"
@@ -311,6 +313,33 @@ func applyChangesInMemory(content []byte, changes []types.Change) []byte {
 		result = result[:c.Start] + c.NewText + result[c.End:]
 	}
 	return []byte(result)
+}
+
+// emptiedFileDeletion returns the change deleting file when applying removals
+// leaves it with nothing but a package clause and imports. A file with a build
+// constraint or a package doc comment stays: those say something on their own.
+func emptiedFileDeletion(file *types.File, removals []types.Change) (types.Change, bool) {
+	rest := applyChangesInMemory(file.OriginalContent, removals)
+	parsed, err := parser.ParseFile(token.NewFileSet(), file.Path, rest, parser.ParseComments)
+	if err != nil || parsed.Doc != nil {
+		return types.Change{}, false
+	}
+	for _, decl := range parsed.Decls {
+		if gen, ok := decl.(*ast.GenDecl); !ok || gen.Tok != token.IMPORT {
+			return types.Change{}, false
+		}
+	}
+	for _, group := range parsed.Comments {
+		if group.Pos() > parsed.Package {
+			break
+		}
+		for _, c := range group.List {
+			if constraint.IsGoBuild(c.Text) || constraint.IsPlusBuild(c.Text) {
+				return types.Change{}, false
+			}
+		}
+	}
+	return types.Change{File: file.Path, Delete: true, Description: fmt.Sprintf("Remove file %s: no declarations left", file.Path)}, true
 }
 
 // unusedImportsAfterRemoval returns the imports of sourceFile that nothing

@@ -167,7 +167,7 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		}
 	}
 
-	if op.existsInTarget(ws, ref.Name) {
+	if !op.staysInPackage(ws, sourcePackage) && op.existsInTarget(ws, ref.Name) {
 		return &types.RefactorError{
 			Type:    types.NameConflict,
 			Message: fmt.Sprintf("symbol %s already exists in target package %s", ref.Name, op.Request.ToPackage),
@@ -175,6 +175,12 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 	}
 
 	return nil
+}
+
+// staysInPackage reports whether a move out of pkg lands in pkg itself, which
+// only a request naming the file can ask for.
+func (op *MoveSymbolOperation) staysInPackage(ws *types.Workspace, pkg *types.Package) bool {
+	return op.Request.ToFile != "" && ws.Packages[op.Request.ToPackage] == pkg
 }
 
 // existsInTarget reports whether the target package declares a package-level
@@ -361,6 +367,28 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	uses := scanMovedUses(ws, moving)
+	for m, u := range uses {
+		if op.staysInPackage(ws, m.pkg) {
+			u.leftBehind = nil
+		}
+	}
+	for _, m := range moving {
+		if m.typ == nil && m.file == targetFile {
+			return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("%s is already declared in %s", m.sym.Name, rootRelative(ws, targetFile.Path)),
+			}}
+		}
+	}
+	for _, f := range sourceFiles {
+		if f == targetFile {
+			continue
+		}
+		if deletion, ok := emptiedFileDeletion(f, removals[f.Path]); ok {
+			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
+			delete(unusedImports, f.Path)
+		}
+	}
 	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moving, uses, targetPackage)
 	if err != nil {
 		return nil, err
@@ -383,7 +411,12 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	for _, ref := range allReferences {
 		owner := movingAt(moving, ref.File, ref.Offset)
 		if owner == nil {
-			survivingReferences = append(survivingReferences, ref)
+			if err := testTargetRefusal(ws, targetFile, ref, moving); err != nil {
+				return nil, err
+			}
+			if refSource[ref].Path != targetPackage.Path {
+				survivingReferences = append(survivingReferences, ref)
+			}
 			continue
 		}
 		if refSource[ref].Path != owner.pkg.Path {
@@ -445,15 +478,36 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	for _, f := range sourceFiles {
-		for _, spec := range unusedImports[f.Path] {
-			plan.Changes = append(plan.Changes, removeImportSpec(ws, f, spec))
-		}
+		plan.Changes = append(plan.Changes, removeImportSpecs(ws, f, unusedImports[f.Path])...)
 	}
 
 	if err := op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes); err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// testTargetRefusal refuses moving a symbol into a _test.go file when ref, a
+// use that stays where it is, could not see it there: any file that is not a
+// test file of the target's package.
+func testTargetRefusal(ws *types.Workspace, targetFile *types.File, ref *types.Reference, moving []*movingSymbol) error {
+	if !strings.HasSuffix(targetFile.Path, "_test.go") {
+		return nil
+	}
+	if strings.HasSuffix(ref.File, "_test.go") && filepath.Dir(ref.File) == filepath.Dir(targetFile.Path) {
+		return nil
+	}
+	owner := 0
+	if i := slices.IndexFunc(moving, func(m *movingSymbol) bool { return m.typ == nil && m.sym == ref.Symbol }); i >= 0 {
+		owner = moving[i].owner
+	}
+	return &groupMemberError{index: owner, err: &types.RefactorError{
+		Type: types.InvalidOperation,
+		Message: fmt.Sprintf("cannot move %s into the test file %s: %s:%d uses it and is not a test file of that package",
+			ref.Symbol.Name, rootRelative(ws, targetFile.Path), rootRelative(ws, ref.File), ref.Line),
+		File: ref.File,
+		Line: ref.Line,
+	}}
 }
 
 // planTargetPackageReferences drops the source-package qualifier from the
@@ -485,7 +539,7 @@ func (op *MoveSymbolOperation) planTargetPackageReferences(ws *types.Workspace, 
 				}
 			}
 			if spec := unusedSourceImport(file, refs, importPath, refSource[ref].Name); spec != nil {
-				changes = append(changes, removeImportSpec(ws, file, spec))
+				changes = append(changes, removeImportSpecs(ws, file, []*ast.ImportSpec{spec})...)
 			}
 		}
 	}
@@ -521,7 +575,7 @@ func (op *MoveSymbolOperation) resolveMoving(ws *types.Workspace, resolver *anal
 			if seen[s] {
 				continue
 			}
-			if s != symbol && op.existsInTarget(ws, s.Name) {
+			if s != symbol && !op.staysInPackage(ws, pkg) && op.existsInTarget(ws, s.Name) {
 				return nil, &groupMemberError{index: i, err: &types.RefactorError{
 					Type:    types.NameConflict,
 					Message: fmt.Sprintf("cannot move %s: its constructor %s already exists in package %s", symbol.Name, s.Name, ws.Packages[op.Request.ToPackage].Name),
@@ -1306,13 +1360,6 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 		}
 	}
 
-	for _, name := range slices.Sorted(maps.Keys(targetPackage.Files)) {
-		f := targetPackage.Files[name]
-		if f.AST != nil && !f.Generated && analysis.IncludedInEveryConfig(targetPackage.Dir, filepath.Base(f.Path), f.AST) {
-			return targetPackage, f, false, nil
-		}
-	}
-
 	// A package that does not exist yet was passed through ResolvePackagePath
 	// untouched. It is resolved as a path so the file lands inside the
 	// project, and the module import path form ("mod/pkg/thing") does not
@@ -1325,8 +1372,38 @@ func (op *MoveSymbolOperation) getOrCreateTargetFile(ws *types.Workspace, target
 	} else if absPackageDir, err = types.ResolveNewPackagePath(ws, targetPackagePath); err != nil {
 		return nil, nil, false, err
 	}
-	filename := targetPackage.Name + ".go"
-	fullPath := filepath.Join(absPackageDir, filename)
+
+	var fullPath string
+	if op.Request.ToFile != "" {
+		fullPath = op.Request.ToFile
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(ws.RootPath, fullPath)
+		}
+		fullPath = filepath.Clean(fullPath)
+		if filepath.Dir(fullPath) != filepath.Clean(absPackageDir) || !strings.HasSuffix(fullPath, ".go") {
+			return nil, nil, false, &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("to_file %s is not a .go file directly in package %s", op.Request.ToFile, targetPackagePath),
+			}
+		}
+		if f := findFileByPath(targetPackage, fullPath); f != nil {
+			if f.AST == nil || f.AST.Name.Name != targetPackage.Name || !analysis.IncludedInEveryConfig(targetPackage.Dir, filepath.Base(f.Path), f.AST) {
+				return nil, nil, false, &types.RefactorError{
+					Type:    types.InvalidOperation,
+					Message: fmt.Sprintf("to_file %s is not a file of package %s under every build configuration", op.Request.ToFile, targetPackage.Name),
+				}
+			}
+			return targetPackage, f, false, nil
+		}
+	} else {
+		for _, name := range slices.Sorted(maps.Keys(targetPackage.Files)) {
+			f := targetPackage.Files[name]
+			if f.AST != nil && !f.Generated && analysis.IncludedInEveryConfig(targetPackage.Dir, filepath.Base(f.Path), f.AST) {
+				return targetPackage, f, false, nil
+			}
+		}
+		fullPath = filepath.Join(absPackageDir, targetPackage.Name+".go")
+	}
 	if _, err := os.Stat(fullPath); err == nil {
 		return nil, nil, false, &types.RefactorError{
 			Type:    types.InvalidOperation,

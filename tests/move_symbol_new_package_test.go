@@ -87,7 +87,7 @@ func NewMemCache() *MemCache {
 
 	commonPath := filepath.Join(tmpDir, "common", "memcache.go")
 	commonContent, err := os.ReadFile(commonPath)
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading %s: %v", commonPath, err)
 	}
 	if strings.Contains(string(commonContent), "type MemCache struct") {

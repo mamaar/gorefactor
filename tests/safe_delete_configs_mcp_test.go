@@ -166,7 +166,7 @@ func TestSafeDelete_TypeTakesMethodDeclaredOnlyUnderTag(t *testing.T) {
 	callJSON(t, sess, "safe_delete", map[string]any{"symbol": "T", "source_file": "p/t.go"})
 
 	for _, f := range []string{"p/t.go", "p/t_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Contains(got, "T") {
+		if got := fileTextOrEmpty(t, dir, f); strings.Contains(got, "T") {
 			t.Errorf("%s still mentions T:\n%s", f, got)
 		}
 	}
