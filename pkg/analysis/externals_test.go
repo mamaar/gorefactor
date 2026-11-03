@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -129,5 +130,17 @@ func TestExternal_ModuleMissingFromTheModuleCacheIsNamedAsSuch(t *testing.T) {
 
 	if !strings.Contains(cause, "could not import example.org/absent") || strings.Contains(cause, "invalid package name") {
 		t.Errorf("cause must say why example.org/absent could not be loaded, got: %s", cause)
+	}
+}
+
+func TestExternalSet_LookupOfAnUnlistedPathIsNotListed(t *testing.T) {
+	for name, set := range map[string]*externalSet{
+		"nil set":   nil,
+		"empty set": {byPath: map[string]*externalPackage{}},
+	} {
+		pkg, err := set.lookup("example.org/missing")
+		if pkg != nil || !errors.Is(err, errNotListed) {
+			t.Errorf("%s: lookup = %v, %v; want nil, errNotListed", name, pkg, err)
+		}
 	}
 }

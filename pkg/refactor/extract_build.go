@@ -229,9 +229,12 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 	return start, end, true
 }
 
+// errNoImportChange reports that extractImportsChange has no imports to add.
+var errNoImportChange = errors.New("no imports to add")
+
 // extractImportsChange returns the change that adds the imports the rendered
-// signature needs but the source file does not have yet, or nil when there
-// are none.
+// signature needs but the source file does not have yet, or errNoImportChange
+// when there are none.
 //
 // The Description text is load-bearing: the plan validator skips its
 // standalone-syntax check for descriptions containing "import" (see
@@ -239,7 +242,7 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 // produces the exact wording other operations rely on.
 func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports map[string]string) (*types.Change, error) {
 	if len(imports) == 0 {
-		return nil, nil
+		return nil, errNoImportChange
 	}
 
 	paths := make([]string, 0, len(imports))
@@ -349,13 +352,14 @@ func buildVerifiedExtractPlan(
 	}
 
 	importChange, err := extractImportsChange(ws, sourceFile, an.Imports)
-	if err != nil {
+	switch {
+	case errors.Is(err, errNoImportChange):
+	case err != nil:
 		return nil, &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: fmt.Sprintf("cannot extract %s: %v", name, err),
 		}
-	}
-	if importChange != nil {
+	default:
 		changes = append(changes, *importChange)
 	}
 

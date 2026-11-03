@@ -66,15 +66,19 @@ func (s *externalSet) add(byID map[string]*externalPackage, meta *packages.Packa
 	return n
 }
 
-// lookup returns the types of the package listed for path, or nil when the
-// load listed none. A package the load listed but could not read is an error.
+// errNotListed reports that the load gave no types for a path.
+var errNotListed = errors.New("package not listed")
+
+// lookup returns the types of the package listed for path, or errNotListed when
+// the load listed none or carried no complete types for it. A package the load listed but could not read is another
+// error. A nil set lists nothing.
 func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	if s == nil {
-		return nil, nil
+		return nil, errNotListed
 	}
 	n := s.byPath[path]
 	if n == nil {
-		return nil, nil
+		return nil, errNotListed
 	}
 	err := n.listingError()
 	if err != nil {
@@ -85,6 +89,9 @@ func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	if !n.checked {
 		s.parse(n)
 		s.check(n)
+	}
+	if n.types == nil {
+		return nil, errNotListed
 	}
 	return n.types, nil
 }

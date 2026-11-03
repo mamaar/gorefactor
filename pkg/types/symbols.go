@@ -73,9 +73,6 @@ type SymbolTable struct {
 
 // FindSymbol searches the symbol table for a symbol by name across all categories.
 func (st *SymbolTable) FindSymbol(name string) *Symbol {
-	if st == nil {
-		return nil
-	}
 	// Dotted Type.Member form: resolve methods and struct fields explicitly.
 	// Method first, then field (Go forbids a field and method of the same name
 	// on a type). Fields are reachable ONLY via this dotted form — they are

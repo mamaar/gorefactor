@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"errors"
 	"fmt"
 	gotypes "go/types"
 	"maps"
@@ -54,28 +55,32 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 	for _, t := range all {
 		for _, site := range idx.CallSitesOf(t.Obj) {
 			seed, err := op.callSiteSeed(idx, plan, site)
+			if errors.Is(err, errNoSeed) {
+				continue
+			}
 			if err != nil {
 				return nil, fmt.Errorf("call site seeds: %w", err)
 			}
-			if seed != nil {
-				seeds = append(seeds, seed)
-			}
+			seeds = append(seeds, seed)
 		}
 	}
 	return seeds, nil
 }
 
+// errNoSeed reports that a call site yields no declaration to thread a ctx into.
+var errNoSeed = errors.New("no seed")
+
 // callSiteSeed returns the declaration that must gain a ctx for site to have
-// one, or nil when site has one, is not reached, or cannot be fixed.
+// one, or errNoSeed when site has one, is not reached, or cannot be fixed.
 func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, plan *threadPlan, site analysis.CallSite) (*gotypes.Func, error) {
 	if strings.HasSuffix(site.File.Path, "_test.go") {
-		return nil, nil
+		return nil, errNoSeed
 	}
 	if site.Fn == nil {
 		if op.Reach.reachesPackage(site.Pkg.ImportPath) {
 			op.note(plan, site, "(package-level var)", "var initializer: it has no ctx in scope and cannot take a parameter")
 		}
-		return nil, nil
+		return nil, errNoSeed
 	}
 	enclosing, err := op.callerObject(site)
 	if err != nil {
@@ -83,10 +88,10 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 	}
 	key, ok := pkgtypes.SymbolKeyOf(enclosing)
 	if ok && op.targets.Has(key) {
-		return nil, nil
+		return nil, errNoSeed
 	}
 	if op.Reach.outside(enclosing) || op.Reach.outsideWithin(enclosing) {
-		return nil, nil
+		return nil, errNoSeed
 	}
 
 	// A closure captures the ctx of its declaration, so the declaration is the seed.
@@ -100,17 +105,20 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 				kind = "init"
 			}
 			op.note(plan, site, funcLabel(enclosing), fmt.Sprintf("%s: %s has no ctx in scope and cannot take a parameter", kind, funcLabel(enclosing)))
-			return nil, nil
+			return nil, errNoSeed
 		}
 	}
 	caller, climb, err := op.climbTarget(idx, plan, site)
-	if err != nil || !climb {
+	if err != nil {
 		return nil, err
+	}
+	if !climb {
+		return nil, errNoSeed
 	}
 	fd := op.declIndex[caller]
 	if fd != nil && fd.File != nil && fd.File.Generated {
 		op.note(plan, site, funcLabel(caller), fmt.Sprintf("generated: %s is declared in generated code, which is not edited", funcLabel(caller)))
-		return nil, nil
+		return nil, errNoSeed
 	}
 	return caller, nil
 }

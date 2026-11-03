@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/importer"
@@ -1222,7 +1223,7 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// a real workspace that fails on essentially every third-party import.
 	imp.extOnce.Do(imp.loadExternal)
 	pkg, err := imp.ext.lookup(path)
-	if pkg != nil || err != nil {
+	if !errors.Is(err, errNotListed) {
 		return pkg, err
 	}
 

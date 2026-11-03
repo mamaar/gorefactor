@@ -224,7 +224,7 @@ func newWorkspaceIndex(fset *token.FileSet) *workspaceIndex {
 // findReferences returns all objectEntry occurrences (defs and uses) for obj
 // across the entire workspace.
 func (wi *workspaceIndex) findReferences(obj gotypes.Object) []objectEntry {
-	if wi == nil || len(wi.packages) == 0 {
+	if len(wi.packages) == 0 {
 		return nil
 	}
 
