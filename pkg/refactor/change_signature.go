@@ -1014,7 +1014,7 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 			if callExpr.Ellipsis.IsValid() {
 				tail[len(tail)-1] += "..."
 			}
-			newArgs = append(newArgs, tail...)
+			newArgs = slices.Concat(newArgs, tail)
 		}
 	}
 
