@@ -614,33 +614,18 @@ func (op *ThreadContextOperation) discover(
 		}
 		plan.Decls[f] = fd
 
-		if !funcHasContextParam(f) {
-			plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
-			stmt, ok := isFakeRootCtxCreation(fd.Decl)
-			if ok {
-				plan.Fake[f] = stmt
-			}
-			uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
-			err := op.valueUseAbort(ws, f, uses)
-			if err != nil {
-				return nil, err
-			}
+		err := op.planCtxParam(f, plan, fd, gen, ws, idx)
+		if err != nil {
+			return nil, err
 		}
 
 		extra, err := op.expandInterfaces(f, ws)
 		if err != nil {
 			return nil, err
 		}
-		for _, e := range extra {
-			if !op.isStop(e) {
-				continue
-			}
-			return nil, &pkgtypes.RefactorError{
-				Type: pkgtypes.InvalidOperation,
-				Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
-					"declared as a stop; the interface method would gain ctx while %s does not, so the "+
-					"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
-			}
+		err = op.checkExpansionAvoidsStops(extra, f)
+		if err != nil {
+			return nil, err
 		}
 		gen.expanded(f, extra)
 		for _, e := range extra {
@@ -648,18 +633,9 @@ func (op *ThreadContextOperation) discover(
 		}
 		queue = append(queue, extra...)
 
-		for _, site := range idx.CallSitesOf(f) {
-			if gen.isCallSite(f, site, op.siteLine(site)) {
-				continue
-			}
-			caller, climb, err := op.climbTarget(idx, plan, site)
-			if err != nil {
-				return nil, err
-			}
-			if climb {
-				gen.climbed(f, caller)
-				queue = append(queue, caller)
-			}
+		queue, err = op.climbCallSites(idx, f, gen, plan, queue)
+		if err != nil {
+			return nil, err
 		}
 	}
 	err := op.generatedAbort(ws, gen, seeds)
@@ -670,6 +646,54 @@ func (op *ThreadContextOperation) discover(
 		delete(visited, f)
 	}
 	return visited, nil
+}
+
+func (op *ThreadContextOperation) planCtxParam(f *gotypes.Func, plan *threadPlan, fd *funcDecl, gen *generatedReach, ws *pkgtypes.Workspace, idx *analysis.ReferenceIndex) error {
+	if !funcHasContextParam(f) {
+		plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
+		stmt, ok := isFakeRootCtxCreation(fd.Decl)
+		if ok {
+			plan.Fake[f] = stmt
+		}
+		uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
+		err := op.valueUseAbort(ws, f, uses)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (op *ThreadContextOperation) checkExpansionAvoidsStops(extra []*gotypes.Func, f *gotypes.Func) error {
+	for _, e := range extra {
+		if !op.isStop(e) {
+			continue
+		}
+		return &pkgtypes.RefactorError{
+			Type: pkgtypes.InvalidOperation,
+			Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
+				"declared as a stop; the interface method would gain ctx while %s does not, so the "+
+				"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
+		}
+	}
+	return nil
+}
+
+func (op *ThreadContextOperation) climbCallSites(idx *analysis.ReferenceIndex, f *gotypes.Func, gen *generatedReach, plan *threadPlan, queue []*gotypes.Func) ([]*gotypes.Func, error) {
+	for _, site := range idx.CallSitesOf(f) {
+		if gen.isCallSite(f, site, op.siteLine(site)) {
+			continue
+		}
+		caller, climb, err := op.climbTarget(idx, plan, site)
+		if err != nil {
+			return queue, err
+		}
+		if climb {
+			gen.climbed(f, caller)
+			queue = append(queue, caller)
+		}
+	}
+	return queue, nil
 }
 
 // missingDeclError reports a worklist entry with no indexed declaration: what

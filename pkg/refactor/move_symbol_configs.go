@@ -126,19 +126,24 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			p.object(v, "references to %s could not be found: %v", key.Name, err)
 			continue
 		}
-		for _, ref := range refs {
-			if generatedFile(ws, ref.File) != nil {
-				p.object(v, "%s is referenced at %s:%d, in a generated file; change the generator's input and regenerate", key.Name, rootRelative(ws, ref.File), ref.Line)
-				continue
-			}
-			if !p.rewritten[refSite{ref.File, ref.Offset}] {
-				res.blockers = append(res.blockers, types.Blocker{Reference: *ref})
-			}
-		}
+		res = p.collectBlockers(refs, ws, v, key, res)
 	}
 	cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers)
 	if cycle != nil {
 		p.object(v, "the move would create an import cycle: %s", strings.Join(cycle, " -> "))
+	}
+	return res
+}
+
+func (p *moveSymbolPlanner) collectBlockers(refs []*types.Reference, ws *types.Workspace, v *analysis.View, key types.SymbolKey, res configResult) configResult {
+	for _, ref := range refs {
+		if generatedFile(ws, ref.File) != nil {
+			p.object(v, "%s is referenced at %s:%d, in a generated file; change the generator's input and regenerate", key.Name, rootRelative(ws, ref.File), ref.Line)
+			continue
+		}
+		if !p.rewritten[refSite{ref.File, ref.Offset}] {
+			res.blockers = append(res.blockers, types.Blocker{Reference: *ref})
+		}
 	}
 	return res
 }

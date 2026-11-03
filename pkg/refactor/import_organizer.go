@@ -106,18 +106,7 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 	tail := commentBlocks(fset, lines, free)
 
 	// Classify and group.
-	groups := make(map[ImportGroup][]importEntry)
-	for _, e := range entries {
-		g := classifyImport(e.path, modulePath, workspaceModules)
-		groups[g] = append(groups[g], e)
-	}
-
-	// Sort within each group.
-	for g := range groups {
-		sort.Slice(groups[g], func(i, j int) bool {
-			return groups[g][i].path < groups[g][j].path
-		})
-	}
+	groups := groupImports(entries, modulePath, workspaceModules)
 
 	// Render the new import block.
 	newBlock := renderImportBlock(groups, cgoEntries, tail)
@@ -132,6 +121,22 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 
 	result := src[:startOff] + newBlock + src[endOff:]
 	return result
+}
+
+func groupImports(entries []importEntry, modulePath string, workspaceModules []string) map[ImportGroup][]importEntry {
+	groups := make(map[ImportGroup][]importEntry)
+	for _, e := range entries {
+		g := classifyImport(e.path, modulePath, workspaceModules)
+		groups[g] = append(groups[g], e)
+	}
+
+	// Sort within each group.
+	for g := range groups {
+		sort.Slice(groups[g], func(i, j int) bool {
+			return groups[g][i].path < groups[g][j].path
+		})
+	}
+	return groups
 }
 
 // newImportEntry returns the sortable entry for spec, without leading comments.

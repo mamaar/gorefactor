@@ -92,6 +92,21 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 	typeExpr := sa.localDeclarationType(enclosingFunc, identName)
 
 	// If not found in function body, check function parameters and receiver
+	typeExpr = sa.paramOrReceiverType(typeExpr, enclosingFunc, identName)
+
+	if typeExpr == nil {
+		return nil
+	}
+
+	// Resolve the type expression to a symbol (reuse existing helper)
+	typeSymbol := sa.resolveTypeExpression(typeExpr, file)
+	if typeSymbol != nil {
+		sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
+	}
+	return typeSymbol
+}
+
+func (sa *ScopeAnalyzer) paramOrReceiverType(typeExpr ast.Expr, enclosingFunc *ast.FuncDecl, identName string) ast.Expr {
 	if typeExpr == nil {
 		if enclosingFunc.Recv != nil {
 			for _, field := range enclosingFunc.Recv.List {
@@ -114,17 +129,7 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 			}
 		}
 	}
-
-	if typeExpr == nil {
-		return nil
-	}
-
-	// Resolve the type expression to a symbol (reuse existing helper)
-	typeSymbol := sa.resolveTypeExpression(typeExpr, file)
-	if typeSymbol != nil {
-		sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
-	}
-	return typeSymbol
+	return typeExpr
 }
 
 func (sa *ScopeAnalyzer) enclosingFuncDecl(file *types.File, pos token.Pos) *ast.FuncDecl {

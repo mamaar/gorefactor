@@ -197,6 +197,28 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// The field must exist on the struct.
+	err = op.checkFieldExists(pkg, structType, req)
+	if err != nil {
+		return err
+	}
+
+	// No existing field on the same struct may already carry the new name.
+	err = op.checkMemberNameConflicts(pkg, req)
+	if err != nil {
+		return err
+	}
+
+	// Promoted field/method collision from an embedded type. Use go/types rather
+	// than walking the AST: LookupFieldOrMethod resolves promotion for us.
+	err = op.checkPromotedCollision(pkg, req)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (op *RenameFieldOperation) checkFieldExists(pkg *types.Package, structType *ast.StructType, req types.RenameFieldRequest) error {
 	if op.fieldSymbol(pkg) == nil {
 		// Distinguish an embedded field (a type rename in disguise) from a plain
 		// unknown field. Embedded fields are deliberately absent from
@@ -222,8 +244,10 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("field %s not found on type %s", req.FieldName, req.TypeName),
 		}
 	}
+	return nil
+}
 
-	// No existing field on the same struct may already carry the new name.
+func (op *RenameFieldOperation) checkMemberNameConflicts(pkg *types.Package, req types.RenameFieldRequest) error {
 	for _, f := range pkg.Symbols.Fields[req.TypeName] {
 		if f.Name != req.NewFieldName {
 			continue
@@ -244,9 +268,10 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("type %s already has a method named %s", req.TypeName, req.NewFieldName),
 		}
 	}
+	return nil
+}
 
-	// Promoted field/method collision from an embedded type. Use go/types rather
-	// than walking the AST: LookupFieldOrMethod resolves promotion for us.
+func (op *RenameFieldOperation) checkPromotedCollision(pkg *types.Package, req types.RenameFieldRequest) error {
 	if pkg.TypesPkg != nil {
 		obj := pkg.TypesPkg.Scope().Lookup(req.TypeName)
 		if obj != nil {
@@ -264,7 +289,6 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 			}
 		}
 	}
-
 	return nil
 }
 

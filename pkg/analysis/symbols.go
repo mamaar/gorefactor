@@ -814,38 +814,77 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 			// error rather than falling through to the bare-name paths (which
 			// would try to resolve the literal string "Type.Member" and fail
 			// generically).
-			_, typeIsKnown := pkg.Symbols.Types[typeName]
-			methodsForType := pkg.Symbols.Methods[typeName]
-			fieldsForType := pkg.Symbols.Fields[typeName]
-			if typeIsKnown || len(methodsForType) > 0 || len(fieldsForType) > 0 {
-				var availFields, availMethods []string
-				for _, f := range fieldsForType {
-					availFields = append(availFields, f.Name)
-				}
-				for _, m := range methodsForType {
-					availMethods = append(availMethods, m.Name)
-				}
-				return nil, &types.RefactorError{
-					Type: types.SymbolNotFound,
-					Message: fmt.Sprintf(
-						"type %q has no field or method %q.\nAvailable fields: %s\nAvailable methods: %s",
-						typeName, member,
-						formatMemberList(availFields),
-						formatMemberList(availMethods)),
-					File: pkg.Dir,
-				}
-			}
-			return nil, &types.RefactorError{
-				Type: types.SymbolNotFound,
-				Message: fmt.Sprintf(
-					"unknown type %q in %q: no such type in package %s",
-					typeName, name, pkg.Path),
-				File: pkg.Dir,
-			}
+			return sr.unknownMemberError(pkg, typeName, member, name)
 		}
 	}
 
 	// Check different symbol types
+	var err error
+	symbol, err = sr.lookupBareName(pkg, name, symbol)
+	if err != nil {
+		return nil, err
+	}
+
+	if symbol != nil {
+		// Cache the result
+		sr.cache.SetResolvedRef(cacheKey, symbol)
+		return symbol, nil
+	}
+
+	// A bare (undotted) name that matches only struct field(s) must NOT resolve:
+	// fields are far more collision-prone than methods, and a bare match could
+	// silently target the wrong symbol. Suggest the Type.Field form instead
+	// (mirrors the ambiguous-method block above).
+	fieldSuggestions := qualifiedFieldsNamed(pkg, name)
+	if len(fieldSuggestions) > 0 {
+		return nil, &types.RefactorError{
+			Type: types.SymbolNotFound,
+			Message: fmt.Sprintf(
+				"%q is a struct field and cannot be resolved by bare name.\nUse Type.Field syntax to select it:\n  %s",
+				name, strings.Join(fieldSuggestions, "\n  ")),
+			File: pkg.Dir,
+		}
+	}
+
+	return nil, &types.RefactorError{
+		Type:    types.SymbolNotFound,
+		Message: fmt.Sprintf("symbol not found: %s", name),
+		File:    pkg.Dir,
+	}
+}
+
+func (sr *SymbolResolver) unknownMemberError(pkg *types.Package, typeName string, member string, name string) (*types.Symbol, error) {
+	_, typeIsKnown := pkg.Symbols.Types[typeName]
+	methodsForType := pkg.Symbols.Methods[typeName]
+	fieldsForType := pkg.Symbols.Fields[typeName]
+	if typeIsKnown || len(methodsForType) > 0 || len(fieldsForType) > 0 {
+		var availFields, availMethods []string
+		for _, f := range fieldsForType {
+			availFields = append(availFields, f.Name)
+		}
+		for _, m := range methodsForType {
+			availMethods = append(availMethods, m.Name)
+		}
+		return nil, &types.RefactorError{
+			Type: types.SymbolNotFound,
+			Message: fmt.Sprintf(
+				"type %q has no field or method %q.\nAvailable fields: %s\nAvailable methods: %s",
+				typeName, member,
+				formatMemberList(availFields),
+				formatMemberList(availMethods)),
+			File: pkg.Dir,
+		}
+	}
+	return nil, &types.RefactorError{
+		Type: types.SymbolNotFound,
+		Message: fmt.Sprintf(
+			"unknown type %q in %q: no such type in package %s",
+			typeName, name, pkg.Path),
+		File: pkg.Dir,
+	}
+}
+
+func (sr *SymbolResolver) lookupBareName(pkg *types.Package, name string, symbol *types.Symbol) (*types.Symbol, error) {
 	sym, exists := pkg.Symbols.Functions[name]
 	if exists {
 		symbol = sym
@@ -881,7 +920,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 						for _, recv := range matchingReceivers {
 							suggestions = append(suggestions, recv+"."+name)
 						}
-						return nil, &types.RefactorError{
+						return symbol, &types.RefactorError{
 							Type: types.SymbolNotFound,
 							Message: fmt.Sprintf(
 								"ambiguous method name %q: found on %d receiver types.\nUse Type.Method syntax to disambiguate:\n  %s",
@@ -893,33 +932,7 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 			}
 		}
 	}
-
-	if symbol != nil {
-		// Cache the result
-		sr.cache.SetResolvedRef(cacheKey, symbol)
-		return symbol, nil
-	}
-
-	// A bare (undotted) name that matches only struct field(s) must NOT resolve:
-	// fields are far more collision-prone than methods, and a bare match could
-	// silently target the wrong symbol. Suggest the Type.Field form instead
-	// (mirrors the ambiguous-method block above).
-	fieldSuggestions := qualifiedFieldsNamed(pkg, name)
-	if len(fieldSuggestions) > 0 {
-		return nil, &types.RefactorError{
-			Type: types.SymbolNotFound,
-			Message: fmt.Sprintf(
-				"%q is a struct field and cannot be resolved by bare name.\nUse Type.Field syntax to select it:\n  %s",
-				name, strings.Join(fieldSuggestions, "\n  ")),
-			File: pkg.Dir,
-		}
-	}
-
-	return nil, &types.RefactorError{
-		Type:    types.SymbolNotFound,
-		Message: fmt.Sprintf("symbol not found: %s", name),
-		File:    pkg.Dir,
-	}
+	return symbol, nil
 }
 
 func qualifiedFieldsNamed(pkg *types.Package, name string) []string {

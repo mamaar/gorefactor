@@ -160,19 +160,23 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 	case *ast.BlockStmt:
 		w.walkList(s.List, make(scope))
 	case *ast.SelectStmt:
-		if s.Body != nil {
-			for _, c := range s.Body.List {
-				cc, ok := c.(*ast.CommClause)
-				if ok {
-					w.processFuncLitsIn(cc.Comm)
-					w.walkList(cc.Body, commClauseScope(cc))
-				}
-			}
-		}
+		w.walkSelectClauses(s)
 	case *ast.LabeledStmt:
 		w.walkLabeled(s, list, idx, declared, cascaded)
 	default:
 		w.processFuncLitsIn(stmt)
+	}
+}
+
+func (w *walker) walkSelectClauses(s *ast.SelectStmt) {
+	if s.Body != nil {
+		for _, c := range s.Body.List {
+			cc, ok := c.(*ast.CommClause)
+			if ok {
+				w.processFuncLitsIn(cc.Comm)
+				w.walkList(cc.Body, commClauseScope(cc))
+			}
+		}
 	}
 }
 
@@ -527,6 +531,14 @@ func (w *walker) laterConflict(rest []ast.Stmt, newNames []*ast.Ident) string {
 	if info == nil || info.Uses == nil {
 		return ""
 	}
+	captured := w.shadowedByHoist(rest, names, info)
+	if captured != "" {
+		return "hoisting would make a later use of " + captured + " refer to the hoisted variable instead of the outer " + captured
+	}
+	return ""
+}
+
+func (w *walker) shadowedByHoist(rest []ast.Stmt, names map[string]bool, info *types.Info) string {
 	lo, hi := rest[0].Pos(), rest[len(rest)-1].End()
 	captured := ""
 	for _, stmt := range rest {
@@ -543,10 +555,7 @@ func (w *walker) laterConflict(rest []ast.Stmt, newNames []*ast.Ident) string {
 			return false
 		})
 	}
-	if captured != "" {
-		return "hoisting would make a later use of " + captured + " refer to the hoisted variable instead of the outer " + captured
-	}
-	return ""
+	return captured
 }
 
 // isMember reports whether obj is a struct field or a method, whose

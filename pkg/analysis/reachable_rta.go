@@ -61,29 +61,9 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		created[c.pkg] = true
 		return prog.CreatePackage(c.pkg, c.files, c.info, importable)
 	}
-	for pkg := range ua.importClosure(entry, includeTests) {
-		c, err := sc.production(pkg)
-		if err != nil {
-			return nil, fmt.Errorf("build liveness: %w", err)
-		}
-		if pkg == entry && c.bodiless != "" {
-			return nil, &EntryBodilessError{Package: entry.ImportPath, Reason: c.bodiless}
-		}
-		ssaPkgs[pkg] = create(c, true)
-		if !includeTests {
-			continue
-		}
-		t := sc.withTests(pkg)
-		if t != nil {
-			testPkgs = append(testPkgs, create(t, false))
-		}
-		x, rebuilt := sc.externalTests(pkg)
-		if x != nil {
-			testPkgs = append(testPkgs, create(x, false))
-		}
-		for _, r := range rebuilt {
-			create(r, false)
-		}
+	testPkgs, err = ua.createSSAPackages(entry, includeTests, sc, ssaPkgs, create, testPkgs)
+	if err != nil {
+		return nil, err
 	}
 	external := createImports(prog, created)
 	prog.Build()
@@ -147,6 +127,34 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		slices.SortFunc(added, func(a, b *ssa.Function) int { return strings.Compare(a.String(), b.String()) })
 		roots = append(roots, added...)
 	}
+}
+
+func (ua *UnusedAnalyzer) createSSAPackages(entry *types.Package, includeTests bool, sc *sourceChecker, ssaPkgs map[*types.Package]*ssa.Package, create func(c *checkedPkg, importable bool) *ssa.Package, testPkgs []*ssa.Package) ([]*ssa.Package, error) {
+	for pkg := range ua.importClosure(entry, includeTests) {
+		c, err := sc.production(pkg)
+		if err != nil {
+			return testPkgs, fmt.Errorf("build liveness: %w", err)
+		}
+		if pkg == entry && c.bodiless != "" {
+			return testPkgs, &EntryBodilessError{Package: entry.ImportPath, Reason: c.bodiless}
+		}
+		ssaPkgs[pkg] = create(c, true)
+		if !includeTests {
+			continue
+		}
+		t := sc.withTests(pkg)
+		if t != nil {
+			testPkgs = append(testPkgs, create(t, false))
+		}
+		x, rebuilt := sc.externalTests(pkg)
+		if x != nil {
+			testPkgs = append(testPkgs, create(x, false))
+		}
+		for _, r := range rebuilt {
+			create(r, false)
+		}
+	}
+	return testPkgs, nil
 }
 
 func entryRoots(mainFn *ssa.Function, ua *UnusedAnalyzer, entry *types.Package, includeTests bool, ssaPkgs map[*types.Package]*ssa.Package, testPkgs []*ssa.Package) []*ssa.Function {

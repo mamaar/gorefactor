@@ -357,22 +357,9 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 			return nil, err
 		}
 	}
-	if op.DerefParam {
-		if isIface || op.PropagateToInterface {
-			return nil, fmt.Errorf("deref_param: interface methods and propagate are not supported")
-		}
-		decl := op.findFunction(sourceFile, op.FunctionName)
-		if decl == nil {
-			return nil, fmt.Errorf("deref_param: function %s not found", op.FunctionName)
-		}
-		idx, err := op.derefTarget(decl)
-		if err != nil {
-			return nil, err
-		}
-		op.derefIdx = idx
-		if err := op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan); err != nil {
-			return nil, err
-		}
+	err := op.planDerefParam(isIface, sourceFile, ws, sourcePackage, plan)
+	if err != nil {
+		return nil, err
 	}
 
 	// Collect all symbols whose references need call-site updates
@@ -418,13 +405,9 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	if op.derefErr != nil {
 		return nil, op.derefErr
 	}
-	if len(op.refusals) > 0 {
-		slices.SortFunc(op.refusals, compareRefusals)
-		lines := make([]string, len(op.refusals))
-		for i, r := range op.refusals {
-			lines[i] = r.String()
-		}
-		return nil, fmt.Errorf("%s: %s cannot be changed:\n%s", op.subcommandName(), op.FunctionName, strings.Join(lines, "\n"))
+	err = op.refusalError()
+	if err != nil {
+		return nil, err
 	}
 	if op.RemoveParam || op.changesReturns() {
 		op.pruneRemovedImports(ws, plan)
@@ -434,6 +417,39 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	op.buildImpactAnalysis(ws, plan, primaryFuncDecl, callSiteCount)
 
 	return plan, nil
+}
+
+func (op *ChangeSignatureOperation) refusalError() error {
+	if len(op.refusals) > 0 {
+		slices.SortFunc(op.refusals, compareRefusals)
+		lines := make([]string, len(op.refusals))
+		for i, r := range op.refusals {
+			lines[i] = r.String()
+		}
+		return fmt.Errorf("%s: %s cannot be changed:\n%s", op.subcommandName(), op.FunctionName, strings.Join(lines, "\n"))
+	}
+	return nil
+}
+
+func (op *ChangeSignatureOperation) planDerefParam(isIface bool, sourceFile *pkgtypes.File, ws *pkgtypes.Workspace, sourcePackage *pkgtypes.Package, plan *pkgtypes.RefactoringPlan) error {
+	if op.DerefParam {
+		if isIface || op.PropagateToInterface {
+			return fmt.Errorf("deref_param: interface methods and propagate are not supported")
+		}
+		decl := op.findFunction(sourceFile, op.FunctionName)
+		if decl == nil {
+			return fmt.Errorf("deref_param: function %s not found", op.FunctionName)
+		}
+		idx, err := op.derefTarget(decl)
+		if err != nil {
+			return err
+		}
+		op.derefIdx = idx
+		if err := op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (op *ChangeSignatureOperation) logger() *slog.Logger {
@@ -705,6 +721,17 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 	signature.WriteString(funcDecl.Name.Name)
 
 	// Add parameters
+	op.writeParams(&signature, funcDecl)
+
+	// Add return types.
+	// NamedReturns ([]Parameter) takes precedence over NewReturns ([]string) so that
+	// named result variables from the original signature are preserved verbatim.
+	op.writeResults(funcDecl, &signature)
+
+	return signature.String()
+}
+
+func (op *ChangeSignatureOperation) writeParams(signature *strings.Builder, funcDecl *ast.FuncDecl) {
 	signature.WriteString("(")
 	named := slices.ContainsFunc(op.NewParams, Parameter.isNamed)
 	for i, param := range op.NewParams {
@@ -724,10 +751,9 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 		signature.WriteString(param.Type)
 	}
 	signature.WriteString(")")
+}
 
-	// Add return types.
-	// NamedReturns ([]Parameter) takes precedence over NewReturns ([]string) so that
-	// named result variables from the original signature are preserved verbatim.
+func (op *ChangeSignatureOperation) writeResults(funcDecl *ast.FuncDecl, signature *strings.Builder) {
 	namedReturns := op.NamedReturns
 	if op.changesReturns() && hasNamedResults(funcDecl.Type) {
 		namedReturns = op.namedResultsAfterChange(funcDecl)
@@ -766,8 +792,6 @@ func (op *ChangeSignatureOperation) generateNewSignature(funcDecl *ast.FuncDecl)
 			signature.WriteString(")")
 		}
 	}
-
-	return signature.String()
 }
 
 // keptGroup returns the declaration group `a, b T` of decl that p is an

@@ -86,6 +86,29 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		b.WriteString("(" + recvDecl + ") ")
 	}
 	b.WriteString(name + "(" + strings.Join(sigParams, ", ") + ")")
+	writeResultTypes(results, &b)
+	b.WriteString(" {\n")
+	for _, d := range an.LocalDecls {
+		b.WriteString("var " + d.Name + " " + d.Type + "\n")
+	}
+	b.WriteString(an.BodyText)
+	writeTrailingReturn(an, &b)
+	b.WriteString("\n}\n")
+
+	decl, err = formatDeclaration(b.String())
+	if err != nil {
+		return "", "", fmt.Errorf("render extraction: %w", err)
+	}
+
+	callExpr := name + "(" + strings.Join(args, ", ") + ")"
+	if recvName != "" {
+		callExpr = recvName + "." + callExpr
+	}
+
+	return decl, hoistedDecls(an) + callSite(an, callExpr), nil
+}
+
+func writeResultTypes(results []extractsig.Result, b *strings.Builder) {
 	switch len(results) {
 	case 0:
 	case 1:
@@ -97,11 +120,9 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		}
 		b.WriteString(" (" + strings.Join(typeList, ", ") + ")")
 	}
-	b.WriteString(" {\n")
-	for _, d := range an.LocalDecls {
-		b.WriteString("var " + d.Name + " " + d.Type + "\n")
-	}
-	b.WriteString(an.BodyText)
+}
+
+func writeTrailingReturn(an *extractsig.Analysis, b *strings.Builder) {
 	if an.ErrGuard {
 		names := make([]string, 0, len(an.Results)+1)
 		for _, r := range an.Results {
@@ -118,19 +139,6 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		}
 		b.WriteString("\nreturn " + strings.Join(names, ", "))
 	}
-	b.WriteString("\n}\n")
-
-	decl, err = formatDeclaration(b.String())
-	if err != nil {
-		return "", "", fmt.Errorf("render extraction: %w", err)
-	}
-
-	callExpr := name + "(" + strings.Join(args, ", ") + ")"
-	if recvName != "" {
-		callExpr = recvName + "." + callExpr
-	}
-
-	return decl, hoistedDecls(an) + callSite(an, callExpr), nil
 }
 
 // hoistedDecls renders the declarations of the no-copy variables the caller

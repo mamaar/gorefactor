@@ -478,6 +478,15 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check methods in the package's symbol table
+	err := op.checkMethodsExist(sourcePackage)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (op *ExtractInterfaceOperation) checkMethodsExist(sourcePackage *types.Package) error {
 	for _, methodName := range op.Methods {
 		found := false
 		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
@@ -497,7 +506,6 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("method %s not found on struct %s", methodName, op.SourceStruct),
 		}
 	}
-
 	return nil
 }
 

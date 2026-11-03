@@ -130,31 +130,10 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 	// 3. Fake-root deletions: `ctx := context.Background()`/`context.TODO()`
 	// statements that would become illegal redeclarations now that ctx is a
 	// parameter.
-	for f, stmt := range plan.Fake {
-		fd, ok := plan.Decls[f]
-		if !ok {
-			return nil, fmt.Errorf(
-				"internal error: %s has a recorded fake-root deletion but no resolvable declaration", funcLabel(f))
-		}
-		del := renderFakeDeletion(ws, fd.File, stmt, funcLabel(f))
-		if plan.WithoutCancel {
-			del = renderFakeWithoutCancel(ws, fd.File, stmt, plan.Funcs[f], funcLabel(f))
-		}
-		// Assert, per the plan, that this deletion cannot swallow an
-		// insertion already emitted. It never can in practice: the deleted
-		// range is exactly `ctx := context.Background()` (or ...TODO()),
-		// and that call takes no arguments, so no target call site — which
-		// is what every insertion offset points at — can lexically sit
-		// inside it. Assert rather than assume.
-		for _, existing := range changes {
-			if existing.File != del.File || existing.Start != existing.End || existing.Start < del.Start || existing.Start >= del.End {
-				continue
-			}
-			return nil, fmt.Errorf(
-				"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
-				del.File, del.Start, del.End, existing.Start)
-		}
-		changes = append(changes, del)
+	var err error
+	changes, err = renderFakeRootDeletions(plan, ws, changes)
+	if err != nil {
+		return nil, err
 	}
 
 	// 4. Internal fabricated contexts: a function that GAINS a ctx parameter
@@ -186,6 +165,36 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		}
 	}
 
+	return changes, nil
+}
+
+func renderFakeRootDeletions(plan *threadPlan, ws *pkgtypes.Workspace, changes []pkgtypes.Change) ([]pkgtypes.Change, error) {
+	for f, stmt := range plan.Fake {
+		fd, ok := plan.Decls[f]
+		if !ok {
+			return changes, fmt.Errorf(
+				"internal error: %s has a recorded fake-root deletion but no resolvable declaration", funcLabel(f))
+		}
+		del := renderFakeDeletion(ws, fd.File, stmt, funcLabel(f))
+		if plan.WithoutCancel {
+			del = renderFakeWithoutCancel(ws, fd.File, stmt, plan.Funcs[f], funcLabel(f))
+		}
+		// Assert, per the plan, that this deletion cannot swallow an
+		// insertion already emitted. It never can in practice: the deleted
+		// range is exactly `ctx := context.Background()` (or ...TODO()),
+		// and that call takes no arguments, so no target call site — which
+		// is what every insertion offset points at — can lexically sit
+		// inside it. Assert rather than assume.
+		for _, existing := range changes {
+			if existing.File != del.File || existing.Start != existing.End || existing.Start < del.Start || existing.Start >= del.End {
+				continue
+			}
+			return changes, fmt.Errorf(
+				"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
+				del.File, del.Start, del.End, existing.Start)
+		}
+		changes = append(changes, del)
+	}
 	return changes, nil
 }
 

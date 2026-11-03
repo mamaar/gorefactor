@@ -88,6 +88,11 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 		return nil, cmp.Or(run.withinErr, fmt.Errorf("unknown within_function %q", req.Within))
 	}
 
+	collectReportSites(run, views, out)
+	return out, nil
+}
+
+func collectReportSites(run *reachableRun, views []*analysis.View, out *ReachableReport) {
 	for _, f := range run.found {
 		if len(f.Configs) == len(views) {
 			f.Configs = nil
@@ -105,7 +110,6 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.File, b.File), cmp.Compare(a.Pos, b.Pos), cmp.Compare(a.Target, b.Target))
 	})
 	out.Unchecked = analysis.UncheckedFiles(views, slices.Sorted(maps.Keys(run.dirs)))
-	return out, nil
 }
 
 type reachableRun struct {

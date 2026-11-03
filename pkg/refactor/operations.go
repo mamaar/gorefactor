@@ -81,40 +81,9 @@ func validateDistinctNames(refs []types.QualifiedSymbol) error {
 
 func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.QualifiedSymbol) error {
 	// Check that source symbol exists
-	sourcePackage, exists := ws.Packages[ref.Package]
-	if !exists {
-		// Build list of available packages for helpful error message
-		var availablePackages []string
-		for pkgPath := range ws.Packages {
-			availablePackages = append(availablePackages, pkgPath)
-		}
-
-		var message strings.Builder
-		fmt.Fprintf(&message, "source package not found: %s\nAvailable packages:\n", ref.Package)
-		if len(availablePackages) == 0 {
-			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
-		} else {
-			for _, pkgPath := range availablePackages {
-				pkg, exists := ws.Packages[pkgPath]
-				if exists {
-					fmt.Fprintf(&message, "  - %s (Go package: %s)\n", pkgPath, pkg.Name)
-				} else {
-					fmt.Fprintf(&message, "  - %s\n", pkgPath)
-				}
-			}
-		}
-
-		return &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: message.String(),
-		}
-	}
-
-	if sourcePackage.Symbols == nil {
-		return &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: "source package symbol table not built",
-		}
+	sourcePackage, err := op.sourcePackageOf(ws, ref)
+	if err != nil {
+		return err
 	}
 
 	// References are told from identically named identifiers by go/types object.
@@ -149,6 +118,61 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 		return err
 	}
 	// Check that target package exists or can be created
+	err = op.checkTargetPackageExists(ws)
+	if err != nil {
+		return err
+	}
+
+	if !op.staysInPackage(ws, sourcePackage) && op.existsInTarget(ws, ref.Name) {
+		return &types.RefactorError{
+			Type:    types.NameConflict,
+			Message: fmt.Sprintf("symbol %s already exists in target package %s", ref.Name, op.Request.ToPackage),
+		}
+	}
+
+	return nil
+}
+
+func (op *MoveSymbolOperation) sourcePackageOf(ws *types.Workspace, ref types.QualifiedSymbol) (*types.Package, error) {
+	sourcePackage, exists := ws.Packages[ref.Package]
+	if !exists {
+		// Build list of available packages for helpful error message
+		var availablePackages []string
+		for pkgPath := range ws.Packages {
+			availablePackages = append(availablePackages, pkgPath)
+		}
+
+		var message strings.Builder
+		fmt.Fprintf(&message, "source package not found: %s\nAvailable packages:\n", ref.Package)
+		if len(availablePackages) == 0 {
+			message.WriteString("  (no packages found - ensure you're in a Go workspace with go.mod)")
+		} else {
+			for _, pkgPath := range availablePackages {
+				pkg, exists := ws.Packages[pkgPath]
+				if exists {
+					fmt.Fprintf(&message, "  - %s (Go package: %s)\n", pkgPath, pkg.Name)
+				} else {
+					fmt.Fprintf(&message, "  - %s\n", pkgPath)
+				}
+			}
+		}
+
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: message.String(),
+		}
+	}
+
+	if sourcePackage.Symbols == nil {
+		return nil, &types.RefactorError{
+			Type:    types.SymbolNotFound,
+			Message: "source package symbol table not built",
+		}
+	}
+	return sourcePackage, nil
+}
+
+func (op *MoveSymbolOperation) checkTargetPackageExists(ws *types.Workspace) error {
 	if !op.Request.CreateTarget {
 		_, exists := ws.Packages[op.Request.ToPackage]
 		if !exists {
@@ -171,14 +195,6 @@ func (op *MoveSymbolOperation) validateSymbol(ws *types.Workspace, ref types.Qua
 			}
 		}
 	}
-
-	if !op.staysInPackage(ws, sourcePackage) && op.existsInTarget(ws, ref.Name) {
-		return &types.RefactorError{
-			Type:    types.NameConflict,
-			Message: fmt.Sprintf("symbol %s already exists in target package %s", ref.Name, op.Request.ToPackage),
-		}
-	}
-
 	return nil
 }
 
@@ -324,49 +340,19 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 	// Find all references to every symbol being moved together. A method is
 	// reached through its type, so only the requested symbols are searched.
-	var moveSet []*types.Symbol
 	var allReferences []*types.Reference
-	refSource := make(map[*types.Reference]*types.Package)
-	for _, m := range moving {
-		if m.typ != nil && !m.lone {
-			continue
-		}
-		moveSet = append(moveSet, m.sym)
-		refs, err := resolver.FindReferences(m.sym)
-		if err != nil {
-			return nil, err
-		}
-		for _, ref := range refs {
-			refSource[ref] = m.pkg
-		}
-		allReferences = append(allReferences, refs...)
+	var refSource map[*types.Reference]*types.Package
+	allReferences, refSource, err = op.findMovedReferences(moving, resolver)
+	if err != nil {
+		return nil, err
 	}
-
-	op.moved, op.references = moveSet, allReferences
 
 	// Remove each moved symbol from its source file.
-	removals := make(map[string][]types.Change)
+	var removals map[string][]types.Change
 	var sourceFiles []*types.File
-	for _, m := range moving {
-		if m.file == nil {
-			continue
-		}
-		c, err := op.generateSymbolRemovalChanges(m)
-		if err != nil {
-			return nil, err
-		}
-		m.removal = c
-	}
-	widenGroupRemovals(moving)
-	for _, m := range moving {
-		if m.file == nil {
-			continue
-		}
-		_, ok := removals[m.file.Path]
-		if !ok {
-			sourceFiles = append(sourceFiles, m.file)
-		}
-		removals[m.file.Path] = append(removals[m.file.Path], m.removal...)
+	removals, sourceFiles, err = op.planSourceRemovals(moving)
+	if err != nil {
+		return nil, err
 	}
 	if err := op.checkForStrandedReferences(ws, moving); err != nil {
 		return nil, err
@@ -391,25 +377,11 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			u.leftBehind = nil
 		}
 	}
-	for _, m := range moving {
-		if m.typ != nil || m.file != targetFile {
-			continue
-		}
-		return nil, &groupMemberError{index: m.owner, err: &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("%s is already declared in %s", m.sym.Name, rootRelative(ws, targetFile.Path)),
-		}}
+	err = op.checkNotDeclaredInTarget(moving, targetFile, ws)
+	if err != nil {
+		return nil, err
 	}
-	for _, f := range sourceFiles {
-		if f == targetFile {
-			continue
-		}
-		deletion, ok := emptiedFileDeletion(f, removals[f.Path])
-		if ok {
-			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
-			delete(unusedImports, f.Path)
-		}
-	}
+	op.dropEmptiedFiles(sourceFiles, targetFile, removals, plan, unusedImports)
 	addChanges, err := op.generateSymbolAdditionChanges(ws, targetFile, moving, uses, targetPackage)
 	if err != nil {
 		return nil, err
@@ -428,6 +400,147 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 
 	// References inside a removed declaration go with it; only the surviving
 	// ones are rewritten and need an import of the target package.
+	var survivingReferences []*types.Reference
+	survivingReferences, err = op.survivingReferences(allReferences, moving, ws, targetFile, refSource, targetPackage)
+	if err != nil {
+		return nil, err
+	}
+
+	op.target = targetPackage.Path
+	if err := op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path); err != nil {
+		return nil, err
+	}
+
+	// Rewrite each surviving reference, file by file, using the qualifier the
+	// file can actually use for the target package (see move_references.go).
+	// targetPackage.Path is the workspace-absolute filesystem path resolved
+	// (and possibly created) by getOrCreateTargetFile above, unlike
+	// op.Request.ToPackage, which may still be the caller's raw input.
+	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
+	err = op.planReferenceRewrites(survivingReferences, ws, targetPackage, refSource, uses, targetFile, plan, unusedImports, targetImportPath)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, f := range sourceFiles {
+		plan.Changes = append(plan.Changes, removeImportSpecs(ws, f, unusedImports[f.Path])...)
+	}
+
+	if err := op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes); err != nil {
+		return nil, err
+	}
+	return plan, nil
+}
+
+func (op *MoveSymbolOperation) checkNotDeclaredInTarget(moving []*movingSymbol, targetFile *types.File, ws *types.Workspace) error {
+	for _, m := range moving {
+		if m.typ != nil || m.file != targetFile {
+			continue
+		}
+		return &groupMemberError{index: m.owner, err: &types.RefactorError{
+			Type:    types.InvalidOperation,
+			Message: fmt.Sprintf("%s is already declared in %s", m.sym.Name, rootRelative(ws, targetFile.Path)),
+		}}
+	}
+	return nil
+}
+
+func (op *MoveSymbolOperation) dropEmptiedFiles(sourceFiles []*types.File, targetFile *types.File, removals map[string][]types.Change, plan *types.RefactoringPlan, unusedImports map[string][]*ast.ImportSpec) {
+	for _, f := range sourceFiles {
+		if f == targetFile {
+			continue
+		}
+		deletion, ok := emptiedFileDeletion(f, removals[f.Path])
+		if ok {
+			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c types.Change) bool { return c.File == f.Path }), deletion)
+			delete(unusedImports, f.Path)
+		}
+	}
+}
+
+func (op *MoveSymbolOperation) planReferenceRewrites(survivingReferences []*types.Reference, ws *types.Workspace, targetPackage *types.Package, refSource map[*types.Reference]*types.Package, uses map[*movingSymbol]*movedUses, targetFile *types.File, plan *types.RefactoringPlan, unusedImports map[string][]*ast.ImportSpec, targetImportPath string) error {
+	for _, group := range groupReferencesByFile(survivingReferences) {
+		refPackage := findPackageForFile(ws, group.file)
+		if refPackage != nil && refPackage.Path == targetPackage.Path {
+			changes, err := op.planTargetPackageReferences(ws, group, refSource, uses, targetFile.Path)
+			if err != nil {
+				return err
+			}
+			plan.Changes = append(plan.Changes, changes...)
+			if !contains(plan.AffectedFiles, group.file) {
+				plan.AffectedFiles = append(plan.AffectedFiles, group.file)
+			}
+			continue
+		}
+		bySource := groupRefsByPackage(group, ws, refSource)
+		edit := planReferenceFile(ws, group.file, bySource, unusedImports[group.file], targetImportPath, targetPackage.Name)
+		plan.Changes = append(plan.Changes, edit.importChanges...)
+		delete(unusedImports, group.file)
+		for _, ref := range group.refs {
+			updateChange, err := op.generateReferenceUpdateChange(ref, edit.qualifier)
+			if err != nil {
+				return err
+			}
+			plan.Changes = append(plan.Changes, *updateChange)
+		}
+		if !contains(plan.AffectedFiles, group.file) {
+			plan.AffectedFiles = append(plan.AffectedFiles, group.file)
+		}
+	}
+	return nil
+}
+
+func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resolver *analysis.SymbolResolver) ([]*types.Reference, map[*types.Reference]*types.Package, error) {
+	var moveSet []*types.Symbol
+	var allReferences []*types.Reference
+	refSource := make(map[*types.Reference]*types.Package)
+	for _, m := range moving {
+		if m.typ != nil && !m.lone {
+			continue
+		}
+		moveSet = append(moveSet, m.sym)
+		refs, err := resolver.FindReferences(m.sym)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, ref := range refs {
+			refSource[ref] = m.pkg
+		}
+		allReferences = append(allReferences, refs...)
+	}
+
+	op.moved, op.references = moveSet, allReferences
+	return allReferences, refSource, nil
+}
+
+func (op *MoveSymbolOperation) planSourceRemovals(moving []*movingSymbol) (map[string][]types.Change, []*types.File, error) {
+	removals := make(map[string][]types.Change)
+	var sourceFiles []*types.File
+	for _, m := range moving {
+		if m.file == nil {
+			continue
+		}
+		c, err := op.generateSymbolRemovalChanges(m)
+		if err != nil {
+			return nil, nil, err
+		}
+		m.removal = c
+	}
+	widenGroupRemovals(moving)
+	for _, m := range moving {
+		if m.file == nil {
+			continue
+		}
+		_, ok := removals[m.file.Path]
+		if !ok {
+			sourceFiles = append(sourceFiles, m.file)
+		}
+		removals[m.file.Path] = append(removals[m.file.Path], m.removal...)
+	}
+	return removals, sourceFiles, nil
+}
+
+func (op *MoveSymbolOperation) survivingReferences(allReferences []*types.Reference, moving []*movingSymbol, ws *types.Workspace, targetFile *types.File, refSource map[*types.Reference]*types.Package, targetPackage *types.Package) ([]*types.Reference, error) {
 	var survivingReferences []*types.Reference
 	for _, ref := range allReferences {
 		owner := movingAt(moving, ref.File, ref.Offset)
@@ -451,55 +564,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 			Message: fmt.Sprintf("%s refers to %s, which moves in the same call from another package", owner.name(), ref.Symbol.Name),
 		}}
 	}
-
-	op.target = targetPackage.Path
-	if err := op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path); err != nil {
-		return nil, err
-	}
-
-	// Rewrite each surviving reference, file by file, using the qualifier the
-	// file can actually use for the target package (see move_references.go).
-	// targetPackage.Path is the workspace-absolute filesystem path resolved
-	// (and possibly created) by getOrCreateTargetFile above, unlike
-	// op.Request.ToPackage, which may still be the caller's raw input.
-	targetImportPath := packagePathToImportPath(ws, targetPackage.Path)
-	for _, group := range groupReferencesByFile(survivingReferences) {
-		refPackage := findPackageForFile(ws, group.file)
-		if refPackage != nil && refPackage.Path == targetPackage.Path {
-			changes, err := op.planTargetPackageReferences(ws, group, refSource, uses, targetFile.Path)
-			if err != nil {
-				return nil, err
-			}
-			plan.Changes = append(plan.Changes, changes...)
-			if !contains(plan.AffectedFiles, group.file) {
-				plan.AffectedFiles = append(plan.AffectedFiles, group.file)
-			}
-			continue
-		}
-		bySource := groupRefsByPackage(group, ws, refSource)
-		edit := planReferenceFile(ws, group.file, bySource, unusedImports[group.file], targetImportPath, targetPackage.Name)
-		plan.Changes = append(plan.Changes, edit.importChanges...)
-		delete(unusedImports, group.file)
-		for _, ref := range group.refs {
-			updateChange, err := op.generateReferenceUpdateChange(ref, edit.qualifier)
-			if err != nil {
-				return nil, err
-			}
-			plan.Changes = append(plan.Changes, *updateChange)
-		}
-		if !contains(plan.AffectedFiles, group.file) {
-			plan.AffectedFiles = append(plan.AffectedFiles, group.file)
-		}
-	}
-
-	for _, f := range sourceFiles {
-		plan.Changes = append(plan.Changes, removeImportSpecs(ws, f, unusedImports[f.Path])...)
-	}
-
-	if err := op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes); err != nil {
-		return nil, err
-	}
-	return plan, nil
+	return survivingReferences, nil
 }
 
 func groupRefsByPackage(group fileReferences, ws *types.Workspace, refSource map[*types.Reference]*types.Package) []referenceSource {
