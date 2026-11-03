@@ -43,17 +43,20 @@ type UnusedReport struct {
 // sharing a key across configurations are one symbol: a use of any keeps all.
 func (e *DefaultEngine) UnusedAcrossConfigs(req UnusedRequest) (*UnusedReport, error) {
 	run := &unusedRun{engine: e, req: req, used: make(types.SymbolKeySet), decls: make(map[declSite]*unusedDecl)}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("unused across configs: %w", err)
 	}
 	defer e.endRun(run)
+
 	for _, v := range views {
 		err := run.visit(v)
 		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
+
 	return run.report(views), nil
 }
 
@@ -91,6 +94,7 @@ func (d *unusedDecl) merge(u *analysis.UnusedSymbol) {
 	if u.Cause > d.Cause {
 		d.Cause, d.Reason = u.Cause, u.Reason
 	}
+
 	d.Referrers = appendSymbols(d.Referrers, u.Referrers, analysis.MaxReferrers)
 	d.UnusedCallers = appendSymbols(d.UnusedCallers, u.UnusedCallers, math.MaxInt)
 }
@@ -101,10 +105,12 @@ func appendSymbols(dst, more []*types.Symbol, limit int) []*types.Symbol {
 		if len(dst) >= limit {
 			break
 		}
+
 		if !declaredIn(dst, s) {
 			dst = append(dst, s)
 		}
 	}
+
 	return dst
 }
 
@@ -116,6 +122,7 @@ func declaredIn(list []*types.Symbol, s *types.Symbol) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -124,16 +131,19 @@ func (r *unusedRun) visit(v *analysis.View) error {
 	a := analysis.NewUnusedAnalyzer(v.Workspace, r.engine.logger)
 	a.SetIncludeExported(r.req.IncludeExported)
 	a.SetIndex(r.indexOf(v))
+
 	unused, err := a.FindUnusedSymbols()
 	if err != nil {
 		return fmt.Errorf("visit: %w", err)
 	}
 
 	reported := make(types.SymbolKeySet)
+
 	names := make(map[string]bool, len(unused))
 	for _, u := range unused {
 		names[u.Symbol.Name] = true
 		site := declSite{u.Symbol.File, u.Symbol.Position}
+
 		d := r.decls[site]
 		if d == nil {
 			d = &unusedDecl{UnusedSymbol: *u}
@@ -142,18 +152,22 @@ func (r *unusedRun) visit(v *analysis.View) error {
 		} else {
 			d.merge(u)
 		}
+
 		d.configs = append(d.configs, v.Config.String())
 		if d.keyed {
 			reported[d.key] = struct{}{}
 		}
 	}
+
 	for key := range declaredSymbolKeys(v.Workspace) {
 		if !reported.Has(key) {
 			r.used[key] = struct{}{}
 		}
 	}
+
 	r.markUnresolved(v, unused, unresolvedMentions(v, names))
 	r.planned(v, nil)
+
 	return nil
 }
 
@@ -166,9 +180,11 @@ func (r *unusedRun) markUnresolved(v *analysis.View, unused []*analysis.UnusedSy
 			if u.Symbol.Name != m.name || !d.keyed || d.unresolved != nil || m.Position == u.Symbol.Position {
 				continue
 			}
+
 			if !mayUse(filepath.Dir(m.File), m.file.AST, d.key, filepath.Dir(u.Symbol.File)) {
 				continue
 			}
+
 			use := m.blocker()
 			use.Configs = []string{v.Config.String()}
 			d.unresolved = &use
@@ -188,15 +204,18 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 
 	var kept []*unusedDecl
 	keys := make(types.SymbolKeySet)
+
 	for _, d := range r.decls {
 		if !r.unusedEverywhere(d, views) || !r.wanted(d) {
 			continue
 		}
+
 		kept = append(kept, d)
 		if d.keyed {
 			keys[d.key] = struct{}{}
 		}
 	}
+
 	slices.SortFunc(kept, compareDecls)
 
 	possible := make(map[types.SymbolKey]*types.Blocker)
@@ -205,22 +224,28 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 			possible[m.key] = &m.site
 		}
 	}
+
 	for _, d := range kept {
 		f := UnusedFinding{UnusedSymbol: d.UnusedSymbol}
 		if len(d.configs) < len(views) {
 			f.Configs = d.configs
 		}
+
 		use := d.unresolved
 		if use == nil && d.keyed {
 			use = possible[d.key]
 		}
+
 		if use != nil {
 			f.PossibleUse, f.SafeToDelete = use, false
 			out.PossiblyUsed = append(out.PossiblyUsed, f)
+
 			continue
 		}
+
 		out.Unused = append(out.Unused, f)
 	}
+
 	return out
 }
 
@@ -230,10 +255,12 @@ func (r *unusedRun) report(views []*analysis.View) *UnusedReport {
 func (r *unusedRun) keepCalleesOfUsedCallers() {
 	for changed := true; changed; {
 		changed = false
+
 		for _, d := range r.decls {
 			if !d.keyed || r.used.Has(d.key) || d.Cause != analysis.CauseOnlyUnusedCode || !r.anyCallerUsed(d) {
 				continue
 			}
+
 			r.used[d.key] = struct{}{}
 			changed = true
 		}
@@ -247,6 +274,7 @@ func (r *unusedRun) anyCallerUsed(d *unusedDecl) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -256,16 +284,20 @@ func (r *unusedRun) unusedEverywhere(d *unusedDecl, views []*analysis.View) bool
 	if d.keyed {
 		return !r.used.Has(d.key)
 	}
+
 	src := r.engine.set.Sources().File(d.Symbol.File)
 	if src == nil {
 		return false
 	}
+
 	including := 0
+
 	for _, v := range views {
 		if v.Config.MatchesFile(src) {
 			including++
 		}
 	}
+
 	return len(d.configs) == including
 }
 

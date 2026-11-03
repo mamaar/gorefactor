@@ -49,6 +49,7 @@ All call sites are updated automatically, under every build configuration (GOOS/
 		state.RLock()
 		plan, err := planChangeSignature(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -57,6 +58,7 @@ All call sites are updated automatically, under every build configuration (GOOS/
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }
@@ -68,10 +70,12 @@ func planChangeSignature(state *MCPServer, in ChangeSignatureInput) (*types.Refa
 	if err != nil {
 		return nil, fmt.Errorf("plan change signature: %w", err)
 	}
+
 	newParams := make([]refactor.Parameter, len(in.Params))
 	for i, p := range in.Params {
 		newParams[i] = refactor.Parameter{Name: p.Name, Type: p.Type}
 	}
+
 	return state.GetEngine().ChangeSignatureAcrossConfigs(refactor.ChangeSignatureRequest{
 		FunctionName:         in.FunctionName,
 		SourceFile:           resolveFile(ws, in.SourceFile),

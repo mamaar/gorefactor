@@ -20,11 +20,14 @@ func funcBody(src, decl string) string {
 	if start < 0 {
 		return ""
 	}
+
 	rest := src[start:]
+
 	before, _, ok := strings.Cut(rest, "\n}\n")
 	if ok {
 		return before
 	}
+
 	return rest
 }
 
@@ -49,22 +52,27 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 	path := filepath.Join(dir, "main.go")
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
 	call := func(tool string, args map[string]any) map[string]any {
 		t.Helper()
+
 		res, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 		if err != nil {
 			t.Fatalf("CallTool(%s): %v", tool, err)
 		}
+
 		if res.IsError {
 			t.Fatalf("CallTool(%s) returned error: %s", tool, errText(res))
 		}
+
 		var decoded map[string]any
 		if err := json.Unmarshal([]byte(errText(res)), &decoded); err != nil {
 			t.Fatalf("decoding %s result: %v", tool, err)
 		}
+
 		return decoded
 	}
 
@@ -76,6 +84,7 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 	if !strings.Contains(afterFlatten, "n.isExternal || !hasCycle(!!visited[pkg])") {
 		t.Fatalf("stage 1 did not produce the expected condition:\n%s", afterFlatten)
 	}
+
 	if !strings.Contains(afterFlatten, "continue") {
 		t.Fatalf("stage 1 did not emit an early continue:\n%s", afterFlatten)
 	}
@@ -94,6 +103,7 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 	if strings.Contains(body, "!!") {
 		t.Errorf("the double negation survived the cleanup pass:\n%s", body)
 	}
+
 	if !strings.Contains(afterSimplify, "continue") {
 		t.Errorf("stage 1's early continue was lost by stage 2:\n%s", afterSimplify)
 	}

@@ -132,11 +132,13 @@ func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
 			p.addSource(pkg, src)
 		}
 	}
+
 	collectImports(pkg)
 
 	if pkg.Name == "" {
 		p.nameFromTests(pkg)
 	}
+
 	if pkg.Name == "" {
 		return nil, ErrNoPackage
 	}
@@ -155,14 +157,17 @@ func (p *GoParser) ProjectFile(pkg *types.Package, path string) bool {
 	delete(pkg.TestFiles, name)
 
 	src := p.sources.File(path)
+
 	admitted := src != nil && p.admits(src)
 	if admitted {
 		p.addSource(pkg, src)
 	}
+
 	if wasFile || wasTest || admitted {
 		collectImports(pkg)
 		return true
 	}
+
 	return false
 }
 
@@ -181,6 +186,7 @@ func (p *GoParser) addSource(pkg *types.Package, src *SourceFile) {
 		pkg.TestFiles[src.Name] = file
 		return
 	}
+
 	pkg.Files[src.Name] = file
 	if pkg.Name == "" {
 		pkg.Name = src.AST.Name.Name
@@ -195,6 +201,7 @@ func (p *GoParser) nameFromTests(pkg *types.Package) {
 	if len(names) == 0 {
 		return
 	}
+
 	pkg.Name = strings.TrimSuffix(pkg.TestFiles[names[0]].AST.Name.Name, "_test")
 	pkg.Path = p.inferPackagePath(pkg.Dir, pkg.Name)
 }
@@ -219,6 +226,7 @@ func (p *GoParser) admits(src *SourceFile) bool {
 		p.logger.Debug("skipping unparsable file", "path", src.Path, "err", src.Err)
 		return false
 	}
+
 	return p.buildConfig.MatchesFile(src)
 }
 
@@ -231,6 +239,7 @@ func absWorkspaceRoot(rootPath string) (string, error) {
 			File:    rootPath,
 		}
 	}
+
 	return abs, nil
 }
 
@@ -244,6 +253,7 @@ func loadSources(tree *SourceTree, absRoot string) error {
 			Cause:   err,
 		}
 	}
+
 	return nil
 }
 
@@ -253,6 +263,7 @@ func readModule(absRoot string) *types.Module {
 	if err != nil {
 		return nil
 	}
+
 	return parseGoMod(content)
 }
 
@@ -268,12 +279,14 @@ func (p *GoParser) projectWorkspace(absRoot string, module *types.Module) *types
 		FileSet:      p.fileSet,
 		BuildConfig:  p.buildConfig.Key(),
 	}
+
 	if module != nil {
 		own := *module
 		workspace.Module = &own
 	}
 
 	var pkgDirs []string
+
 	for _, dir := range p.sources.Dirs() {
 		if p.hasGoFiles(dir) {
 			pkgDirs = append(pkgDirs, dir)
@@ -284,22 +297,26 @@ func (p *GoParser) projectWorkspace(absRoot string, module *types.Module) *types
 	for i := range pkgDirs {
 		proj.next <- i
 	}
+
 	close(proj.next)
 
 	var wg sync.WaitGroup
 	for range workerCount(len(pkgDirs)) {
 		wg.Go(proj.work)
 	}
+
 	wg.Wait()
 
 	for i, res := range proj.results {
 		if errors.Is(res.err, ErrNoPackage) {
 			continue
 		}
+
 		if res.err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to parse package %s: %v\n", pkgDirs[i], res.err)
 			continue
 		}
+
 		workspace.Packages[res.pkg.Path] = res.pkg
 	}
 
@@ -351,6 +368,7 @@ func parseGoMod(content []byte) *types.Module {
 			module.Path = strings.TrimSpace(strings.TrimPrefix(line, "module"))
 		}
 	}
+
 	return module
 }
 
@@ -361,6 +379,7 @@ func (p *GoParser) inferPackagePath(dir, packageName string) string {
 	if err != nil {
 		return packageName
 	}
+
 	return abs
 }
 
@@ -374,10 +393,12 @@ func computeImportPath(ws *types.Workspace, fsPath string) string {
 	if ws.Module == nil {
 		return ""
 	}
+
 	relPath, err := filepath.Rel(ws.RootPath, fsPath)
 	if err != nil || relPath == "." {
 		return ws.Module.Path
 	}
+
 	return ws.Module.Path + "/" + filepath.ToSlash(relPath)
 }
 
@@ -403,9 +424,11 @@ func (p *GoParser) EnsureTypeChecked(ws *types.Workspace, pkg *types.Package) {
 	p.mu.Lock()
 	checked := pkg.TypesChecked
 	p.mu.Unlock()
+
 	if checked {
 		return
 	}
+
 	p.TypeCheckPackage(ws, pkg)
 }
 
@@ -417,11 +440,14 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	if pkg == nil {
 		return
 	}
+
 	if p.importer != nil {
 		p.importer.prodCycles.Store(nil)
 	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	pkg.TypesInfo = nil
 	pkg.TypesPkg = nil
 	pkg.ExternalTestTypesPkg = nil
@@ -442,14 +468,17 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 func (p *GoParser) InvalidateImporters(ws *types.Workspace, paths []string) {
 	p.checkMu.Lock()
 	defer p.checkMu.Unlock()
+
 	for _, path := range slices.Concat(paths, Importers(ws, paths)) {
 		pkg := ws.Packages[path]
 		if pkg == nil {
 			continue
 		}
+
 		if p.importer != nil {
 			delete(p.importer.productionOnly, pkg)
 		}
+
 		p.InvalidateTypeCheck(pkg)
 	}
 }
@@ -460,10 +489,12 @@ func (p *GoParser) InvalidateImporters(ws *types.Workspace, paths []string) {
 func (p *GoParser) releaseTypeChecks(ws *types.Workspace) {
 	p.checkMu.Lock()
 	defer p.checkMu.Unlock()
+
 	if p.importer != nil {
 		p.importer.productionOnly = nil
 		p.importer.prodCycles.Store(nil)
 	}
+
 	for _, pkg := range ws.Packages {
 		p.InvalidateTypeCheck(pkg)
 	}
@@ -475,12 +506,15 @@ func (p *GoParser) releaseTypeChecks(ws *types.Workspace) {
 func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
 	p.checkMu.Lock()
 	defer p.checkMu.Unlock()
+
 	if p.importer != nil {
 		p.importer.productionOnly = nil
 		p.importer.prodCycles.Store(nil)
 	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	for _, pkg := range ws.Packages {
 		pkg.TypesInfo = nil
 		pkg.TypesPkg = nil
@@ -512,6 +546,7 @@ func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
 func (p *GoParser) TypeCheckPackage(ws *types.Workspace, pkg *types.Package) {
 	p.checkMu.Lock()
 	defer p.checkMu.Unlock()
+
 	p.typeCheckLocked(ws, pkg)
 }
 
@@ -522,6 +557,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	p.mu.Lock()
 	checked := pkg.TypesChecked
 	p.mu.Unlock()
+
 	if checked {
 		return
 	}
@@ -529,12 +565,14 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	if p.typeCheckInProgress == nil {
 		p.typeCheckInProgress = make(map[*types.Package]bool)
 	}
+
 	if p.typeCheckInProgress[pkg] {
 		// Already being checked further up this same call stack (a cycle
 		// reached through in-package test files). Import's placeholder
 		// handles the recursive import; there is nothing more to do here.
 		return
 	}
+
 	p.typeCheckInProgress[pkg] = true
 	defer delete(p.typeCheckInProgress, pkg)
 
@@ -547,6 +585,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// silently miss every test-file reference. External test packages (package x_test)
 	// carry a different package name and cannot be checked in the same pass.
 	files := productionASTs(pkg)
+
 	inPackage, external := testASTs(pkg, pkg.Name)
 	if len(files) == 0 && len(inPackage) == 0 {
 		// A package of external test files only: they are its own check, since
@@ -592,23 +631,27 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 // productionASTs returns the parsed non-test files of pkg in file-name order.
 func productionASTs(pkg *types.Package) []*ast.File {
 	var files []*ast.File
+
 	for _, name := range slices.Sorted(maps.Keys(pkg.Files)) {
 		f := pkg.Files[name]
 		if f.AST != nil {
 			files = append(files, f.AST)
 		}
 	}
+
 	return files
 }
 
 // productionFiles returns the non-test files of pkg among asts, by name.
 func productionFiles(pkg *types.Package, asts []*ast.File) []testAST {
 	var files []testAST
+
 	for name, f := range pkg.Files {
 		if f.AST != nil && slices.Contains(asts, f.AST) {
 			files = append(files, testAST{name: name, ast: f.AST})
 		}
 	}
+
 	return files
 }
 
@@ -631,6 +674,7 @@ func testASTs(pkg *types.Package, pkgName string) (inPackage, external []testAST
 			external = append(external, testAST{name: name, ast: f.AST})
 		}
 	}
+
 	return inPackage, external
 }
 
@@ -654,11 +698,13 @@ type testCheck struct {
 // pass, all remaining ones are dropped and the first such error is unattributed.
 func (p *GoParser) checkSheddingTests(ws *types.Workspace, pkg *types.Package, base []*ast.File, tests []testAST) testCheck {
 	var res testCheck
+
 	for pass := 0; ; pass++ {
 		files := slices.Clone(base)
 		for _, t := range tests {
 			files = append(files, t.ast)
 		}
+
 		if len(files) == 0 {
 			res.pkg, res.info, res.err = nil, nil, nil
 			return res
@@ -666,16 +712,19 @@ func (p *GoParser) checkSheddingTests(ws *types.Workspace, pkg *types.Package, b
 
 		errs := &typeErrors{}
 		res.pkg, res.info, res.err = p.checkFiles(ws, pkg, files, errs)
+
 		bad := errs.firstPerFile(ws.FileSet, tests)
 		if len(bad) == 0 {
 			res.production = errs.firstPerFile(ws.FileSet, productionFiles(pkg, base))
 			return res
 		}
+
 		if pass == maxTestExclusionPasses {
 			res.unattributed = firstTestError(tests, bad)
 			p.logger.Debug("test files still fail after dropping those with errors, dropping all",
 				"package", pkg.ImportPath, "err", res.unattributed)
 		}
+
 		tests = res.drop(tests, bad)
 	}
 }
@@ -687,6 +736,7 @@ func (c *testCheck) drop(tests []testAST, bad map[string]error) []testAST {
 		c.excluded = make(map[string]error)
 	}
 	var kept []testAST
+
 	for _, t := range tests {
 		err, isBad := bad[t.name]
 		switch {
@@ -698,6 +748,7 @@ func (c *testCheck) drop(tests []testAST, bad map[string]error) []testAST {
 			kept = append(kept, t)
 		}
 	}
+
 	return kept
 }
 
@@ -709,6 +760,7 @@ func firstTestError(tests []testAST, bad map[string]error) error {
 			return fmt.Errorf("first test error: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -732,24 +784,30 @@ func (c *typeErrors) firstPerFile(fset *token.FileSet, tests []testAST) map[stri
 	for _, t := range tests {
 		names[fset.File(t.ast.Package)] = t.name
 	}
+
 	first := make(map[string]gotypes.Error)
+
 	for _, e := range c.errs {
 		if !e.Pos.IsValid() || strings.HasPrefix(e.Msg, "\t") {
 			continue
 		}
+
 		name, ok := names[fset.File(e.Pos)]
 		if !ok {
 			continue
 		}
+
 		prev, seen := first[name]
 		if !seen || e.Pos < prev.Pos {
 			first[name] = e
 		}
 	}
+
 	out := make(map[string]error, len(first))
 	for name, e := range first {
 		out[name] = e
 	}
+
 	return out
 }
 
@@ -793,23 +851,28 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	if len(res.excluded) > 0 {
 		// A fresh map: readers may already hold the one published above.
 		excluded := maps.Clone(pkg.ExcludedTestFiles)
 		if excluded == nil {
 			excluded = make(map[string]error, len(res.excluded))
 		}
+
 		maps.Copy(excluded, res.excluded)
 		pkg.ExcludedTestFiles = excluded
 	}
+
 	if pkg.UnattributedTestErr == nil {
 		pkg.UnattributedTestErr = res.unattributed
 	}
+
 	if res.info == nil || pkg.TypesInfo == nil {
 		// Every external test file was excluded, or pkg's own check had
 		// nowhere to merge into.
 		return
 	}
+
 	pkg.ExternalTestTypesPkg = res.pkg
 	maps.Copy(pkg.TypesInfo.Defs, res.info.Defs)
 	maps.Copy(pkg.TypesInfo.Uses, res.info.Uses)
@@ -863,8 +926,10 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 	if p.checkPassHook != nil {
 		p.checkPassHook(pkg)
 	}
+
 	p.checkStack = append(p.checkStack, pkg)
 	defer func() { p.checkStack = p.checkStack[:len(p.checkStack)-1] }()
+
 	conf := NewTypesConfig(p.importer, errs.add)
 	info := &gotypes.Info{
 		Types:      make(map[ast.Expr]gotypes.TypeAndValue),
@@ -875,6 +940,7 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 		Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
 	}
 	typesPkg, err := conf.Check(pkg.ImportPath, ws.FileSet, files, info)
+
 	return typesPkg, info, err
 }
 
@@ -987,6 +1053,7 @@ func (imp *workspaceImporter) loadExternal() {
 	if err != nil {
 		imp.parser.logger.Debug("external package load failed", "config", imp.parser.buildConfig.Key(), "err", err)
 		imp.failExternal(err)
+
 		return
 	}
 
@@ -1000,9 +1067,11 @@ func (imp *workspaceImporter) loadExternal() {
 // imports, which are the ones a type-check of the workspace asks for.
 func (imp *workspaceImporter) warm() {
 	imp.extOnce.Do(imp.loadExternal)
+
 	if imp.ext == nil {
 		return
 	}
+
 	for _, pkg := range imp.ws.Packages {
 		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 			for _, file := range group {
@@ -1016,8 +1085,10 @@ func (imp *workspaceImporter) warmImports(file *types.File) {
 	if file.AST == nil {
 		return
 	}
+
 	for _, spec := range file.AST.Imports {
 		path := strings.Trim(spec.Path.Value, `"`)
+
 		_, local := imp.ws.ImportToPath[path]
 		if !local {
 			_, _ = imp.ext.lookup(path)
@@ -1033,11 +1104,14 @@ func externalLoadSettings(cfg BuildConfig, hostOS, hostArch string) (env, flags 
 	if cfg.Cgo && cfg.isPort(hostOS, hostArch) {
 		cgo = "1"
 	}
+
 	env = []string{"GOPROXY=off", "GOOS=" + cfg.GOOS, "GOARCH=" + cfg.GOARCH, "CGO_ENABLED=" + cgo}
+
 	tags := normalizeTags(cfg.Tags)
 	if len(tags) > 0 {
 		flags = []string{"-tags=" + strings.Join(tags, ",")}
 	}
+
 	return env, flags
 }
 
@@ -1048,8 +1122,10 @@ func (imp *workspaceImporter) failExternal(err error) {
 		imp.fallback.extOnce.Do(imp.fallback.loadExternal)
 		imp.ext = imp.fallback.ext
 	}
+
 	imp.parser.mu.Lock()
 	defer imp.parser.mu.Unlock()
+
 	imp.extErr = err
 	imp.fellBack = imp.fallback != nil
 }
@@ -1059,9 +1135,11 @@ func (imp *workspaceImporter) failExternal(err error) {
 func (p *GoParser) externalFallback() (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
 	if p.importer == nil || !p.importer.fellBack {
 		return false, nil
 	}
+
 	return true, p.importer.extErr
 }
 
@@ -1080,17 +1158,22 @@ func (imp *workspaceImporter) hasExternalImports() bool {
 		if file == nil || file.AST == nil {
 			return false
 		}
+
 		for _, spec := range file.AST.Imports {
 			path := strings.Trim(spec.Path.Value, `"`)
+
 			_, local := imp.ws.ImportToPath[path]
 			if local {
 				continue
 			}
+
 			if isStdlibImportPath(path) {
 				continue
 			}
+
 			return true
 		}
+
 		return false
 	}
 
@@ -1100,12 +1183,14 @@ func (imp *workspaceImporter) hasExternalImports() bool {
 				return true
 			}
 		}
+
 		for _, file := range pkg.TestFiles {
 			if external(file) {
 				return true
 			}
 		}
 	}
+
 	return false
 }
 
@@ -1226,6 +1311,7 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// which is GOPATH-based and cannot see anything in the module cache — on
 	// a real workspace that fails on essentially every third-party import.
 	imp.extOnce.Do(imp.loadExternal)
+
 	pkg, err := imp.ext.lookup(path)
 	if !errors.Is(err, errNotListed) {
 		return pkg, err
@@ -1238,6 +1324,7 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	if imp.std == nil {
 		imp.std = importer.Default()
 	}
+
 	return imp.std.Import(path)
 }
 
@@ -1275,6 +1362,7 @@ func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotype
 	if imp.productionOnly == nil {
 		imp.productionOnly = make(map[*types.Package]*gotypes.Package)
 	}
+
 	imp.productionOnly[pkg] = typesPkg
 
 	return typesPkg, nil
@@ -1296,15 +1384,19 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 	var stack []string
 	next, comp := 0, 0
 	var connect func(v string)
+
 	connect = func(v string) {
 		index[v], low[v] = next, next
 		next++
+
 		stack = append(stack, v)
+
 		onStack[v] = true
 		for _, w := range g[v] {
 			_, seen := index[w]
 			if !seen {
 				connect(w)
+
 				if low[w] < low[v] {
 					low[v] = low[w]
 				}
@@ -1314,18 +1406,22 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 				}
 			}
 		}
+
 		if low[v] != index[v] {
 			return
 		}
+
 		for {
 			w := stack[len(stack)-1]
 			stack = stack[:len(stack)-1]
 			onStack[w] = false
+
 			c.scc[w] = comp
 			if w == v {
 				break
 			}
 		}
+
 		comp++
 	}
 	for _, v := range slices.Sorted(maps.Keys(g)) {
@@ -1334,6 +1430,7 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 			connect(v)
 		}
 	}
+
 	return c
 }
 
@@ -1342,34 +1439,42 @@ func (c *prodCycles) onCycle(from, to string) bool {
 	if !slices.Contains(c.graph[from], to) {
 		return false
 	}
+
 	a, aok := c.scc[from]
 	b, bok := c.scc[to]
+
 	return aok && bok && a == b
 }
 
 // path returns the shortest production path from -> ... -> to, or nil.
 func (c *prodCycles) path(from, to string) []string {
 	prev := map[string]string{from: ""}
+
 	queue := []string{from}
 	for len(queue) > 0 {
 		v := queue[0]
 		queue = queue[1:]
+
 		for _, w := range c.graph[v] {
 			_, seen := prev[w]
 			if seen {
 				continue
 			}
+
 			prev[w] = v
 			if w == to {
 				var out []string
 				for x := to; x != ""; x = prev[x] {
 					out = append([]string{x}, out...)
 				}
+
 				return out
 			}
+
 			queue = append(queue, w)
 		}
 	}
+
 	return nil
 }
 
@@ -1382,22 +1487,27 @@ func (imp *workspaceImporter) productionCycleError(pkg *types.Package) error {
 	if len(stack) == 0 {
 		return nil
 	}
+
 	importer := stack[len(stack)-1]
 	if importer == pkg && importsItself(pkg) {
 		return fmt.Errorf("import cycle not allowed: %s -> %s", pkg.ImportPath, pkg.ImportPath)
 	}
+
 	c := imp.prodCycles.Load()
 	if c == nil {
 		c = newProdCycles(imp.ws)
 		imp.prodCycles.Store(c)
 	}
+
 	if !c.onCycle(importer.Path, pkg.Path) {
 		return nil
 	}
+
 	names := []string{importer.ImportPath}
 	for _, fs := range c.path(pkg.Path, importer.Path) {
 		names = append(names, imp.importPathOf(fs))
 	}
+
 	return fmt.Errorf("import cycle not allowed: %s", strings.Join(names, " -> "))
 }
 
@@ -1410,6 +1520,7 @@ func importsItself(pkg *types.Package) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -1418,5 +1529,6 @@ func (imp *workspaceImporter) importPathOf(fsPath string) string {
 	if ok {
 		return p.ImportPath
 	}
+
 	return fsPath
 }

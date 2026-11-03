@@ -28,8 +28,10 @@ func (op *ChangeSignatureOperation) returnTargets(
 	typeName, methodName string, isIface bool, members []*gotypes.Func,
 ) ([]*gotypes.Func, error) {
 	var target *gotypes.Func
+
 	if isIface {
 		var err error
+
 		target, err = methodObject(ws, pkg, typeName, methodName)
 		if err != nil {
 			return nil, fmt.Errorf("return targets: %w", err)
@@ -40,9 +42,11 @@ func (op *ChangeSignatureOperation) returnTargets(
 			target, _ = pkg.TypesInfo.Defs[decl.Name].(*gotypes.Func)
 		}
 	}
+
 	if target == nil {
 		return nil, fmt.Errorf("%s: no type information for %s; its results cannot be changed by object identity", op.subcommandName(), op.FunctionName)
 	}
+
 	return append([]*gotypes.Func{target}, members...), nil
 }
 
@@ -55,11 +59,14 @@ func (op *ChangeSignatureOperation) planReturns(
 	if !idx.HasTypeInfo() {
 		return 0, fmt.Errorf("%s: no type information; the workspace must be type-checked first", op.subcommandName())
 	}
+
 	n := targets[0].Signature().Results().Len()
+
 	want := n + 1
 	if op.NewReturnPosition >= 0 && len(op.NewReturns) != want {
 		return 0, fmt.Errorf("add_return: returns must list the current %d results plus the added one, got %d", n, len(op.NewReturns))
 	}
+
 	want = n - 1
 	if op.RemovedReturnIndex >= 0 && len(op.NewReturns) != want {
 		return 0, fmt.Errorf("remove_return: returns must list the current %d results minus the last, got %d", n, len(op.NewReturns))
@@ -67,30 +74,37 @@ func (op *ChangeSignatureOperation) planReturns(
 
 	decls := buildFuncDeclIndex(ws)
 	var calls []plannedCall
+
 	for _, t := range targets {
 		d := decls[canonicalFunc(t)]
 		if d != nil && d.Decl != nil {
 			op.planReturnBody(ws, d, n, plan)
 		}
+
 		for _, u := range idx.NonCallUsesOf(t) {
 			op.refuse(ws, u.Pos, fmt.Sprintf("%s is used as a func value, so its results cannot be changed", t.Name()))
 		}
+
 		for _, site := range idx.CallSitesOf(t) {
 			fold := foldPlan{Refusals: addedResultRefusals(site)}
 			if op.RemovedReturnIndex >= 0 {
 				fold = removedResultFold(site.Pkg.TypesInfo, idx, site, op.RemovedReturnIndex)
 			}
+
 			calls = append(calls, plannedCall{site: site, target: t, fold: fold})
 		}
 	}
+
 	live := op.liveCalls(ws, calls)
 
 	sites := 0
+
 	for _, c := range live {
 		if op.planReturnCall(ws, c, plan) {
 			sites++
 		}
 	}
+
 	return sites, nil
 }
 
@@ -106,6 +120,7 @@ type plannedCall struct {
 // edit the same source are refused too.
 func (op *ChangeSignatureOperation) liveCalls(ws *pkgtypes.Workspace, calls []plannedCall) []plannedCall {
 	var live []plannedCall
+
 	for i, c := range calls {
 		deleted := slices.ContainsFunc(calls[:i:i], func(o plannedCall) bool { return o.site.File == c.site.File && foldDeletes(o.fold, c.site.Call.Pos()) }) ||
 			slices.ContainsFunc(calls[i+1:], func(o plannedCall) bool { return o.site.File == c.site.File && foldDeletes(o.fold, c.site.Call.Pos()) })
@@ -113,14 +128,17 @@ func (op *ChangeSignatureOperation) liveCalls(ws *pkgtypes.Workspace, calls []pl
 			live = append(live, c)
 		}
 	}
+
 	for i, c := range live {
 		for _, r := range c.fold.Refusals {
 			op.refuse(ws, r.Pos, r.Reason)
 		}
+
 		for _, o := range live[:i] {
 			if o.site.File != c.site.File {
 				continue
 			}
+
 			for _, e1 := range c.fold.Edits {
 				for _, e2 := range o.fold.Edits {
 					if e1.Start < e2.End && e2.Start < e1.End {
@@ -130,6 +148,7 @@ func (op *ChangeSignatureOperation) liveCalls(ws *pkgtypes.Workspace, calls []pl
 			}
 		}
 	}
+
 	return live
 }
 
@@ -145,6 +164,7 @@ func (op *ChangeSignatureOperation) namedResultsAfterChange(decl *ast.FuncDecl) 
 	if op.RemovedReturnIndex >= 0 {
 		return results[:len(results)-1]
 	}
+
 	return append(results, Parameter{Name: "_", Type: op.NewReturns[op.NewReturnPosition]})
 }
 
@@ -154,31 +174,39 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 	if d.Decl.Body == nil {
 		return
 	}
+
 	content := d.File.OriginalContent
 	info := d.Pkg.TypesInfo
+
 	list := d.Decl.Body.List
 	if n == 0 && op.NewReturnPosition >= 0 && (len(list) == 0 || !stmtfacts.Terminates(info, list[len(list)-1])) {
 		op.refuse(ws, d.Decl.Name.Pos(), fmt.Sprintf("%s has no results and does not end in a return, so an added result has nothing to return", d.Decl.Name.Name))
 	}
+
 	walkBodyForReturnStmts(d.Decl.Body, func(ret *ast.ReturnStmt) {
 		if len(ret.Results) != n {
 			reason := "return forwards a multi-value call, so its results cannot be changed"
 			if len(ret.Results) == 0 {
 				reason = "bare return of named results would change meaning"
 			}
+
 			op.refuse(ws, ret.Pos(), reason)
+
 			return
 		}
+
 		values := splitReturnValueTexts(ret, content, ws)
 		if op.RemovedReturnIndex >= 0 {
 			if stmtfacts.HasCallOrReceive(info, []ast.Node{ret.Results[op.RemovedReturnIndex]}) {
 				op.refuse(ws, ret.Results[op.RemovedReturnIndex].Pos(), "the returned value being dropped has side effects (a call or a receive)")
 				return
 			}
+
 			values = append(values[:op.RemovedReturnIndex], values[op.RemovedReturnIndex+1:]...)
 		} else {
 			values = append(values, op.DefaultReturnValue)
 		}
+
 		start, end := ws.FileSet.Position(ret.Pos()).Offset, ws.FileSet.Position(ret.End()).Offset
 		newText := strings.TrimSpace("return " + strings.Join(values, ", "))
 		plan.Changes = append(plan.Changes, pkgtypes.Change{
@@ -202,6 +230,7 @@ func (op *ChangeSignatureOperation) planReturnCall(
 	if len(c.fold.Refusals) > 0 {
 		return false
 	}
+
 	site, target := c.site, c.target
 
 	content := site.File.OriginalContent
@@ -209,11 +238,13 @@ func (op *ChangeSignatureOperation) planReturnCall(
 	name := target.Name()
 	_, parent := callUseOf(site.Cursor)
 	var change pkgtypes.Change
+
 	switch p := parent.(type) {
 	case *ast.ExprStmt:
 		if op.RemovedReturnIndex >= 0 {
 			return false // an unused result needs no change
 		}
+
 		blanks := strings.TrimSuffix(strings.Repeat("_, ", len(op.NewReturns)), ", ")
 		change = pkgtypes.Change{
 			Start: off(p.Pos()), End: off(p.Pos()), NewText: blanks + " = ",
@@ -224,15 +255,19 @@ func (op *ChangeSignatureOperation) planReturnCall(
 	default:
 		return false // go and defer statements discard every result
 	}
+
 	change.File = site.File.Path
 	change.OldText = string(content[change.Start:change.End])
 	plan.Changes = append(plan.Changes, change)
+
 	for _, e := range c.fold.Edits {
 		fc := foldChange(ws, site.File, e)
 		plan.Changes = append(plan.Changes, fc)
 		op.removedSpans = append(op.removedSpans, fc)
 	}
+
 	addAffected(plan, site.File.Path)
+
 	return true
 }
 
@@ -247,6 +282,7 @@ func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *a
 			Description: fmt.Sprintf("Update assignment LHS for call to %s", name),
 		}
 	}
+
 	if len(assign.Lhs) == 1 {
 		return pkgtypes.Change{
 			Start: off(assign.Pos()), End: off(assign.End()),
@@ -254,10 +290,12 @@ func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *a
 			Description: fmt.Sprintf("Remove assignment LHS for call to %s", name),
 		}
 	}
+
 	change := pkgtypes.Change{
 		Start: off(assign.Lhs[len(assign.Lhs)-2].End()), End: off(last.End()),
 		Description: fmt.Sprintf("Update assignment LHS for call to %s", name),
 	}
+
 	declares := slices.ContainsFunc(assign.Lhs[:len(assign.Lhs)-1], func(l ast.Expr) bool {
 		id, ok := l.(*ast.Ident)
 		return ok && id.Name != "_" && info.Defs[id] != nil
@@ -265,6 +303,7 @@ func (op *ChangeSignatureOperation) assignChange(assign *ast.AssignStmt, call *a
 	if assign.Tok == token.DEFINE && !declares {
 		change.End, change.NewText = off(assign.TokPos)+len(token.DEFINE.String()), " ="
 	}
+
 	return change
 }
 
@@ -303,6 +342,7 @@ func callUseOf(call inspector.Cursor) (callUse, ast.Node) {
 			return useAssigned, parent
 		}
 	}
+
 	return useEmbedded, parent
 }
 
@@ -313,6 +353,7 @@ func addedResultRefusals(site analysis.CallSite) []returnRefusal {
 	if use == useEmbedded {
 		return []returnRefusal{embeddedCallRefusal(site.Call, "extended")}
 	}
+
 	return nil
 }
 
@@ -330,6 +371,7 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	refuse := func(pos token.Pos, why string) foldPlan {
 		return foldPlan{Refusals: []returnRefusal{{Pos: pos, Reason: why}}}
 	}
+
 	use, parent := callUseOf(site.Cursor)
 	switch use {
 	case useEmbedded:
@@ -337,35 +379,44 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	case useDiscarded:
 		return foldPlan{}
 	}
+
 	assign := parent.(*ast.AssignStmt)
 	if idx >= len(assign.Lhs) {
 		return refuse(site.Call.Pos(), "the assignment does not match the call's results")
 	}
+
 	id, ok := assign.Lhs[idx].(*ast.Ident)
 	if !ok {
 		return refuse(assign.Lhs[idx].Pos(), "the removed result is stored in a field or element, which would stop being assigned")
 	}
+
 	if id.Name == "_" {
 		return foldPlan{}
 	}
+
 	obj := info.ObjectOf(id)
 	if obj == nil {
 		return refuse(id.Pos(), fmt.Sprintf("no type information to check whether %s is read", id.Name))
 	}
 	var reads []returnRefusal
 	var writes []token.Pos
+
 	for _, u := range refs.NonCallUsesOf(obj) {
 		if isAssignTarget(u.Cursor) {
 			writes = append(writes, u.Pos)
 			continue
 		}
+
 		reads = append(reads, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
 	}
+
 	plan := foldErrorReads(info, site, assign, idx, obj, reads, writes)
+
 	ret := bareReturnOfResult(info, site.Cursor, obj)
 	if ret != nil {
 		plan.Refusals = append(plan.Refusals, returnRefusal{Pos: ret.Pos(), Reason: fmt.Sprintf("%s is a named result and this bare return reads it", id.Name)})
 	}
+
 	return plan
 }
 
@@ -375,29 +426,36 @@ func bareReturnOfResult(info *gotypes.Info, at inspector.Cursor, obj gotypes.Obj
 	for fn := range at.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
 		var ft *ast.FuncType
 		var body *ast.BlockStmt
+
 		switch f := fn.Node().(type) {
 		case *ast.FuncDecl:
 			ft, body = f.Type, f.Body
 		case *ast.FuncLit:
 			ft, body = f.Type, f.Body
 		}
+
 		named := false
+
 		for _, field := range listOf(ft.Results) {
 			for _, n := range field.Names {
 				named = named || info.Defs[n] == obj
 			}
 		}
+
 		if !named || body == nil {
 			continue
 		}
 		var bare *ast.ReturnStmt
+
 		walkBodyForReturnStmts(body, func(r *ast.ReturnStmt) {
 			if len(r.Results) == 0 && bare == nil {
 				bare = r
 			}
 		})
+
 		return bare
 	}
+
 	return nil
 }
 
@@ -407,6 +465,8 @@ func isAssignTarget(id inspector.Cursor) bool {
 	if id.ParentEdgeKind() != edge.AssignStmt_Lhs {
 		return false
 	}
+
 	tok := id.Parent().Node().(*ast.AssignStmt).Tok
+
 	return tok == token.ASSIGN || tok == token.DEFINE
 }

@@ -13,6 +13,7 @@ const shaperSrc = "package src\n\ntype shaper interface{ area() int }\n\ntype Sq
 
 func assertMoveRefused(t *testing.T, dir, src, symbol string, want ...string) {
 	t.Helper()
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -21,11 +22,13 @@ func assertMoveRefused(t *testing.T, dir, src, symbol string, want ...string) {
 	if !res.IsError {
 		t.Fatalf("move %s succeeded, want a refusal", symbol)
 	}
+
 	for _, w := range want {
 		if !strings.Contains(errText(res), w) {
 			t.Errorf("error = %q, want it to mention %q", errText(res), w)
 		}
 	}
+
 	assertFileUnchanged(t, dir, "src/src.go", src)
 }
 
@@ -51,6 +54,7 @@ func TestMoveSymbol_RefusesPointerReceiverImplementerOfUnexportedMethodInterface
 func TestMoveSymbol_MovesTypeImplementingOnlyExportedMethodInterface(t *testing.T) {
 	src := "package src\n\ntype Shaper interface{ Area() int }\n\ntype Sq struct{}\n\nfunc (Sq) Area() int { return 1 }\n\nfunc Total(s Shaper) int { return s.Area() }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -66,6 +70,7 @@ func TestMoveSymbol_MovesTypeImplementingOnlyExportedMethodInterface(t *testing.
 func TestMoveSymbol_MovesTypeThatDoesNotImplementTheUnexportedMethodInterface(t *testing.T) {
 	src := "package src\n\ntype shaper interface{ area() int }\n\ntype Circle struct{}\n\nfunc (Circle) Radius() int { return 1 }\n\nfunc Total(s shaper) int { return s.area() }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -85,6 +90,7 @@ func TestMoveByDependencies_SkipsCandidateThatImplementsAnUnexportedMethodInterf
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { return src.Clean() + len([]src.Sq{}) }\n",
 		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.Clean() + len([]src.Sq{}) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -96,6 +102,7 @@ func TestMoveByDependencies_SkipsCandidateThatImplementsAnUnexportedMethodInterf
 			t.Errorf("skipped_sites = %s, want it to mention %q", sites, want)
 		}
 	}
+
 	assertFileContains(t, dir, "shared/shared.go", "func Clean() int")
 	assertFileContains(t, dir, "src/src.go", "type Sq struct")
 	goVets(t, dir, "")

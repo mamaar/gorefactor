@@ -14,6 +14,7 @@ func (s objSet) clone() objSet {
 	for k := range s {
 		out[k] = true
 	}
+
 	return out
 }
 
@@ -23,6 +24,7 @@ func intersect(sets []objSet, fallback objSet) objSet {
 	if len(sets) == 0 {
 		return fallback
 	}
+
 	out := sets[0].clone()
 	for _, s := range sets[1:] {
 		for k := range out {
@@ -31,6 +33,7 @@ func intersect(sets []objSet, fallback objSet) objSet {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -65,6 +68,7 @@ func (a *analyzer) newFlow() *flow {
 func (a *analyzer) analyzeFlow() *flowFacts {
 	f := a.newFlow()
 	f.facts.definite = f.list(a.stmts, objSet{})
+
 	return &f.facts
 }
 
@@ -73,6 +77,7 @@ func (a *analyzer) analyzeFlow() *flowFacts {
 // are liveOut's concern.
 func (a *analyzer) readAfterBlock(obj gotypes.Object) bool {
 	f := a.newFlow()
+
 	w := objSet{}
 	for _, s := range a.followingStmts() {
 		w = f.stmt(s, w)
@@ -80,6 +85,7 @@ func (a *analyzer) readAfterBlock(obj gotypes.Object) bool {
 			break
 		}
 	}
+
 	return f.facts.unreliable || f.facts.readBeforeWrite[obj]
 }
 
@@ -88,8 +94,10 @@ func (a *analyzer) readAfterBlock(obj gotypes.Object) bool {
 func (a *analyzer) followingStmts() []ast.Stmt {
 	path := a.pathTo(a.stmts[len(a.stmts)-1])
 	var out []ast.Stmt
+
 	for i := len(path) - 2; i >= 0; i-- {
 		var list []ast.Stmt
+
 		switch p := path[i].(type) {
 		case *ast.BlockStmt:
 			list = p.List
@@ -98,15 +106,18 @@ func (a *analyzer) followingStmts() []ast.Stmt {
 		case *ast.CommClause:
 			list = p.Body
 		}
+
 		for j, s := range list {
 			if ast.Node(s) == path[i+1] {
 				out = append(out, list[j+1:]...)
 			}
 		}
+
 		if path[i] == ast.Node(a.innerBody) {
 			break
 		}
 	}
+
 	return out
 }
 
@@ -114,6 +125,7 @@ func (f *flow) list(stmts []ast.Stmt, w objSet) objSet {
 	for _, s := range stmts {
 		w = f.stmt(s, w)
 	}
+
 	return w
 }
 
@@ -123,16 +135,20 @@ func (f *flow) reads(n ast.Node, w objSet) {
 	if n == nil {
 		return
 	}
+
 	ast.Inspect(n, func(c ast.Node) bool {
 		id, ok := c.(*ast.Ident)
 		if !ok {
 			return true
 		}
+
 		obj := f.a.objectOf(id)
 		if !f.a.isCapturedVar(obj) {
 			return true
 		}
+
 		f.read(obj, w)
+
 		return true
 	})
 }
@@ -152,10 +168,12 @@ func (f *flow) write(e ast.Expr, w objSet) {
 		f.reads(e, w)
 		return
 	}
+
 	obj := f.a.info.Uses[id]
 	if !f.a.isCapturedVar(obj) {
 		return
 	}
+
 	f.facts.written[obj] = true
 	w[obj] = true
 }
@@ -166,11 +184,13 @@ func (f *flow) stmt(s ast.Stmt, w objSet) objSet {
 		for _, r := range x.Rhs {
 			f.reads(r, w)
 		}
+
 		plain := x.Tok == token.ASSIGN || x.Tok == token.DEFINE
 		for _, l := range x.Lhs {
 			if !plain {
 				f.reads(l, w)
 			}
+
 			f.write(l, w)
 		}
 	case *ast.BlockStmt:
@@ -193,22 +213,27 @@ func (f *flow) stmt(s ast.Stmt, w objSet) objSet {
 	case *ast.RangeStmt:
 		f.reads(x.X, w)
 		body := w.clone()
+
 		if x.Tok == token.ASSIGN {
 			if x.Key != nil {
 				f.write(x.Key, body)
 			}
+
 			if x.Value != nil {
 				f.write(x.Value, body)
 			}
 		}
+
 		f.list(x.Body.List, body)
 	case *ast.SwitchStmt:
 		w = f.optStmt(x.Init, w)
 		f.reads(x.Tag, w)
+
 		return f.clauses(x.Body, w, true)
 	case *ast.TypeSwitchStmt:
 		w = f.optStmt(x.Init, w)
 		f.reads(x.Assign, w)
+
 		return f.clauses(x.Body, w, true)
 	case *ast.SelectStmt:
 		return f.clauses(x.Body, w, false)
@@ -216,6 +241,7 @@ func (f *flow) stmt(s ast.Stmt, w objSet) objSet {
 	default:
 		f.reads(s, w)
 	}
+
 	return w
 }
 
@@ -226,6 +252,7 @@ func (f *flow) returnStmt(x *ast.ReturnStmt, w objSet) {
 		f.reads(x, w)
 		return
 	}
+
 	for v := range f.a.innerSig.Results().Variables() {
 		if f.a.isCapturedVar(v) {
 			f.read(v, w)
@@ -237,6 +264,7 @@ func (f *flow) optStmt(s ast.Stmt, w objSet) objSet {
 	if s == nil {
 		return w
 	}
+
 	return f.stmt(s, w)
 }
 
@@ -244,10 +272,12 @@ func (f *flow) ifStmt(x *ast.IfStmt, w objSet) objSet {
 	w = f.optStmt(x.Init, w)
 	f.reads(x.Cond, w)
 	var joined []objSet
+
 	body := f.list(x.Body.List, w.clone())
 	if !terminates(x.Body) {
 		joined = append(joined, body)
 	}
+
 	if x.Else == nil {
 		joined = append(joined, w)
 	} else {
@@ -256,6 +286,7 @@ func (f *flow) ifStmt(x *ast.IfStmt, w objSet) objSet {
 			joined = append(joined, other)
 		}
 	}
+
 	return intersect(joined, w)
 }
 
@@ -265,21 +296,25 @@ func (f *flow) ifStmt(x *ast.IfStmt, w objSet) objSet {
 func (f *flow) clauses(body *ast.BlockStmt, w objSet, needDefault bool) objSet {
 	var joined []objSet
 	hasDefault := false
+
 	for _, cl := range body.List {
 		var list []ast.Stmt
 		set := w.clone()
+
 		switch c := cl.(type) {
 		case *ast.CaseClause:
 			hasDefault = hasDefault || c.List == nil
 			for _, e := range c.List {
 				f.reads(e, w)
 			}
+
 			list = c.Body
 		case *ast.CommClause:
 			hasDefault = hasDefault || c.Comm == nil
 			set = f.optStmt(c.Comm, set)
 			list = c.Body
 		}
+
 		set = f.list(list, set)
 		switch {
 		case hasAnyBreak(list):
@@ -288,9 +323,11 @@ func (f *flow) clauses(body *ast.BlockStmt, w objSet, needDefault bool) objSet {
 			joined = append(joined, set)
 		}
 	}
+
 	if needDefault && !hasDefault {
 		joined = append(joined, w)
 	}
+
 	return intersect(joined, w)
 }
 
@@ -298,6 +335,7 @@ func (f *flow) clauses(body *ast.BlockStmt, w objSet, needDefault bool) objSet {
 // literal, whichever statement it targets.
 func hasAnyBreak(list []ast.Stmt) bool {
 	found := false
+
 	for _, s := range list {
 		ast.Inspect(s, func(n ast.Node) bool {
 			switch x := n.(type) {
@@ -306,9 +344,11 @@ func hasAnyBreak(list []ast.Stmt) bool {
 			case *ast.BranchStmt:
 				found = found || x.Tok == token.BREAK
 			}
+
 			return !found
 		})
 	}
+
 	return found
 }
 
@@ -321,9 +361,11 @@ func (a *analyzer) writeFirst(obj gotypes.Object) bool {
 	if f.unreliable || !f.written[obj] || f.readBeforeWrite[obj] {
 		return false
 	}
+
 	if f.definite[obj] {
 		return f.read[obj] || a.liveOut(obj)
 	}
+
 	return f.read[obj] && !a.liveOut(obj)
 }
 
@@ -335,20 +377,26 @@ func (a *analyzer) liveOut(obj gotypes.Object) bool {
 	region := a.repeatRegion()
 	var stack []ast.Node
 	found := false
+
 	ast.Inspect(a.fn.Body, func(n ast.Node) bool {
 		if n == nil {
 			stack = stack[:len(stack)-1]
 			return true
 		}
+
 		stack = append(stack, n)
+
 		id, ok := n.(*ast.Ident)
 		if !ok || a.info.Uses[id] != obj || (id.Pos() >= a.blockStart && id.Pos() < a.blockEnd) {
 			return !found
 		}
+
 		inRegion := region != nil && region.Pos() <= id.Pos() && id.Pos() < region.End() && obj.Pos() < region.Pos()
 		found = found || inRegion || a.inForeignClosure(stack) || takesAddress(stack)
+
 		return !found
 	})
+
 	return found || a.readAfterBlock(obj)
 }
 
@@ -360,17 +408,20 @@ func (a *analyzer) knownZero(obj gotypes.Object) bool {
 	if a.zeroDecl(obj) == nil {
 		return false
 	}
+
 	region := a.repeatRegion()
 	if region != nil && obj.Pos() < region.Pos() {
 		return false
 	}
 	var stack []ast.Node
 	ok := true
+
 	ast.Inspect(a.fn.Body, func(n ast.Node) bool {
 		if n == nil {
 			stack = stack[:len(stack)-1]
 			return true
 		}
+
 		stack = append(stack, n)
 		switch x := n.(type) {
 		case *ast.BranchStmt:
@@ -379,6 +430,7 @@ func (a *analyzer) knownZero(obj gotypes.Object) bool {
 			if a.info.Uses[x] != obj {
 				break
 			}
+
 			switch {
 			case x.Pos() < a.blockStart:
 				ok = false
@@ -386,8 +438,10 @@ func (a *analyzer) knownZero(obj gotypes.Object) bool {
 				ok = ok && !a.inBlockClosure(stack) && !takesAddress(stack)
 			}
 		}
+
 		return ok
 	})
+
 	return ok
 }
 
@@ -400,21 +454,25 @@ func (a *analyzer) inBlockClosure(stack []ast.Node) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
 // zeroDecl returns the `var x T` statement that declares obj with no value.
 func (a *analyzer) zeroDecl(obj gotypes.Object) *ast.DeclStmt {
 	var found *ast.DeclStmt
+
 	ast.Inspect(a.fn.Body, func(n ast.Node) bool {
 		ds, ok := n.(*ast.DeclStmt)
 		if !ok || found != nil {
 			return found == nil
 		}
+
 		gd, ok := ds.Decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.VAR {
 			return false
 		}
+
 		for _, sp := range gd.Specs {
 			vs := sp.(*ast.ValueSpec)
 			for _, name := range vs.Names {
@@ -423,8 +481,10 @@ func (a *analyzer) zeroDecl(obj gotypes.Object) *ast.DeclStmt {
 				}
 			}
 		}
+
 		return false
 	})
+
 	return found
 }
 
@@ -436,15 +496,19 @@ func (a *analyzer) droppableDecl(obj gotypes.Object) *ast.DeclStmt {
 	if ds == nil || ds.Pos() >= a.blockStart {
 		return nil
 	}
+
 	gd := ds.Decl.(*ast.GenDecl)
 	if gd.Lparen.IsValid() || len(gd.Specs[0].(*ast.ValueSpec).Names) != 1 {
 		return nil
 	}
+
 	path := a.pathTo(a.stmts[0])
+
 	parent := path[len(path)-2]
 	if slices.Contains(children(parent), ast.Node(ds)) {
 		return ds
 	}
+
 	return nil
 }
 
@@ -453,6 +517,7 @@ func (a *analyzer) droppableDecl(obj gotypes.Object) *ast.DeclStmt {
 // whole selection does not repeat it.
 func (a *analyzer) repeatRegion() ast.Node {
 	var region ast.Node
+
 	ast.Inspect(a.fn.Body, func(n ast.Node) bool {
 		switch n.(type) {
 		case *ast.ForStmt, *ast.RangeStmt, *ast.FuncLit:
@@ -460,8 +525,10 @@ func (a *analyzer) repeatRegion() ast.Node {
 				region = n
 			}
 		}
+
 		return region == nil
 	})
+
 	return region
 }
 
@@ -474,6 +541,7 @@ func (a *analyzer) inForeignClosure(stack []ast.Node) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -489,5 +557,6 @@ func takesAddress(stack []ast.Node) bool {
 			return false
 		}
 	}
+
 	return false
 }

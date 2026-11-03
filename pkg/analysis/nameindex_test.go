@@ -9,28 +9,37 @@ import (
 
 func typedNameEntries(t *testing.T, v *View, name string) []string {
 	t.Helper()
+
 	entries, _ := v.Resolver.BuildReferenceIndex().NameEntries(name)
 	var out []string
+
 	for _, e := range entries {
 		pos := v.Workspace.FileSet.Position(e.Pos)
+
 		kind := "use"
 		if e.IsDeclaration {
 			kind = "decl"
 		}
+
 		sel := ""
 		if e.IsSelector {
 			sel = " sel=" + e.PkgAlias
 		}
+
 		typed := ""
 		if e.TypesObject == nil {
 			typed = " untyped"
 		}
+
 		if e.File.Path != pos.Filename {
 			t.Errorf("%s entry at %s is attributed to %s", name, pos, e.File.Path)
 		}
+
 		out = append(out, fmt.Sprintf("%s:%d:%d %s%s%s", filepath.Base(pos.Filename), pos.Line, pos.Column, kind, sel, typed))
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 

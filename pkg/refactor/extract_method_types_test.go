@@ -30,12 +30,15 @@ func writeExtractWorkspace(t *testing.T, files map[string]string) (RefactorEngin
 	if !ok {
 		files["go.mod"] = "module example.com/extracttest\n\ngo 1.21\n"
 	}
+
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0o755)
 		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
@@ -44,10 +47,12 @@ func writeExtractWorkspace(t *testing.T, files map[string]string) (RefactorEngin
 
 	engine := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true, AllowBreaking: true},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
 	}
+
 	return engine, ws
 }
 
@@ -55,12 +60,15 @@ func writeExtractWorkspace(t *testing.T, files map[string]string) (RefactorEngin
 // contains substr.
 func changeText(t *testing.T, plan *types.RefactoringPlan, substr string) string {
 	t.Helper()
+
 	for _, c := range plan.Changes {
 		if strings.Contains(c.Description, substr) {
 			return c.NewText
 		}
 	}
+
 	t.Fatalf("no change with a description containing %q; got %d changes", substr, len(plan.Changes))
+
 	return ""
 }
 
@@ -135,15 +143,19 @@ func analyze(auth sourceInfo, feed feedInfo) (res scanReport) {
 	if !strings.Contains(decl, wantSig) {
 		t.Errorf("expected signature %q in:\n%s", wantSig, decl)
 	}
+
 	if strings.Contains(decl, "interface{}") {
 		t.Errorf("generated declaration still contains interface{}:\n%s", decl)
 	}
+
 	if strings.Contains(wantSig, "orDefault") {
 		t.Fatal("test bug: orDefault must not be in the expected signature")
 	}
+
 	if strings.Contains(decl, "orDefault ") || strings.Contains(decl, "orDefault,") {
 		t.Errorf("package-level func orDefault was captured as a parameter:\n%s", decl)
 	}
+
 	if !strings.HasSuffix(strings.TrimSpace(decl), "return res\n}") {
 		t.Errorf("expected the body to end in `return res`:\n%s", decl)
 	}
@@ -184,9 +196,11 @@ func check(n int) error {
 
 	decl := declOf(t, plan)
 	t.Logf("generated declaration:\n%s", decl)
+
 	if !strings.Contains(decl, "func validate(n int) error {") {
 		t.Errorf("expected the enclosing function's result signature, got:\n%s", decl)
 	}
+
 	call := callOf(t, plan)
 	if call != "return validate(n)" {
 		t.Errorf("call site = %q, want %q", call, "return validate(n)")
@@ -221,6 +235,7 @@ func f(n int) int {
 	if err == nil {
 		t.Fatal("expected a refusal for a block mixing early returns with fall-through")
 	}
+
 	if !strings.Contains(err.Error(), "fall-through") {
 		t.Errorf("refusal should explain the fall-through problem, got: %v", err)
 	}
@@ -256,6 +271,7 @@ func g(path string) error {
 	if err == nil {
 		t.Fatal("expected a refusal for a selection containing a defer")
 	}
+
 	if !strings.Contains(err.Error(), "defer") {
 		t.Errorf("refusal should mention the defer, got: %v", err)
 	}
@@ -297,6 +313,7 @@ func Run() {
 	if err == nil {
 		t.Fatal("expected the type-check gate to reject a plan referencing an unexported type")
 	}
+
 	if !strings.Contains(err.Error(), "impl") {
 		t.Errorf("expected the reported type error to mention impl, got: %v", err)
 	}
@@ -334,11 +351,13 @@ func run(n int) {
 
 	decl := declOf(t, plan)
 	t.Logf("generated declaration:\n%s", decl)
+
 	if !strings.Contains(decl, "func shift(sum int, n int) (int, string) {") {
 		t.Errorf("unexpected signature:\n%s", decl)
 	}
 
 	want := "var label string\nsum, label = shift(sum, n)"
+
 	call := callOf(t, plan)
 	if call != want {
 		t.Errorf("call site = %q, want %q", call, want)
@@ -384,6 +403,7 @@ func run() {
 	if !strings.Contains(decl, "func printTwice(d time.Duration) {") {
 		t.Errorf("expected the qualified time.Duration type, got:\n%s", decl)
 	}
+
 	imports := changeText(t, plan, "Add imports to")
 	if !strings.Contains(imports, `"time"`) {
 		t.Errorf("expected the plan to add the time import, got: %q", imports)
@@ -439,13 +459,16 @@ func (m *MyStruct) ProcessData(items []string, count int) error {
 	if strings.Contains(decl, "interface{}") {
 		t.Errorf("generated method contains interface{} types:\n%s", decl)
 	}
+
 	sigLine, _, _ := strings.Cut(decl, "\n")
 	if !strings.Contains(sigLine, "items []string") {
 		t.Errorf("expected items to keep its []string type, got:\n%s", sigLine)
 	}
+
 	if !strings.Contains(sigLine, "seen map[string]bool") {
 		t.Errorf("expected seen to be a parameter with its real type, got:\n%s", sigLine)
 	}
+
 	if !strings.HasSuffix(sigLine, ") int {") {
 		t.Errorf("expected an int result for total, got:\n%s", sigLine)
 	}
@@ -453,6 +476,7 @@ func (m *MyStruct) ProcessData(items []string, count int) error {
 	if strings.Contains(sigLine, "m *MyStruct,") || strings.Count(sigLine, "MyStruct") != 1 {
 		t.Errorf("receiver leaked into the parameter list:\n%s", sigLine)
 	}
+
 	call := callOf(t, plan)
 	if call != "total = m.processItems(items, seen, total, count)" {
 		t.Errorf("call site = %q", call)
@@ -507,12 +531,15 @@ func (p *Processor) Run(result *Result, data []string) {
 	if strings.Contains(decl, "interface{}") {
 		t.Errorf("generated method contains interface{} types:\n%s", decl)
 	}
+
 	if strings.Count(sigLine, "*Result") != 1 {
 		t.Errorf("result must be a parameter only, not also a return:\n%s", sigLine)
 	}
+
 	if !strings.HasSuffix(sigLine, ") int {") {
 		t.Errorf("expected a single int result for counter, got:\n%s", sigLine)
 	}
+
 	call := callOf(t, plan)
 	if call != "counter = p.processData(data, result, counter)" {
 		t.Errorf("call site = %q", call)
@@ -523,22 +550,29 @@ func (p *Processor) Run(result *Result, data []string) {
 // startMark to the line containing endMark (both marks must be unique).
 func extractLines(t *testing.T, src, startMark, endMark string) (int, int) {
 	t.Helper()
+
 	find := func(mark string) int {
 		found := 0
+
 		for i, line := range strings.Split(src, "\n") {
 			if !strings.Contains(line, mark) {
 				continue
 			}
+
 			if found != 0 {
 				t.Fatalf("mark %q appears on lines %d and %d", mark, found, i+1)
 			}
+
 			found = i + 1
 		}
+
 		if found == 0 {
 			t.Fatalf("mark %q not found", mark)
 		}
+
 		return found
 	}
+
 	return find(startMark), find(endMark)
 }
 
@@ -546,23 +580,30 @@ func extractLines(t *testing.T, src, startMark, endMark string) (int, int) {
 // the plan's own verification is not enough to catch copied locks.
 func vetPlan(t *testing.T, ws *types.Workspace, plan *types.RefactoringPlan) {
 	t.Helper()
+
 	path := filepath.Join(ws.RootPath, "main.go")
+
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	changes := append([]types.Change(nil), plan.Changes...)
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Start > changes[j].Start })
+
 	out := string(content)
 	for _, c := range changes {
 		out = out[:c.Start] + c.NewText + out[c.End:]
 	}
+
 	err = os.WriteFile(path, []byte(out), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = ws.RootPath
+
 	vetOut, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go vet failed after applying the plan: %v\n%s\n--- result ---\n%s", err, vetOut, out)
@@ -646,6 +687,7 @@ func bump() int {
 		t.Run(tc.name, func(t *testing.T) {
 			eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": tc.src})
 			startLine, endLine := extractLines(t, tc.src, tc.start, tc.end)
+
 			plan, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 				SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 				StartLine:       startLine,
@@ -655,17 +697,21 @@ func bump() int {
 			if err != nil {
 				t.Fatalf("ExtractFunction: %v", err)
 			}
+
 			decl := declOf(t, plan)
 			if !strings.Contains(decl, tc.wantSig) {
 				t.Errorf("signature: want %q in:\n%s", tc.wantSig, decl)
 			}
+
 			if tc.wantBodyHas != "" && !strings.Contains(decl, tc.wantBodyHas) {
 				t.Errorf("body: want %q in:\n%s", tc.wantBodyHas, decl)
 			}
+
 			call := callOf(t, plan)
 			if call != tc.wantCall {
 				t.Errorf("call site = %q, want %q", call, tc.wantCall)
 			}
+
 			vetPlan(t, ws, plan)
 		})
 	}
@@ -689,6 +735,7 @@ func render(names []string) string {
 `
 	eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": hoistable})
 	startLine, endLine := extractLines(t, hoistable, "// start", "// end")
+
 	plan, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 		SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 		StartLine:       startLine,
@@ -698,14 +745,17 @@ func render(names []string) string {
 	if err != nil {
 		t.Fatalf("ExtractFunction: %v", err)
 	}
+
 	decl := declOf(t, plan)
 	if !strings.Contains(decl, "func build(names []string, sb *strings.Builder) {") || strings.Contains(decl, "var sb") {
 		t.Errorf("want sb as a pointer parameter with its declaration removed:\n%s", decl)
 	}
+
 	call, want := callOf(t, plan), "var sb strings.Builder\nbuild(names, &sb)"
 	if call != want {
 		t.Errorf("call site = %q, want %q", call, want)
 	}
+
 	vetPlan(t, ws, plan)
 
 	const initialised = `package main
@@ -720,6 +770,7 @@ func render() string {
 `
 	eng, ws = writeExtractWorkspace(t, map[string]string{"main.go": initialised})
 	startLine, endLine = extractLines(t, initialised, "// start", "// end")
+
 	_, err = eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 		SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 		StartLine:       startLine,
@@ -782,6 +833,7 @@ func pick(c bool) int {
 		t.Run(tc.name, func(t *testing.T) {
 			eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": tc.src})
 			startLine, endLine := extractLines(t, tc.src, tc.start, tc.end)
+
 			plan, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 				SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 				StartLine:       startLine,
@@ -791,17 +843,21 @@ func pick(c bool) int {
 			if err != nil {
 				t.Fatalf("ExtractFunction: %v", err)
 			}
+
 			decl := declOf(t, plan)
 			if !strings.Contains(decl, tc.wantSig) {
 				t.Errorf("signature: want %q in:\n%s", tc.wantSig, decl)
 			}
+
 			if tc.wantBodyHas != "" && !strings.Contains(decl, tc.wantBodyHas) {
 				t.Errorf("body: want %q in:\n%s", tc.wantBodyHas, decl)
 			}
+
 			call := callOf(t, plan)
 			if call != tc.wantCall {
 				t.Errorf("call site = %q, want %q", call, tc.wantCall)
 			}
+
 			vetPlan(t, ws, plan)
 		})
 	}
@@ -839,6 +895,7 @@ func load(path string) (int, error) {
 func TestExtractFunctionErrorGuards(t *testing.T) {
 	eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": errGuardSrc})
 	startLine, endLine := extractLines(t, errGuardSrc, "// start", "// end")
+
 	plan, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 		SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 		StartLine:       startLine,
@@ -848,6 +905,7 @@ func TestExtractFunctionErrorGuards(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractFunction: %v", err)
 	}
+
 	decl := declOf(t, plan)
 	for _, want := range []string{
 		"func parseData(data string) (int, error) {",
@@ -859,11 +917,14 @@ func TestExtractFunctionErrorGuards(t *testing.T) {
 			t.Errorf("want %q in:\n%s", want, decl)
 		}
 	}
+
 	wantCall := "var n int\nn, err = parseData(data)\nif err != nil {\n\treturn 0, err\n}"
+
 	call := callOf(t, plan)
 	if call != wantCall {
 		t.Errorf("call site = %q, want %q", call, wantCall)
 	}
+
 	vetPlan(t, ws, plan)
 }
 
@@ -880,6 +941,7 @@ func TestExtractFunctionRefusesNonGuardReturns(t *testing.T) {
 			src := strings.Replace(errGuardSrc, tc.from, tc.to, 1)
 			eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": src})
 			startLine, endLine := extractLines(t, src, "// start", "// end")
+
 			_, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 				SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 				StartLine:       startLine,
@@ -899,6 +961,7 @@ func extractAndVet(t *testing.T, src, wantSig, wantCall string) *types.Refactori
 	t.Helper()
 	eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": src})
 	startLine, endLine := extractLines(t, src, "// start", "// end")
+
 	plan, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
 		SourceFile:      filepath.Join(ws.RootPath, "main.go"),
 		StartLine:       startLine,
@@ -908,15 +971,19 @@ func extractAndVet(t *testing.T, src, wantSig, wantCall string) *types.Refactori
 	if err != nil {
 		t.Fatalf("ExtractFunction: %v", err)
 	}
+
 	decl := declOf(t, plan)
 	if !strings.Contains(decl, wantSig) {
 		t.Errorf("signature: want %q in:\n%s", wantSig, decl)
 	}
+
 	call := callOf(t, plan)
 	if call != wantCall {
 		t.Errorf("call site = %q, want %q", call, wantCall)
 	}
+
 	vetPlan(t, ws, plan)
+
 	return plan
 }
 
@@ -970,6 +1037,7 @@ func run(n int) error {
 			extractAndVet(t, tc.src, "func measure(n int) error {", tc.wantCall)
 		})
 	}
+
 	t.Run("outputs with err declared later in the scope", func(t *testing.T) {
 		src := `package main
 
@@ -1151,11 +1219,13 @@ func run(items []string) int {
 `
 		plan := extractAndVet(t, src, "func measure(items []string) ([]string, int) {", "out, n := measure(items)")
 		var dropped int
+
 		for _, c := range plan.Changes {
 			if c.NewText == "" {
 				dropped++
 			}
 		}
+
 		if dropped != 2 {
 			t.Errorf("want the two var declarations removed, got %d deletions", dropped)
 		}

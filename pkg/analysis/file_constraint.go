@@ -23,18 +23,23 @@ func ConstraintOf(f *SourceFile) FileConstraint {
 // the toolchain's rule that the part before the first underscore never counts.
 func nameSuffix(name string) string {
 	stem := strings.TrimSuffix(filepath.Base(name), ".go")
+
 	_, rest, ok := strings.Cut(stem, "_")
 	if !ok {
 		return ""
 	}
+
 	parts := strings.Split(rest, "_")
+
 	n := len(parts)
 	if n >= 2 && knownOS[parts[n-2]] && knownArch[parts[n-1]] {
 		return parts[n-2] + "_" + parts[n-1]
 	}
+
 	if knownOS[parts[n-1]] || knownArch[parts[n-1]] {
 		return parts[n-1]
 	}
+
 	return ""
 }
 
@@ -50,5 +55,6 @@ func setOf(names ...string) map[string]bool {
 	for _, n := range names {
 		m[n] = true
 	}
+
 	return m
 }

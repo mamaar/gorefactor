@@ -21,19 +21,23 @@ func TestFixSwitchableIfChains_CountsOnlyWhatItRewrote(t *testing.T) {
 	if len(fixed) != 3 {
 		t.Fatalf("expected exactly 3 rewritten functions, got %d: %v", len(fixed), fixed)
 	}
+
 	fixedSet := make(map[string]bool, len(fixed))
 	for _, f := range fixed {
 		fn, _ := f.(string)
 		fixedSet[fn] = true
 	}
+
 	for _, want := range []string{"httpStatusMessage", "classifyMessage", "describeValue"} {
 		if !fixedSet[want] {
 			t.Errorf("functions_fixed = %v, want it to include %s", fixed, want)
 		}
 	}
+
 	if fixedSet["gradeScore"] {
 		t.Error("gradeScore is the flattener's chain and must not be reported as fixed")
 	}
+
 	if fixedSet["resolveKey"] {
 		t.Error("resolveKey's rewrite is refused and must not be reported as fixed")
 	}
@@ -42,6 +46,7 @@ func TestFixSwitchableIfChains_CountsOnlyWhatItRewrote(t *testing.T) {
 	if converted != 3 {
 		t.Errorf("chains_converted = %v, want 3", converted)
 	}
+
 	changes, _ := result["changes_count"].(float64)
 	if changes != 3 {
 		t.Errorf("changes_count = %v, want 3 (one change per converted chain)", changes)
@@ -51,7 +56,9 @@ func TestFixSwitchableIfChains_CountsOnlyWhatItRewrote(t *testing.T) {
 	if len(unfixable) != 1 {
 		t.Fatalf("expected exactly 1 unfixable finding (resolveKey), got %d: %v", len(unfixable), unfixable)
 	}
+
 	item := unfixable[0].(map[string]any)
+
 	fn, _ := item["function_name"].(string)
 	if fn != "resolveKey" {
 		t.Errorf("unfixable finding = %q, want resolveKey", fn)
@@ -72,6 +79,7 @@ func TestDetectSwitchableIfChains_ReportsKinds(t *testing.T) {
 	}
 
 	kinds := make(map[string]string, len(violations))
+
 	fixable := make(map[string]bool, len(violations))
 	for _, v := range violations {
 		item := v.(map[string]any)
@@ -91,6 +99,7 @@ func TestDetectSwitchableIfChains_ReportsKinds(t *testing.T) {
 		if kinds[fn] != wantKind {
 			t.Errorf("kind[%s] = %q, want %q", fn, kinds[fn], wantKind)
 		}
+
 		if !fixable[fn] {
 			t.Errorf("fixable[%s] = false, want true", fn)
 		}
@@ -100,6 +109,7 @@ func TestDetectSwitchableIfChains_ReportsKinds(t *testing.T) {
 	if !found {
 		t.Error("resolveKey should still be detected (and reported unfixable), just not applied")
 	}
+
 	if fixable["resolveKey"] {
 		t.Error("resolveKey should be reported as not fixable")
 	}
@@ -123,10 +133,12 @@ func TestFixSwitchableIfChains_DryRunLeavesFilesAlone(t *testing.T) {
 	if after != before {
 		t.Errorf("dry run modified the file on disk:\n%s", after)
 	}
+
 	dryRun, _ := result["dry_run"].(bool)
 	if !dryRun {
 		t.Error("result should report dry_run=true so the caller knows nothing was written")
 	}
+
 	diffs, _ := result["diffs"].([]any)
 	if len(diffs) == 0 {
 		t.Error("a dry run should return the diffs it would apply")
@@ -145,10 +157,12 @@ func TestFixSwitchableIfChains_KindsFilter(t *testing.T) {
 	if len(fixed) != 1 {
 		t.Fatalf("expected exactly 1 rewritten function, got %d: %v", len(fixed), fixed)
 	}
+
 	fn, _ := fixed[0].(string)
 	if fn != "httpStatusMessage" {
 		t.Errorf("functions_fixed = %v, want [httpStatusMessage]", fixed)
 	}
+
 	converted, _ := result["chains_converted"].(float64)
 	if converted != 1 {
 		t.Errorf("chains_converted = %v, want 1", converted)
@@ -158,9 +172,11 @@ func TestFixSwitchableIfChains_KindsFilter(t *testing.T) {
 	if !strings.Contains(after, `switch code {`) {
 		t.Errorf("httpStatusMessage should have been converted to a switch, got:\n%s", after)
 	}
+
 	if !strings.Contains(after, `if strings.HasPrefix(s, "ERROR") {`) {
 		t.Errorf("classifyMessage is tagless and should have been left as an if-chain with kinds=[tagged], got:\n%s", after)
 	}
+
 	if !strings.Contains(after, `if v, ok := x.(int); ok {`) {
 		t.Errorf("describeValue is a type switch and should have been left as an if-chain with kinds=[tagged], got:\n%s", after)
 	}
@@ -174,16 +190,20 @@ func TestFixSwitchableIfChains_RefusalsAreReported(t *testing.T) {
 
 	unfixable, _ := result["unfixable"].([]any)
 	var item map[string]any
+
 	for _, u := range unfixable {
 		candidate := u.(map[string]any)
+
 		fn, _ := candidate["function_name"].(string)
 		if fn == "resolveKey" {
 			item = candidate
 		}
 	}
+
 	if item == nil {
 		t.Fatalf("expected resolveKey to be reported unfixable, got unfixable=%v", unfixable)
 	}
+
 	reason, _ := item["reason"].(string)
 	if !strings.Contains(reason, "fix_if_init_assignments") {
 		t.Errorf("reason = %q, want it to name fix_if_init_assignments", reason)
@@ -199,6 +219,7 @@ func TestFixSwitchableIfChains_ModuleStillCompiles(t *testing.T) {
 
 	buildCmd := exec.Command("go", "build", "./...")
 	buildCmd.Dir = dir
+
 	out, err := buildCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go build ./... failed after fix_switchable_if_chains:\n%s", out)
@@ -206,6 +227,7 @@ func TestFixSwitchableIfChains_ModuleStillCompiles(t *testing.T) {
 
 	vetCmd := exec.Command("go", "vet", "./...")
 	vetCmd.Dir = dir
+
 	out, err = vetCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go vet ./... failed after fix_switchable_if_chains:\n%s", out)

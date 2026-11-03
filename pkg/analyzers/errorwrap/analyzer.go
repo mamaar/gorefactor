@@ -127,15 +127,18 @@ func analyzeFile(pass *analysis.Pass, cfg *config, file *ast.File, content []byt
 			stack = stack[:len(stack)-1]
 			return false
 		}
+
 		stack = append(stack, n)
 
 		switch node := n.(type) {
 		case *ast.FuncDecl:
 			currentFunc = node.Name.Name
+
 			site = siteInfo{content: content, funcName: currentFunc, fmtSkip: fmtSkip, needsFmt: needsFmt}
 			if slices.Contains(cfg.excluded, qualifiedName(node)) {
 				site.skip = skipExcluded
 			}
+
 			funcReturnsError = returnsError(node)
 			if !funcReturnsError {
 				stack = stack[:len(stack)-1]
@@ -145,10 +148,12 @@ func analyzeFile(pass *analysis.Pass, cfg *config, file *ast.File, content []byt
 			if !funcReturnsError {
 				return true
 			}
+
 			site.stack = stack
 			violations := checkReturnStmt(pass, cfg, site, node)
 			results = append(results, violations...)
 		}
+
 		return true
 	})
 
@@ -159,12 +164,14 @@ func returnsError(fn *ast.FuncDecl) bool {
 	if fn.Type.Results == nil {
 		return false
 	}
+
 	for _, field := range fn.Type.Results.List {
 		ident, ok := field.Type.(*ast.Ident)
 		if ok && ident.Name == "error" {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -183,6 +190,7 @@ func qualifiedName(fn *ast.FuncDecl) string {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return fn.Name.Name
 	}
+
 	t := fn.Recv.List[0].Type
 	for {
 		switch x := t.(type) {
@@ -199,12 +207,15 @@ func qualifiedName(fn *ast.FuncDecl) string {
 			t = x.X
 			continue
 		}
+
 		break
 	}
+
 	id, ok := t.(*ast.Ident)
 	if ok {
 		return id.Name + "." + fn.Name.Name
 	}
+
 	return fn.Name.Name
 }
 
@@ -214,22 +225,27 @@ func fmtAvailability(pass *analysis.Pass, file *ast.File) (skip string, needsImp
 	if pass.Pkg.Scope().Lookup("fmt") != nil {
 		return "the package declares an identifier named fmt", false
 	}
+
 	for _, imp := range file.Imports {
 		importPath, err := strconv.Unquote(imp.Path.Value)
 		if err != nil {
 			continue
 		}
+
 		name := path.Base(importPath)
 		if imp.Name != nil {
 			name = imp.Name.Name
 		}
+
 		if importPath == "fmt" && name == "fmt" {
 			return "", false
 		}
+
 		if name == "fmt" {
 			return "the file imports " + importPath + " under the name fmt", false
 		}
 	}
+
 	return "", true
 }
 
@@ -241,6 +257,7 @@ func checkReturnStmt(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.R
 		if r != nil {
 			results = append(results, r)
 		}
+
 		r = checkFmtErrorf(pass, cfg, site, ret, expr)
 		if r != nil {
 			results = append(results, r)
@@ -252,6 +269,7 @@ func checkReturnStmt(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.R
 
 func checkBareReturn(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.ReturnStmt, expr ast.Expr) *Result {
 	content, funcName := site.content, site.funcName
+
 	ident, ok := expr.(*ast.Ident)
 	if !ok || !isErrorVarName(ident.Name) {
 		return nil
@@ -275,6 +293,7 @@ func checkBareReturn(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.R
 	}
 
 	var fixes []analysis.SuggestedFix
+
 	if identStart >= 0 && identEnd > identStart && identEnd <= len(content) {
 		newText := `fmt.Errorf("` + errCtx + `: %w", ` + ident.Name + `)`
 		fixes = append(fixes, analysis.SuggestedFix{
@@ -318,6 +337,7 @@ func checkBareReturn(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.R
 
 func checkFmtErrorf(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.ReturnStmt, expr ast.Expr) *Result {
 	content, funcName := site.content, site.funcName
+
 	call, ok := expr.(*ast.CallExpr)
 	if !ok {
 		return nil
@@ -327,6 +347,7 @@ func checkFmtErrorf(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.Re
 	if !ok {
 		return nil
 	}
+
 	pkgIdent, ok := sel.X.(*ast.Ident)
 	if !ok || pkgIdent.Name != "fmt" || sel.Sel.Name != "Errorf" {
 		return nil
@@ -340,6 +361,7 @@ func checkFmtErrorf(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.Re
 	if !ok || formatLit.Kind != token.STRING {
 		return nil
 	}
+
 	formatStr := formatLit.Value
 
 	pos := pass.Fset.Position(ret.Pos())
@@ -349,12 +371,14 @@ func checkFmtErrorf(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.Re
 	// Check for %v instead of %w
 	if strings.Contains(formatStr, "%v") && !strings.Contains(formatStr, "%w") {
 		lastArg := call.Args[len(call.Args)-1]
+
 		ident, ok := lastArg.(*ast.Ident)
 		if ok && isErrorVarName(ident.Name) && matchesSeverity(cfg.severity, SeverityCritical) {
 			litStart := pass.Fset.Position(formatLit.Pos()).Offset
 			litEnd := pass.Fset.Position(formatLit.End()).Offset
 
 			var fixes []analysis.SuggestedFix
+
 			if litStart >= 0 && litEnd > litStart && litEnd <= len(content) {
 				oldLit := string(content[litStart:litEnd])
 				newLit := strings.Replace(oldLit, "%v", "%w", 1)
@@ -407,6 +431,7 @@ func checkFmtErrorf(pass *analysis.Pass, cfg *config, site siteInfo, ret *ast.Re
 			}
 
 			var fixes []analysis.SuggestedFix
+
 			if litStart >= 0 && litEnd > litStart && litEnd <= len(content) {
 				newLit := `"` + errCtx + `: %w"`
 				fixes = append(fixes, analysis.SuggestedFix{
@@ -465,6 +490,7 @@ func matchesSeverity(threshold, violation Severity) bool {
 	case SeverityInfo:
 		return true
 	}
+
 	return true
 }
 
@@ -472,11 +498,14 @@ func sourceText(fset *token.FileSet, content []byte, from, to token.Pos) string 
 	if len(content) == 0 {
 		return ""
 	}
+
 	start := fset.Position(from).Offset
+
 	end := fset.Position(to).Offset
 	if start < 0 || end < 0 || start >= len(content) || end > len(content) || start >= end {
 		return ""
 	}
+
 	return string(content[start:end])
 }
 
@@ -484,7 +513,9 @@ func isErrorVarName(name string) bool {
 	if name == "err" {
 		return true
 	}
+
 	lower := strings.ToLower(name)
+
 	return strings.HasSuffix(lower, "err") ||
 		strings.HasSuffix(lower, "error") ||
 		strings.HasPrefix(lower, "err")
@@ -496,6 +527,7 @@ func isGenericMessage(msg string) bool {
 		"", "error", "err", "failed", "failure", "fail",
 		"something went wrong", "unexpected error",
 	}
+
 	return slices.Contains(generic, lower)
 }
 
@@ -508,6 +540,7 @@ func suggestContext(funcName string) string {
 
 	var words []string
 	current := strings.Builder{}
+
 	for i, r := range funcName {
 		if i > 0 && r >= 'A' && r <= 'Z' {
 			if current.Len() > 0 {
@@ -515,8 +548,10 @@ func suggestContext(funcName string) string {
 				current.Reset()
 			}
 		}
+
 		current.WriteRune(r)
 	}
+
 	if current.Len() > 0 {
 		words = append(words, strings.ToLower(current.String()))
 	}

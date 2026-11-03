@@ -12,6 +12,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -48,6 +49,7 @@ func serve(isProd bool) {
 func doStuff(isProd bool) {}
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, envbool.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -61,15 +63,19 @@ func doStuff(isProd bool) {}
 	// serve propagates isProd → doStuff, depth=1 which meets the default maxDepth=1 threshold.
 	// doStuff also has isProd but does not propagate it further (depth=0), so only serve is flagged.
 	found := false
+
 	for _, v := range results {
 		if v.Function != "serve" || v.ParameterName != "isProd" {
 			continue
 		}
+
 		found = true
+
 		if v.PropagationDepth < 1 {
 			t.Errorf("Expected PropagationDepth >= 1 for serve, got %d", v.PropagationDepth)
 		}
 	}
+
 	if !found {
 		t.Errorf("Expected a violation for function 'serve' with parameter 'isProd', got results: %v", results)
 	}
@@ -83,6 +89,7 @@ func foo(enabled bool) {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, envbool.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -92,6 +99,7 @@ func foo(enabled bool) {
 	if !ok {
 		t.Fatalf("Expected []*envbool.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations for non-env bool param 'enabled', got %d", len(results))
 	}
@@ -109,6 +117,7 @@ func setup(isTest bool) {}
 func execute(isTest bool) {}
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, envbool.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -120,15 +129,19 @@ func execute(isTest bool) {}
 	}
 
 	found := false
+
 	for _, v := range results {
 		if v.Function != "run" || v.ParameterName != "isTest" {
 			continue
 		}
+
 		found = true
+
 		if v.PropagationDepth < 1 {
 			t.Errorf("Expected PropagationDepth >= 1, got %d", v.PropagationDepth)
 		}
 	}
+
 	if !found {
 		t.Errorf("Expected a violation for function 'run' with parameter 'isTest'")
 	}

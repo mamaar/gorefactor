@@ -19,20 +19,25 @@ import (
 // exercises).
 func typeCheckSrc(t *testing.T, importPath, src string) *gotypes.Package {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "src.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("failed to parse: %v", err)
 	}
+
 	conf := gotypes.Config{Importer: importer.Default()}
 	info := &gotypes.Info{
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typesPkg, err := conf.Check(importPath, fset, []*ast.File{astFile}, info)
 	if err != nil {
 		t.Fatalf("type-checking failed: %v", err)
 	}
+
 	return typesPkg
 }
 
@@ -40,17 +45,21 @@ func typeCheckSrc(t *testing.T, importPath, src string) *gotypes.Package {
 // function named funcName.
 func paramType(t *testing.T, pkg *gotypes.Package, funcName string, i int) gotypes.Type {
 	t.Helper()
+
 	obj := pkg.Scope().Lookup(funcName)
 	if obj == nil {
 		t.Fatalf("function %q not found in package", funcName)
 	}
+
 	sig, ok := obj.Type().(*gotypes.Signature)
 	if !ok {
 		t.Fatalf("%q is not a function", funcName)
 	}
+
 	if i >= sig.Params().Len() {
 		t.Fatalf("function %q has no parameter %d", funcName, i)
 	}
+
 	return sig.Params().At(i).Type()
 }
 
@@ -60,6 +69,7 @@ func TestIsContextType(t *testing.T) {
 import "context"
 func f(ctx context.Context) {}
 `
+
 		pkg := typeCheckSrc(t, "p", src)
 		if !IsContextType(paramType(t, pkg, "f", 0)) {
 			t.Error("expected context.Context to be recognized")
@@ -74,6 +84,7 @@ func f(ctx context.Context) {}
 import ctxpkg "context"
 func f(ctx ctxpkg.Context) {}
 `
+
 		pkg := typeCheckSrc(t, "p", src)
 		if !IsContextType(paramType(t, pkg, "f", 0)) {
 			t.Error("expected ctxpkg.Context (aliased import) to be recognized as context.Context")
@@ -86,6 +97,7 @@ import "context"
 type Ctx = context.Context
 func f(ctx Ctx) {}
 `
+
 		pkg := typeCheckSrc(t, "p", src)
 		if !IsContextType(paramType(t, pkg, "f", 0)) {
 			t.Error("expected type alias Ctx = context.Context to be recognized")
@@ -100,6 +112,7 @@ func f(ctx Ctx) {}
 type Context struct{}
 func f(ctx Context) {}
 `
+
 		pkg := typeCheckSrc(t, "example.com/localcontext", src)
 		if IsContextType(paramType(t, pkg, "f", 0)) {
 			t.Error("local Context struct in a package named context must not match context.Context")
@@ -110,10 +123,12 @@ func f(ctx Context) {}
 		src := `package p
 func f(e error, a any) {}
 `
+
 		pkg := typeCheckSrc(t, "p", src)
 		if IsContextType(paramType(t, pkg, "f", 0)) {
 			t.Error("error should not be recognized as context.Context")
 		}
+
 		if IsContextType(paramType(t, pkg, "f", 1)) {
 			t.Error("any should not be recognized as context.Context")
 		}
@@ -131,10 +146,12 @@ func TestIsHTTPRequestPtr(t *testing.T) {
 import "net/http"
 func f(r *http.Request, notPtr http.Request) {}
 `
+
 	pkg := typeCheckSrc(t, "p", src)
 	if !IsHTTPRequestPtr(paramType(t, pkg, "f", 0)) {
 		t.Error("expected *http.Request to be recognized")
 	}
+
 	if IsHTTPRequestPtr(paramType(t, pkg, "f", 1)) {
 		t.Error("bare http.Request (non-pointer) must not be recognized")
 	}
@@ -150,15 +167,19 @@ func f(t2 *testing.T, b *testing.B, ff *testing.F, m *testing.M) {}
 	if !IsTestingTB(paramType(t, pkg, "f", 0)) {
 		t.Error("expected *testing.T to be recognized by IsTestingTB")
 	}
+
 	if !IsTestingTB(paramType(t, pkg, "f", 1)) {
 		t.Error("expected *testing.B to be recognized by IsTestingTB")
 	}
+
 	if !IsTestingTB(paramType(t, pkg, "f", 2)) {
 		t.Error("expected *testing.F to be recognized by IsTestingTB")
 	}
+
 	if IsTestingTB(paramType(t, pkg, "f", 3)) {
 		t.Error("*testing.M must not be recognized by IsTestingTB")
 	}
+
 	if !IsTestingM(paramType(t, pkg, "f", 3)) {
 		t.Error("expected *testing.M to be recognized by IsTestingM")
 	}
@@ -169,10 +190,12 @@ func TestIsTestingTBInterface(t *testing.T) {
 import "testing"
 func f(tb testing.TB, v testing.T) {}
 `
+
 	pkg := typeCheckSrc(t, "p", src)
 	if !IsTestingTB(paramType(t, pkg, "f", 0)) {
 		t.Error("expected testing.TB interface to be recognized by IsTestingTB")
 	}
+
 	if IsTestingTB(paramType(t, pkg, "f", 1)) {
 		t.Error("non-pointer testing.T must not be recognized by IsTestingTB")
 	}

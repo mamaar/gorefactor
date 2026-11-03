@@ -28,6 +28,7 @@ func TestFacadeFileName(t *testing.T) {
 // Different expressions can flatten to the same words.
 func TestFacadeFileNameAvoidsTakenNames(t *testing.T) {
 	taken := map[string]bool{"facade_a_tags.go": true}
+
 	got := facadeFileName(facadeKey{expr: "a"}, taken)
 	if got != "facade_a_2_tags.go" {
 		t.Errorf("got %q", got)

@@ -21,11 +21,13 @@ func UncheckedFiles(views []*View, dirs []string) []UncheckedFile {
 	if len(views) == 0 || len(dirs) == 0 {
 		return nil
 	}
+
 	tree := views[0].Parser.sources
 	dirs = slices.Clone(dirs)
 	slices.Sort(dirs)
 
 	var out []UncheckedFile
+
 	for _, dir := range slices.Compact(dirs) {
 		for _, f := range tree.Dir(dir) {
 			u, ok := uncheckedFile(views, f)
@@ -34,6 +36,7 @@ func UncheckedFiles(views []*View, dirs []string) []UncheckedFile {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -48,22 +51,28 @@ func uncheckedFile(views []*View, f *SourceFile) (UncheckedFile, bool) {
 	}
 
 	var reasons []string
+
 	for _, v := range views {
 		if !v.Config.MatchesFile(f) {
 			continue
 		}
+
 		reason := v.uncheckedReason(f)
 		if reason == "" {
 			return UncheckedFile{}, false
 		}
+
 		u.Configs = append(u.Configs, v.Config)
 		reasons = append(reasons, reason)
 	}
+
 	if len(reasons) == 0 {
 		u.Reason = staticReason(f, views[0].Config)
 		return u, true
 	}
+
 	u.Reason = joinReasons(u.Configs, reasons)
+
 	return u, true
 }
 
@@ -74,15 +83,19 @@ func (v *View) uncheckedReason(f *SourceFile) string {
 	if pkg == nil {
 		return "the directory holds no package under this configuration"
 	}
+
 	v.Parser.mu.Lock()
 	defer v.Parser.mu.Unlock()
+
 	if !pkg.TypesChecked {
 		return "the package was not type-checked"
 	}
+
 	err := pkg.ExcludedTestFiles[f.Name]
 	if err != nil {
 		return err.Error()
 	}
+
 	return ""
 }
 
@@ -91,7 +104,9 @@ func (v *View) uncheckedReason(f *SourceFile) string {
 func (v *View) ExcludedTestFiles() map[string]bool {
 	v.Parser.mu.Lock()
 	defer v.Parser.mu.Unlock()
+
 	paths := make(map[string]bool)
+
 	for _, pkg := range v.Workspace.Packages {
 		for name := range pkg.ExcludedTestFiles {
 			f := pkg.TestFiles[name]
@@ -100,6 +115,7 @@ func (v *View) ExcludedTestFiles() map[string]bool {
 			}
 		}
 	}
+
 	return paths
 }
 
@@ -122,10 +138,12 @@ func joinReasons(configs []BuildConfig, reasons []string) string {
 	if len(slices.Compact(slices.Clone(reasons))) == 1 {
 		return reasons[0]
 	}
+
 	parts := make([]string, len(reasons))
 	for i, reason := range reasons {
 		parts[i] = configs[i].String() + ": " + reason
 	}
+
 	return strings.Join(parts, "; ")
 }
 
@@ -142,6 +160,7 @@ func (v *View) ProductionErrors() []ProductionError {
 	v.Parser.mu.Lock()
 	defer v.Parser.mu.Unlock()
 	var out []ProductionError
+
 	for _, pkg := range v.Workspace.Packages {
 		for name, err := range pkg.ProductionErrs {
 			f := pkg.Files[name]
@@ -150,7 +169,9 @@ func (v *View) ProductionErrors() []ProductionError {
 			}
 		}
 	}
+
 	slices.SortFunc(out, compareProductionErrors)
+
 	return out
 }
 

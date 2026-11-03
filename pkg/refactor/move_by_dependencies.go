@@ -35,6 +35,7 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 	}
 
 	var accepted []sharedSymbolCandidate
+
 	for _, c := range op.identifySharedSymbols(ws) {
 		plan, err := planMove(types.MoveSymbolRequest{
 			SymbolName:  c.symbol.Name,
@@ -50,8 +51,10 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 		if len(plan.SkippedSites) > 0 {
 			site := plan.SkippedSites[0]
 			skip(c, fmt.Sprintf("%s:%d %s", site.File, site.Line, site.Reason))
+
 			continue
 		}
+
 		accepted = append(accepted, c)
 	}
 
@@ -60,6 +63,7 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 		for _, c := range group {
 			req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: c.pkg.Path, Name: c.symbol.Name})
 		}
+
 		return planMove(req)
 	}
 	drop := func(i int, reason string) {
@@ -69,17 +73,20 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 
 	for len(accepted) > 0 {
 		plan, err := planGroup(accepted)
+
 		var member *groupMemberError
 		if errors.As(err, &member) && member.index < len(accepted) {
 			drop(member.index, member.err.Error())
 			continue
 		}
+
 		if err != nil {
 			// No member is to blame: skip the first candidate whose
 			// addition to the group breaks it.
 			good, bad := 0, len(accepted)
 			for bad-good > 1 {
 				mid := (good + bad) / 2
+
 				_, midErr := planGroup(accepted[:mid])
 				if midErr == nil {
 					good = mid
@@ -87,10 +94,14 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 					bad, err = mid, midErr
 				}
 			}
+
 			drop(good, err.Error())
+
 			continue
 		}
+
 		plan.SkippedSites = append(plan.SkippedSites, skipped...)
+
 		return plan, nil
 	}
 

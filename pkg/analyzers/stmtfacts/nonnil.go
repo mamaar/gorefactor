@@ -13,6 +13,7 @@ import (
 // literal may run later, or redeclare the name.
 func ProvablyNonNil(stack []ast.Node, ret *ast.ReturnStmt, name string) bool {
 	var loops []ast.Node
+
 	for i := len(stack) - 2; i >= 0; i-- {
 		switch stack[i].(type) {
 		case *ast.FuncLit:
@@ -20,24 +21,29 @@ func ProvablyNonNil(stack []ast.Node, ret *ast.ReturnStmt, name string) bool {
 		case *ast.ForStmt, *ast.RangeStmt:
 			loops = append(loops, stack[i])
 		}
+
 		ifStmt, ok := stack[i].(*ast.IfStmt)
 		if !ok {
 			continue
 		}
+
 		branch := stack[i+1]
 		var proven bool
+
 		switch branch {
 		case ifStmt.Body:
 			proven = nonNilWhen(ifStmt.Cond, name, true)
 		case ifStmt.Else:
 			proven = nonNilWhen(ifStmt.Cond, name, false)
 		}
+
 		if proven && !assignsBefore(branch, name, ret.Pos()) && !slices.ContainsFunc(loops, func(l ast.Node) bool {
 			return assignsBefore(l, name, l.End())
 		}) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -54,12 +60,14 @@ func nonNilWhen(cond ast.Expr, name string, truth bool) bool {
 			return comparesToNil(c, name)
 		}
 	}
+
 	return false
 }
 
 func comparesToNil(c *ast.BinaryExpr, name string) bool {
 	x, xok := c.X.(*ast.Ident)
 	y, yok := c.Y.(*ast.Ident)
+
 	return xok && yok && (x.Name == name && y.Name == "nil" || y.Name == name && x.Name == "nil")
 }
 
@@ -70,10 +78,12 @@ func assignsBefore(root ast.Node, name string, pos token.Pos) bool {
 		return ok && id.Name == name
 	}
 	found := false
+
 	ast.Inspect(root, func(n ast.Node) bool {
 		if n == nil || n.Pos() >= pos || found {
 			return false
 		}
+
 		switch s := n.(type) {
 		case *ast.AssignStmt:
 			found = slices.ContainsFunc(s.Lhs, isName)
@@ -88,7 +98,9 @@ func assignsBefore(root ast.Node, name string, pos token.Pos) bool {
 		case *ast.ValueSpec:
 			found = slices.ContainsFunc(s.Names, func(id *ast.Ident) bool { return id.Name == name })
 		}
+
 		return !found
 	})
+
 	return found
 }

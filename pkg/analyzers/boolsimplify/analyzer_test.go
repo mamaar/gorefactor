@@ -34,6 +34,7 @@ func sample(a, b, c, d bool, x, y int) bool {
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -75,10 +76,12 @@ func createTypedWorkspace(t *testing.T, src string) *types.Workspace {
 		Uses:  make(map[*ast.Ident]gotypes.Object),
 	}
 	conf := gotypes.Config{Importer: importer.Default()}
+
 	typesPkg, err := conf.Check("testpkg", ws.FileSet, []*ast.File{pkg.Files["testpkg.go"].AST}, info)
 	if err != nil {
 		t.Fatalf("type check: %v", err)
 	}
+
 	pkg.TypesInfo = info
 	pkg.TypesPkg = typesPkg
 
@@ -97,6 +100,7 @@ func run(t *testing.T, ws *types.Workspace, opts ...boolsimplify.Option) ([]*boo
 	if !ok && rr.Result != nil {
 		t.Fatalf("unexpected result type %T", rr.Result)
 	}
+
 	return results, rr.Diagnostics
 }
 
@@ -108,6 +112,7 @@ func runSrc(t *testing.T, src string) ([]*boolsimplify.Result, []string, string)
 	ws := createTestWorkspace(t, src)
 	results, diags := run(t, ws)
 	texts, fixed := applyFixes(t, ws.FileSet, src, diags)
+
 	return results, texts, fixed
 }
 
@@ -122,6 +127,7 @@ func applyFixes(t *testing.T, fset *token.FileSet, src string, diags []analysis.
 	t.Helper()
 
 	var edits []edit
+
 	for _, d := range diags {
 		for _, fix := range d.SuggestedFixes {
 			for _, e := range fix.TextEdits {
@@ -133,6 +139,7 @@ func applyFixes(t *testing.T, fset *token.FileSet, src string, diags []analysis.
 			}
 		}
 	}
+
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start < edits[j].start })
 
 	for i := 1; i < len(edits); i++ {
@@ -150,6 +157,7 @@ func applyFixes(t *testing.T, fset *token.FileSet, src string, diags []analysis.
 	for _, edit := range slices.Backward(edits) {
 		patched = patched[:edit.start] + edit.text + patched[edit.end:]
 	}
+
 	return texts, patched
 }
 
@@ -161,11 +169,13 @@ func returnExpr(t *testing.T, src string) ast.Expr {
 	if err != nil {
 		t.Fatalf("parse: %v\n%s", err, src)
 	}
+
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Name.Name != "sample" || fn.Body == nil {
 			continue
 		}
+
 		for _, stmt := range fn.Body.List {
 			ret, ok := stmt.(*ast.ReturnStmt)
 			if ok && len(ret.Results) == 1 {
@@ -173,7 +183,9 @@ func returnExpr(t *testing.T, src string) ast.Expr {
 			}
 		}
 	}
+
 	t.Fatalf("no return statement found in sample:\n%s", src)
+
 	return nil
 }
 
@@ -217,18 +229,22 @@ func TestFixtures(t *testing.T) {
 				if len(texts) != 0 {
 					t.Fatalf("expected no fix, got %q", texts)
 				}
+
 				if len(results) != 0 {
 					t.Fatalf("expected no findings, got %+v", results[0])
 				}
+
 				return
 			}
 
 			if len(texts) != 1 {
 				t.Fatalf("expected exactly 1 fix, got %d: %q", len(texts), texts)
 			}
+
 			if texts[0] != tt.want {
 				t.Errorf("fix text = %q, want %q", texts[0], tt.want)
 			}
+
 			if len(results) != 1 {
 				t.Fatalf("expected exactly 1 finding, got %d", len(results))
 			}
@@ -237,15 +253,19 @@ func TestFixtures(t *testing.T) {
 			if got.Function != "sample" {
 				t.Errorf("function = %q, want sample", got.Function)
 			}
+
 			if got.After != tt.want {
 				t.Errorf("After = %q, want %q", got.After, tt.want)
 			}
+
 			if got.NegationsAfter >= got.NegationsBefore {
 				t.Errorf("negations did not drop: %d -> %d", got.NegationsBefore, got.NegationsAfter)
 			}
+
 			if !strings.HasPrefix(got.Before, "!") {
 				t.Errorf("Before = %q, want the verbatim negation", got.Before)
 			}
+
 			if got.Line == 0 || got.Column == 0 {
 				t.Errorf("missing position: %+v", got)
 			}
@@ -260,6 +280,7 @@ func TestFixedSourceParses(t *testing.T) {
 	for _, tt := range fixtures {
 		t.Run(tt.name, func(t *testing.T) {
 			_, _, fixed := runSrc(t, sampleSrc(tt.body))
+
 			_, err := parser.ParseFile(token.NewFileSet(), "", fixed, parser.ParseComments)
 			if err != nil {
 				t.Fatalf("patched source does not parse: %v\n%s", err, fixed)
@@ -276,6 +297,7 @@ func TestIdempotence(t *testing.T) {
 		if tt.want == "" {
 			continue
 		}
+
 		t.Run(tt.name, func(t *testing.T) {
 			_, texts, fixed := runSrc(t, sampleSrc(tt.body))
 			if len(texts) == 0 {
@@ -324,6 +346,7 @@ func TestSemanticEquivalence(t *testing.T) {
 	for _, expr := range semanticCases {
 		t.Run(expr, func(t *testing.T) {
 			src := sampleSrc("return " + expr)
+
 			_, texts, fixed := runSrc(t, src)
 			if len(texts) == 0 {
 				return
@@ -338,6 +361,7 @@ func TestSemanticEquivalence(t *testing.T) {
 					t.Fatalf("rewrite introduced a new variable %q: %s", v, fixed)
 				}
 			}
+
 			if len(vars) > 4 {
 				t.Fatalf("too many free variables to enumerate: %v", vars)
 			}
@@ -347,7 +371,9 @@ func TestSemanticEquivalence(t *testing.T) {
 				for i, v := range vars {
 					env[v] = mask&(1<<i) != 0
 				}
+
 				want := eval(t, before, env)
+
 				got := eval(t, after, env)
 				if got != want {
 					t.Fatalf("rewrite of %q changed meaning for %v: got %v, want %v\nafter: %s",
@@ -360,11 +386,13 @@ func TestSemanticEquivalence(t *testing.T) {
 
 func exprString(t *testing.T, fixed string) string {
 	t.Helper()
+
 	for line := range strings.SplitSeq(fixed, "\n") {
 		if strings.Contains(line, "return") && !strings.Contains(line, "func ") {
 			return strings.TrimSpace(line)
 		}
 	}
+
 	return fixed
 }
 
@@ -380,6 +408,7 @@ func eval(t *testing.T, e ast.Expr, env map[string]bool) bool {
 		if x.Op != token.NOT {
 			t.Fatalf("unsupported unary operator %s", x.Op)
 		}
+
 		return !eval(t, x.X, env)
 	case *ast.BinaryExpr:
 		switch x.Op {
@@ -388,31 +417,37 @@ func eval(t *testing.T, e ast.Expr, env map[string]bool) bool {
 		case token.LOR:
 			return eval(t, x.X, env) || eval(t, x.Y, env)
 		}
+
 		t.Fatalf("unsupported binary operator %s", x.Op)
 	case *ast.Ident:
 		v, ok := env[x.Name]
 		if !ok {
 			t.Fatalf("undefined variable %q", x.Name)
 		}
+
 		return v
 	}
 
 	t.Fatalf("unsupported expression %T", e)
+
 	return false
 }
 
 func freeVars(e ast.Expr) []string {
 	seen := make(map[string]bool)
 	var names []string
+
 	ast.Inspect(e, func(n ast.Node) bool {
 		ident, ok := n.(*ast.Ident)
 		if ok && !seen[ident.Name] {
 			seen[ident.Name] = true
 			names = append(names, ident.Name)
 		}
+
 		return true
 	})
 	sort.Strings(names)
+
 	return names
 }
 
@@ -450,8 +485,10 @@ func sample(x, y ` + tt.typ + `) bool {
 				if len(texts) != 0 {
 					t.Fatalf("expected no fix for %s operands, got %q", tt.typ, texts)
 				}
+
 				return
 			}
+
 			if len(texts) != 1 || texts[0] != tt.wantFix {
 				t.Fatalf("fixes = %q, want [%q]", texts, tt.wantFix)
 			}
@@ -471,6 +508,7 @@ func sample(x, y float64, a bool) bool {
 `
 	ws := createTypedWorkspace(t, src)
 	_, diags := run(t, ws)
+
 	texts, _ := applyFixes(t, ws.FileSet, src, diags)
 	if len(texts) != 0 {
 		t.Fatalf("expected no fix, got %q", texts)
@@ -511,18 +549,22 @@ func outer() func() bool {
 	}
 }
 `
+
 	results, texts, _ := runSrc(t, src)
 	if len(texts) != 2 {
 		t.Fatalf("expected 2 fixes, got %d: %q", len(texts), texts)
 	}
+
 	for _, text := range texts {
 		if text != "alpha || beta" {
 			t.Errorf("fix text = %q, want %q", text, "alpha || beta")
 		}
 	}
+
 	if results[0].Function != "" {
 		t.Errorf("package-level finding function = %q, want empty", results[0].Function)
 	}
+
 	if results[1].Function != "outer" {
 		t.Errorf("func literal finding function = %q, want outer", results[1].Function)
 	}
@@ -539,6 +581,7 @@ func TestWithMinReduction(t *testing.T) {
 
 	ws := createTestWorkspace(t, src)
 	_, diags := run(t, ws, boolsimplify.WithMinReduction(2))
+
 	texts, _ = applyFixes(t, ws.FileSet, src, diags)
 	if len(texts) != 0 {
 		t.Fatalf("min reduction 2: expected no fix, got %q", texts)
@@ -548,6 +591,7 @@ func TestWithMinReduction(t *testing.T) {
 	// it is clamped.
 	ws = createTestWorkspace(t, src)
 	_, diags = run(t, ws, boolsimplify.WithMinReduction(0))
+
 	texts, _ = applyFixes(t, ws.FileSet, src, diags)
 	if len(texts) != 1 {
 		t.Fatalf("min reduction 0: expected 1 fix, got %q", texts)
@@ -564,6 +608,7 @@ func sample(a, b bool) bool {
 	return !(!a && !b) // trailing note
 }
 `
+
 	_, _, fixed := runSrc(t, src)
 	for _, want := range []string{"// why this matters", "// trailing note", "return a || b"} {
 		if !strings.Contains(fixed, want) {

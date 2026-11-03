@@ -25,9 +25,11 @@ func FindFuncType(ws *types.Workspace, sourceFile, functionName string) (*ast.Fu
 			Message: fmt.Sprintf("source file not found: %s", sourceFile),
 		}
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("find func type: %w", err)
 	}
+
 	if file.AST == nil {
 		return nil, fmt.Errorf("source file has no AST: %s", sourceFile)
 	}
@@ -51,6 +53,7 @@ func FuncTypeParams(ft *ast.FuncType) []FuncParam {
 		return nil
 	}
 	var params []FuncParam
+
 	for _, field := range ft.Params.List {
 		typeStr := ASTExprToString(field.Type)
 		if len(field.Names) == 0 {
@@ -61,6 +64,7 @@ func FuncTypeParams(ft *ast.FuncType) []FuncParam {
 			}
 		}
 	}
+
 	return params
 }
 
@@ -70,31 +74,38 @@ func FindFuncDeclByName(astFile *ast.File, name string) *ast.FuncDecl {
 		parts := strings.SplitN(name, ".", 2)
 		typeName, methodName := parts[0], parts[1]
 		var found *ast.FuncDecl
+
 		ast.Inspect(astFile, func(n ast.Node) bool {
 			fd, ok := n.(*ast.FuncDecl)
 			if !ok || fd.Name == nil || fd.Name.Name != methodName {
 				return true
 			}
+
 			if fd.Recv != nil && len(fd.Recv.List) > 0 {
 				if MatchesReceiverType(fd.Recv.List[0].Type, typeName) {
 					found = fd
 					return false
 				}
 			}
+
 			return true
 		})
+
 		return found
 	}
 
 	var found *ast.FuncDecl
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		fd, ok := n.(*ast.FuncDecl)
 		if ok && fd.Name != nil && fd.Name.Name == name {
 			found = fd
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -110,6 +121,7 @@ func MatchesReceiverType(expr ast.Expr, typeName string) bool {
 	case *ast.IndexListExpr:
 		return MatchesReceiverType(t.X, typeName)
 	}
+
 	return false
 }
 
@@ -124,6 +136,7 @@ func ASTExprToString(expr ast.Expr) string {
 		if t.Len == nil {
 			return "[]" + ASTExprToString(t.Elt)
 		}
+
 		return "[...]" + ASTExprToString(t.Elt)
 	case *ast.SelectorExpr:
 		return ASTExprToString(t.X) + "." + t.Sel.Name

@@ -22,13 +22,16 @@ func TestRemoveImportSpecs_DropsTheDeclarationItEmpties(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fset := token.NewFileSet()
+
 			af, err := parser.ParseFile(fset, "p.go", tc.src, parser.ParseComments)
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			ws := &types.Workspace{FileSet: fset}
 			file := &types.File{Path: "p.go", AST: af, OriginalContent: []byte(tc.src)}
 			var specs []*ast.ImportSpec
+
 			for _, imp := range af.Imports {
 				for _, path := range tc.remove {
 					if imp.Path.Value == `"`+path+`"` {
@@ -36,6 +39,7 @@ func TestRemoveImportSpecs_DropsTheDeclarationItEmpties(t *testing.T) {
 					}
 				}
 			}
+
 			got := string(applyChangesInMemory(file.OriginalContent, removeImportSpecs(ws, file, specs)))
 			if got != tc.want {
 				t.Errorf("got:\n%q\nwant:\n%q", got, tc.want)

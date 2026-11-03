@@ -43,6 +43,7 @@ func unexportedStructFields(file *ast.File, typeName string) map[string]bool {
 		if !ok || typeSpec.Name.Name != typeName {
 			return true
 		}
+
 		structType, ok := typeSpec.Type.(*ast.StructType)
 		if !ok || structType.Fields == nil {
 			return false
@@ -52,9 +53,11 @@ func unexportedStructFields(file *ast.File, typeName string) map[string]bool {
 			if name == "" || isExportedIdent(name) {
 				return
 			}
+
 			if result == nil {
 				result = make(map[string]bool)
 			}
+
 			result[name] = true
 		}
 
@@ -64,10 +67,12 @@ func unexportedStructFields(file *ast.File, typeName string) map[string]bool {
 				addUnexported(embeddedFieldName(field.Type))
 				continue
 			}
+
 			for _, name := range field.Names {
 				addUnexported(name.Name)
 			}
 		}
+
 		return false
 	})
 
@@ -115,16 +120,19 @@ func compositeLitRequiresSamePackage(lit *ast.CompositeLit, unexportedFields map
 	}
 
 	allKeyed := true
+
 	for _, elt := range lit.Elts {
 		kv, ok := elt.(*ast.KeyValueExpr)
 		if !ok {
 			allKeyed = false
 			continue
 		}
+
 		if keyIdent, ok := kv.Key.(*ast.Ident); ok && unexportedFields[keyIdent.Name] {
 			return true
 		}
 	}
+
 	return !allKeyed
 }
 
@@ -141,26 +149,31 @@ func findCompanionFuncDecls(pkg *types.Package, typeFile *types.File, typeName s
 
 	files := []*types.File{typeFile}
 	var others []*types.File
+
 	for _, f := range pkg.Files {
 		if f != typeFile && f.AST != nil {
 			others = append(others, f)
 		}
 	}
+
 	sort.Slice(others, func(i, j int) bool { return others[i].Path < others[j].Path })
 	files = append(files, others...)
 
 	var companions []*ast.FuncDecl
+
 	for _, file := range files {
 		for _, decl := range file.AST.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Recv != nil || fn.Body == nil {
 				continue // only plain functions; methods already move with the type
 			}
+
 			if (file == typeFile || returnsType(fn, typeName)) && containsSamePackageCompositeLit(fn.Body, typeName, unexportedFields) {
 				companions = append(companions, fn)
 			}
 		}
 	}
+
 	return companions
 }
 
@@ -169,36 +182,45 @@ func returnsType(fn *ast.FuncDecl, typeName string) bool {
 	if fn.Type.Results == nil {
 		return false
 	}
+
 	for _, field := range fn.Type.Results.List {
 		expr := field.Type
+
 		star, ok := expr.(*ast.StarExpr)
 		if ok {
 			expr = star.X
 		}
+
 		ident, ok := expr.(*ast.Ident)
 		if ok && ident.Name == typeName {
 			return true
 		}
 	}
+
 	return false
 }
 
 func containsSamePackageCompositeLit(node ast.Node, typeName string, unexportedFields map[string]bool) bool {
 	found := false
+
 	ast.Inspect(node, func(n ast.Node) bool {
 		if found {
 			return false
 		}
+
 		lit, ok := n.(*ast.CompositeLit)
 		if !ok {
 			return true
 		}
+
 		if compositeLitNamesType(lit, typeName) && compositeLitRequiresSamePackage(lit, unexportedFields) {
 			found = true
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -212,21 +234,26 @@ func findStrandedCompositeLiterals(ws *types.Workspace, pkg *types.Package, type
 	}
 
 	var stranded []string
+
 	for _, files := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 		for _, file := range files {
 			if file.AST == nil {
 				continue
 			}
+
 			findCompositeLitsInto(file.AST, typeName, unexportedFields, file.Path, func(lit *ast.CompositeLit, filePath string) {
 				pos := ws.FileSet.Position(lit.Pos())
 				if movingAt(moving, filePath, pos.Offset) != nil {
 					return
 				}
+
 				stranded = append(stranded, fmt.Sprintf("%s:%d", filePath, pos.Line))
 			})
 		}
 	}
+
 	sort.Strings(stranded)
+
 	return stranded
 }
 
@@ -236,9 +263,11 @@ func findCompositeLitsInto(node ast.Node, typeName string, unexportedFields map[
 		if !ok {
 			return true
 		}
+
 		if compositeLitNamesType(lit, typeName) && compositeLitRequiresSamePackage(lit, unexportedFields) {
 			report(lit, filePath)
 		}
+
 		return true
 	})
 }
@@ -269,8 +298,10 @@ func (op *MoveSymbolOperation) resolveCompanionSymbols(resolver *analysis.Symbol
 		if err != nil {
 			return nil, fmt.Errorf("resolving companion function %s for moved type %s: %w", decl.Name.Name, symbol.Name, err)
 		}
+
 		companions = append(companions, companionSymbol)
 	}
+
 	return companions, nil
 }
 
@@ -286,11 +317,14 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		if m.sym.Kind != types.TypeSymbol || file == nil || file.AST == nil || op.staysInPackage(ws, m.pkg) {
 			continue
 		}
+
 		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
+
 		stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving)
 		if len(stranded) == 0 {
 			continue
 		}
+
 		return &groupMemberError{index: m.owner, err: &types.RefactorError{
 			Type: types.VisibilityViolation,
 			Message: fmt.Sprintf(
@@ -306,27 +340,34 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		if checked[m.pkg] || m.pkg.TypesInfo == nil || m.pkg.TypesPkg == nil || op.staysInPackage(ws, m.pkg) {
 			continue
 		}
+
 		checked[m.pkg] = true
 		var found []strandedUse
+
 		for ident, obj := range m.pkg.TypesInfo.Uses {
 			if !unexportedMember(obj, m.pkg.TypesPkg) {
 				continue
 			}
+
 			use := ws.FileSet.Position(ident.Pos())
 			def := ws.FileSet.Position(obj.Pos())
+
 			user, owner := movingAt(moving, use.Filename, use.Offset), movingAt(moving, def.Filename, def.Offset)
 			if (user == nil) != (owner == nil) {
 				found = append(found, strandedUse{user: user, owner: owner, name: obj.Name(), file: use.Filename, line: use.Line, offset: use.Offset})
 			}
 		}
+
 		if len(found) > 0 {
 			return found[firstStrandedUse(found)].error(m.pkg.Path)
 		}
+
 		err := checkSplitInterfaceImplementers(ws, m.pkg, moving)
 		if err != nil {
 			return fmt.Errorf("check for stranded references: %w", err)
 		}
 	}
+
 	return nil
 }
 
@@ -340,44 +381,55 @@ func checkSplitInterfaceImplementers(ws *types.Workspace, pkg *types.Package, mo
 		pos := ws.FileSet.Position(obj.Pos())
 		return movingAt(moving, pos.Filename, pos.Offset)
 	}
+
 	for _, ifaceName := range scope.Names() {
 		ifaceObj, ok := scope.Lookup(ifaceName).(*gotypes.TypeName)
 		if !ok || ifaceObj.IsAlias() {
 			continue
 		}
+
 		iface, ok := ifaceObj.Type().Underlying().(*gotypes.Interface)
+
 		named, isNamed := ifaceObj.Type().(*gotypes.Named)
 		if !ok || !isNamed || named.TypeParams().Len() > 0 {
 			continue
 		}
+
 		method := firstUnexportedMethod(iface, pkg.TypesPkg)
 		if method == nil {
 			continue
 		}
+
 		for _, typeName := range scope.Names() {
 			typeObj, ok := scope.Lookup(typeName).(*gotypes.TypeName)
 			if !ok || typeObj == ifaceObj || typeObj.IsAlias() {
 				continue
 			}
+
 			named, ok := typeObj.Type().(*gotypes.Named)
 			if !ok || named.TypeParams().Len() > 0 || gotypes.IsInterface(named) || !typeImplements(named, iface) {
 				continue
 			}
+
 			typeMover, ifaceMover := moverOf(typeObj), moverOf(ifaceObj)
 			if (typeMover == nil) == (ifaceMover == nil) {
 				continue
 			}
+
 			message := fmt.Sprintf("cannot move %s: it implements %s through the unexported method %s, and %s stays in package %s",
 				typeName, ifaceName, method.Name(), ifaceName, pkg.Path)
+
 			blamed := typeMover
 			if typeMover == nil {
 				blamed = ifaceMover
 				message = fmt.Sprintf("cannot move %s: %s implements it through the unexported method %s, and %s stays in package %s",
 					ifaceName, typeName, method.Name(), typeName, pkg.Path)
 			}
+
 			return &groupMemberError{index: blamed.owner, err: &types.RefactorError{Type: types.VisibilityViolation, Message: message}}
 		}
 	}
+
 	return nil
 }
 
@@ -390,6 +442,7 @@ func firstUnexportedMethod(iface *gotypes.Interface, pkg *gotypes.Package) *goty
 			first = m
 		}
 	}
+
 	return first
 }
 
@@ -411,6 +464,7 @@ func firstStrandedUse(uses []strandedUse) int {
 			first = i
 		}
 	}
+
 	return first
 }
 
@@ -424,6 +478,7 @@ func (u strandedUse) error(sourcePackage string) error {
 			Line: u.line,
 		}}
 	}
+
 	return &groupMemberError{index: u.owner.owner, err: &types.RefactorError{
 		Type: types.VisibilityViolation,
 		Message: fmt.Sprintf("%s cannot move: unexported %s moves with it but is used by code that stays in package %s; move that code along or export %s first",
@@ -439,6 +494,7 @@ func unexportedMember(obj gotypes.Object, pkg *gotypes.Package) bool {
 	if obj == nil || obj.Pkg() != pkg || obj.Exported() {
 		return false
 	}
+
 	switch o := obj.(type) {
 	case *gotypes.Var:
 		return o.IsField() || o.Parent() == pkg.Scope()
@@ -447,6 +503,7 @@ func unexportedMember(obj gotypes.Object, pkg *gotypes.Package) bool {
 	case *gotypes.TypeName, *gotypes.Const:
 		return o.Parent() == pkg.Scope()
 	}
+
 	return false
 }
 
@@ -455,7 +512,9 @@ func joinFieldNames(fields map[string]bool) string {
 	for name := range fields {
 		names = append(names, name)
 	}
+
 	sort.Strings(names)
+
 	return joinStrings(names)
 }
 
@@ -465,11 +524,14 @@ func joinLocations(locs []string) string {
 
 func joinStrings(items []string) string {
 	var out strings.Builder
+
 	for i, item := range items {
 		if i > 0 {
 			out.WriteString(", ")
 		}
+
 		out.WriteString(item)
 	}
+
 	return out.String()
 }

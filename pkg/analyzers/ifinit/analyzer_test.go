@@ -22,6 +22,7 @@ import (
 // "type information unavailable" skip).
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -55,6 +56,7 @@ func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 // must use this helper.
 func createTypeCheckedWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -106,13 +108,16 @@ func applyChanges(t *testing.T, src string, changes []types.Change) string {
 	sort.SliceStable(changes, func(i, j int) bool {
 		return changes[i].Start > changes[j].Start
 	})
+
 	content := src
 	for _, c := range changes {
 		if c.Start < 0 || c.End > len(content) || c.Start > c.End {
 			t.Fatalf("invalid change bounds: start=%d end=%d len=%d", c.Start, c.End, len(content))
 		}
+
 		content = content[:c.Start] + c.NewText + content[c.End:]
 	}
+
 	return content
 }
 
@@ -121,10 +126,12 @@ func applyChanges(t *testing.T, src string, changes []types.Change) string {
 func mustFormat(t *testing.T, src string, changes []types.Change) string {
 	t.Helper()
 	applied := applyChanges(t, src, changes)
+
 	formatted, err := format.Source([]byte(applied))
 	if err != nil {
 		t.Fatalf("fixed source does not parse: %v\n--- applied (unformatted) ---\n%s", err, applied)
 	}
+
 	return string(formatted)
 }
 
@@ -133,7 +140,9 @@ func mustFormat(t *testing.T, src string, changes []types.Change) string {
 // helpers above, which mirror this project's TypeCheckPackage).
 func typeCheckErrors(t *testing.T, src string) []string {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, "check.go", src, 0)
 	if err != nil {
 		t.Fatalf("re-parse failed: %v\n--- source ---\n%s", err, src)
@@ -149,6 +158,7 @@ func typeCheckErrors(t *testing.T, src string) []string {
 		Uses:  make(map[*ast.Ident]gotypes.Object),
 	}
 	_, _ = conf.Check("check", fset, []*ast.File{f}, info)
+
 	return errs
 }
 
@@ -159,10 +169,12 @@ func typeCheckErrors(t *testing.T, src string) []string {
 func mustCompile(t *testing.T, src string, changes []types.Change) string {
 	t.Helper()
 	formatted := mustFormat(t, src, changes)
+
 	errs := typeCheckErrors(t, formatted)
 	if len(errs) > 0 {
 		t.Fatalf("fixed source does not type-check: %v\n--- formatted ---\n%s", errs, formatted)
 	}
+
 	return formatted
 }
 
@@ -180,6 +192,7 @@ func foo() error {
 func bar() (int, error) { return 0, nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -189,6 +202,7 @@ func bar() (int, error) { return 0, nil }
 	if !ok {
 		t.Fatalf("Expected []*ifinit.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
@@ -197,21 +211,27 @@ func bar() (int, error) { return 0, nil }
 	if v.Function != "foo" {
 		t.Errorf("Expected function 'foo', got %q", v.Function)
 	}
+
 	if len(v.Variables) != 2 || v.Variables[0] != "x" || v.Variables[1] != "err" {
 		t.Errorf("Expected variables [x, err], got %v", v.Variables)
 	}
+
 	if v.Expression != "bar()" {
 		t.Errorf("Expected expression 'bar()', got %q", v.Expression)
 	}
+
 	if v.Line != 4 {
 		t.Errorf("Expected line 4, got %d", v.Line)
 	}
+
 	if v.Kind != "if" {
 		t.Errorf("Expected kind 'if', got %q", v.Kind)
 	}
+
 	if v.IsElseIf {
 		t.Errorf("Expected IsElseIf false")
 	}
+
 	if v.Skipped {
 		t.Errorf("Expected Skipped false")
 	}
@@ -243,6 +263,7 @@ func foo() error {
 func bar() (int, error) { return 0, nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -268,6 +289,7 @@ func foo() error {
 func bar() error { return nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -277,15 +299,18 @@ func bar() error { return nil }
 	if !ok || len(results) != 1 {
 		t.Fatalf("Expected 1 violation for plain assignment, got %d", len(results))
 	}
+
 	if results[0].Skipped {
 		t.Errorf("Expected plain assignment not to be skipped")
 	}
 
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	formatted := mustFormat(t, src, changes)
 	if !strings.Contains(formatted, "err = bar()") {
 		t.Errorf("Expected hoisted 'err = bar()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "if err != nil {") {
 		t.Errorf("Expected 'if err != nil {', got:\n%s", formatted)
 	}
@@ -310,6 +335,7 @@ func bar() (int, error) { return 0, nil }
 func baz() (int, error) { return 0, nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -335,6 +361,7 @@ func foo() error {
 func bar() (int, error) { return 0, nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -376,6 +403,7 @@ func f() int { return 0 }
 func g() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -385,9 +413,11 @@ func g() int { return 0 }
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations (head + else-if), got %d", len(results))
 	}
+
 	if results[0].IsElseIf {
 		t.Errorf("Expected first result to not be an else-if")
 	}
+
 	if !results[1].IsElseIf {
 		t.Errorf("Expected second result to be an else-if")
 	}
@@ -396,9 +426,11 @@ func g() int { return 0 }
 	if len(changes) != 3 {
 		t.Fatalf("Expected 3 text edits (1 head + 2 else-if), got %d", len(changes))
 	}
+
 	if changes[1].NewText != "{\n\t\tb := g()\n\t\tif b == 2 {" {
 		t.Errorf("else-if preview header is not splice-indented:\n%s", changes[1].NewText)
 	}
+
 	if changes[2].NewText != "\n\t}" {
 		t.Errorf("else-if preview closing brace is not splice-indented: %q", changes[2].NewText)
 	}
@@ -408,12 +440,15 @@ func g() int { return 0 }
 	if !strings.Contains(formatted, "a := f()") {
 		t.Errorf("Expected hoisted 'a := f()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "} else {") {
 		t.Errorf("Expected desugared '} else {', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "b := g()") {
 		t.Errorf("Expected hoisted 'b := g()' inside the wrapping block, got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "if b == 2 {") {
 		t.Errorf("Expected nested 'if b == 2 {', got:\n%s", formatted)
 	}
@@ -438,6 +473,7 @@ func g() int { return 0 }
 func h() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -459,6 +495,7 @@ func h() int { return 0 }
 	if strings.Count(formatted, "} else {") != 2 {
 		t.Errorf("Expected two desugared '} else {' blocks, got:\n%s", formatted)
 	}
+
 	for _, want := range []string{"a := f()", "b := g()", "c := h()", "if b == 2 {", "if c == 3 {"} {
 		if !strings.Contains(formatted, want) {
 			t.Errorf("Expected %q in formatted output, got:\n%s", want, formatted)
@@ -483,6 +520,7 @@ func f() int { return 0 }
 func g() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -499,6 +537,7 @@ func g() int { return 0 }
 	if !strings.Contains(formatted, "b := g()") {
 		t.Errorf("Expected hoisted 'b := g()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "return 3") {
 		t.Errorf("Expected trailing else body preserved, got:\n%s", formatted)
 	}
@@ -526,6 +565,7 @@ func a() error { return nil }
 func b() error { return nil }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -535,6 +575,7 @@ func b() error { return nil }
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations, got %d", len(results))
 	}
+
 	if results[0].Skipped || results[1].Skipped {
 		t.Fatalf("Expected neither result skipped, got %+v / %+v", results[0], results[1])
 	}
@@ -545,9 +586,11 @@ func b() error { return nil }
 	if !strings.Contains(formatted, "err := a()") {
 		t.Errorf("Expected first hoist to stay 'err := a()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "err = b()") {
 		t.Errorf("Expected second hoist to downgrade to 'err = b()', got:\n%s", formatted)
 	}
+
 	if strings.Contains(formatted, "err := b()") {
 		t.Errorf("Did not expect 'err := b()' (should have been downgraded), got:\n%s", formatted)
 	}
@@ -574,6 +617,7 @@ func b() error { return nil }
 func c() error { return nil }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -583,6 +627,7 @@ func c() error { return nil }
 	if len(results) != 3 {
 		t.Fatalf("Expected 3 violations, got %d", len(results))
 	}
+
 	for i, r := range results {
 		if r.Skipped {
 			t.Fatalf("result %d unexpectedly skipped: %+v", i, r)
@@ -595,9 +640,11 @@ func c() error { return nil }
 	if !strings.Contains(formatted, "err := a()") {
 		t.Errorf("Expected first hoist to stay 'err := a()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "err = b()") {
 		t.Errorf("Expected second hoist to downgrade to 'err = b()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "err = c()") {
 		t.Errorf("Expected third hoist to downgrade to 'err = c()', got:\n%s", formatted)
 	}
@@ -621,6 +668,7 @@ func a() error { return nil }
 func f() (int, error) { return 0, nil }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -630,6 +678,7 @@ func f() (int, error) { return 0, nil }
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations, got %d", len(results))
 	}
+
 	if results[1].Skipped {
 		t.Fatalf("Expected partial-collision result not skipped: %+v", results[1])
 	}
@@ -671,6 +720,7 @@ func okNumber() int    { return 0 }
 func trouble() string  { return "" }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -680,9 +730,11 @@ func trouble() string  { return "" }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
+
 	if !results[0].Skipped {
 		t.Fatalf("Expected the incompatible collision to be skipped, got %+v", results[0])
 	}
+
 	if results[0].SkipReason == "" {
 		t.Errorf("Expected a non-empty SkipReason")
 	}
@@ -690,6 +742,7 @@ func trouble() string  { return "" }
 	if len(rr.Diagnostics) != 1 {
 		t.Fatalf("Expected 1 diagnostic, got %d", len(rr.Diagnostics))
 	}
+
 	if len(rr.Diagnostics[0].SuggestedFixes) != 0 {
 		t.Errorf("Expected no SuggestedFixes for a skipped site, got %d", len(rr.Diagnostics[0].SuggestedFixes))
 	}
@@ -712,6 +765,7 @@ func foo() {
 func compute() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -721,6 +775,7 @@ func compute() int { return 0 }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if results[0].Kind != "switch" {
 		t.Errorf("Expected kind 'switch', got %q", results[0].Kind)
 	}
@@ -731,6 +786,7 @@ func compute() int { return 0 }
 	if !strings.Contains(formatted, "v := compute()") {
 		t.Errorf("Expected hoisted 'v := compute()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "switch v {") {
 		t.Errorf("Expected 'switch v {', got:\n%s", formatted)
 	}
@@ -748,6 +804,7 @@ func foo() {
 func compute() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -764,6 +821,7 @@ func compute() int { return 0 }
 	if !strings.Contains(formatted, "v := compute()") {
 		t.Errorf("Expected hoisted 'v := compute()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "switch {") {
 		t.Errorf("Expected nil-tag 'switch {', got:\n%s", formatted)
 	}
@@ -783,6 +841,7 @@ func foo(x interface{}) {
 func f() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -792,6 +851,7 @@ func f() int { return 0 }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if results[0].Kind != "type_switch" {
 		t.Errorf("Expected kind 'type_switch', got %q", results[0].Kind)
 	}
@@ -802,6 +862,7 @@ func f() int { return 0 }
 	if !strings.Contains(formatted, "v := f()") {
 		t.Errorf("Expected hoisted 'v := f()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "switch y := x.(type) {") {
 		t.Errorf("Expected untouched Assign 'switch y := x.(type) {', got:\n%s", formatted)
 	}
@@ -817,6 +878,7 @@ func foo() {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -841,6 +903,7 @@ Loop:
 func f() int { return 0 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -850,6 +913,7 @@ func f() int { return 0 }
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations for a labeled if, got %d", len(results))
 	}
+
 	if len(rr.Diagnostics) != 0 {
 		t.Errorf("Expected 0 diagnostics for a labeled if, got %d", len(rr.Diagnostics))
 	}
@@ -868,6 +932,7 @@ func foo() error {
 func f() (int, error) { return 0, nil }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -877,14 +942,17 @@ func f() (int, error) { return 0, nil }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if len(results[0].Variables) != 2 || results[0].Variables[0] != "_" || results[0].Variables[1] != "err" {
 		t.Errorf("Expected variables [_, err], got %v", results[0].Variables)
 	}
+
 	if results[0].Skipped {
 		t.Errorf("Expected blank-identifier case not to be skipped")
 	}
 
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	formatted := mustFormat(t, src, changes)
 	if !strings.Contains(formatted, "_, err := f()") {
 		t.Errorf("Expected unchanged '_, err := f()', got:\n%s", formatted)
@@ -916,6 +984,7 @@ func foo(x interface{}) {
 func f() int { return 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -950,6 +1019,7 @@ func foo(ch chan int) {
 func g() int { return 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -987,6 +1057,7 @@ func foo(tag int) {
 func f() int { return 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -996,6 +1067,7 @@ func f() int { return 0 }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if results[0].Skipped {
 		t.Fatalf("Expected no collision (ordinary switch clauses have no implicit variable), got %+v", results[0])
 	}
@@ -1033,6 +1105,7 @@ func f() int { return 0 }
 func g() int { return 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1042,6 +1115,7 @@ func g() int { return 0 }
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations (one per sibling clause), got %d", len(results))
 	}
+
 	for i, r := range results {
 		if r.Skipped {
 			t.Fatalf("result %d unexpectedly skipped: %+v", i, r)
@@ -1054,6 +1128,7 @@ func g() int { return 0 }
 	if strings.Count(formatted, "w := f()") != 1 {
 		t.Errorf("Expected exactly one 'w := f()', got:\n%s", formatted)
 	}
+
 	if strings.Count(formatted, "w := g()") != 1 {
 		t.Errorf("Expected exactly one 'w := g()' (not downgraded to '=' — the sibling "+
 			"clause's 'w' must not leak into this clause's scope), got:\n%s", formatted)
@@ -1088,6 +1163,7 @@ func (pg *PackageGraph) AddPackage(path string) *PackageNode {
 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1097,6 +1173,7 @@ func (pg *PackageGraph) AddPackage(path string) *PackageNode {
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation (the if), got %d", len(results))
 	}
+
 	if results[0].Skipped {
 		t.Fatalf("Expected the hoist not to be skipped: %+v", results[0])
 	}
@@ -1104,6 +1181,7 @@ func (pg *PackageGraph) AddPackage(path string) *PackageNode {
 	if len(rr.Diagnostics) != 1 || len(rr.Diagnostics[0].SuggestedFixes) != 1 {
 		t.Fatalf("Expected 1 diagnostic with 1 suggested fix, got %+v", rr.Diagnostics)
 	}
+
 	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
 	if got != 2 {
 		t.Fatalf("Expected 2 TextEdits in the one SuggestedFix (hoist + cascaded downgrade), got %d", got)
@@ -1119,13 +1197,16 @@ func (pg *PackageGraph) AddPackage(path string) *PackageNode {
 	if !strings.Contains(formatted, "node, exists := pg.Nodes[path]") {
 		t.Errorf("Expected hoisted 'node, exists := pg.Nodes[path]', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "if exists {") {
 		t.Errorf("Expected 'if exists {', got:\n%s", formatted)
 	}
+
 	if strings.Contains(formatted, "node := &PackageNode{}") {
 		t.Fatalf("must not leave a bare 'node := &PackageNode{}' — it now collides with the "+
 			"hoisted 'node' in the same block, got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "node = &PackageNode{}") {
 		t.Errorf("Expected the later statement cascaded to 'node = &PackageNode{}', got:\n%s", formatted)
 	}
@@ -1151,6 +1232,7 @@ func g() int          { return 0 }
 func h() (int, int)   { return 0, 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1160,6 +1242,7 @@ func h() (int, int)   { return 0, 0 }
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations, got %d", len(results))
 	}
+
 	for i, r := range results {
 		if r.Skipped {
 			t.Fatalf("result %d unexpectedly skipped: %+v", i, r)
@@ -1188,12 +1271,15 @@ func h() (int, int)   { return 0, 0 }
 	if !strings.Contains(formatted, "a := f()") {
 		t.Errorf("Expected hoisted 'a := f()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "b := g()") {
 		t.Errorf("Expected hoisted 'b := g()', got:\n%s", formatted)
 	}
+
 	if strings.Contains(formatted, "a, b := h()") {
 		t.Fatalf("must not leave a bare 'a, b := h()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "a, b = h()") {
 		t.Errorf("Expected 'a, b := h()' cascaded to 'a, b = h()', got:\n%s", formatted)
 	}
@@ -1217,6 +1303,7 @@ func lookup() (int, bool) { return 0, false }
 func create() int         { return 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1226,9 +1313,11 @@ func create() int         { return 0 }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if results[0].Skipped {
 		t.Fatalf("Expected the hoist not to be skipped: %+v", results[0])
 	}
+
 	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
 	if got != 1 {
 		t.Errorf("Expected 1 TextEdit — the nested block's own 'node' is a different "+
@@ -1241,6 +1330,7 @@ func create() int         { return 0 }
 	if !strings.Contains(formatted, "node, exists := lookup()") {
 		t.Errorf("Expected hoisted 'node, exists := lookup()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "node := create()") {
 		t.Errorf("Expected the nested block's 'node := create()' to stay ':=' "+
 			"(different scope, no cascade), got:\n%s", formatted)
@@ -1263,6 +1353,7 @@ func lookup() (int, bool)  { return 0, false }
 func create() (int, int)   { return 0, 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1272,9 +1363,11 @@ func create() (int, int)   { return 0, 0 }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if results[0].Skipped {
 		t.Fatalf("Expected the hoist not to be skipped: %+v", results[0])
 	}
+
 	got := len(rr.Diagnostics[0].SuggestedFixes[0].TextEdits)
 	if got != 1 {
 		t.Errorf("Expected 1 TextEdit — 'node, other := create()' is only a partial "+
@@ -1304,6 +1397,7 @@ func lookup() (int, bool) { return 0, false }
 func makeString() string  { return "" }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1313,13 +1407,16 @@ func makeString() string  { return "" }
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation, got %d", len(results))
 	}
+
 	if !results[0].Skipped {
 		t.Fatalf("Expected the hoist to be skipped (the later ':=' would become type-"+
 			"incompatible once downgraded), got %+v", results[0])
 	}
+
 	if results[0].SkipReason == "" {
 		t.Errorf("Expected a non-empty SkipReason")
 	}
+
 	if !strings.Contains(results[0].SkipReason, "reuse the hoisted variable") {
 		t.Errorf("Expected SkipReason to explain the cascade failure, got %q", results[0].SkipReason)
 	}
@@ -1332,6 +1429,7 @@ func makeString() string  { return "" }
 	if len(changes) != 0 {
 		t.Fatalf("Expected no changes, got %d", len(changes))
 	}
+
 	applied := applyChanges(t, src, changes)
 	if applied != src {
 		t.Errorf("Expected the file to be left byte-identical when the hoist is skipped,\n--- got ---\n%s\n--- want ---\n%s", applied, src)
@@ -1357,6 +1455,7 @@ func g() int  { return 0 }
 func h() int  { return 0 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -1366,6 +1465,7 @@ func h() int  { return 0 }
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations, got %d", len(results))
 	}
+
 	for i, r := range results {
 		if r.Skipped {
 			t.Fatalf("result %d unexpectedly skipped: %+v", i, r)
@@ -1401,12 +1501,15 @@ func h() int  { return 0 }
 	if !strings.Contains(formatted, "a := f()") {
 		t.Errorf("Expected hoisted 'a := f()', got:\n%s", formatted)
 	}
+
 	if !strings.Contains(formatted, "a2 := g()") {
 		t.Errorf("Expected hoisted 'a2 := g()', got:\n%s", formatted)
 	}
+
 	if strings.Count(formatted, "a = h()") != 1 {
 		t.Errorf("Expected exactly one 'a = h()', got:\n%s", formatted)
 	}
+
 	if strings.Contains(formatted, "a := h()") {
 		t.Errorf("must not leave a bare 'a := h()', got:\n%s", formatted)
 	}
@@ -1417,26 +1520,33 @@ func h() int  { return 0 }
 // produced for that site.
 func assertSkipped(t *testing.T, src, wantReason string) {
 	t.Helper()
+
 	errs := typeCheckErrors(t, src)
 	if len(errs) > 0 {
 		t.Fatalf("test source does not type-check: %v", errs)
 	}
+
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	results, _ := rr.Result.([]*ifinit.Result)
 	if len(results) == 0 {
 		t.Fatal("expected a violation")
 	}
+
 	if !results[0].Skipped {
 		formatted := mustFormat(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		t.Fatalf("expected the first site skipped, got fix:\n%s", formatted)
 	}
+
 	if !strings.Contains(results[0].SkipReason, wantReason) {
 		t.Errorf("SkipReason = %q, want it to contain %q", results[0].SkipReason, wantReason)
 	}
+
 	if len(rr.Diagnostics[0].SuggestedFixes) != 0 {
 		t.Errorf("a skipped site must carry no fix")
 	}
@@ -1563,19 +1673,24 @@ func m() *myErr              { return nil }
 func h() (int, string)       { return 0, "" }
 `
 			ws := createTypeCheckedWorkspace(t, src)
+
 			errs := typeCheckErrors(t, src)
 			if len(errs) > 0 {
 				t.Fatalf("test source does not type-check: %v", errs)
 			}
+
 			rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			results, _ := rr.Result.([]*ifinit.Result)
+
 			last := results[len(results)-1]
 			if !last.Skipped {
 				t.Fatalf("expected the last site skipped, got %+v", last)
 			}
+
 			mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 		})
 	}
@@ -1600,17 +1715,21 @@ func f() int { return 2 }
 func c() int { return 3 }
 `
 	ws := createTypeCheckedWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	results, _ := rr.Result.([]*ifinit.Result)
 	if len(results) != 2 {
 		t.Fatalf("Expected 2 violations, got %d", len(results))
 	}
+
 	if !results[1].Skipped {
 		t.Errorf("third split must be skipped: reusing x would clobber f(); got %+v", results[1])
 	}
+
 	mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
 }
 
@@ -1635,17 +1754,21 @@ func a() int { return 1 }
 func c() int { return 3 }
 `
 			ws := createTypeCheckedWorkspace(t, src)
+
 			rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			results, _ := rr.Result.([]*ifinit.Result)
 			if len(results) != 2 {
 				t.Fatalf("Expected 2 violations, got %d", len(results))
 			}
+
 			if results[0].Skipped {
 				t.Errorf("first split should still be hoisted: %+v", results[0])
 			}
+
 			if !results[1].Skipped {
 				t.Errorf("second split must be skipped: x is captured by the first if; got %+v", results[1])
 			}

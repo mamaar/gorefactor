@@ -31,10 +31,12 @@ func buildTestIndex(t *testing.T, src, depSrc string) *testIndex {
 
 	check := func(path, filename, code string) (*gotypes.Package, *gotypes.Info, *ast.File) {
 		t.Helper()
+
 		f, err := parser.ParseFile(fset, filename, code, 0)
 		if err != nil {
 			t.Fatalf("parse %s: %v", path, err)
 		}
+
 		info := &gotypes.Info{
 			Types: make(map[ast.Expr]gotypes.TypeAndValue),
 			Defs:  make(map[*ast.Ident]gotypes.Object),
@@ -46,17 +48,21 @@ func buildTestIndex(t *testing.T, src, depSrc string) *testIndex {
 				if ok {
 					return pkg, nil
 				}
+
 				return nil, fmt.Errorf("unknown import %q", p)
 			}),
 		}
+
 		pkg, err := conf.Check(path, fset, []*ast.File{f}, info)
 		if err != nil {
 			t.Fatalf("type-check %s: %v", path, err)
 		}
+
 		return pkg, info, f
 	}
 
 	ti := &testIndex{}
+
 	if depSrc != "" {
 		depPkg, _, _ := check(testDepPath, "dep.go", depSrc)
 		imports[testDepPath] = depPkg
@@ -66,6 +72,7 @@ func buildTestIndex(t *testing.T, src, depSrc string) *testIndex {
 	pkg, info, file := check("example.com/p", "p.go", src)
 	ti.pkgs = append([]*gotypes.Package{pkg}, ti.pkgs...)
 	ti.ix = newPackageIndex(inspector.New([]*ast.File{file}), pkg, info)
+
 	return ti
 }
 
@@ -81,23 +88,29 @@ func (ti *testIndex) lookup(t *testing.T, name string) gotypes.Object {
 			if obj != nil {
 				return canonicalObject(obj)
 			}
+
 			continue
 		}
+
 		obj := pkg.Scope().Lookup(typeName)
 		if obj == nil {
 			continue
 		}
+
 		named, ok := obj.Type().(*gotypes.Named)
 		if !ok {
 			continue
 		}
+
 		for m := range named.Methods() {
 			if m.Name() == methodName {
 				return canonicalObject(m)
 			}
 		}
 	}
+
 	t.Fatalf("callee %q not found in any test package", name)
+
 	return nil
 }
 
@@ -242,13 +255,16 @@ func g(fn func()) {}`,
 			callee := ti.lookup(t, tt.callee)
 
 			var got int
+
 			for cur := range ti.ix.Calls(callee) {
 				_, ok := cur.Node().(*ast.CallExpr)
 				if !ok {
 					t.Errorf("Calls yielded %T, want *ast.CallExpr", cur.Node())
 				}
+
 				got++
 			}
+
 			if got != tt.want {
 				t.Errorf("Calls(%s) yielded %d call sites, want %d", tt.callee, got, tt.want)
 			}
@@ -268,6 +284,7 @@ func use() { f(); f(); f() }`, "")
 		got++
 		break
 	}
+
 	if got != 1 {
 		t.Errorf("early-exit yielded %d call sites, want 1", got)
 	}

@@ -51,9 +51,12 @@ func isGoTestEntryPoint(name string) bool {
 		if !ok {
 			continue
 		}
+
 		r, _ := utf8.DecodeRuneInString(rest)
+
 		return rest == "" || !unicode.IsLower(r)
 	}
+
 	return false
 }
 
@@ -71,6 +74,7 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte) []*Result 
 		if funcDecl.Name.Name == "main" || funcDecl.Name.Name == "init" {
 			return false
 		}
+
 		if isTestFile && funcDecl.Recv == nil && isGoTestEntryPoint(funcDecl.Name.Name) {
 			return false
 		}
@@ -116,11 +120,13 @@ func hasContextParam(funcDecl *ast.FuncDecl) bool {
 	if funcDecl.Type.Params == nil {
 		return false
 	}
+
 	for _, field := range funcDecl.Type.Params.List {
 		if isContextType(field.Type) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -129,33 +135,41 @@ func isContextType(expr ast.Expr) bool {
 	if !ok {
 		return false
 	}
+
 	pkg, ok := sel.X.(*ast.Ident)
 	if !ok {
 		return false
 	}
+
 	return pkg.Name == "context" && sel.Sel.Name == "Context"
 }
 
 func detectContextCreation(body *ast.BlockStmt) []string {
 	var calls []string
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
+
 		sel, ok := call.Fun.(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
+
 		pkg, ok := sel.X.(*ast.Ident)
 		if !ok {
 			return true
 		}
+
 		if pkg.Name == "context" && (sel.Sel.Name == "TODO" || sel.Sel.Name == "Background") {
 			calls = append(calls, "context."+sel.Sel.Name+"()")
 		}
+
 		return true
 	})
+
 	return calls
 }
 
@@ -163,10 +177,13 @@ func extractSignatureText(fset *token.FileSet, content []byte, funcDecl *ast.Fun
 	if len(content) == 0 {
 		return ""
 	}
+
 	start := fset.Position(funcDecl.Pos()).Offset
+
 	end := fset.Position(funcDecl.Body.Lbrace).Offset
 	if start < 0 || end < 0 || start >= len(content) || end > len(content) || start >= end {
 		return ""
 	}
+
 	return string(bytes.TrimSpace(content[start:end]))
 }

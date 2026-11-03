@@ -24,6 +24,7 @@ func TestFindFile_BareNameMustBeUnique(t *testing.T) {
 		!strings.Contains(err.Error(), "/ws/a/x.go") || !strings.Contains(err.Error(), "/ws/b/x.go") {
 		t.Errorf("bare x.go: want ambiguity error naming both files, got %v", err)
 	}
+
 	for _, tc := range []struct{ path, want string }{
 		{"y.go", "/ws/b/y.go"},
 		{"y_test.go", "/ws/b/y_test.go"},
@@ -35,6 +36,7 @@ func TestFindFile_BareNameMustBeUnique(t *testing.T) {
 			t.Errorf("FindFile(%q) = %v, %v; want %s", tc.path, f, err, tc.want)
 		}
 	}
+
 	f, _, err := ws.FindFile("nope.go")
 	if f != nil || !errors.Is(err, ErrFileNotFound) {
 		t.Errorf("missing file: got %v, %v; want ErrFileNotFound", f, err)

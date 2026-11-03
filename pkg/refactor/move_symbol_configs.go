@@ -38,34 +38,42 @@ func (p *moveSymbolPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (conf
 	// Type-checked so the run can tell which files no view checks.
 	p.indexOf(v)
 	var res configResult
+
 	var err error
 	if v == p.views[0] {
 		res, err = p.planPrimary(v)
 	} else {
 		res = p.check(v)
 	}
+
 	if err != nil {
 		return configResult{}, err
 	}
+
 	res.declared = types.SymbolKeySet{}
 	p.planned(v, res.plan)
+
 	return res, nil
 }
 
 func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) {
 	op := &MoveSymbolOperation{Request: p.req}
+
 	err := op.Validate(v.Workspace)
 	if err != nil {
 		err = fmt.Errorf("move operation validation failed: %w", err)
 		if isSymbolNotFound(err) {
 			return configResult{absent: err}, nil
 		}
+
 		return configResult{}, err
 	}
+
 	plan, err := op.Execute(v.Workspace)
 	if err != nil {
 		return configResult{}, fmt.Errorf("failed to generate move plan: %w", err)
 	}
+
 	plan.Operations = []types.Operation{op}
 
 	p.moved = make(map[types.SymbolKey]string, len(op.moved))
@@ -75,12 +83,15 @@ func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) 
 			p.moved[key] = sym.File
 		}
 	}
+
 	p.rewritten = make(map[refSite]bool, len(op.references))
 	for _, ref := range op.references {
 		p.rewritten[refSite{ref.File, ref.Offset}] = true
 	}
+
 	p.target, p.targetImports, p.importers = op.target, op.targetImports, op.importers
 	op.moved, op.references = nil, nil
+
 	return configResult{plan: plan, changed: keySet(p.moved)}, nil
 }
 
@@ -89,21 +100,25 @@ func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) 
 func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 	ws := v.Workspace
 	resolver := quietResolver(ws)
+
 	if len(p.moved) == 0 {
 		for _, ref := range p.req.Refs() {
 			pkg := ws.Packages[ref.Package]
 			if pkg == nil || pkg.Symbols == nil {
 				continue
 			}
+
 			sym, err := resolver.ResolveSymbol(pkg, ref.Name)
 			if err == nil {
 				p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
 			}
 		}
+
 		return configResult{}
 	}
 
 	var res configResult
+
 	target := ws.Packages[p.req.ToPackage]
 	for _, key := range orderedKeys(keySet(p.moved)) {
 		sym := symbolForKey(ws, key)
@@ -115,23 +130,28 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			p.object(v, "%s is declared in %s instead of %s; the move would leave that declaration behind", key.Name, sym.File, p.moved[key])
 			continue
 		}
+
 		if target != nil && target.Symbols != nil && findPackageForFile(ws, sym.File) != target {
 			_, err := resolver.ResolveSymbol(target, key.Name)
 			if err == nil {
 				p.object(v, "symbol %s already exists in target package %s", key.Name, p.req.ToPackage)
 			}
 		}
+
 		refs, err := resolver.FindReferences(sym)
 		if err != nil {
 			p.object(v, "references to %s could not be found: %v", key.Name, err)
 			continue
 		}
+
 		res = p.collectBlockers(refs, ws, v, key, res)
 	}
+
 	cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers)
 	if cycle != nil {
 		p.object(v, "the move would create an import cycle: %s", strings.Join(cycle, " -> "))
 	}
+
 	return res
 }
 
@@ -141,10 +161,12 @@ func (p *moveSymbolPlanner) collectBlockers(refs []*types.Reference, ws *types.W
 			p.object(v, "%s is referenced at %s:%d, in a generated file; change the generator's input and regenerate", key.Name, rootRelative(ws, ref.File), ref.Line)
 			continue
 		}
+
 		if !p.rewritten[refSite{ref.File, ref.Offset}] {
 			res.blockers = append(res.blockers, types.Blocker{Reference: *ref})
 		}
 	}
+
 	return res
 }
 
@@ -153,6 +175,7 @@ func keySet(moved map[types.SymbolKey]string) types.SymbolKeySet {
 	for key := range moved {
 		keys[key] = struct{}{}
 	}
+
 	return keys
 }
 
@@ -168,21 +191,27 @@ func (p *moveSymbolPlanner) refuse(blockers []types.Blocker) error {
 	for _, o := range p.objections {
 		fmt.Fprintf(&b, "\n  %s", o)
 	}
+
 	missed := 0
+
 	for _, blocker := range blockers {
 		if blocker.Unverified != "" {
 			continue
 		}
+
 		if missed++; missed <= maxListedBlockers {
 			fmt.Fprintf(&b, "\n  %s:%d%s is a reference the move would not rewrite", blocker.File, blocker.Line, blocker.Note())
 		}
 	}
+
 	if missed > maxListedBlockers {
 		fmt.Fprintf(&b, "\n  …and %d more references", missed-maxListedBlockers)
 	}
+
 	if b.Len() == 0 {
 		return nil
 	}
+
 	return &types.RefactorError{
 		Type: types.InvalidOperation,
 		Message: fmt.Sprintf("cannot move %s: the move is planned for the default build configuration and does not hold under the others:%s",
@@ -195,5 +224,6 @@ func refNames(refs []types.QualifiedSymbol) string {
 	for i, ref := range refs {
 		names[i] = ref.Name
 	}
+
 	return strings.Join(names, ", ")
 }

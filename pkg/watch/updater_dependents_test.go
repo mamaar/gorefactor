@@ -10,6 +10,7 @@ import (
 
 func dependentsWorkspace() map[string]string {
 	const mod = "example.com/test/"
+
 	return map[string]string{
 		"a/a.go":      "package a\n\ntype T struct{}\n\nfunc (T) M() {}\n\nfunc unrelated() int { return 1 }\n",
 		"b/b.go":      "package b\n\nimport \"" + mod + "a\"\n\nfunc Use() { a.T{}.M() }\n",
@@ -25,6 +26,7 @@ func dependentsWorkspace() map[string]string {
 func TestUpdater_ModifyDropsTypeInformationOfEveryDependent(t *testing.T) {
 	u, set, root := setupViews(t, dependentsWorkspace())
 	views := builtViews(t, set, 1)
+
 	v := views[0]
 	for _, dir := range []string{"a", "b", "c", "d", "e", "f"} {
 		typedPackage(t, v, filepath.Join(root, dir))
@@ -39,6 +41,7 @@ func TestUpdater_ModifyDropsTypeInformationOfEveryDependent(t *testing.T) {
 			t.Errorf("package %s kept type information of the replaced package a", dir)
 		}
 	}
+
 	if !v.Workspace.Packages[filepath.Join(root, "f")].TypesChecked {
 		t.Error("package f does not depend on a and must keep its type information")
 	}
@@ -57,11 +60,13 @@ func TestUpdater_ModifyLeavesDependentUsesPointingAtTheNewMethod(t *testing.T) {
 	b := typedPackage(t, v, filepath.Join(root, "b"))
 	method := a.TypesPkg.Scope().Lookup("T").Type().(*gotypes.Named).Method(0)
 	var used gotypes.Object
+
 	for id, obj := range b.TypesInfo.Uses {
 		if id.Name == "M" {
 			used = obj
 		}
 	}
+
 	if used != method {
 		t.Errorf("b resolves M to %v (%p), want the method of the current package a (%p)", used, used, method)
 	}

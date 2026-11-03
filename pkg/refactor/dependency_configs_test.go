@@ -9,6 +9,7 @@ func TestMergeCycles(t *testing.T) {
 	configs := []string{"linux", "windows", "darwin"}
 	abc := []string{"a", "b", "c", "a"}
 	ac := []string{"a", "c", "a"}
+
 	cases := []struct {
 		name    string
 		perView [][]groupedCycle

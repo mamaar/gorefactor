@@ -110,11 +110,13 @@ func (r *EntryReach) reachesPackage(path string) bool {
 	if r.Bodiless[path] {
 		return true
 	}
+
 	for key := range r.Funcs {
 		if key.PkgPath == path {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -153,6 +155,7 @@ func (fd *funcDecl) FuncType() *ast.FuncType {
 	if fd.Decl != nil {
 		return fd.Decl.Type
 	}
+
 	return fd.IfaceFuncType
 }
 
@@ -232,6 +235,7 @@ func (op *ThreadContextOperation) logger() *slog.Logger {
 	if op.Logger != nil {
 		return op.Logger
 	}
+
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
@@ -240,7 +244,9 @@ func (op *ThreadContextOperation) Validate(ws *pkgtypes.Workspace) error {
 	if err != nil {
 		return err
 	}
+
 	op.plan = plan
+
 	return nil
 }
 
@@ -250,6 +256,7 @@ func (op *ThreadContextOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Ref
 		if err != nil {
 			return nil, err
 		}
+
 		op.plan = plan
 	}
 
@@ -290,11 +297,13 @@ func (op *ThreadContextOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Ref
 // line order.
 func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 	var sites []pkgtypes.SkippedSite
+
 	add := func(f *gotypes.Func, reason string) {
 		fd := op.declIndex[f]
 		if fd == nil || fd.File == nil {
 			return
 		}
+
 		sites = append(sites, pkgtypes.SkippedSite{
 			File:    fd.File.Path,
 			Line:    offsetLine(fd.File, fd.Decl.Pos()),
@@ -305,23 +314,27 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 	for f := range op.plan.Stops {
 		add(f, "stop_at")
 	}
+
 	for f := range op.plan.Outside {
 		_, gains := op.plan.Funcs[f]
 		if !gains {
 			add(f, "outside entry")
 		}
 	}
+
 	for f := range op.plan.OutsideWithin {
 		_, gains := op.plan.Funcs[f]
 		if !gains {
 			add(f, "outside within")
 		}
 	}
+
 	for f, reason := range op.plan.Blocked {
 		fd := op.declIndex[f]
 		if fd == nil || fd.File == nil {
 			continue
 		}
+
 		sites = append(sites, pkgtypes.SkippedSite{
 			File:    fd.File.Path,
 			Line:    offsetLine(fd.File, fd.Decl.Pos()),
@@ -329,11 +342,13 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 			Snippet: funcLabel(f),
 		})
 	}
+
 	sites = append(sites, op.plan.Notes...)
 	slices.SortFunc(sites, func(a, b pkgtypes.SkippedSite) int {
 		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), strings.Compare(a.Snippet, b.Snippet), strings.Compare(a.Reason, b.Reason))
 	})
 	sites = slices.Compact(sites)
+
 	return sites
 }
 
@@ -347,6 +362,7 @@ func assertNoOverlappingChanges(changes []pkgtypes.Change) error {
 	for _, c := range changes {
 		byFile[c.File] = append(byFile[c.File], c)
 	}
+
 	for file, cs := range byFile {
 		for i := range cs {
 			for j := i + 1; j < len(cs); j++ {
@@ -354,6 +370,7 @@ func assertNoOverlappingChanges(changes []pkgtypes.Change) error {
 				if a.Start >= b.End || b.Start >= a.End {
 					continue
 				}
+
 				return &pkgtypes.RefactorError{
 					Type: pkgtypes.InvalidOperation,
 					Message: fmt.Sprintf(
@@ -365,6 +382,7 @@ func assertNoOverlappingChanges(changes []pkgtypes.Change) error {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -410,12 +428,15 @@ func (op *ThreadContextOperation) buildPlan(ws *pkgtypes.Workspace) (*threadPlan
 	if err != nil {
 		return nil, err
 	}
+
 	if err := op.resolve(idx, plan, visited); err != nil {
 		return nil, err
 	}
+
 	if err := op.unattributedTestsAbort(plan); err != nil {
 		return nil, err
 	}
+
 	return plan, nil
 }
 
@@ -429,16 +450,21 @@ func (op *ThreadContextOperation) seeds(ws *pkgtypes.Workspace, idx *analysis.Re
 		if err != nil {
 			return nil, err
 		}
+
 		return op.rejectStopSeeds(append(sites, linked...))
 	}
+
 	seed, err := op.resolveSeed(ws)
 	if err != nil {
 		if len(linked) == 0 || !isSymbolNotFound(err) {
 			return nil, err
 		}
+
 		return op.rejectStopSeeds(linked)
 	}
+
 	op.seed = seed
+
 	return op.rejectStopSeeds(append([]*gotypes.Func{seed}, linked...))
 }
 
@@ -449,12 +475,14 @@ func (op *ThreadContextOperation) rejectStopSeeds(seeds []*gotypes.Func) ([]*got
 		if !op.isStop(f) {
 			continue
 		}
+
 		return nil, &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf("cannot thread context through %s: it is the function that gains the "+
 				"parameter and is also declared as a stop. No changes were made.", funcLabel(f)),
 		}
 	}
+
 	return seeds, nil
 }
 
@@ -470,12 +498,14 @@ func (op *ThreadContextOperation) linkedFuncs() []*gotypes.Func {
 		return nil
 	}
 	var out []*gotypes.Func
+
 	for f := range op.declIndex {
 		key, ok := pkgtypes.SymbolKeyOf(f)
 		if ok && op.Linked.Has(key) {
 			out = append(out, f)
 		}
 	}
+
 	return out
 }
 
@@ -486,12 +516,14 @@ func (op *ThreadContextOperation) GainedKeys() pkgtypes.SymbolKeySet {
 	if op.plan == nil {
 		return keys
 	}
+
 	for f := range op.plan.Funcs {
 		key, ok := pkgtypes.SymbolKeyOf(f)
 		if ok {
 			keys[key] = struct{}{}
 		}
 	}
+
 	return keys
 }
 
@@ -507,14 +539,17 @@ func isSymbolNotFound(err error) bool {
 // listed for the user to fix by hand.
 func (op *ThreadContextOperation) unattributedTestsAbort(plan *threadPlan) error {
 	var blind []*pkgtypes.Package
+
 	for _, pkg := range plan.reachedPackages() {
 		if pkg.UnattributedTestErr != nil {
 			blind = append(blind, pkg)
 		}
 	}
+
 	if len(blind) == 0 {
 		return nil
 	}
+
 	return unattributedTestsError(blind)
 }
 
@@ -522,21 +557,25 @@ func (op *ThreadContextOperation) unattributedTestsAbort(plan *threadPlan) error
 // traversal touched or a call site it rewrites.
 func (plan *threadPlan) reachedPackages() []*pkgtypes.Package {
 	byDir := make(map[string]*pkgtypes.Package)
+
 	for _, fd := range plan.Decls {
 		if fd.Pkg != nil {
 			byDir[fd.Pkg.Path] = fd.Pkg
 		}
 	}
+
 	for _, edit := range plan.ArgFor {
 		pkg := edit.Site.Pkg
 		if pkg != nil {
 			byDir[pkg.Path] = pkg
 		}
 	}
+
 	out := make([]*pkgtypes.Package, 0, len(byDir))
 	for _, dir := range slices.Sorted(maps.Keys(byDir)) {
 		out = append(out, byDir[dir])
 	}
+
 	return out
 }
 
@@ -547,12 +586,15 @@ func (op *ThreadContextOperation) reach() reach {
 	if op.plan == nil {
 		return r
 	}
+
 	for _, pkg := range op.plan.reachedPackages() {
 		r.dirs = append(r.dirs, pkg.Path)
 	}
+
 	for f := range op.plan.Funcs {
 		r.names = append(r.names, f.Name())
 	}
+
 	return r
 }
 
@@ -584,13 +626,16 @@ func (op *ThreadContextOperation) discover(
 	for len(queue) > 0 {
 		f := queue[0]
 		queue = queue[1:]
+
 		if visited[f] {
 			reason := plan.Blocked[f]
 			if reason != "" && pinned[f] {
 				return nil, blockedError(f, reason)
 			}
+
 			continue // the visited set is what terminates cycles and diamonds
 		}
+
 		visited[f] = true
 
 		fd := op.declIndex[f]
@@ -602,16 +647,20 @@ func (op *ThreadContextOperation) discover(
 		if gen.isGaining(f, fd) {
 			continue
 		}
+
 		if len(op.CallSitesOf) > 0 {
 			reason := op.gainBlocker(ws, idx, f)
 			if reason != "" {
 				if pinned[f] {
 					return nil, blockedError(f, reason)
 				}
+
 				plan.Blocked[f] = reason
+
 				continue
 			}
 		}
+
 		plan.Decls[f] = fd
 
 		err := op.planCtxParam(f, plan, fd, gen, ws, idx)
@@ -623,14 +672,18 @@ func (op *ThreadContextOperation) discover(
 		if err != nil {
 			return nil, err
 		}
+
 		err = op.checkExpansionAvoidsStops(extra, f)
 		if err != nil {
 			return nil, err
 		}
+
 		gen.expanded(f, extra)
+
 		for _, e := range extra {
 			pinned[e] = true
 		}
+
 		queue = append(queue, extra...)
 
 		queue, err = op.climbCallSites(idx, f, gen, plan, queue)
@@ -638,29 +691,36 @@ func (op *ThreadContextOperation) discover(
 			return nil, err
 		}
 	}
+
 	err := op.generatedAbort(ws, gen, seeds)
 	if err != nil {
 		return nil, err
 	}
+
 	for f := range plan.Blocked {
 		delete(visited, f)
 	}
+
 	return visited, nil
 }
 
 func (op *ThreadContextOperation) planCtxParam(f *gotypes.Func, plan *threadPlan, fd *funcDecl, gen *generatedReach, ws *pkgtypes.Workspace, idx *analysis.ReferenceIndex) error {
 	if !funcHasContextParam(f) {
 		plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
+
 		stmt, ok := isFakeRootCtxCreation(fd.Decl)
 		if ok {
 			plan.Fake[f] = stmt
 		}
+
 		uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
+
 		err := op.valueUseAbort(ws, f, uses)
 		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -669,6 +729,7 @@ func (op *ThreadContextOperation) checkExpansionAvoidsStops(extra []*gotypes.Fun
 		if !op.isStop(e) {
 			continue
 		}
+
 		return &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf("cannot thread context through %s: expanding it reaches %s, which is "+
@@ -676,6 +737,7 @@ func (op *ThreadContextOperation) checkExpansionAvoidsStops(extra []*gotypes.Fun
 				"result would not compile. No changes were made.", funcLabel(f), funcLabel(e), funcLabel(e)),
 		}
 	}
+
 	return nil
 }
 
@@ -684,15 +746,18 @@ func (op *ThreadContextOperation) climbCallSites(idx *analysis.ReferenceIndex, f
 		if gen.isCallSite(f, site, op.siteLine(site)) {
 			continue
 		}
+
 		caller, climb, err := op.climbTarget(idx, plan, site)
 		if err != nil {
 			return queue, err
 		}
+
 		if climb {
 			gen.climbed(f, caller)
 			queue = append(queue, caller)
 		}
 	}
+
 	return queue, nil
 }
 
@@ -700,10 +765,12 @@ func (op *ThreadContextOperation) climbCallSites(idx *analysis.ReferenceIndex, f
 // was looked up, where it is declared and why the index does not hold it.
 func missingDeclError(ws *pkgtypes.Workspace, f *gotypes.Func) error {
 	pos := ws.FileSet.Position(f.Pos())
+
 	pkgPath := "(none)"
 	if f.Pkg() != nil {
 		pkgPath = f.Pkg().Path()
 	}
+
 	return &pkgtypes.RefactorError{
 		Type: pkgtypes.InvalidOperation,
 		Message: fmt.Sprintf(
@@ -719,6 +786,7 @@ func missingDeclReason(ws *pkgtypes.Workspace, f *gotypes.Func) string {
 	if f.Pkg() == nil {
 		return "it belongs to no package"
 	}
+
 	pkg := ws.Packages[ws.ImportToPath[strings.TrimSuffix(f.Pkg().Path(), "_test")]]
 	switch {
 	case pkg == nil:
@@ -746,6 +814,7 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 		if src.Kind == ctxUnknown {
 			return nil, false, op.unknownCtxAbort(site)
 		}
+
 		return nil, false, nil
 	}
 
@@ -769,6 +838,7 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	if err != nil {
 		return nil, false, err
 	}
+
 	_, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, cleanupHelper)
 	if isRoot {
 		return nil, false, nil
@@ -794,17 +864,20 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 		plan.Stops[caller] = true
 		return nil, false, nil
 	}
+
 	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && (op.Reach.outside(caller) || op.Reach.outsideWithin(caller)) {
 		// A conflict only costs the rename here: the caller can pass context.TODO().
 		renamed, _ := op.renameBlankCtx(plan, caller, site)
 		if renamed {
 			return nil, false, nil
 		}
+
 		if op.Reach.outside(caller) {
 			plan.Outside[caller] = true
 		} else {
 			plan.OutsideWithin[caller] = true
 		}
+
 		return nil, false, nil
 	}
 
@@ -817,6 +890,7 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 		if err != nil || renamed {
 			return nil, false, err
 		}
+
 		return nil, false, &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf(
@@ -844,9 +918,11 @@ func (op *ThreadContextOperation) resolve(
 			if err != nil {
 				return fmt.Errorf("resolve: %w", err)
 			}
+
 			plan.ArgFor[site.Call.Lparen] = &callEdit{Expr: expr, Site: site, Callee: f}
 		}
 	}
+
 	return nil
 }
 
@@ -861,10 +937,12 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 		if err != nil {
 			return "", err
 		}
+
 		name, ok := plan.Funcs[caller]
 		if ok {
 			return name, nil
 		}
+
 		if plan.Renamed[caller] {
 			return ctxParamName, nil
 		}
@@ -887,6 +965,7 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	if err != nil {
 		return "", err
 	}
+
 	src, ok = classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call, cleanupHelper)
 	if ok {
 		return src.Expr, nil
@@ -923,10 +1002,12 @@ func (op *ThreadContextOperation) calledFromCleanup(idx *analysis.ReferenceIndex
 	if site.Fn == nil || site.Lit != nil || !hasTestingTBParam(site.Pkg, site.Fn.Type) {
 		return false, nil
 	}
+
 	caller, err := op.callerObject(site)
 	if err != nil {
 		return false, fmt.Errorf("called from cleanup: %w", err)
 	}
+
 	return slices.ContainsFunc(idx.CallSitesOf(caller), func(s analysis.CallSite) bool {
 		return inCleanupClosure(s.Pkg, s.Fn, s.Call)
 	}), nil
@@ -959,6 +1040,7 @@ func (op *ThreadContextOperation) expandInterfaces(
 	if err != nil {
 		return nil, err
 	}
+
 	err = stdMethodError("thread context through", f)
 	if err != nil {
 		return nil, err
@@ -982,8 +1064,10 @@ func (op *ThreadContextOperation) valueUseAbort(
 	if len(uses) == 0 {
 		return nil
 	}
+
 	use := uses[0]
 	pos := ws.FileSet.Position(use.Pos)
+
 	return &pkgtypes.RefactorError{
 		Type: pkgtypes.InvalidOperation,
 		Message: fmt.Sprintf(
@@ -1000,6 +1084,7 @@ func moreUses(n int) string {
 	if n <= 0 {
 		return ""
 	}
+
 	return fmt.Sprintf(" (and %d more such use(s))", n)
 }
 
@@ -1019,6 +1104,7 @@ func (op *ThreadContextOperation) sitePos(site analysis.CallSite) string {
 	if line == 0 {
 		return site.File.Path
 	}
+
 	return fmt.Sprintf("%s:%d", site.File.Path, line)
 }
 
@@ -1026,6 +1112,7 @@ func (op *ThreadContextOperation) siteLine(site analysis.CallSite) int {
 	if site.File == nil || site.File.Package == nil {
 		return 0
 	}
+
 	return offsetLine(site.File, site.Call.Pos())
 }
 
@@ -1036,10 +1123,12 @@ func offsetLine(file *pkgtypes.File, pos token.Pos) int {
 	if file.AST == nil || len(file.OriginalContent) == 0 {
 		return 0
 	}
+
 	offset := int(pos - file.AST.FileStart)
 	if offset < 0 || offset > len(file.OriginalContent) {
 		return 0
 	}
+
 	return 1 + strings.Count(string(file.OriginalContent[:offset]), "\n")
 }
 
@@ -1052,6 +1141,7 @@ func (op *ThreadContextOperation) callerObject(site analysis.CallSite) (*gotypes
 	if site.Pkg == nil || site.Pkg.TypesInfo == nil {
 		return nil, op.unknownCtxAbort(site)
 	}
+
 	obj, _ := site.Pkg.TypesInfo.Defs[site.Fn.Name].(*gotypes.Func)
 	if obj == nil {
 		return nil, &pkgtypes.RefactorError{
@@ -1063,6 +1153,7 @@ func (op *ThreadContextOperation) callerObject(site analysis.CallSite) (*gotypes
 			Line: op.siteLine(site),
 		}
 	}
+
 	return canonicalFunc(obj), nil
 }
 
@@ -1076,11 +1167,14 @@ func sourceIsFakeRoot(site analysis.CallSite, src ctxSource) bool {
 	if !ok {
 		return false
 	}
+
 	lhs, ok := fake.Lhs[0].(*ast.Ident)
 	if !ok {
 		return false
 	}
+
 	v := lookupVarAt(site.Pkg, src.Expr, site.Call.Pos())
+
 	return v != nil && v.Pos() == lhs.Pos()
 }
 
@@ -1090,12 +1184,15 @@ func lookupVarAt(pkg *pkgtypes.Package, name string, pos token.Pos) *gotypes.Var
 	if pkg == nil || pkg.TypesPkg == nil {
 		return nil
 	}
+
 	_, inner := scopeAt(pkg, pos)
 	if inner == nil {
 		return nil
 	}
+
 	_, obj := inner.LookupParent(name, pos)
 	v, _ := obj.(*gotypes.Var)
+
 	return v
 }
 
@@ -1107,12 +1204,14 @@ func funcHasContextParam(f *gotypes.Func) bool {
 	if !ok {
 		return false
 	}
+
 	params := sig.Params()
 	for v := range params.Variables() {
 		if analysis.IsContextType(v.Type()) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1124,6 +1223,7 @@ func canonicalFunc(f *gotypes.Func) *gotypes.Func {
 	if orig != nil {
 		return orig
 	}
+
 	return f
 }
 
@@ -1132,6 +1232,7 @@ func funcLabel(f *gotypes.Func) string {
 	if ok && sig.Recv() != nil {
 		return fmt.Sprintf("%s.%s", gotypes.TypeString(sig.Recv().Type(), nil), f.Name())
 	}
+
 	return f.Name()
 }
 
@@ -1139,31 +1240,39 @@ func funcLabel(f *gotypes.Func) string {
 // workspace to its AST and owning package/file.
 func buildFuncDeclIndex(ws *pkgtypes.Workspace) map[*gotypes.Func]*funcDecl {
 	index := make(map[*gotypes.Func]*funcDecl)
+
 	for _, pkg := range ws.Packages {
 		if pkg.TypesInfo == nil {
 			continue
 		}
+
 		for _, file := range allFilesOf(pkg) {
 			if file.AST == nil {
 				continue
 			}
+
 			for _, decl := range file.AST.Decls {
 				fd, ok := decl.(*ast.FuncDecl)
 				if ok {
 					if fd.Name == nil {
 						continue
 					}
+
 					obj, _ := pkg.TypesInfo.Defs[fd.Name].(*gotypes.Func)
 					if obj == nil {
 						continue
 					}
+
 					index[canonicalFunc(obj)] = &funcDecl{Decl: fd, Pkg: pkg, File: file}
+
 					continue
 				}
+
 				indexInterfaceMethods(index, decl, pkg, file)
 			}
 		}
 	}
+
 	return index
 }
 
@@ -1182,15 +1291,18 @@ func indexInterfaceMethods(
 	if !ok || gen.Tok != token.TYPE {
 		return
 	}
+
 	for _, spec := range gen.Specs {
 		ts, ok := spec.(*ast.TypeSpec)
 		if !ok {
 			continue
 		}
+
 		iface, ok := ts.Type.(*ast.InterfaceType)
 		if !ok || iface.Methods == nil {
 			continue
 		}
+
 		for _, field := range iface.Methods.List {
 			// No name means an embedded interface (or a type-set element), which
 			// declares no method of its own here — the embedded interface's own
@@ -1198,14 +1310,17 @@ func indexInterfaceMethods(
 			if len(field.Names) == 0 {
 				continue
 			}
+
 			ft, ok := field.Type.(*ast.FuncType)
 			if !ok {
 				continue
 			}
+
 			obj, _ := pkg.TypesInfo.Defs[field.Names[0]].(*gotypes.Func)
 			if obj == nil {
 				continue
 			}
+
 			index[canonicalFunc(obj)] = &funcDecl{
 				Pkg:           pkg,
 				File:          file,
@@ -1221,9 +1336,11 @@ func allFilesOf(pkg *pkgtypes.Package) []*pkgtypes.File {
 	for _, f := range pkg.Files {
 		files = append(files, f)
 	}
+
 	for _, f := range pkg.TestFiles {
 		files = append(files, f)
 	}
+
 	return files
 }
 
@@ -1234,11 +1351,13 @@ func (op *ThreadContextOperation) referenceIndex(ws *pkgtypes.Workspace) *analys
 	if op.CachedIndex != nil {
 		return op.CachedIndex
 	}
+
 	if op.Parser != nil {
 		for _, pkg := range ws.Packages {
 			op.Parser.EnsureTypeChecked(ws, pkg)
 		}
 	}
+
 	return analysis.NewSymbolResolver(ws, op.logger()).BuildReferenceIndex()
 }
 
@@ -1253,12 +1372,14 @@ func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.
 	// seed names an interface method such as "Store.Save", which is an *ast.Field
 	// and so invisible to FindFuncDeclByName — that field's.
 	var seedIdent *ast.Ident
+
 	fd := analysis.FindFuncDeclByName(file.AST, op.FunctionName)
 	if fd != nil {
 		seedIdent = fd.Name
 	} else {
 		seedIdent = findInterfaceMethodIdent(file.AST, op.FunctionName)
 	}
+
 	if seedIdent == nil {
 		return nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.SymbolNotFound,
@@ -1266,6 +1387,7 @@ func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.
 			File:    file.Path,
 		}
 	}
+
 	if pkg.TypesInfo == nil {
 		return nil, &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
@@ -1274,6 +1396,7 @@ func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.
 			File: file.Path,
 		}
 	}
+
 	obj, _ := pkg.TypesInfo.Defs[seedIdent].(*gotypes.Func)
 	if obj == nil {
 		return nil, &pkgtypes.RefactorError{
@@ -1284,6 +1407,7 @@ func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.
 			File: file.Path,
 		}
 	}
+
 	return canonicalFunc(obj), nil
 }
 
@@ -1302,6 +1426,7 @@ func (op *ThreadContextOperation) findSourceFile(ws *pkgtypes.Workspace) (*pkgty
 	if op.SourceFile != "" {
 		hits = matchSourceFiles(ws, op.SourceFile)
 	}
+
 	switch len(hits) {
 	case 1:
 		return hits[0].file, hits[0].pkg, nil
@@ -1327,13 +1452,16 @@ func (op *ThreadContextOperation) findSourceFile(ws *pkgtypes.Workspace) (*pkgty
 func matchSourceFiles(ws *pkgtypes.Workspace, path string) []fileHit {
 	var all, exact, loose []fileHit
 	want := filepath.ToSlash(path)
+
 	for _, pkg := range ws.Packages {
 		for key, f := range allNamedFilesOf(pkg) {
 			if f.AST == nil {
 				continue
 			}
+
 			h := fileHit{file: f, pkg: pkg}
 			all = append(all, h)
+
 			switch {
 			case f.Path == path || key == path:
 				exact = append(exact, h)
@@ -1342,6 +1470,7 @@ func matchSourceFiles(ws *pkgtypes.Workspace, path string) []fileHit {
 			}
 		}
 	}
+
 	switch {
 	case path == "":
 		return all
@@ -1358,5 +1487,6 @@ func allNamedFilesOf(pkg *pkgtypes.Package) map[string]*pkgtypes.File {
 	files := make(map[string]*pkgtypes.File, len(pkg.Files)+len(pkg.TestFiles))
 	maps.Copy(files, pkg.Files)
 	maps.Copy(files, pkg.TestFiles)
+
 	return files
 }

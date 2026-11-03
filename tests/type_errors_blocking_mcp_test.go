@@ -13,6 +13,7 @@ const teType = "package p\n\ntype T struct{}\n\nfunc (T) Run() {}\n\nfunc (T) Id
 
 func teWorkspace(t *testing.T) string {
 	t.Helper()
+
 	return writeInlineWorkspace(t, map[string]string{
 		"p/t.go":        teType,
 		"p/bad_tagx.go": teBrokenImport + "func Bad() { thirdparty.Make().Run() }\n",
@@ -21,8 +22,10 @@ func teWorkspace(t *testing.T) string {
 
 func TestSafeDelete_UnresolvedMentionInErroringProductionFileBlocksUnlessForced(t *testing.T) {
 	dir := teWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	ctx := context.Background()
 
 	res, text := callSafeDelete(ctx, t, sess, "T.Run", "p/t.go", false, false)
@@ -30,11 +33,13 @@ func TestSafeDelete_UnresolvedMentionInErroringProductionFileBlocksUnlessForced(
 	if !res.IsError {
 		t.Fatalf("safe_delete succeeded, want it refused: %s", text)
 	}
+
 	for _, want := range []string{"found 1 references", "p/bad_tagx.go:7", "tags=tagx", "could not import"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("error %q does not contain %q", text, want)
 		}
 	}
+
 	assertFileUnchanged(t, dir, "p/t.go", teType)
 
 	forced, text := callSafeDelete(ctx, t, sess, "T.Run", "p/t.go", true, false)
@@ -43,16 +48,20 @@ func TestSafeDelete_UnresolvedMentionInErroringProductionFileBlocksUnlessForced(
 		t.Fatalf("forced safe_delete failed: %s", text)
 	}
 	var out typeErrorsJSON
+
 	err := json.Unmarshal([]byte(text), &out)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(out.SkippedSites) != 1 || !strings.HasSuffix(out.SkippedSites[0].File, "p/bad_tagx.go") || out.SkippedSites[0].Line != 7 {
 		t.Errorf("skipped_sites = %+v, want bad_tagx.go:7", out.SkippedSites)
 	}
+
 	if len(out.TypeErrors) != 1 || out.TypeErrors[0].Config != "tags=tagx" {
 		t.Errorf("type_errors = %+v, want package p under tagx", out.TypeErrors)
 	}
+
 	got := fileText(t, dir, "p/t.go")
 	if strings.Contains(got, "Run") {
 		t.Errorf("Run still declared after a forced delete:\n%s", got)
@@ -61,6 +70,7 @@ func TestSafeDelete_UnresolvedMentionInErroringProductionFileBlocksUnlessForced(
 
 func TestSafeDelete_ErroringProductionFileThatDoesNotMentionTheNameOnlyReports(t *testing.T) {
 	dir := teWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -70,13 +80,16 @@ func TestSafeDelete_ErroringProductionFileThatDoesNotMentionTheNameOnlyReports(t
 		t.Fatalf("safe_delete refused: %s", text)
 	}
 	var out typeErrorsJSON
+
 	err := json.Unmarshal([]byte(text), &out)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(out.TypeErrors) != 1 || out.TypeErrors[0].Config != "tags=tagx" {
 		t.Errorf("type_errors = %+v, want package p under tagx", out.TypeErrors)
 	}
+
 	got := fileText(t, dir, "p/t.go")
 	if strings.Contains(got, "Idle") {
 		t.Errorf("Idle still declared:\n%s", got)
@@ -93,10 +106,12 @@ func TestUnused_UnresolvedMentionInErroringProductionFileIsPossiblyUsed(t *testi
 	if len(got) != 1 || got[0] != "t.go:idle" {
 		t.Errorf("unused = %v, want only idle", got)
 	}
+
 	got = declarations(out.PossiblyUsed)
 	if len(got) != 1 || got[0] != "t.go:run" {
 		t.Fatalf("possibly_used = %v, want run", got)
 	}
+
 	use := out.PossiblyUsed[0].PossibleUse
 	if use == nil || !strings.HasSuffix(use.File, "p/bad_tagx.go") || use.Line != 7 {
 		t.Errorf("possible_use = %+v, want bad_tagx.go:7", use)

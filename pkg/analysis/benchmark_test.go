@@ -32,6 +32,7 @@ func BenchmarkSymbolResolution(b *testing.B) {
 
 	// Find available symbols in the test package
 	var availableSymbols []string
+
 	if testPkg.Symbols != nil {
 		for name := range testPkg.Symbols.Functions {
 			availableSymbols = append(availableSymbols, name)
@@ -39,6 +40,7 @@ func BenchmarkSymbolResolution(b *testing.B) {
 				break
 			}
 		}
+
 		for name := range testPkg.Symbols.Types {
 			availableSymbols = append(availableSymbols, name)
 			if len(availableSymbols) >= 4 {
@@ -69,6 +71,7 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 
 	// Find a type symbol for testing
 	var typeSymbol *types.Symbol
+
 	for _, pkg := range workspace.Packages {
 		if pkg.Symbols != nil {
 			for _, symbol := range pkg.Symbols.Types {
@@ -78,6 +81,7 @@ func BenchmarkMethodSetResolution(b *testing.B) {
 				}
 			}
 		}
+
 		if typeSymbol != nil {
 			break
 		}
@@ -103,6 +107,7 @@ func BenchmarkFindReferences(b *testing.B) {
 
 	// Find a function symbol for testing
 	var funcSymbol *types.Symbol
+
 	for _, pkg := range workspace.Packages {
 		if pkg.Symbols != nil {
 			for _, symbol := range pkg.Symbols.Functions {
@@ -110,6 +115,7 @@ func BenchmarkFindReferences(b *testing.B) {
 				break
 			}
 		}
+
 		if funcSymbol != nil {
 			break
 		}
@@ -142,6 +148,7 @@ func BenchmarkBuildSymbolTable(b *testing.B) {
 
 	for range b.N {
 		resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 		_, err := resolver.BuildSymbolTable(testPkg)
 		if err != nil {
 			b.Fatalf("Failed to build symbol table: %v", err)
@@ -173,6 +180,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 		}
 
 		b.ResetTimer()
+
 		for i := range b.N {
 			cache.GetResolvedRef(fmt.Sprintf("key%d", i%1000))
 		}
@@ -185,6 +193,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 		}
 
 		b.ResetTimer()
+
 		for i := range b.N {
 			cache.InvalidatePackage(fmt.Sprintf("test/pkg%d", i%1000))
 		}
@@ -195,6 +204,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 
 func createBenchmarkWorkspace(b *testing.B, numPackages int) *types.Workspace {
 	b.Helper()
+
 	fileSet := token.NewFileSet()
 	workspace := &types.Workspace{
 		Packages: make(map[string]*types.Package),
@@ -308,6 +318,7 @@ func ComplexFunction%d() {
 // This enables the object index path in benchmarks.
 func createTypedBenchmarkWorkspace(tb testing.TB, numPackages int) *types.Workspace {
 	tb.Helper()
+
 	fileSet := token.NewFileSet()
 	workspace := &types.Workspace{
 		Packages:     make(map[string]*types.Package),
@@ -338,6 +349,7 @@ var Var%d = "var"
 `, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum, pkgNum)
 
 		fileName := fmt.Sprintf("pkg%d.go", pkgNum)
+
 		astFile, err := parser.ParseFile(fileSet, fileName, src, parser.ParseComments)
 		if err != nil {
 			tb.Fatalf("Failed to parse package %d: %v", pkgNum, err)
@@ -351,6 +363,7 @@ var Var%d = "var"
 			Defs: make(map[*ast.Ident]gotypes.Object),
 			Uses: make(map[*ast.Ident]gotypes.Object),
 		}
+
 		typesPkg, err := conf.Check(fmt.Sprintf("pkg%d", pkgNum), fileSet, []*ast.File{astFile}, info)
 		if err != nil {
 			// Type errors are expected (no cross-package resolution), continue
@@ -390,8 +403,10 @@ func BenchmarkBuildReferenceIndex(b *testing.B) {
 		b.Run(fmt.Sprintf("Typed_%d_pkgs", size), func(b *testing.B) {
 			workspace := createTypedBenchmarkWorkspace(b, size)
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 			b.ResetTimer()
 			b.ReportAllocs()
+
 			for range b.N {
 				_ = resolver.BuildReferenceIndex()
 			}
@@ -399,8 +414,10 @@ func BenchmarkBuildReferenceIndex(b *testing.B) {
 		b.Run(fmt.Sprintf("Untyped_%d_pkgs", size), func(b *testing.B) {
 			workspace := createBenchmarkWorkspace(b, size)
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 			b.ResetTimer()
 			b.ReportAllocs()
+
 			for range b.N {
 				_ = resolver.BuildReferenceIndex()
 			}
@@ -415,6 +432,7 @@ func BenchmarkFindReferencesIndexed_ObjectPath(b *testing.B) {
 
 	// Find a function symbol to query
 	var symbol *types.Symbol
+
 	for _, pkg := range workspace.Packages {
 		if pkg.Symbols != nil {
 			for _, s := range pkg.Symbols.Functions {
@@ -422,16 +440,19 @@ func BenchmarkFindReferencesIndexed_ObjectPath(b *testing.B) {
 				break
 			}
 		}
+
 		if symbol != nil {
 			break
 		}
 	}
+
 	if symbol == nil {
 		b.Fatal("No function symbol found")
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
+
 	for range b.N {
 		_, _ = resolver.FindReferencesIndexed(symbol, idx)
 	}
@@ -443,6 +464,7 @@ func BenchmarkFindReferencesIndexed_NamePath(b *testing.B) {
 	idx := resolver.BuildReferenceIndex()
 
 	var symbol *types.Symbol
+
 	for _, pkg := range workspace.Packages {
 		if pkg.Symbols != nil {
 			for _, s := range pkg.Symbols.Functions {
@@ -450,16 +472,19 @@ func BenchmarkFindReferencesIndexed_NamePath(b *testing.B) {
 				break
 			}
 		}
+
 		if symbol != nil {
 			break
 		}
 	}
+
 	if symbol == nil {
 		b.Fatal("No function symbol found")
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
+
 	for range b.N {
 		_, _ = resolver.FindReferencesIndexed(symbol, idx)
 	}
@@ -472,6 +497,7 @@ func BenchmarkBuildUsageGraph(b *testing.B) {
 
 	b.ResetTimer()
 	b.ReportAllocs()
+
 	for range b.N {
 		_ = buildUsageGraph(workspace, resolver, idx)
 	}
@@ -483,8 +509,10 @@ func BenchmarkBuildReferenceIndex_TypeIndex(b *testing.B) {
 		b.Run(fmt.Sprintf("%d_pkgs", size), func(b *testing.B) {
 			workspace := createTypedBenchmarkWorkspace(b, size)
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 			b.ResetTimer()
 			b.ReportAllocs()
+
 			for range b.N {
 				_ = resolver.BuildReferenceIndex()
 			}
@@ -498,6 +526,7 @@ func BenchmarkFindReferencesIndexed_TypeIndexPath(b *testing.B) {
 	idx := resolver.BuildReferenceIndex()
 
 	var symbol *types.Symbol
+
 	for _, pkg := range workspace.Packages {
 		if pkg.Symbols != nil {
 			for _, s := range pkg.Symbols.Functions {
@@ -505,16 +534,19 @@ func BenchmarkFindReferencesIndexed_TypeIndexPath(b *testing.B) {
 				break
 			}
 		}
+
 		if symbol != nil {
 			break
 		}
 	}
+
 	if symbol == nil {
 		b.Fatal("No function symbol found")
 	}
 
 	b.ResetTimer()
 	b.ReportAllocs()
+
 	for range b.N {
 		_, _ = resolver.FindReferencesIndexed(symbol, idx)
 	}
@@ -528,6 +560,7 @@ func BenchmarkMemoryUsage_TypeIndex(b *testing.B) {
 			resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 			var memBefore, memAfter runtime.MemStats
+
 			b.ResetTimer()
 			b.ReportAllocs()
 
@@ -542,6 +575,7 @@ func BenchmarkMemoryUsage_TypeIndex(b *testing.B) {
 
 				// Keep idx alive past the memory measurement
 				_ = idx
+
 				b.ReportMetric(float64(memAfter.HeapAlloc-memBefore.HeapAlloc), "heap-bytes/op")
 			}
 		})
@@ -554,6 +588,7 @@ func BenchmarkFindUnusedSymbols(b *testing.B) {
 	analyzer.SetIncludeExported(true)
 	b.ResetTimer()
 	b.ReportAllocs()
+
 	for range b.N {
 		_, err := analyzer.FindUnusedSymbols()
 		if err != nil {

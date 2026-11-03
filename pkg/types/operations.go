@@ -68,6 +68,7 @@ type MoveSymbolRequest struct {
 func (r MoveSymbolRequest) Refs() []QualifiedSymbol {
 	if len(r.Symbols) > 0 {
 		seen := make(map[QualifiedSymbol]bool, len(r.Symbols))
+
 		refs := make([]QualifiedSymbol, 0, len(r.Symbols))
 		for _, ref := range r.Symbols {
 			if !seen[ref] {
@@ -75,8 +76,10 @@ func (r MoveSymbolRequest) Refs() []QualifiedSymbol {
 				refs = append(refs, ref)
 			}
 		}
+
 		return refs
 	}
+
 	return []QualifiedSymbol{{Package: r.FromPackage, Name: r.SymbolName}}
 }
 
@@ -243,9 +246,11 @@ func (b Blocker) Note() string {
 	if len(b.Configs) > 0 {
 		note = " [" + strings.Join(b.Configs, ", ") + "]"
 	}
+
 	if b.Unverified != "" {
 		note += " (unverified: " + b.Unverified + ")"
 	}
+
 	return note
 }
 

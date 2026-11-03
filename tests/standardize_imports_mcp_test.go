@@ -36,6 +36,7 @@ func TestStandardizeImports_DropsRedundantAliasAndRewritesUsesInTestFiles(t *tes
 		"p/a_test.go":    siAliasedTest,
 		"p/b_test.go":    strings.Replace(siAliasedTest, "TestA", "TestB", 1),
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -57,6 +58,7 @@ func TestStandardizeImports_AddsAliasAndRewritesUses(t *testing.T) {
 		"check/check.go": siCheck,
 		"p/p.go":         "package p\n\nimport \"example.com/threadmcp/check\"\n\nfunc F() { check.Ok() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -73,12 +75,14 @@ func TestStandardizeImports_SkipsFileWhenNewNameIsTakenAtAUse(t *testing.T) {
 		"check/check.go": siCheck,
 		"p/p.go":         src,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	out := callJSON(t, sess, "standardize_imports", map[string]any{"rules": []any{siRule("check")}})
 
 	assertFileUnchanged(t, dir, "p/p.go", src)
+
 	sites, _ := out["skipped_sites"].([]any)
 	if len(sites) != 1 {
 		t.Errorf("skipped_sites = %v, want one entry", out["skipped_sites"])
@@ -87,6 +91,7 @@ func TestStandardizeImports_SkipsFileWhenNewNameIsTakenAtAUse(t *testing.T) {
 
 func TestStandardizeImports_UnknownFileIsAnError(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"check/check.go": siCheck})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

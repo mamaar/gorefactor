@@ -11,7 +11,9 @@ func canConfirm(sess *mcpsdk.ServerSession) bool {
 	if iparams == nil || iparams.Capabilities == nil || iparams.Capabilities.Elicitation == nil {
 		return false
 	}
+
 	caps := iparams.Capabilities.Elicitation
+
 	return caps.Form != nil || caps.URL == nil
 }
 
@@ -43,6 +45,8 @@ func confirmAccepted(answer mcpsdk.InputResponse) bool {
 	if !ok || res.Action != "accept" {
 		return false
 	}
+
 	v, present := res.Content["confirm"]
+
 	return !present || v == true
 }

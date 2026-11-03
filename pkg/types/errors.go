@@ -16,6 +16,7 @@ func (e *RefactorError) Error() string {
 	if e.File != "" {
 		return fmt.Sprintf("%s:%d:%d: %s", e.File, e.Line, e.Column, e.Message)
 	}
+
 	return e.Message
 }
 

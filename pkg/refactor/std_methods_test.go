@@ -14,24 +14,31 @@ import (
 // checkStdSource type-checks src and returns its package.
 func checkStdSource(t *testing.T, src string) *gotypes.Package {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	file, err := parser.ParseFile(fset, "p.go", src, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	conf := gotypes.Config{Importer: importer.Default(), Error: func(err error) { t.Error(err) }}
 	pkg, _ := conf.Check("p", fset, []*ast.File{file}, nil)
+
 	return pkg
 }
 
 // methodOf returns the method name of the named type typeName in pkg.
 func methodOf(t *testing.T, pkg *gotypes.Package, typeName, name string) *gotypes.Func {
 	t.Helper()
+
 	obj, _, _ := gotypes.LookupFieldOrMethod(pkg.Scope().Lookup(typeName).Type(), false, pkg, name)
+
 	f, ok := obj.(*gotypes.Func)
 	if !ok {
 		t.Fatalf("no method %s.%s", typeName, name)
 	}
+
 	return f
 }
 
@@ -44,14 +51,17 @@ func TestIsStdMethodRecognisesEveryTableEntry(t *testing.T) {
 	src.WriteString("type base struct{}\n\nfunc (base) Error() string { return \"\" }\n\n")
 	type entry struct{ name, sig string }
 	var entries []entry
+
 	for name, list := range stdMethods {
 		for _, m := range list {
 			entries = append(entries, entry{name, m.signature})
 		}
 	}
+
 	for i, e := range entries {
 		fmt.Fprintf(&src, "type s%d struct{ base }\n\nfunc (s%d) %s%s { panic(0) }\n\n", i, i, e.name, strings.ReplaceAll(e.sig, "encoding/xml.", "xml."))
 	}
+
 	pkg := checkStdSource(t, src.String())
 
 	for i, e := range entries {
@@ -105,6 +115,7 @@ func Error() string { return "" }
 			t.Errorf("%s.%s: recognised as a standard method, want not", c.typ, c.method)
 		}
 	}
+
 	f := pkg.Scope().Lookup("Error").(*gotypes.Func)
 	if stdMethodOf(f.Name(), f) != nil {
 		t.Error("the package-level function Error: recognised as a method")
@@ -120,6 +131,7 @@ func TestStdMethodOfMatchesTheNameItIsGiven(t *testing.T) {
 	if stdMethodOf("String", f) == nil {
 		t.Error("Name() string named String: not matched")
 	}
+
 	if stdMethodOf("Name", f) != nil {
 		t.Error("Name() string named Name: matched")
 	}

@@ -73,6 +73,7 @@ func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 	for filePath := range fileChanges {
 		paths = append(paths, filePath)
 	}
+
 	sort.Strings(paths)
 
 	steps := make([]fileStep, 0, len(paths))
@@ -84,6 +85,7 @@ func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 				Message: fmt.Sprintf("failed to apply changes to file %s: %v", filePath, err),
 			}
 		}
+
 		steps = append(steps, step)
 	}
 
@@ -92,6 +94,7 @@ func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 		if err == nil {
 			continue
 		}
+
 		return errors.Join(&refactorTypes.RefactorError{
 			Type:    refactorTypes.FileSystemError,
 			Message: err.Error(),
@@ -119,6 +122,7 @@ type fileStep struct {
 // without writing anything. A file marked for deletion gets no new content.
 func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change) (fileStep, error) {
 	step := fileStep{path: filePath, delete: fileHasDeletion(changes), mode: newFileMode(changes)}
+
 	info, err := os.Stat(filePath)
 	switch {
 	case err == nil:
@@ -126,14 +130,18 @@ func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change
 		if err != nil {
 			return step, fmt.Errorf("failed to read file: %w", err)
 		}
+
 		step.existed, step.old, step.mode = true, old, info.Mode().Perm()
 	case !os.IsNotExist(err):
 		return step, fmt.Errorf("failed to read file: %w", err)
 	}
+
 	if step.delete {
 		return step, nil
 	}
+
 	step.content, err = s.computeContent(filePath, step.old, changes)
+
 	return step, err
 }
 
@@ -144,19 +152,24 @@ func (f *fileStep) commit() error {
 		if err != nil {
 			return fmt.Errorf("failed to delete file %s: %w", f.path, err)
 		}
+
 		return nil
 	}
+
 	if !f.existed {
 		f.createdDir = outermostMissingDir(filepath.Dir(f.path))
 	}
+
 	err := os.MkdirAll(filepath.Dir(f.path), 0755)
 	if err != nil {
 		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %w", f.path, err)
 	}
+
 	err = os.WriteFile(f.path, f.content, f.mode)
 	if err != nil {
 		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %w", f.path, err)
 	}
+
 	return nil
 }
 
@@ -167,13 +180,17 @@ func (f *fileStep) undo() error {
 		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
+
 		removeCreatedDirs(filepath.Dir(f.path), f.createdDir)
+
 		return nil
 	}
+
 	err := os.MkdirAll(filepath.Dir(f.path), 0755)
 	if err != nil {
 		return err
 	}
+
 	return os.WriteFile(f.path, f.old, f.mode)
 }
 
@@ -185,12 +202,14 @@ func rollback(committed []fileStep, failed *fileStep) error {
 		committed = append(committed, *failed)
 	}
 	var errs []error
+
 	for i := len(committed) - 1; i >= 0; i-- {
 		err := committed[i].undo()
 		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to restore %s: %w", committed[i].path, err))
 		}
 	}
+
 	return errors.Join(errs...)
 }
 
@@ -198,16 +217,20 @@ func rollback(committed []fileStep, failed *fileStep) error {
 // that does not exist, or "" when dir exists.
 func outermostMissingDir(dir string) string {
 	missing := ""
+
 	for {
 		_, err := os.Stat(dir)
 		if err == nil {
 			return missing
 		}
+
 		missing = dir
+
 		parent := filepath.Dir(dir)
 		if parent == dir {
 			return missing
 		}
+
 		dir = parent
 	}
 }
@@ -218,11 +241,13 @@ func removeCreatedDirs(dir, top string) {
 	if top == "" {
 		return
 	}
+
 	for {
 		err := os.Remove(dir)
 		if err != nil && !os.IsNotExist(err) || dir == top {
 			return
 		}
+
 		dir = filepath.Dir(dir)
 	}
 }
@@ -237,9 +262,11 @@ func validateChangePathsAbsolute(changes []refactorTypes.Change) error {
 				Message: fmt.Sprintf("refusing to apply a change with no file path (%s)", change.Description),
 			}
 		}
+
 		if filepath.IsAbs(change.File) {
 			continue
 		}
+
 		return &refactorTypes.RefactorError{
 			Type: refactorTypes.FileSystemError,
 			Message: fmt.Sprintf(
@@ -250,6 +277,7 @@ func validateChangePathsAbsolute(changes []refactorTypes.Change) error {
 			File: change.File,
 		}
 	}
+
 	return nil
 }
 
@@ -261,6 +289,7 @@ func newFileMode(changes []refactorTypes.Change) os.FileMode {
 			return c.Mode
 		}
 	}
+
 	return 0644
 }
 
@@ -272,6 +301,7 @@ func fileHasDeletion(changes []refactorTypes.Change) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -284,7 +314,9 @@ func deleteFile(filePath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+
 	pruneEmptyDirs(filepath.Dir(filePath))
+
 	return nil
 }
 
@@ -298,9 +330,11 @@ func pruneEmptyDirs(dir string) {
 		if err != nil || len(entries) > 0 {
 			return
 		}
+
 		if err := os.Remove(dir); err != nil {
 			return
 		}
+
 		dir = filepath.Dir(dir)
 	}
 }
@@ -324,6 +358,7 @@ func (s *Serializer) PreviewChanges(changes []refactorTypes.Change) (string, err
 	for file := range fileChanges {
 		files = append(files, file)
 	}
+
 	sort.Strings(files)
 
 	fmt.Fprintf(&preview, "Preview of %d changes across %d files:\n\n", len(changes), len(files))
@@ -340,22 +375,27 @@ func (s *Serializer) PreviewChanges(changes []refactorTypes.Change) (string, err
 
 		for i, change := range changesForFile {
 			fmt.Fprintf(&preview, "%d. %s\n", i+1, change.Description)
+
 			if change.Delete {
 				preview.WriteString("   Action: delete file\n\n")
 				continue
 			}
+
 			fmt.Fprintf(&preview, "   Position: %d-%d\n", change.Start, change.End)
 
 			if change.OldText != "" {
 				fmt.Fprintf(&preview, "   - %s\n", s.truncateText(change.OldText))
 			}
+
 			if change.Carried() {
 				fmt.Fprintf(&preview, "   + file moved (%d bytes)\n", len(change.NewText))
 			} else if change.NewText != "" {
 				fmt.Fprintf(&preview, "   + %s\n", s.truncateText(change.NewText))
 			}
+
 			preview.WriteString("\n")
 		}
+
 		preview.WriteString("\n")
 	}
 
@@ -384,6 +424,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	}
 
 	modifiedContent := string(content)
+
 	var err error
 	for _, change := range sorted {
 		modifiedContent, err = s.applyChange(modifiedContent, change)
@@ -391,6 +432,7 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 			return nil, fmt.Errorf("failed to apply change: %w", err)
 		}
 	}
+
 	return []byte(modifiedContent), nil
 }
 
@@ -401,13 +443,16 @@ func (s *Serializer) computeContent(filePath string, content []byte, changes []r
 	if err != nil {
 		return nil, fmt.Errorf("compute content: %w", err)
 	}
+
 	if len(modifiedBytes) == 0 || !strings.HasSuffix(filePath, ".go") || slices.Contains(strings.Split(filepath.ToSlash(filePath), "/"), "testdata") {
 		return modifiedBytes, nil
 	}
+
 	modifiedContent := string(modifiedBytes)
 	if s.modulePath != "" {
 		modifiedContent = OrganizeImports(modifiedContent, s.modulePath, s.workspaceModules)
 	}
+
 	formatted, err := s.formatGoCode(modifiedContent)
 	if err == nil {
 		return []byte(formatted), nil
@@ -419,6 +464,7 @@ func (s *Serializer) computeContent(filePath string, content []byte, changes []r
 			return []byte(modifiedContent), nil
 		}
 	}
+
 	return nil, fmt.Errorf("%s: result is not valid Go: %w", filePath, err)
 }
 
@@ -444,6 +490,7 @@ func (s *Serializer) applyChange(content string, change refactorTypes.Change) (s
 
 	// Construct the new content
 	newContent := before + change.NewText + after
+
 	return newContent, nil
 }
 
@@ -461,6 +508,7 @@ func (s *Serializer) validateChangePositions(changes []refactorTypes.Change) err
 			}
 		}
 	}
+
 	return nil
 }
 

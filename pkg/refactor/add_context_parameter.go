@@ -31,9 +31,11 @@ func (p *addContextParameterPlanner) requestedIn(ws *types.Workspace) (*funcTarg
 	if err != nil {
 		return nil, err
 	}
+
 	if hasLeadingCtx(analysis.FuncTypeParams(ft)) {
 		return nil, fmt.Errorf("function %s already has context.Context as first parameter", p.req.FunctionName)
 	}
+
 	return &funcTarget{name: p.req.FunctionName, file: p.req.SourceFile, ft: ft}, nil
 }
 
@@ -47,19 +49,24 @@ func (p *addContextParameterPlanner) run(r *signatureRun, t funcTarget, requeste
 	if !requested && hasLeadingCtx(params) {
 		return nil
 	}
+
 	ws := r.view.Workspace
 	op := p.operation(t, params, bodyNeedsCtxName(ws, t))
+
 	err := op.Validate(ws)
 	if err != nil {
 		return err
 	}
+
 	altered, err := r.execute(op)
 	if err != nil {
 		return err
 	}
+
 	for _, d := range altered {
 		r.merge(RemoveInternalCtxCreation(ws, d.File, qualifiedName(d.Key)), nil)
 	}
+
 	return nil
 }
 
@@ -76,13 +83,16 @@ func (p *addContextParameterPlanner) operation(t funcTarget, current []analysis.
 	if len(current) > 0 && current[0].Name == "" && !needsName {
 		params[0].Name = ""
 	}
+
 	for _, fp := range current {
 		params = append(params, Parameter{Name: fp.Name, Type: fp.Type})
 	}
+
 	defaultValue := p.req.DefaultValue
 	if defaultValue == "" {
 		defaultValue = "context.TODO()"
 	}
+
 	return &ChangeSignatureOperation{
 		FunctionName:         t.name,
 		SourceFile:           t.file,

@@ -18,6 +18,7 @@ func (k SymbolKey) String() string {
 	if k.Recv == "" {
 		return k.PkgPath + "." + k.Name
 	}
+
 	return k.PkgPath + "." + k.Recv + "." + k.Name
 }
 
@@ -28,6 +29,7 @@ func SymbolKeyOf(obj gotypes.Object) (SymbolKey, bool) {
 	if obj == nil || obj.Pkg() == nil || obj.Name() == "_" {
 		return SymbolKey{}, false
 	}
+
 	fn, ok := obj.(*gotypes.Func)
 	if ok {
 		sig, ok := fn.Type().(*gotypes.Signature)
@@ -36,15 +38,19 @@ func SymbolKeyOf(obj gotypes.Object) (SymbolKey, bool) {
 			if !ok {
 				return SymbolKey{}, false
 			}
+
 			return SymbolKey{PkgPath: obj.Pkg().Path(), Recv: recv, Name: obj.Name()}, true
 		}
+
 		if obj.Name() == "init" {
 			return SymbolKey{}, false
 		}
 	}
+
 	if obj.Parent() != obj.Pkg().Scope() {
 		return SymbolKey{}, false
 	}
+
 	return SymbolKey{PkgPath: obj.Pkg().Path(), Name: obj.Name()}, true
 }
 
@@ -52,18 +58,22 @@ func SymbolKeyOf(obj gotypes.Object) (SymbolKey, bool) {
 // or points to.
 func packageLevelTypeName(t gotypes.Type) (string, bool) {
 	t = gotypes.Unalias(t)
+
 	ptr, ok := t.(*gotypes.Pointer)
 	if ok {
 		t = gotypes.Unalias(ptr.Elem())
 	}
+
 	named, ok := t.(*gotypes.Named)
 	if !ok {
 		return "", false
 	}
+
 	obj := named.Obj()
 	if obj.Pkg() == nil || obj.Parent() != obj.Pkg().Scope() {
 		return "", false
 	}
+
 	return obj.Name(), true
 }
 
@@ -79,6 +89,7 @@ func (s SymbolKeySet) Has(k SymbolKey) bool {
 func (s SymbolKeySet) AddAll(other SymbolKeySet) bool {
 	before := len(s)
 	maps.Copy(s, other)
+
 	return len(s) > before
 }
 
@@ -86,5 +97,6 @@ func (s SymbolKeySet) AddAll(other SymbolKeySet) bool {
 func (s SymbolKeySet) Clone() SymbolKeySet {
 	out := make(SymbolKeySet, len(s))
 	maps.Copy(out, s)
+
 	return out
 }

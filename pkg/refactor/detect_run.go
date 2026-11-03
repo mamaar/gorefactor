@@ -46,6 +46,7 @@ func (r *detectRun) recordSignature(key declKey, sig string) {
 	if r.signatures[key] == nil {
 		r.signatures[key] = make(map[string]bool)
 	}
+
 	r.signatures[key][sig] = true
 }
 
@@ -59,14 +60,17 @@ func declShape(decl *funcDecl) string {
 // sig, is refused: another configuration declares it with a different shape.
 func (r *detectRun) signatureRefusal(key declKey, function, file, sig string) string {
 	var others []string
+
 	for other := range r.signatures[key] {
 		if other != sig {
 			others = append(others, other)
 		}
 	}
+
 	if len(others) == 0 {
 		return ""
 	}
+
 	return fmt.Sprintf("%s in %s has signature %s, which differs from %s, the signature it is changed from under another build configuration; make the declarations agree first",
 		function, file, sig, slices.Min(others))
 }
@@ -95,8 +99,10 @@ func (r *detectRun) header(views []*analysis.View) DetectHeader {
 	for i, v := range views {
 		h.Configs[i] = v.Config.String()
 	}
+
 	slices.SortFunc(h.TypeErrors, func(a, b analysis.ProductionError) int {
 		return cmp.Compare(a.File.Path, b.File.Path)
 	})
+
 	return h
 }

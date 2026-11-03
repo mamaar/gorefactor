@@ -13,16 +13,19 @@ import (
 
 func renameSymbol(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "rename_symbol", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	return res
 }
 
 func renameFToG(extra map[string]any) map[string]any {
 	args := map[string]any{"symbol": "f", "new_name": "g"}
 	maps.Copy(args, extra)
+
 	return args
 }
 
@@ -32,6 +35,7 @@ func TestRenameSymbol_RenamesReferenceInTaggedTestFile(t *testing.T) {
 		"p/use.go":           "package p\n\nfunc Use() int { return f(1) }\n",
 		"p/use_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestTagx(t *testing.T) { f(2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -49,6 +53,7 @@ func TestRenameSymbol_TagSiblingsBothRenamedAndSharedCallerOnce(t *testing.T) {
 		"p/f_tagx.go":    ctxFTagx,
 		"p/use.go":       "package p\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -58,16 +63,19 @@ func TestRenameSymbol_TagSiblingsBothRenamedAndSharedCallerOnce(t *testing.T) {
 	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
+
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
 		got := fileText(t, dir, f)
 		if strings.Count(got, "func g(n int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	got := fileText(t, dir, "p/use.go")
 	if strings.Count(got, "g(1)") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -77,6 +85,7 @@ func TestRenameSymbol_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 		"p/use_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use() int { return f(1) }\n",
 		"p/plain.go":    "package p\n\nfunc plain() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -90,6 +99,7 @@ func TestRenameSymbol_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 
 func TestRenameSymbol_MissingSymbolErrorTextIsUnchanged(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": "package p\n\nfunc f(n int) int { return n }\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -103,6 +113,7 @@ func TestRenameSymbol_MissingSymbolErrorTextIsUnchanged(t *testing.T) {
 
 func TestRenameSymbol_ReportsBrokenTaggedTestFileAsUncovered(t *testing.T) {
 	dir := brokenTaggedTestWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -120,11 +131,13 @@ func TestRenameSymbol_SingleConfigOmitsBuildConfigs(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nfunc f(n int) int { return n }\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	for _, dryRun := range []bool{true, false} {
 		out := callJSON(t, sess, "rename_symbol", map[string]any{"symbol": "f", "new_name": "g", "dry_run": dryRun})
+
 		_, ok := out["build_configs"]
 		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
@@ -137,6 +150,7 @@ func TestRenameSymbol_NewNameTakenOnlyUnderTagAborts(t *testing.T) {
 		"p/f.go":      "package p\n\nfunc f(n int) int { return n }\n",
 		"p/g_tagx.go": "//go:build tagx\n\npackage p\n\nfunc g() {}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -146,6 +160,7 @@ func TestRenameSymbol_NewNameTakenOnlyUnderTagAborts(t *testing.T) {
 	if !res.IsError || !strings.Contains(msg, "tags=tagx") || !strings.Contains(msg, "name conflict") {
 		t.Errorf("error = %q (IsError %v), want a name conflict naming tags=tagx", msg, res.IsError)
 	}
+
 	assertFileUnchanged(t, dir, "p/f.go", "package p\n\nfunc f(n int) int { return n }\n")
 }
 
@@ -154,6 +169,7 @@ func TestRenameSymbol_NewNameTakenByTagOnlyAlternativeIsNotAConflict(t *testing.
 		"p/f_default.go": ctxFDefault,
 		"p/g_tagx.go":    "//go:build tagx\n\npackage p\n\nfunc g() {}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -168,6 +184,7 @@ func TestRenameSymbol_TypeUsedOnlyInTypeExpressionInTaggedFile(t *testing.T) {
 		"p/t.go":        "package p\n\ntype T struct{}\n",
 		"p/use_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use(x T) {}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

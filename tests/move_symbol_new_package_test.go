@@ -59,6 +59,7 @@ func NewMemCache() *MemCache {
 	}
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -73,24 +74,29 @@ func NewMemCache() *MemCache {
 	if err != nil {
 		t.Fatalf("CallTool transport error (server likely crashed/disconnected): %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
 	}
 
 	targetPath := filepath.Join(tmpDir, "pkg", "memcache", "memcache.go")
+
 	targetContent, err := os.ReadFile(targetPath)
 	if err != nil {
 		t.Fatalf("expected %s to have been created: %v", targetPath, err)
 	}
+
 	if !strings.Contains(string(targetContent), "type MemCache struct") {
 		t.Errorf("expected MemCache type in newly-created package, got:\n%s", targetContent)
 	}
 
 	commonPath := filepath.Join(tmpDir, "common", "memcache.go")
+
 	commonContent, err := os.ReadFile(commonPath)
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading %s: %v", commonPath, err)
 	}
+
 	if strings.Contains(string(commonContent), "type MemCache struct") {
 		t.Errorf("expected MemCache type to have been removed from source package, got:\n%s", commonContent)
 	}
@@ -114,6 +120,7 @@ type MemCache struct {
 `)
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -128,15 +135,18 @@ type MemCache struct {
 	if err != nil {
 		t.Fatalf("CallTool transport error: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
 	}
 
 	targetPath := filepath.Join(tmpDir, "pkg", "memcache", "memcache.go")
+
 	got, err := os.ReadFile(targetPath)
 	if err != nil {
 		t.Fatalf("expected %s to have been created: %v", targetPath, err)
 	}
+
 	if !strings.Contains(string(got), "type MemCache struct") {
 		t.Errorf("expected MemCache in the new package, got:\n%s", got)
 	}
@@ -149,10 +159,12 @@ type MemCache struct {
 
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
+
 	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err != nil {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
+
 	err = os.WriteFile(path, []byte(content), 0o644)
 	if err != nil {
 		t.Fatalf("write %s: %v", path, err)

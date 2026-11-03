@@ -26,6 +26,7 @@ func TestResolvePackagePath_ImportPath(t *testing.T) {
 	}
 
 	got := ResolvePackagePath(ws, "scratch/pkg/widget")
+
 	want := "/repo/go/pkg/widget"
 	if got != want {
 		t.Fatalf("ResolvePackagePath(%q) = %q, want %q", "scratch/pkg/widget", got, want)
@@ -51,6 +52,7 @@ func TestResolvePackagePath_FilesystemPathStillWorks(t *testing.T) {
 	}
 
 	got := ResolvePackagePath(ws, "/repo/go/pkg/widget")
+
 	want := "/repo/go/pkg/widget"
 	if got != want {
 		t.Fatalf("ResolvePackagePath(%q) = %q, want %q", "/repo/go/pkg/widget", got, want)
@@ -95,6 +97,7 @@ func TestResolveNewPackagePath(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ResolveNewPackagePath(%q) returned an error: %v", tc.input, err)
 			}
+
 			if got != tc.want {
 				t.Fatalf("ResolveNewPackagePath(%q) = %q, want %q", tc.input, got, tc.want)
 			}
@@ -136,6 +139,7 @@ func TestResolveNewPackagePath_ImportPathWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if got != "/repo/go/pkg" {
 		t.Fatalf("got %q, want %q (the import path reading)", got, "/repo/go/pkg")
 	}
@@ -144,6 +148,7 @@ func TestResolveNewPackagePath_ImportPathWins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if got != "/repo/go/feltgis/pkg" {
 		t.Fatalf("got %q, want the literal directory", got)
 	}

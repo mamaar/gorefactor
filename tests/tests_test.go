@@ -34,9 +34,11 @@ func TestRenameSymbol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenameSymbol: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "rename_symbol", tmpDir)
 }
 
@@ -53,9 +55,11 @@ func TestRenameMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenameMethod: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "rename_method", tmpDir)
 }
 
@@ -72,9 +76,11 @@ func TestRenameField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenameField: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "rename_field", tmpDir)
 }
 
@@ -92,9 +98,11 @@ func TestRenamePackage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RenamePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "rename_package", tmpDir)
 }
 
@@ -111,9 +119,11 @@ func TestMoveSymbol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MoveSymbol: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "move_symbol", tmpDir)
 }
 
@@ -133,9 +143,11 @@ func TestExtractFunction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractFunction: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "extract_function", tmpDir)
 }
 
@@ -154,9 +166,11 @@ func TestExtractMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractMethod: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "extract_method", tmpDir)
 }
 
@@ -173,9 +187,11 @@ func TestExtractInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractInterface: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "extract_interface", tmpDir)
 }
 
@@ -194,9 +210,11 @@ func TestExtractVariable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExtractVariable: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "extract_variable", tmpDir)
 }
 
@@ -215,9 +233,11 @@ func TestInlineFunction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InlineFunction: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "inline_function", tmpDir)
 }
 
@@ -234,9 +254,11 @@ func TestInlineMethod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InlineMethod: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "inline_method", tmpDir)
 }
 
@@ -252,9 +274,11 @@ func TestInlineVariable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("InlineVariable: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "inline_variable", tmpDir)
 }
 
@@ -288,14 +312,17 @@ func TestChangeSignature(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
+
 	err = eng.ExecutePlan(plan)
 	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "change_signature", tmpDir)
 }
 
@@ -320,9 +347,11 @@ func TestAddReturn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ChangeSignature: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "add_return", tmpDir)
 }
 
@@ -354,14 +383,17 @@ func TestAddContextParameter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
+
 	err = eng.ExecutePlan(plan)
 	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "add_context_parameter", tmpDir)
 }
 
@@ -379,9 +411,11 @@ func TestThreadContext_Chain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_chain", tmpDir)
 }
 
@@ -397,9 +431,11 @@ func TestThreadContext_Stops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_stops", tmpDir)
 }
 
@@ -416,20 +452,25 @@ func TestThreadContext_StopsAtWrapperKeepingGeneratedBridgeUntouched(t *testing.
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_generated", tmpDir)
 
 	gen := filepath.Join("bridge", "bridge_gen.go")
+
 	want, err := os.ReadFile(filepath.Join("testdata", "thread_context_generated", gen))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got, err := os.ReadFile(filepath.Join(tmpDir, gen))
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if string(got) != string(want) {
 		t.Errorf("%s was modified:\n%s", gen, got)
 	}
@@ -447,9 +488,11 @@ func TestThreadContext_Interface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_interface", tmpDir)
 }
 
@@ -465,9 +508,11 @@ func TestThreadContext_TestRoots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_test_roots", tmpDir)
 }
 
@@ -483,9 +528,11 @@ func TestThreadContext_Roots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_roots", tmpDir)
 }
 
@@ -501,9 +548,11 @@ func TestThreadContext_FakeRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_fake_root", tmpDir)
 }
 
@@ -519,9 +568,11 @@ func TestThreadContext_Nested(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_nested", tmpDir)
 }
 
@@ -537,9 +588,11 @@ func TestThreadContext_Generics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "thread_context_generics", tmpDir)
 }
 
@@ -564,6 +617,7 @@ func TestThreadContext_AbortsOnValueUse(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected ThreadContext to abort, got nil error")
 	}
+
 	if !strings.Contains(err.Error(), "Seed") || !strings.Contains(err.Error(), "used as a value") {
 		t.Fatalf("error must name the offending value use, got: %v", err)
 	}
@@ -572,6 +626,7 @@ func TestThreadContext_AbortsOnValueUse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading fixture after ThreadContext: %v", err)
 	}
+
 	if string(before) != string(after) {
 		t.Fatalf("expected zero files changed after an abort, but main.go differs:\n%s", unifiedDiff(string(before), string(after)))
 	}
@@ -599,6 +654,7 @@ func TestThreadContext_AbortsOnExternalInterface(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected ThreadContext to abort, got nil error")
 	}
+
 	if !strings.Contains(err.Error(), "net/http.Handler") {
 		t.Fatalf("error must name the external interface by package path, got: %v", err)
 	}
@@ -607,6 +663,7 @@ func TestThreadContext_AbortsOnExternalInterface(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading fixture after ThreadContext: %v", err)
 	}
+
 	if string(before) != string(after) {
 		t.Fatalf("expected zero files changed after an abort, but main.go differs:\n%s", unifiedDiff(string(before), string(after)))
 	}
@@ -645,11 +702,13 @@ func TestThreadContext_Compiles(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ThreadContext: %v", err)
 			}
+
 			if err := eng.ExecutePlan(plan); err != nil {
 				t.Fatalf("ExecutePlan: %v", err)
 			}
 
 			buildCmd := exec.Command("go", "build", "./...")
+
 			buildCmd.Dir = tmpDir
 			if out, err := buildCmd.CombinedOutput(); err != nil {
 				t.Fatalf("go build ./... failed after ThreadContext:\n%s", out)
@@ -661,6 +720,7 @@ func TestThreadContext_Compiles(t *testing.T) {
 			// added — the exact failure findParsedFile exists to prevent.
 			vetCmd := exec.Command("go", "vet", "./...")
 			vetCmd.Dir = tmpDir
+
 			out, err := vetCmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go vet ./... failed after ThreadContext:\n%s", out)
@@ -685,14 +745,17 @@ func TestSafeDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
+
 	err = eng.ExecutePlan(plan)
 	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "safe_delete", tmpDir)
 }
 
@@ -707,11 +770,14 @@ func TestFixIfInit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "fix_if_init", tmpDir)
 }
 
@@ -731,11 +797,14 @@ func runFixIfInit(t *testing.T, fixtureDir string) string {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	return tmpDir
 }
 
@@ -800,6 +869,7 @@ func TestFixIfInit_Compiles(t *testing.T) {
 
 			buildCmd := exec.Command("go", "build", "./...")
 			buildCmd.Dir = tmpDir
+
 			out, err := buildCmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go build ./... failed after ifinit fix:\n%s", out)
@@ -807,6 +877,7 @@ func TestFixIfInit_Compiles(t *testing.T) {
 
 			vetCmd := exec.Command("go", "vet", "./...")
 			vetCmd.Dir = tmpDir
+
 			out, err = vetCmd.CombinedOutput()
 			if err != nil {
 				t.Fatalf("go vet ./... failed after ifinit fix:\n%s", out)
@@ -824,11 +895,14 @@ func TestFixBooleanBranching(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "fix_boolean_branching", tmpDir)
 }
 
@@ -838,15 +912,19 @@ func TestFixDeepIfElse(t *testing.T) {
 	ws := loadWorkspace(t, eng, tmpDir)
 
 	a := deepifelse.NewAnalyzer(deepifelse.WithMaxNesting(2), deepifelse.WithMinElseLines(3))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "fix_deep_if_else", tmpDir)
 }
 
@@ -865,11 +943,14 @@ func TestFixDeepIfElseChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "fix_deep_if_else_chain", tmpDir)
 }
 
@@ -887,11 +968,14 @@ func TestFixSwitchableIfChains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "switch_chains", tmpDir)
 }
 
@@ -901,14 +985,18 @@ func TestFixErrorWrapping(t *testing.T) {
 	ws := loadWorkspace(t, eng, tmpDir)
 
 	a := errorwrap.NewAnalyzer(errorwrap.WithSeverity(errorwrap.SeverityCritical))
+
 	rr, err := analyzers.Run(ws, a, "")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+
 	changes := analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics)
+
 	plan := analyzers.ChangesToPlan(changes)
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	compareGoldenFiles(t, "fix_error_wrapping", tmpDir)
 }

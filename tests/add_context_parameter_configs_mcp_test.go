@@ -16,10 +16,13 @@ import (
 
 func goVets(t *testing.T, dir string, tagSets ...string) {
 	t.Helper()
+
 	for _, tags := range tagSets {
 		cmd := exec.Command("go", "vet", "-tags="+tags, "./...")
 		cmd.Dir = dir
+
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
+
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Errorf("go vet -tags=%q failed: %v\n%s", tags, err, out)
@@ -29,10 +32,12 @@ func goVets(t *testing.T, dir string, tagSets ...string) {
 
 func addContext(t *testing.T, sess *mcptest.Session, args map[string]any) *mcpsdk.CallToolResult {
 	t.Helper()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "add_context_parameter", Arguments: args})
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	return res
 }
 
@@ -44,6 +49,7 @@ func addContextOK(t *testing.T, sess *mcptest.Session, args map[string]any) map[
 func fArgs(file string, extra map[string]any) map[string]any {
 	args := map[string]any{"function_name": "f", "source_file": file}
 	maps.Copy(args, extra)
+
 	return args
 }
 
@@ -56,6 +62,7 @@ func TestAddContextParameter_RewritesCallSiteInTaggedTestFile(t *testing.T) {
 		"p/use.go":           "package p\n\nfunc Use() int { return f(1) }\n",
 		"p/use_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestTagx(t *testing.T) { f(2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -73,6 +80,7 @@ func TestAddContextParameter_TagSiblingsGainCtxAndSharedCallerPassesDefaultOnce(
 		"p/f_tagx.go":    ctxFTagx,
 		"p/use.go":       "package p\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -82,16 +90,19 @@ func TestAddContextParameter_TagSiblingsGainCtxAndSharedCallerPassesDefaultOnce(
 	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
+
 	for _, f := range []string{"p/f_default.go", "p/f_tagx.go"} {
 		got := fileText(t, dir, f)
 		if strings.Count(got, "func f(ctx context.Context, n int) int") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	got := fileText(t, dir, "p/use.go")
 	if strings.Count(got, "f(context.TODO(), 1)") != 1 || strings.Count(got, "context.TODO()") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -102,6 +113,7 @@ func TestAddContextParameter_CustomDefaultAppliesInTaggedCallSites(t *testing.T)
 		"p/use.go":           "package p\n\nfunc Use() int { return f(1) }\n",
 		"p/use_tagx_test.go": "//go:build tagx\n\npackage p\n\nimport \"testing\"\n\nfunc TestTagx(t *testing.T) { f(2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -118,6 +130,7 @@ func TestAddContextParameter_PropagateReachesImplementationOnlyUnderTag(t *testi
 		"p/a.go":      "//go:build !tagx\n\npackage p\n\ntype A struct{}\n\nfunc (A) Run(n int) int { return n }\n",
 		"p/b_tagx.go": "//go:build tagx\n\npackage p\n\ntype B struct{}\n\nfunc (B) Run(n int) int { return n + 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -129,6 +142,7 @@ func TestAddContextParameter_PropagateReachesImplementationOnlyUnderTag(t *testi
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	assertFileContains(t, dir, "p/iface.go", "r.Run(context.TODO(), 1)")
 	goVets(t, dir, "", "tagx")
 }
@@ -139,6 +153,7 @@ func TestAddContextParameter_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 		"p/use_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use() int { return f(1) }\n",
 		"p/plain.go":    "package p\n\nfunc plain() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -152,6 +167,7 @@ func TestAddContextParameter_FindsTargetDeclaredOnlyUnderTag(t *testing.T) {
 
 func TestAddContextParameter_MissingFunctionErrorTextIsUnchanged(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": "package p\n\nfunc f(n int) int { return n }\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -167,6 +183,7 @@ func TestAddContextParameter_AlreadyHasContextErrorTextIsUnchanged(t *testing.T)
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nimport \"context\"\n\nfunc f(ctx context.Context, n int) int { return n }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -184,6 +201,7 @@ func TestAddContextParameter_RemovesInternalCtxCreationInBothSiblings(t *testing
 		"p/f_default.go": "//go:build !tagx\n\npackage p\n\nimport \"context\"\n\n" + body,
 		"p/f_tagx.go":    "//go:build tagx\n\npackage p\n\nimport \"context\"\n\n" + body,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -195,11 +213,13 @@ func TestAddContextParameter_RemovesInternalCtxCreationInBothSiblings(t *testing
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
 func brokenTaggedTestWorkspace(t *testing.T) string {
 	t.Helper()
+
 	return writeInlineWorkspace(t, map[string]string{
 		"p/f_default.go":     ctxFDefault,
 		"p/f_tagx.go":        ctxFTagx,
@@ -209,13 +229,16 @@ func brokenTaggedTestWorkspace(t *testing.T) string {
 
 func assertBrokenTaggedTestReported(t *testing.T, out planResultJSON) {
 	t.Helper()
+
 	if len(out.UncoveredFiles) != 1 {
 		t.Fatalf("uncovered_files = %+v, want p/bad_tagx_test.go", out.UncoveredFiles)
 	}
+
 	u := out.UncoveredFiles[0]
 	if u.File != "p/bad_tagx_test.go" || len(u.Configs) != 1 || u.Configs[0] != "tags=tagx" || !strings.Contains(u.Reason, "could not import") {
 		t.Errorf("uncovered file = %+v", u)
 	}
+
 	if len(out.SkippedSites) != 1 || !strings.HasSuffix(out.SkippedSites[0].File, "p/bad_tagx_test.go") || out.SkippedSites[0].Line != 12 {
 		t.Errorf("skipped_sites = %+v, want the f call at bad_tagx_test.go:12", out.SkippedSites)
 	}
@@ -223,6 +246,7 @@ func assertBrokenTaggedTestReported(t *testing.T, out planResultJSON) {
 
 func TestAddContextParameter_ReportsBrokenTaggedTestFileAsUncovered(t *testing.T) {
 	dir := brokenTaggedTestWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -240,11 +264,13 @@ func TestAddContextParameter_SingleConfigOmitsBuildConfigs(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nfunc f(n int) int { return n }\n\nfunc Use() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	for _, dryRun := range []bool{true, false} {
 		out := addContextOK(t, sess, fArgs("p/f.go", map[string]any{"dry_run": dryRun}))
+
 		_, ok := out["build_configs"]
 		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])

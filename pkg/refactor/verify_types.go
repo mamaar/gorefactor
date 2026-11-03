@@ -56,9 +56,11 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 	if ws == nil {
 		return &TypeCheckResult{Skipped: "no workspace provided"}
 	}
+
 	if ws.FileSet == nil {
 		return &TypeCheckResult{Skipped: "workspace has no FileSet"}
 	}
+
 	if plan == nil || len(plan.Changes) == 0 {
 		// Nothing to apply, so nothing can have gone newly wrong.
 		return &TypeCheckResult{}
@@ -77,6 +79,7 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 
 	touched := make(map[*types.Package]bool)
 	var untracked []string
+
 	for file := range changesByFile {
 		pkg, ok := fileToPkg[file]
 		if ok {
@@ -112,6 +115,7 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 			gp.BindWorkspace(ws)
 			importer = gp.Importer()
 		}
+
 		if importer == nil {
 			return &TypeCheckResult{Skipped: "could not obtain a workspace importer"}
 		}
@@ -137,19 +141,23 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 	if len(skipped) > 0 {
 		result.Skipped = strings.Join(skipped, "; ")
 	}
+
 	return result
 }
 
 func packagesByFile(ws *types.Workspace) map[string]*types.Package {
 	fileToPkg := make(map[string]*types.Package)
+
 	for _, pkg := range ws.Packages {
 		for _, f := range pkg.Files {
 			fileToPkg[f.Path] = pkg
 		}
+
 		for _, f := range pkg.TestFiles {
 			fileToPkg[f.Path] = pkg
 		}
 	}
+
 	return fileToPkg
 }
 
@@ -175,6 +183,7 @@ func (o *overlayImporter) Import(path string) (*gotypes.Package, error) {
 	if p != nil {
 		return p, nil
 	}
+
 	return o.base.Import(path)
 }
 
@@ -185,6 +194,7 @@ func changesProduction(pkg *types.Package, changesByFile map[string][]types.Chan
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -208,12 +218,15 @@ func orderVerification(ws *types.Workspace, touched []*types.Package, changesByF
 	for _, p := range ws.Packages {
 		byImport[p.ImportPath] = p
 	}
+
 	importsOf := func(files []*types.File) []*types.Package {
 		var out []*types.Package
+
 		for _, f := range files {
 			if f.AST == nil {
 				continue
 			}
+
 			for _, imp := range f.AST.Imports {
 				path, err := strconv.Unquote(imp.Path.Value)
 				if err == nil && byImport[path] != nil {
@@ -221,6 +234,7 @@ func orderVerification(ws *types.Workspace, touched []*types.Package, changesByF
 				}
 			}
 		}
+
 		return out
 	}
 	prodImports := func(p *types.Package) []*types.Package { return importsOf(slices.Collect(maps.Values(p.Files))) }
@@ -229,20 +243,25 @@ func orderVerification(ws *types.Workspace, touched []*types.Package, changesByF
 	for _, p := range touched {
 		o.changed[p] = changesProduction(p, changesByFile)
 	}
+
 	affected := make(map[*types.Package]bool)
 	started := make(map[*types.Package]bool)
 	var visit func(p *types.Package)
+
 	visit = func(p *types.Package) {
 		if started[p] {
 			return // done, or an import cycle through test files
 		}
+
 		started[p] = true
 		for _, d := range prodImports(p) {
 			visit(d)
+
 			if o.changed[d] || affected[d] {
 				affected[p] = !o.changed[p]
 			}
 		}
+
 		if o.changed[p] || affected[p] {
 			o.overlaid = append(o.overlaid, p)
 		}
@@ -252,13 +271,16 @@ func orderVerification(ws *types.Workspace, touched []*types.Package, changesByF
 			o.needed[d] = true
 			visit(d)
 		}
+
 		visit(p)
 	}
+
 	for _, p := range o.overlaid {
 		for _, d := range prodImports(p) {
 			o.needed[d] = true
 		}
 	}
+
 	return o
 }
 
@@ -270,27 +292,33 @@ func verifyTouched(ws *types.Workspace, pkgs []*types.Package, changesByFile map
 	ser := NewSerializer()
 	over := &overlayImporter{base: importer, over: make(map[string]*gotypes.Package)}
 	order := orderVerification(ws, pkgs, changesByFile)
+
 	isTouched := make(map[*types.Package]bool, len(pkgs))
 	for _, p := range pkgs {
 		isTouched[p] = true
 	}
+
 	record := func(res packageVerifyResult) {
 		if res.skipped != "" {
 			skipped = append(skipped, res.skipped)
 			return
 		}
+
 		newErrors = append(newErrors, res.newErrors...)
 	}
 
 	checked := make(map[*types.Package]bool)
+
 	for _, p := range order.overlaid {
 		inPackage, _ := packageFileGroups(p)
+
 		production := productionFiles(p, inPackage)
 		switch {
 		case len(production) == 0:
 		case isTouched[p] && len(production) == len(inPackage):
 			res := verifyFileGroup(p.ImportPath, inPackage, changesByFile, ser, importer, over)
 			record(res)
+
 			checked[p] = true
 			if res.modified != nil {
 				over.over[p.ImportPath] = res.modified
@@ -301,20 +329,24 @@ func verifyTouched(ws *types.Workspace, pkgs []*types.Package, changesByFile map
 			if isTouched[p] && res.skipped != "" {
 				skipped = append(skipped, res.skipped)
 			}
+
 			if res.modified != nil {
 				over.over[p.ImportPath] = res.modified
 			}
 		}
 	}
+
 	for _, p := range pkgs {
 		inPackage, external := packageFileGroups(p)
 		if !checked[p] {
 			record(verifyFileGroup(p.ImportPath, inPackage, changesByFile, ser, importer, over))
 		}
+
 		if slices.ContainsFunc(external, func(f *types.File) bool { return changesByFile[f.Path] != nil }) {
 			record(verifyFileGroup(p.ImportPath+"_test", external, changesByFile, ser, importer, over))
 		}
 	}
+
 	return newErrors, skipped
 }
 
@@ -337,9 +369,11 @@ func packageFileGroups(pkg *types.Package) (inPackage, external []*types.File) {
 			external = append(external, f)
 		}
 	}
+
 	if len(inPackage) == 0 {
 		return external, nil
 	}
+
 	return inPackage, external
 }
 
@@ -353,6 +387,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 	}
 
 	baseFset := token.NewFileSet()
+
 	baseFiles, err := parseAll(baseFset, baselineContents)
 	if err != nil {
 		// Should not happen: pkg.Files/TestFiles only ever hold content that
@@ -364,6 +399,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		// result" situation Skipped exists for.
 		return packageVerifyResult{skipped: fmt.Sprintf("package %s: baseline content unexpectedly failed to parse: %v", importPath, err)}
 	}
+
 	_, baseErrs := checkPackageErrors(baseFset, importer, importPath, baseFiles)
 	baseline := normalizeErrorSet(baseErrs)
 
@@ -372,6 +408,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		// A plan that does not apply in memory does not apply on disk either.
 		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan cannot be applied: %v", importPath, err)}}
 	}
+
 	if len(modContents) == 0 {
 		// The plan deletes every file in the package; there is nothing left
 		// to type-check, and that is not itself an error.
@@ -379,6 +416,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 	}
 
 	modFset := token.NewFileSet()
+
 	modFiles, err := parseAll(modFset, modContents)
 	if err != nil {
 		// The plan's own changes produce invalid Go source. This is exactly
@@ -389,15 +427,18 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		// the only finding for this package.
 		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan produces invalid Go source: %v", importPath, err)}}
 	}
+
 	modPkg, modErrs := checkPackageErrors(modFset, modImporter, importPath, modFiles)
 
 	var newErrs []string
+
 	for _, e := range modErrs {
 		key, full := normalizeTypeError(e)
 		if !baseline[key] {
 			newErrs = append(newErrs, full)
 		}
 	}
+
 	return packageVerifyResult{newErrors: newErrs, modified: modPkg}
 }
 
@@ -407,6 +448,7 @@ func fileContents(files []*types.File) map[string][]byte {
 	for _, f := range files {
 		out[f.Path] = f.OriginalContent
 	}
+
 	return out
 }
 
@@ -426,15 +468,19 @@ func applyPlanToFiles(files []*types.File, changesByFile map[string][]types.Chan
 			out[f.Path] = f.OriginalContent
 			continue
 		}
+
 		if slices.ContainsFunc(changes, func(c types.Change) bool { return c.Delete }) {
 			continue // dropped, see doc comment above
 		}
+
 		modified, err := ser.ApplyChangesToContent(f.OriginalContent, changes)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", f.Path, err)
 		}
+
 		out[f.Path] = modified
 	}
+
 	return out, nil
 }
 
@@ -450,6 +496,7 @@ func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, err
 	for p := range contents {
 		paths = append(paths, p)
 	}
+
 	sort.Strings(paths)
 
 	files := make([]*ast.File, 0, len(paths))
@@ -458,8 +505,10 @@ func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, err
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", p, err)
 		}
+
 		files = append(files, f)
 	}
+
 	return files, nil
 }
 
@@ -483,6 +532,7 @@ func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPa
 	// above (Config.Check returns the first error even when a custom Error
 	// callback is set), so it is intentionally discarded here.
 	pkg, _ := conf.Check(importPath, fset, files, info)
+
 	return pkg, errs
 }
 
@@ -501,12 +551,14 @@ func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPa
 // message-only comparison would incorrectly conflate into one.
 func normalizeTypeError(err error) (key string, full string) {
 	full = err.Error()
+
 	terr, ok := errors.AsType[gotypes.Error](err)
 	if ok {
 		base := "?"
 		if terr.Fset != nil {
 			base = filepath.Base(terr.Fset.Position(terr.Pos).Filename)
 		}
+
 		return base + ": " + terr.Msg, full
 	}
 	// Not a go/types.Error (e.g. an *Argument error from a hard failure
@@ -520,6 +572,7 @@ func normalizeTypeError(err error) (key string, full string) {
 			return filepath.Base(prefix) + full[idx:], full
 		}
 	}
+
 	return full, full
 }
 
@@ -531,5 +584,6 @@ func normalizeErrorSet(errs []error) map[string]bool {
 		key, _ := normalizeTypeError(e)
 		set[key] = true
 	}
+
 	return set
 }

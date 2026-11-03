@@ -112,10 +112,12 @@ func WithKinds(kinds ...string) Option {
 		if len(kinds) == 0 {
 			return
 		}
+
 		set := make(map[string]bool, len(kinds))
 		for _, kind := range kinds {
 			set[kind] = true
 		}
+
 		c.kinds = set
 	}
 }
@@ -148,6 +150,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	return &analysis.Analyzer{
 		Name:     "switchchain",
 		Doc:      "detects if-else chains that should be switch statements",
@@ -229,7 +232,9 @@ func (w *walker) walkFile(file *ast.File) {
 			if !ok || lit.Body == nil {
 				return true
 			}
+
 			w.walkStmts(lit.Body.List, fn.Name.Name+".func")
+
 			return true
 		})
 	}
@@ -248,6 +253,7 @@ func (w *walker) walkStmts(list []ast.Stmt, fnName string) {
 				continue
 			}
 		}
+
 		w.descend(stmt, fnName)
 	}
 }
@@ -259,6 +265,7 @@ func (w *walker) descend(stmt ast.Stmt, fnName string) {
 	switch s := stmt.(type) {
 	case *ast.IfStmt:
 		w.walkStmts(s.Body.List, fnName)
+
 		switch e := s.Else.(type) {
 		case *ast.BlockStmt:
 			w.walkStmts(e.List, fnName)
@@ -286,6 +293,7 @@ func (w *walker) walkClauses(body *ast.BlockStmt, fnName string) {
 	if body == nil {
 		return
 	}
+
 	for _, clause := range body.List {
 		switch c := clause.(type) {
 		case *ast.CaseClause:
@@ -305,13 +313,16 @@ func (w *walker) tryChain(root *ast.IfStmt, fnName string) bool {
 	}
 
 	links, final := chainOf(root)
+
 	branches := len(links)
 	if final != nil {
 		branches++
 	}
+
 	if branches < w.cfg.minBranches {
 		return false
 	}
+
 	if w.flattenerHandlesIt(links, final) {
 		return false
 	}
@@ -366,6 +377,7 @@ func (w *walker) tryChain(root *ast.IfStmt, fnName string) bool {
 	})
 
 	w.reported = append(w.reported, span{root.Pos(), root.End()})
+
 	return true
 }
 
@@ -373,6 +385,7 @@ func switchName(kind string) string {
 	if kind == KindTypeSwitch {
 		return "type switch"
 	}
+
 	return "switch statement"
 }
 
@@ -382,6 +395,7 @@ func (w *walker) alreadyReported(n ast.Node) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -407,13 +421,16 @@ func (w *walker) flattenerHandlesIt(links []*ast.IfStmt, final *ast.BlockStmt) b
 		if link.Init != nil {
 			return false
 		}
+
 		if !stmtfacts.Terminates(w.pass.TypesInfo, link.Body) {
 			return false
 		}
 	}
+
 	if final != nil && !stmtfacts.Terminates(w.pass.TypesInfo, final) {
 		return false
 	}
+
 	return true
 }
 
@@ -434,6 +451,7 @@ func (w *walker) hazards(root *ast.IfStmt, links []*ast.IfStmt, final *ast.Block
 			return "a branch breaks out of an enclosing loop or switch, which the new switch would intercept"
 		}
 	}
+
 	if final != nil && stmtfacts.BreaksOut(final.List, "") {
 		return "the else branch breaks out of an enclosing loop or switch, which the new switch would intercept"
 	}
@@ -475,6 +493,7 @@ func (w *walker) strayComment(root *ast.IfStmt, links []*ast.IfStmt, final *ast.
 	for _, link := range links {
 		blocks = append(blocks, link.Body)
 	}
+
 	if final != nil {
 		blocks = append(blocks, final)
 	}
@@ -484,13 +503,16 @@ func (w *walker) strayComment(root *ast.IfStmt, links []*ast.IfStmt, final *ast.
 			if c.Pos() < root.Pos() || c.End() > root.End() {
 				continue
 			}
+
 			inside := false
+
 			for _, block := range blocks {
 				if c.Pos() > block.Lbrace && c.End() <= block.Rbrace {
 					inside = true
 					break
 				}
 			}
+
 			if !inside {
 				return "a comment sits between the chain's branches, where a switch has nowhere to keep it"
 			}
@@ -531,6 +553,7 @@ func (w *walker) classify(links []*ast.IfStmt, final *ast.BlockStmt) (string, pl
 	}
 
 	tagged, isTagged := w.matchTagged(links)
+
 	kind := KindTagless
 	if isTagged {
 		kind = KindTagged
@@ -556,6 +579,7 @@ func (w *walker) classify(links []*ast.IfStmt, final *ast.BlockStmt) (string, pl
 	}
 
 	p, reason := w.planTagless(links, init)
+
 	return KindTagless, p, reason
 }
 
@@ -566,7 +590,9 @@ func (w *walker) initText(link *ast.IfStmt) (string, bool) {
 	if link.Init == nil {
 		return "", true
 	}
+
 	text := srctext.NodeText(w.pass.Fset, w.content, link.Init)
+
 	return text, text != ""
 }
 
@@ -596,14 +622,17 @@ func (w *walker) matchTypeSwitch(links []*ast.IfStmt) (typeSwitchChain, bool) {
 		if !ok || assign.Tok != token.DEFINE || len(assign.Lhs) != 2 || len(assign.Rhs) != 1 {
 			return typeSwitchChain{}, false
 		}
+
 		value, ok := assign.Lhs[0].(*ast.Ident)
 		if !ok {
 			return typeSwitchChain{}, false
 		}
+
 		okIdent, ok := assign.Lhs[1].(*ast.Ident)
 		if !ok {
 			return typeSwitchChain{}, false
 		}
+
 		assertion, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
 		if !ok || assertion.Type == nil {
 			return typeSwitchChain{}, false
@@ -632,10 +661,12 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 		if operand == "" {
 			return p, reasonNoText
 		}
+
 		if operand != chain.operands[0] {
 			return p, "the branches assert on different expressions, which a single type switch cannot do"
 		}
 	}
+
 	p.tag = chain.operands[0]
 
 	// The operand is the one expression a type switch really does hoist: the
@@ -652,13 +683,16 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 	// uses the variable — but two different real names are two different
 	// variables, and the clauses that used each would now read the other.
 	binding := ""
+
 	for _, name := range chain.bindings {
 		if name == "_" {
 			continue
 		}
+
 		if binding != "" && name != binding {
 			return p, fmt.Sprintf("the branches bind the asserted value to different names (%q and %q), which a single type switch guard cannot do", binding, name)
 		}
+
 		binding = name
 	}
 
@@ -667,6 +701,7 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 		if text == "" {
 			return p, reasonNoText
 		}
+
 		for j := range i {
 			if !w.sameType(chain.asserted[j], typeExpr) {
 				continue
@@ -675,6 +710,7 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 			// type does not compile at all.
 			return p, fmt.Sprintf("two branches assert the same type %s, which a type switch cannot repeat; remove the dead branch first", text)
 		}
+
 		p.cases = append(p.cases, text)
 	}
 
@@ -686,6 +722,7 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 			return p, "a branch reads the assertion's ok variable, which a type switch does not bind"
 		}
 	}
+
 	if final != nil && stmtfacts.ReferencesAny(final, chain.okNames) {
 		return p, "the else branch reads the assertion's ok variable, which a type switch does not bind"
 	}
@@ -702,6 +739,7 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 				if stmtfacts.DeclaredNames(link.Body.List)[binding] {
 					return p, fmt.Sprintf("a branch redeclares %q, which the type switch guard already binds in that clause", binding)
 				}
+
 				continue
 			}
 			// This branch does not bind the name today, so whatever it reads by
@@ -711,6 +749,7 @@ func (w *walker) planTypeSwitch(chain typeSwitchChain, links []*ast.IfStmt, fina
 				return p, fmt.Sprintf("a branch reads an outer %q, which the type switch would rebind in every clause", binding)
 			}
 		}
+
 		if final != nil && stmtfacts.ReferencesAny(final, names) {
 			return p, fmt.Sprintf("the else branch reads an outer %q, which the new default clause would shadow", binding)
 		}
@@ -733,6 +772,7 @@ func (w *walker) sameType(a, b ast.Expr) bool {
 	info := w.pass.TypesInfo
 	if info != nil && info.Types != nil {
 		ta, aok := info.Types[a]
+
 		tb, bok := info.Types[b]
 		if aok && bok && ta.Type != nil && tb.Type != nil {
 			return types.Identical(ta.Type, tb.Type)
@@ -741,6 +781,7 @@ func (w *walker) sameType(a, b ast.Expr) bool {
 
 	textA := srctext.ExprText(w.pass.Fset, w.content, a)
 	textB := srctext.ExprText(w.pass.Fset, w.content, b)
+
 	return textA != "" && textA == textB
 }
 
@@ -762,6 +803,7 @@ type taggedChain struct {
 // conversion hoists is one that can be re-read without effect.
 func (w *walker) matchTagged(links []*ast.IfStmt) (taggedChain, bool) {
 	first := disjuncts(links[0].Cond)
+
 	eq, ok := first[0].(*ast.BinaryExpr)
 	if !ok || eq.Op != token.EQL {
 		return taggedChain{}, false
@@ -771,10 +813,12 @@ func (w *walker) matchTagged(links []*ast.IfStmt) (taggedChain, bool) {
 		if !isPathExpr(candidate) {
 			continue
 		}
+
 		text := srctext.ExprText(w.pass.Fset, w.content, candidate)
 		if text == "" {
 			continue
 		}
+
 		chain, ok := w.matchTaggedWith(links, text, candidate)
 		if ok {
 			return chain, true
@@ -789,11 +833,13 @@ func (w *walker) matchTaggedWith(links []*ast.IfStmt, tag string, tagExpr ast.Ex
 
 	for _, link := range links {
 		var values []ast.Expr
+
 		for _, term := range disjuncts(link.Cond) {
 			eq, ok := term.(*ast.BinaryExpr)
 			if !ok || eq.Op != token.EQL {
 				return taggedChain{}, false
 			}
+
 			switch {
 			case srctext.ExprText(w.pass.Fset, w.content, eq.X) == tag:
 				values = append(values, eq.Y)
@@ -803,6 +849,7 @@ func (w *walker) matchTaggedWith(links []*ast.IfStmt, tag string, tagExpr ast.Ex
 				return taggedChain{}, false
 			}
 		}
+
 		chain.values = append(chain.values, values)
 	}
 
@@ -850,12 +897,14 @@ func (w *walker) planTagged(chain taggedChain, init string) (plan, string) {
 			if text == "" {
 				return p, reasonNoText
 			}
+
 			texts = append(texts, text)
 
 			val := w.constValue(value)
 			if val == nil {
 				continue
 			}
+
 			for _, prev := range seen {
 				// Kinds are compared first because go/constant.Compare panics on
 				// operands of different kinds.
@@ -863,8 +912,10 @@ func (w *walker) planTagged(chain taggedChain, init string) (plan, string) {
 					return p, fmt.Sprintf("two branches test the tag against the same value %s, which a switch cannot repeat; remove the dead branch first", text)
 				}
 			}
+
 			seen = append(seen, val)
 		}
+
 		p.cases = append(p.cases, strings.Join(texts, ", "))
 	}
 
@@ -876,10 +927,12 @@ func (w *walker) constValue(e ast.Expr) constant.Value {
 	if info == nil || info.Types == nil {
 		return nil
 	}
+
 	tv, ok := info.Types[e]
 	if !ok || tv.Value == nil || tv.Value.Kind() == constant.Unknown {
 		return nil
 	}
+
 	return tv.Value
 }
 
@@ -909,6 +962,7 @@ func isPathExpr(e ast.Expr) bool {
 	case *ast.ParenExpr:
 		return isPathExpr(v.X)
 	}
+
 	return false
 }
 
@@ -916,10 +970,12 @@ func isPathExpr(e ast.Expr) bool {
 // which is the order a switch will try them in.
 func disjuncts(e ast.Expr) []ast.Expr {
 	inner := ast.Unparen(e)
+
 	binary, ok := inner.(*ast.BinaryExpr)
 	if ok && binary.Op == token.LOR {
 		return append(disjuncts(binary.X), disjuncts(binary.Y)...)
 	}
+
 	return []ast.Expr{inner}
 }
 
@@ -949,6 +1005,7 @@ func (w *walker) planTagless(links []*ast.IfStmt, init string) (plan, string) {
 		if text == "" {
 			return p, reasonNoText
 		}
+
 		p.cases = append(p.cases, text)
 	}
 
@@ -971,23 +1028,28 @@ func (w *walker) render(root *ast.IfStmt, links []*ast.IfStmt, final *ast.BlockS
 	if srctext.NodeText(w.pass.Fset, w.content, root) == "" {
 		return "", reasonNoText
 	}
+
 	if len(p.cases) != len(links) {
 		return "", reasonNoText
 	}
 
 	var sb strings.Builder
 	sb.WriteString("switch ")
+
 	if p.header != "" {
 		sb.WriteString(wrapIndent(p.header) + " ")
 	}
+
 	sb.WriteString("{\n")
 
 	for i, link := range links {
 		sb.WriteString("case " + wrapIndent(p.cases[i]) + ":\n")
+
 		body, ok := w.branchText(link.Body)
 		if !ok {
 			return "", reasonNoText
 		}
+
 		if body != "" {
 			sb.WriteString(body + "\n")
 		}
@@ -995,10 +1057,12 @@ func (w *walker) render(root *ast.IfStmt, links []*ast.IfStmt, final *ast.BlockS
 
 	if final != nil {
 		sb.WriteString("default:\n")
+
 		body, ok := w.branchText(final)
 		if !ok {
 			return "", reasonNoText
 		}
+
 		if body != "" {
 			sb.WriteString(body + "\n")
 		}
@@ -1007,6 +1071,7 @@ func (w *walker) render(root *ast.IfStmt, links []*ast.IfStmt, final *ast.BlockS
 	sb.WriteString("}")
 
 	indent := srctext.Indentation(w.content, w.offset(root.Pos()))
+
 	return srctext.ApplyIndent(sb.String(), indent), ""
 }
 
@@ -1030,6 +1095,7 @@ func wrapIndent(text string) string {
 	if !wrapped {
 		return text
 	}
+
 	return first + "\n" + srctext.IndentLines(srctext.Normalize(rest), "\t")
 }
 
@@ -1058,6 +1124,7 @@ func (w *walker) branchText(block *ast.BlockStmt) (string, bool) {
 	if text == "" {
 		return "", len(block.List) == 0
 	}
+
 	return srctext.IndentLines(text, "\t"), true
 }
 
@@ -1068,11 +1135,14 @@ func (w *walker) braceLineTail(block *ast.BlockStmt) string {
 	if start < 1 || start > len(w.content) {
 		return ""
 	}
+
 	rest := w.content[start:]
+
 	i := bytes.IndexByte(rest, '\n')
 	if i >= 0 {
 		rest = rest[:i]
 	}
+
 	return string(rest)
 }
 
@@ -1109,5 +1179,6 @@ func firstReason(reasons ...string) string {
 			return r
 		}
 	}
+
 	return ""
 }

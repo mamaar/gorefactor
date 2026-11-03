@@ -12,6 +12,7 @@ import (
 
 func TestAnalyzeDependencies_SuggestedMovesNameSymbolAndReferrers(t *testing.T) {
 	dir := mbdWorkspace(t, nil)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -21,15 +22,18 @@ func TestAnalyzeDependencies_SuggestedMovesNameSymbolAndReferrers(t *testing.T) 
 	if len(moves) != 1 {
 		t.Fatalf("suggested_moves = %v, want one move", out["suggested_moves"])
 	}
+
 	raw, _ := json.Marshal(moves[0])
 	for _, want := range []string{`"Shared"`, "threadmcp/src", "threadmcp/a", "threadmcp/b"} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("move = %s, want it to mention %q", raw, want)
 		}
 	}
+
 	if out["package_coupling"] == nil {
 		t.Errorf("package_coupling missing from %v", out)
 	}
+
 	assertFileUnchanged(t, dir, "src/src.go", mbdSrc)
 }
 
@@ -38,6 +42,7 @@ func TestAnalyzeDependencies_NoSharedSymbolsGivesEmptyList(t *testing.T) {
 		"a/a.go": "package a\n\nfunc A() int { return 1 }\n",
 		"b/b.go": "package b\n\nfunc B() int { return 2 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -53,6 +58,7 @@ func TestAnalyzeDependencies_NoSharedSymbolsGivesEmptyList(t *testing.T) {
 
 func TestAnalyzeDependencies_FlagsGateTheirSections(t *testing.T) {
 	dir := mbdWorkspace(t, nil)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -71,6 +77,7 @@ func TestAnalyzeDependencies_InnerImportingOuterIsBackwardsDependency(t *testing
 		"domain/d.go":  "package domain\n\nimport \"example.com/threadmcp/handler\"\n\nfunc D() int { return handler.H() }\n",
 		"handler/h.go": "package handler\n\nfunc H() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -80,6 +87,7 @@ func TestAnalyzeDependencies_InnerImportingOuterIsBackwardsDependency(t *testing
 	if len(deps) != 1 {
 		t.Fatalf("backwards_dependencies = %v, want one", out["backwards_dependencies"])
 	}
+
 	raw, _ := json.Marshal(deps[0])
 	for _, want := range []string{"threadmcp/domain", "threadmcp/handler"} {
 		if !strings.Contains(string(raw), want) {
@@ -95,6 +103,7 @@ func TestAnalyzeDependencies_CountsImportsAndSymbolsOfEveryConfig(t *testing.T) 
 		"a/a_linux.go":   "package a\n\nfunc L() int { return 1 }\n",
 		"b/b.go":         "package b\n\nfunc B() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -113,35 +122,43 @@ func TestAnalyzeDependencies_CountsImportsAndSymbolsOfEveryConfig(t *testing.T) 
 		} `json:"dependency_graph"`
 		Configs []string `json:"build_configs"`
 	}
+
 	err := json.Unmarshal(raw, &got)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var aDir, bDir string
+
 	for d := range got.Graph.PackageImports {
 		if strings.HasSuffix(d, "/a") {
 			aDir = d
 		}
 	}
+
 	for d := range got.Coupling {
 		if strings.HasSuffix(d, "/b") {
 			bDir = d
 		}
 	}
+
 	if !slices.Contains(got.Graph.PackageImports[aDir], "example.com/threadmcp/b") {
 		t.Errorf("PackageImports[a] = %v, want the windows-only import", got.Graph.PackageImports[aDir])
 	}
+
 	if !slices.Contains(got.Graph.PackageDeps[aDir], bDir) {
 		t.Errorf("PackageDeps[a] = %v, want %s", got.Graph.PackageDeps[aDir], bDir)
 	}
+
 	c := got.Coupling[bDir]
 	if c.Incoming != 1 {
 		t.Errorf("b incoming_deps = %d, want 1", c.Incoming)
 	}
+
 	c = got.Coupling[aDir]
 	if c.Symbols != 3 || c.Outgoing != 1 {
 		t.Errorf("a coupling = %+v, want 3 symbols and 1 outgoing", c)
 	}
+
 	if len(got.Configs) < 2 {
 		t.Errorf("build_configs = %v, want several", got.Configs)
 	}
@@ -153,25 +170,31 @@ func TestAnalyzeDependencies_CyclesAreObjectsNamingTheirConfigs(t *testing.T) {
 		"a/a_windows.go": "package a\n\nimport \"example.com/threadmcp/b\"\n\nfunc W() int { return b.B() }\n",
 		"b/b.go":         "package b\n\nimport \"example.com/threadmcp/a\"\n\nfunc B() int { return a.A() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	out := callJSON(t, sess, "analyze_dependencies", map[string]any{})
 
 	graph, _ := out["dependency_graph"].(map[string]any)
+
 	cycles, _ := graph["ImportCycles"].([]any)
 	if len(cycles) != 1 {
 		t.Fatalf("ImportCycles = %v, want one", graph["ImportCycles"])
 	}
+
 	cycle, _ := cycles[0].(map[string]any)
+
 	p, _ := cycle["packages"].([]any)
 	if len(p) != 3 {
 		t.Errorf("packages = %v, want a closed path of 3", cycle["packages"])
 	}
+
 	c, _ := cycle["configs"].([]any)
 	if len(c) == 0 {
 		t.Errorf("configs = %v, want the windows configuration", cycle["configs"])
 	}
+
 	tc, ok := graph["TestImportCycles"].([]any)
 	if !ok || len(tc) != 0 {
 		t.Errorf("TestImportCycles = %#v, want an empty list", graph["TestImportCycles"])
@@ -184,22 +207,27 @@ func TestAnalyzeDependencies_ImportOnlyInTagFileIsInPackageImports(t *testing.T)
 		"a/a_tagx.go": "//go:build tagx\n\npackage a\n\nimport \"example.com/threadmcp/b\"\n\nfunc X() int { return b.B() }\n",
 		"b/b.go":      "package b\n\nfunc B() int { return 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
 	out := callJSON(t, sess, "analyze_dependencies", map[string]any{})
 
 	graph, _ := out["dependency_graph"].(map[string]any)
+
 	imports, _ := graph["PackageImports"].(map[string]any)
 	for d, v := range imports {
 		if !strings.HasSuffix(d, "/a") {
 			continue
 		}
+
 		l, _ := v.([]any)
 		if len(l) != 1 || l[0] != "example.com/threadmcp/b" {
 			t.Errorf("PackageImports[a] = %v, want the tagx-only import", v)
 		}
+
 		return
 	}
+
 	t.Errorf("PackageImports = %v, want an entry for a", imports)
 }

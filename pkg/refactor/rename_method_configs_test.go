@@ -19,6 +19,7 @@ func TestRenameMethodAcrossConfigs_SingleConfigPlanEqualsSingleWorkspacePlan(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	got, err := eng.RenameMethodAcrossConfigs(req)
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +28,7 @@ func TestRenameMethodAcrossConfigs_SingleConfigPlanEqualsSingleWorkspacePlan(t *
 	if !slices.Equal(sortedChanges(got), sortedChanges(want)) {
 		t.Errorf("changes differ:\n got %+v\nwant %+v", sortedChanges(got), sortedChanges(want))
 	}
+
 	if len(got.Coverage.Configs) > 1 {
 		t.Errorf("configs = %v, want a single configuration", got.Coverage.Configs)
 	}
@@ -38,18 +40,22 @@ func TestRenameMethodPlanner_LinkedSupersetKeepsPlan(t *testing.T) {
 		"p/t_tagx.go":    "//go:build tagx\n\npackage p\n\ntype T struct{}\n\nfunc (T) M() {}\n",
 		"p/use.go":       "package p\n\nfunc Use(t T) { t.M() }\n",
 	})
+
 	views, err := eng.WorkspaceSet().Views()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	planner := &renameMethodPlanner{req: types.RenameMethodRequest{TypeName: "T", MethodName: "M", NewMethodName: "N"}}
 
 	first, err := planner.planIn(views[0], nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	linked := first.changed.Clone()
 	linked[types.SymbolKey{PkgPath: "example.com/threadtest/p", Recv: "T", Name: "absent"}] = struct{}{}
+
 	second, err := planner.planIn(views[0], linked)
 	if err != nil {
 		t.Fatal(err)

@@ -18,6 +18,7 @@ type save interface {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -37,6 +38,7 @@ type save interface {
 	if len(returns) != 1 {
 		t.Fatalf("expected 1 return type, got %d", len(returns))
 	}
+
 	if returns[0] != "error" {
 		t.Errorf("expected return type 'error', got %q", returns[0])
 	}
@@ -50,6 +52,7 @@ type Repo interface {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -66,9 +69,11 @@ type Repo interface {
 	if len(returns) != 2 {
 		t.Fatalf("expected 2 return types, got %d", len(returns))
 	}
+
 	if returns[0] != "string" {
 		t.Errorf("expected return type 'string', got %q", returns[0])
 	}
+
 	if returns[1] != "error" {
 		t.Errorf("expected return type 'error', got %q", returns[1])
 	}
@@ -82,6 +87,7 @@ type Writer interface {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -108,6 +114,7 @@ type save interface {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -133,9 +140,11 @@ type save interface {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(op.NewReturns) != 1 {
 		t.Fatalf("expected 1 return type preserved, got %d", len(op.NewReturns))
 	}
+
 	if op.NewReturns[0] != "error" {
 		t.Errorf("expected preserved return type 'error', got %q", op.NewReturns[0])
 	}
@@ -151,6 +160,7 @@ func (s *Storage) SaveTile(key *string, data []byte) error {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -176,9 +186,11 @@ func (s *Storage) SaveTile(key *string, data []byte) error {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if len(op.NewReturns) != 1 {
 		t.Fatalf("expected 1 return type preserved, got %d", len(op.NewReturns))
 	}
+
 	if op.NewReturns[0] != "error" {
 		t.Errorf("expected preserved return type 'error', got %q", op.NewReturns[0])
 	}
@@ -192,6 +204,7 @@ type save interface {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -216,6 +229,7 @@ type save interface {
 	if len(op.NewReturns) != 2 {
 		t.Fatalf("expected 2 return types (unchanged), got %d", len(op.NewReturns))
 	}
+
 	if op.NewReturns[0] != "string" || op.NewReturns[1] != "error" {
 		t.Errorf("explicit returns were overwritten: %v", op.NewReturns)
 	}
@@ -232,6 +246,7 @@ func TestGenerateInterfaceMethodSignature_PreservedReturns(t *testing.T) {
 	}
 
 	sig := generateInterfaceMethodSignature(op, "SaveTile")
+
 	expected := "SaveTile(ctx context.Context, key *string, data []byte) error"
 	if sig != expected {
 		t.Errorf("expected %q, got %q", expected, sig)
@@ -248,6 +263,7 @@ func TestGenerateInterfaceMethodSignature_MultipleReturns(t *testing.T) {
 	}
 
 	sig := generateInterfaceMethodSignature(op, "Get")
+
 	expected := "Get(ctx context.Context, id string) (string, error)"
 	if sig != expected {
 		t.Errorf("expected %q, got %q", expected, sig)
@@ -268,25 +284,30 @@ func foo() (int, error) {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
 
 	var funcDecl *ast.FuncDecl
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		fd, ok := n.(*ast.FuncDecl)
 		if ok && fd.Name.Name == "foo" {
 			funcDecl = fd
 			return false
 		}
+
 		return true
 	})
+
 	if funcDecl == nil {
 		t.Fatal("function foo not found")
 	}
 
 	var returnCount int
+
 	walkBodyForReturnStmts(funcDecl.Body, func(retStmt *ast.ReturnStmt) {
 		returnCount++
 	})
@@ -305,6 +326,7 @@ func foo() (string, error) {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -313,26 +335,32 @@ func foo() (string, error) {
 	ws := &types.Workspace{FileSet: fset}
 
 	var retStmt *ast.ReturnStmt
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		rs, ok := n.(*ast.ReturnStmt)
 		if ok {
 			retStmt = rs
 			return false
 		}
+
 		return true
 	})
+
 	if retStmt == nil {
 		t.Fatal("return statement not found")
 	}
 
 	content := []byte(src)
+
 	values := splitReturnValueTexts(retStmt, content, ws)
 	if len(values) != 2 {
 		t.Fatalf("expected 2 values, got %d", len(values))
 	}
+
 	if values[0] != `"hello"` {
 		t.Errorf("expected first value %q, got %q", `"hello"`, values[0])
 	}
+
 	if values[1] != "nil" {
 		t.Errorf("expected second value %q, got %q", "nil", values[1])
 	}
@@ -346,6 +374,7 @@ type Store interface {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "store.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -378,6 +407,7 @@ type Store interface {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if op.SourceFile != "/test/store.go" {
 		t.Errorf("expected source file '/test/store.go', got %q", op.SourceFile)
 	}
@@ -393,6 +423,7 @@ func (s *MyStore) Get(id string) (string, error) {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "mystore.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -425,6 +456,7 @@ func (s *MyStore) Get(id string) (string, error) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if op.SourceFile != "/test/mystore.go" {
 		t.Errorf("expected source file '/test/mystore.go', got %q", op.SourceFile)
 	}
@@ -445,6 +477,7 @@ func TestResolveSourceFile_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+
 	if !strings.Contains(err.Error(), "could not find type") {
 		t.Errorf("expected 'could not find type' error, got: %v", err)
 	}
@@ -461,6 +494,7 @@ func getSecret(project string, secretName string) (secret []byte, err error) {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "secret.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -491,23 +525,28 @@ func getSecret(project string, secretName string) (secret []byte, err error) {
 	if len(op.NamedReturns) != 2 {
 		t.Fatalf("expected 2 NamedReturns, got %d: %v", len(op.NamedReturns), op.NamedReturns)
 	}
+
 	if op.NamedReturns[0].Name != "secret" || op.NamedReturns[0].Type != "[]byte" {
 		t.Errorf("NamedReturns[0] = %+v, want {Name:secret Type:[]byte}", op.NamedReturns[0])
 	}
+
 	if op.NamedReturns[1].Name != "err" || op.NamedReturns[1].Type != "error" {
 		t.Errorf("NamedReturns[1] = %+v, want {Name:err Type:error}", op.NamedReturns[1])
 	}
 
 	// generateNewSignature must emit the named return variables.
 	var funcDecl *ast.FuncDecl
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		fd, ok := n.(*ast.FuncDecl)
 		if ok && fd.Name.Name == "getSecret" {
 			funcDecl = fd
 			return false
 		}
+
 		return true
 	})
+
 	if funcDecl == nil {
 		t.Fatal("funcDecl not found")
 	}
@@ -516,9 +555,11 @@ func getSecret(project string, secretName string) (secret []byte, err error) {
 	if !strings.Contains(sig, "secret []byte") {
 		t.Errorf("signature missing named return 'secret []byte': %s", sig)
 	}
+
 	if !strings.Contains(sig, "err error") {
 		t.Errorf("signature missing named return 'err error': %s", sig)
 	}
+
 	if !strings.Contains(sig, "ctx context.Context") {
 		t.Errorf("signature missing new param 'ctx context.Context': %s", sig)
 	}
@@ -534,6 +575,7 @@ func ListVersions(project string, secretName string) ([]string, error) {
 }
 `
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "secret.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
@@ -609,6 +651,7 @@ type Store interface {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+
 	if op.SourceFile != "/test/store.go" {
 		t.Errorf("expected non-test file '/test/store.go', got %q", op.SourceFile)
 	}

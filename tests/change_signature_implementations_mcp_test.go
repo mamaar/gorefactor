@@ -15,6 +15,7 @@ func TestChangeSignature_PropagateLeavesSameNameMethodWithOtherSignatureAlone(t 
 		"p/a.go":     "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n",
 		"p/c.go":     c,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -33,6 +34,7 @@ func TestChangeSignature_PropagateReachesPointerReceiverImplementer(t *testing.T
 		"p/a.go":     "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n",
 		"p/b.go":     "package p\n\ntype B struct{}\n\nfunc (*B) Run(n, m int) int { return n }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -49,6 +51,7 @@ func TestChangeSignature_PropagateReachesImplementerDeclaredOnlyUnderAnotherConf
 		"p/b_linux.go": "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n }\n",
 		"p/b_other.go": "//go:build !linux\n\npackage p\n\nfunc other() {}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -60,6 +63,7 @@ func TestChangeSignature_PropagateReachesImplementerDeclaredOnlyUnderAnotherConf
 func TestChangeSignature_RefusesConcreteMethodSatisfyingInterfaceWithoutPropagate(t *testing.T) {
 	a := "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": removeParamIface, "p/a.go": a})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -68,6 +72,7 @@ func TestChangeSignature_RefusesConcreteMethodSatisfyingInterfaceWithoutPropagat
 	if !res.IsError || !strings.Contains(errText(res), "Runner") || !strings.Contains(errText(res), "propagate") {
 		t.Errorf("want a refusal naming Runner and propagate, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/a.go", a)
 }
 
@@ -77,6 +82,7 @@ func TestChangeSignature_RefusesMethodSatisfyingExternalInterfaceEvenWithPropaga
 		"p/w.go":   w,
 		"p/use.go": "package p\n\nimport \"io\"\n\nvar _ io.Writer = (*W)(nil)\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -90,6 +96,7 @@ func TestChangeSignature_RefusesMethodSatisfyingExternalInterfaceEvenWithPropaga
 	if !res.IsError || !strings.Contains(errText(res), "io.Writer") {
 		t.Errorf("want a refusal naming io.Writer, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/w.go", w)
 }
 
@@ -98,6 +105,7 @@ const promotedImpl = "package p\n\ntype Inner struct{}\n\nfunc (Inner) Run(n, m 
 
 func TestChangeSignature_RefusesPromotedMethodSatisfyingInterfaceWithoutPropagate(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": promotedIface, "p/a.go": promotedImpl})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -106,11 +114,13 @@ func TestChangeSignature_RefusesPromotedMethodSatisfyingInterfaceWithoutPropagat
 	if !res.IsError || !strings.Contains(errText(res), "Runner") {
 		t.Errorf("want a refusal naming Runner, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/a.go", promotedImpl)
 }
 
 func TestChangeSignature_PropagateReachesInterfaceSatisfiedThroughPromotion(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": promotedIface, "p/a.go": promotedImpl})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -126,6 +136,7 @@ func TestChangeSignature_RefusesPromotedMethodSatisfyingExternalInterface(t *tes
 	w := "package p\n\nimport \"sort\"\n\ntype Inner struct{}\n\nfunc (Inner) Len() int { return 0 }\n\n" +
 		"type Outer struct{ Inner }\n\nfunc (Outer) Less(i, j int) bool { return false }\n\nfunc (Outer) Swap(i, j int) {}\n\nvar _ sort.Interface = Outer{}\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/w.go": w})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -137,6 +148,7 @@ func TestChangeSignature_RefusesPromotedMethodSatisfyingExternalInterface(t *tes
 	if !res.IsError || !strings.Contains(errText(res), "sort.Interface") {
 		t.Errorf("want a refusal naming sort.Interface, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/w.go", w)
 }
 
@@ -147,6 +159,7 @@ func TestChangeSignature_UpdatesImplementerInExternalTestPackage(t *testing.T) {
 		"p/x_test.go": "package p_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/p\"\n)\n\n" +
 			"type fake struct{}\n\nfunc (fake) Run(n, m int) int { return n }\n\nvar _ p.Runner = fake{}\n\nfunc TestX(t *testing.T) {}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -159,6 +172,7 @@ func TestChangeSignature_UpdatesImplementerInExternalTestPackage(t *testing.T) {
 func TestChangeSignature_RefusesGenericImplementer(t *testing.T) {
 	g := "package p\n\ntype G[T any] struct{}\n\nfunc (G[T]) Run(n, m int) int { return n }\n\nvar _ Runner = G[int]{}\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": removeParamIface, "p/g.go": g})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -167,6 +181,7 @@ func TestChangeSignature_RefusesGenericImplementer(t *testing.T) {
 	if !res.IsError || !strings.Contains(errText(res), "generic") {
 		t.Errorf("want a refusal saying generic implementations are unsupported, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/g.go", g)
 }
 
@@ -175,6 +190,7 @@ func TestChangeSignature_ChangesSameNameMethodWithOtherSignatureWithoutPropagate
 		"p/iface.go": removeParamIface,
 		"p/c.go":     "package p\n\ntype C struct{}\n\nfunc (C) Run(n, m string) int { return len(n) }\n\nfunc UseC(c C) int { return c.Run(\"x\", \"y\") }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -187,6 +203,7 @@ func TestChangeSignature_ChangesSameNameMethodWithOtherSignatureWithoutPropagate
 func TestAddContextParameter_RefusesMethodSatisfyingInterfaceWithoutPropagate(t *testing.T) {
 	a := "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": removeParamIface, "p/a.go": a})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -195,5 +212,6 @@ func TestAddContextParameter_RefusesMethodSatisfyingInterfaceWithoutPropagate(t 
 	if !res.IsError || !strings.Contains(errText(res), "propagate") {
 		t.Errorf("want a refusal mentioning propagate, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/a.go", a)
 }

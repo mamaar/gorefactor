@@ -68,9 +68,11 @@ func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.Assi
 	if info.Defs[id] != obj || !gotypes.Identical(obj.Type(), gotypes.Universe.Lookup("error").Type()) {
 		return foldPlan{Refusals: reads}
 	}
+
 	f := &errFold{info: info, obj: obj, assign: assign, idx: idx, promoted: map[*ast.IfStmt]bool{}, gone: map[*ast.IfStmt]bool{}}
 	ifs := map[token.Pos]inspector.Cursor{}
 	var stray []returnRefusal
+
 	for _, r := range reads {
 		c, ok := nilCheckIf(info, r.Read.Cursor)
 		if ok {
@@ -79,20 +81,25 @@ func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.Assi
 			stray = append(stray, r)
 		}
 	}
+
 	for _, pos := range slices.Sorted(maps.Keys(ifs)) {
 		if !f.inDropped(pos) {
 			f.foldIf(ifs[pos])
 		}
 	}
+
 	if slices.ContainsFunc(writes, func(w token.Pos) bool { return !f.inDropped(w) }) {
 		return foldPlan{Refusals: reads}
 	}
+
 	for _, r := range stray {
 		if !f.inDropped(r.Pos) {
 			f.refuse = append(f.refuse, r)
 		}
 	}
+
 	f.checkLastUses(site)
+
 	return foldPlan{Edits: mergeTouching(f.edits), Dropped: f.dropped, Refusals: f.refuse}
 }
 
@@ -100,10 +107,12 @@ func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.Assi
 // contains the identifier at id, reached only through ||, && and parentheses.
 func nilCheckIf(info *gotypes.Info, id inspector.Cursor) (inspector.Cursor, bool) {
 	cmpNode := id.Parent()
+
 	cmpExpr, ok := cmpNode.Node().(ast.Expr)
 	if !ok || nilComparison(info, info.Uses[id.Node().(*ast.Ident)], cmpExpr) == token.ILLEGAL {
 		return inspector.Cursor{}, false
 	}
+
 	for c := cmpNode; ; c = c.Parent() {
 		switch p := c.Parent().Node().(type) {
 		case *ast.ParenExpr:
@@ -138,6 +147,7 @@ func (f *errFold) evalNil(cond ast.Expr) (v truth, dels [][2]token.Pos, why stri
 		if e.Op == token.LAND || e.Op == token.LOR {
 			return f.evalChain(e)
 		}
+
 		switch nilComparison(f.info, f.obj, e) {
 		case token.EQL:
 			return isTrue, nil, ""
@@ -145,6 +155,7 @@ func (f *errFold) evalNil(cond ast.Expr) (v truth, dels [][2]token.Pos, why stri
 			return isFalse, nil, ""
 		}
 	}
+
 	return unknown, nil, ""
 }
 
@@ -152,6 +163,7 @@ func (f *errFold) evalNil(cond ast.Expr) (v truth, dels [][2]token.Pos, why stri
 // ends it, one that cannot change it is dropped.
 func (f *errFold) evalChain(n *ast.BinaryExpr) (truth, [][2]token.Pos, string) {
 	ops := flattenChain(n)
+
 	decides, neutral := isTrue, isFalse
 	if n.Op == token.LAND {
 		decides, neutral = isFalse, isTrue
@@ -159,6 +171,7 @@ func (f *errFold) evalChain(n *ast.BinaryExpr) (truth, [][2]token.Pos, string) {
 	var dels [][2]token.Pos
 	remove := make([]bool, len(ops))
 	sawEffect, kept := false, false
+
 	for i, op := range ops {
 		v, d, why := f.evalNil(op)
 		switch {
@@ -172,13 +185,17 @@ func (f *errFold) evalChain(n *ast.BinaryExpr) (truth, [][2]token.Pos, string) {
 			remove[i] = true
 			continue
 		}
+
 		kept = true
+
 		dels = append(dels, d...)
 		sawEffect = sawEffect || !f.pure(op)
 	}
+
 	if !kept {
 		return neutral, nil, ""
 	}
+
 	return unknown, append(dels, chainDeletions(ops, remove)...), ""
 }
 
@@ -189,6 +206,7 @@ func (f *errFold) pure(e ast.Expr) bool {
 	if ok && tv.Value != nil {
 		return true
 	}
+
 	switch e := e.(type) {
 	case *ast.Ident, *ast.BasicLit:
 		return true
@@ -202,6 +220,7 @@ func (f *errFold) pure(e ast.Expr) bool {
 			return f.pure(e.X) && f.pure(e.Y)
 		}
 	}
+
 	return false
 }
 
@@ -214,53 +233,68 @@ func (f *errFold) delete(from, to token.Pos) {
 // foldIf folds the nil checks in the condition of the if at c.
 func (f *errFold) foldIf(c inspector.Cursor) {
 	ifs := c.Node().(*ast.IfStmt)
+
 	v, dels, why := f.evalNil(ifs.Cond)
 	if why != "" {
 		f.refusal(ifs.Cond.Pos(), why)
 		return
 	}
+
 	if v == unknown {
 		for _, d := range dels {
 			f.delete(d[0], d[1])
 		}
+
 		return
 	}
 
 	parent, isElseIf := c.Parent().Node().(*ast.IfStmt)
+
 	isElseIf = isElseIf && parent.Else == ifs && !f.promoted[ifs]
 	if isElseIf && ifs.Init != nil {
 		f.refusal(ifs.Pos(), "the nil check is in an else-if with an init statement, which cannot be folded")
 		return
 	}
+
 	keep := ifs.Else
+
 	gone := ast.Node(ifs.Body)
 	if v == isTrue {
 		keep, gone = ifs.Body, ifs.Else
 	}
+
 	if keep != nil && f.terminatesChain(c, keep) {
 		f.refusal(ifs.Pos(), "folding the nil check would leave the code after it unreachable")
 		return
 	}
+
 	if gone != nil {
 		f.checkBreaks(c, gone)
 	}
+
 	f.gone[ifs] = true
+
 	f.dropped = append(f.dropped, [2]token.Pos{ifs.Cond.Pos(), ifs.Cond.End()})
 	if gone != nil {
 		f.dropped = append(f.dropped, [2]token.Pos{gone.Pos(), gone.End()})
 	}
+
 	if keep == nil {
 		if isElseIf && f.gone[parent] {
 			f.refusal(ifs.Pos(), "the nil checks of an else-if chain fold into each other, which cannot be folded")
 			return
 		}
+
 		f.dropIf(ifs, parent, isElseIf)
+
 		return
 	}
+
 	inner, ok := keep.(*ast.IfStmt)
 	if ok {
 		f.promoted[inner] = !isElseIf
 	}
+
 	f.unwrapIf(ifs, keep, isElseIf)
 }
 
@@ -271,16 +305,20 @@ func (f *errFold) terminatesChain(c inspector.Cursor, keep ast.Stmt) bool {
 	if !stmtfacts.Terminates(f.info, keep) {
 		return false
 	}
+
 	for {
 		parent, ok := c.Parent().Node().(*ast.IfStmt)
 		if !ok || parent.Else != c.Node() {
 			break
 		}
+
 		if !stmtfacts.Terminates(f.info, parent.Body) {
 			return false
 		}
+
 		c = c.Parent()
 	}
+
 	return hasFollowingStmt(c)
 }
 
@@ -293,6 +331,7 @@ func (f *errFold) checkBreaks(c inspector.Cursor, gone ast.Node) {
 		if loop == nil || loop.Cond != nil {
 			continue
 		}
+
 		other := slices.ContainsFunc(leavingBreaks(loop.Body), func(o *ast.BranchStmt) bool {
 			return (o.Label == nil || o.Label.Name == label) && (gone.Pos() > o.Pos() || o.Pos() >= gone.End())
 		})
@@ -307,16 +346,21 @@ func (f *errFold) checkBreaks(c inspector.Cursor, gone ast.Node) {
 func (f *errFold) breakTarget(c inspector.Cursor, b *ast.BranchStmt) (*ast.ForStmt, string) {
 	for enc := range c.Enclosing((*ast.ForStmt)(nil), (*ast.RangeStmt)(nil), (*ast.SwitchStmt)(nil), (*ast.TypeSwitchStmt)(nil), (*ast.SelectStmt)(nil), (*ast.FuncLit)(nil)) {
 		label := ""
+
 		l, ok := enc.Parent().Node().(*ast.LabeledStmt)
 		if ok {
 			label = l.Label.Name
 		}
+
 		if b.Label != nil && b.Label.Name != label {
 			continue
 		}
+
 		loop, _ := enc.Node().(*ast.ForStmt)
+
 		return loop, label
 	}
+
 	return nil, ""
 }
 
@@ -331,6 +375,7 @@ func leavingBreaks(n ast.Node) []*ast.BranchStmt {
 		case *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt, *ast.TypeSwitchStmt, *ast.SelectStmt, *ast.FuncLit:
 			return true
 		}
+
 		return false
 	}
 	ast.Inspect(n, func(x ast.Node) bool {
@@ -338,19 +383,25 @@ func leavingBreaks(n ast.Node) []*ast.BranchStmt {
 			if breakable(stack[len(stack)-1]) {
 				nested--
 			}
+
 			stack = stack[:len(stack)-1]
+
 			return true
 		}
+
 		stack = append(stack, x)
 		if breakable(x) {
 			nested++
 		}
+
 		b, ok := x.(*ast.BranchStmt)
 		if ok && b.Tok == token.BREAK && (b.Label != nil || nested == 0) {
 			out = append(out, b)
 		}
+
 		return true
 	})
+
 	return out
 }
 
@@ -372,10 +423,12 @@ func (f *errFold) dropIf(ifs, parent *ast.IfStmt, isElseIf bool) {
 func (f *errFold) unwrapIf(ifs *ast.IfStmt, keep ast.Stmt, isElseIf bool) {
 	wrap := ifs.Init != nil && f.initDefines(ifs.Init)
 	from, to := keep.Pos(), keep.End() // retained source
+
 	block, ok := keep.(*ast.BlockStmt)
 	if ok && !isElseIf && !declaresNames(block) {
 		from, to = block.Lbrace+1, block.Rbrace
 	}
+
 	strip := from != keep.Pos()
 
 	if ifs.Init == nil {
@@ -385,14 +438,17 @@ func (f *errFold) unwrapIf(ifs *ast.IfStmt, keep ast.Stmt, isElseIf bool) {
 		if wrap {
 			open = "{\n"
 		}
+
 		f.edits = append(f.edits,
 			foldEdit{Start: ifs.Pos(), End: ifs.Init.Pos(), Text: open},
 			foldEdit{Start: ifs.Init.End(), End: from, Text: "\n", LineAfter: true})
 	}
+
 	closer := ""
 	if wrap {
 		closer = "\n}"
 	}
+
 	if to != ifs.End() || closer != "" {
 		f.edits = append(f.edits, foldEdit{Start: to, End: ifs.End(), Text: closer, Lines: strip && closer == "", LineBefore: true})
 	}
@@ -405,12 +461,14 @@ func (f *errFold) initDefines(init ast.Stmt) bool {
 	if !ok || as.Tok != token.DEFINE {
 		return false
 	}
+
 	for i, l := range as.Lhs {
 		id, ok := l.(*ast.Ident)
 		if ok && id.Name != "_" && (as != f.assign || i != f.idx) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -426,6 +484,7 @@ func declaresNames(block *ast.BlockStmt) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -446,11 +505,14 @@ func hasFollowingStmt(c inspector.Cursor) bool {
 		default:
 			return false
 		}
+
 		block := c.Parent()
+
 		k := block.ParentEdgeKind()
 		if k != edge.BlockStmt_List && k != edge.CaseClause_Body && k != edge.CommClause_Body {
 			return false
 		}
+
 		c = block
 	}
 }
@@ -459,16 +521,20 @@ func hasFollowingStmt(c inspector.Cursor) bool {
 // them as one.
 func mergeTouching(edits []foldEdit) []foldEdit {
 	slices.SortFunc(edits, func(a, b foldEdit) int { return int(a.Start) - int(b.Start) })
+
 	var out []foldEdit
 	for _, e := range edits {
 		n := len(out)
 		if n > 0 && out[n-1].End == e.Start && out[n-1].Text == "" && e.Text == "" {
 			out[n-1].End = e.End
 			out[n-1].Lines = out[n-1].Lines || e.Lines
+
 			continue
 		}
+
 		out = append(out, e)
 	}
+
 	return out
 }
 
@@ -478,10 +544,12 @@ func (f *errFold) checkLastUses(site analysis.CallSite) {
 	if len(f.dropped) == 0 {
 		return
 	}
+
 	var fn ast.Node
 	for enc := range site.Cursor.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil)) {
 		fn = enc.Node()
 	}
+
 	if fn == nil {
 		return
 	}
@@ -492,6 +560,7 @@ func (f *errFold) checkLastUses(site analysis.CallSite) {
 		outside int
 	}
 	counts := map[gotypes.Object]*count{}
+
 	ast.Inspect(fn, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FieldList:
@@ -521,22 +590,27 @@ func (f *errFold) checkLastUses(site analysis.CallSite) {
 			default:
 				return true
 			}
+
 			if obj.Pos() < fn.Pos() || obj.Pos() >= fn.End() || f.inDropped(obj.Pos()) {
 				return true
 			}
+
 			c := counts[obj]
 			if c == nil {
 				c = &count{}
 				counts[obj] = c
 			}
+
 			if f.inDropped(n.Pos()) {
 				c.dropped = n.Pos()
 			} else {
 				c.outside++
 			}
 		}
+
 		return true
 	})
+
 	for obj, c := range counts {
 		inParams := slices.ContainsFunc(params, func(r [2]token.Pos) bool { return r[0] <= obj.Pos() && obj.Pos() < r[1] })
 		if c.dropped.IsValid() && c.outside == 0 && !inParams {
@@ -548,31 +622,37 @@ func (f *errFold) checkLastUses(site analysis.CallSite) {
 // foldChange converts e to a plan change in file.
 func foldChange(ws *pkgtypes.Workspace, file *pkgtypes.File, e foldEdit) pkgtypes.Change {
 	content := file.OriginalContent
+
 	start, end := ws.FileSet.Position(e.Start).Offset, ws.FileSet.Position(e.End).Offset
 	if e.Lines {
 		start, end = wholeLines(content, start, end)
 	}
+
 	text := e.Text
 	if e.LineAfter && end < len(content) && content[end] == '\n' {
 		text = ""
 	}
+
 	if e.LineBefore && text != "" {
 		i := start
 		for i > 0 && (content[i-1] == ' ' || content[i-1] == '\t') {
 			i--
 		}
+
 		if i > 0 && content[i-1] == '\n' {
 			text = strings.TrimPrefix(text, "\n")
 		}
 	}
 	// "Wrap" and "Replace" exempt a fragment from the validator's syntax check.
 	desc := foldDescription
+
 	switch {
 	case strings.TrimSpace(text) == "" && text != "":
 		desc = "Replace folded if header with a line break"
 	case text != "":
 		desc = "Wrap init statement of folded if in a block"
 	}
+
 	return pkgtypes.Change{
 		File:        file.Path,
 		Start:       start,

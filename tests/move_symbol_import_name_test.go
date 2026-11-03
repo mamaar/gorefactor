@@ -25,6 +25,7 @@ func TestMoveSymbol_KeepsAnImportTheStayingCodeStillUsesWhenItsNameIsNotThePathS
 		t.Run(name, func(t *testing.T) {
 			dir := writeInlineWorkspace(t, importNameFiles(f,
 				"func F() int { return "+f.pkg+".N() }\n\nfunc K() int { return "+f.pkg+".N() }\n"))
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -32,6 +33,7 @@ func TestMoveSymbol_KeepsAnImportTheStayingCodeStillUsesWhenItsNameIsNotThePathS
 			if res.IsError {
 				t.Fatalf("move: %s", errText(res))
 			}
+
 			assertFileContains(t, dir, "src/src.go", f.path)
 			assertFileContains(t, dir, "dst/dst.go", f.path)
 			goVets(t, dir, "")
@@ -44,6 +46,7 @@ func TestMoveSymbol_DropsAnImportWhoseOnlyUserMovesWhenItsNameIsNotThePathSuffix
 		t.Run(name, func(t *testing.T) {
 			dir := writeInlineWorkspace(t, importNameFiles(f,
 				"func F() int { return "+f.pkg+".N() }\n\nfunc K() int { return 2 }\n"))
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -51,6 +54,7 @@ func TestMoveSymbol_DropsAnImportWhoseOnlyUserMovesWhenItsNameIsNotThePathSuffix
 			if res.IsError {
 				t.Fatalf("move: %s", errText(res))
 			}
+
 			assertFileOmits(t, dir, "src/src.go", f.path)
 			goVets(t, dir, "")
 		})
@@ -64,6 +68,7 @@ func TestMoveSymbol_DropsTheSourceImportOfAReferrerWhenTheSourceNameIsNotThePath
 				f.dir + "/p.go": "package " + f.pkg + "\n\nfunc N() int { return 1 }\n",
 				"use/use.go":    "package use\n\nimport \"" + f.path + "\"\n\nfunc U() int { return " + f.pkg + ".N() }\n",
 			})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -71,6 +76,7 @@ func TestMoveSymbol_DropsTheSourceImportOfAReferrerWhenTheSourceNameIsNotThePath
 			if res.IsError {
 				t.Fatalf("move: %s", errText(res))
 			}
+
 			assertFileOmits(t, dir, "use/use.go", f.path)
 			goVets(t, dir, "")
 		})

@@ -67,6 +67,7 @@ func TestInlineMethodOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspaceForInline()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("InlineMethodOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -83,6 +84,7 @@ func TestInlineMethodOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expectedDesc := "Inline method 'inlineMe' from TestStruct into test.go"
 	if desc != expectedDesc {
 		t.Errorf("Expected description '%s', got '%s'", expectedDesc, desc)
@@ -153,6 +155,7 @@ func TestInlineVariableOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspaceForInline()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("InlineVariableOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -170,6 +173,7 @@ func TestInlineVariableOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expectedDesc := "Inline variable 'tempVar' from lines 10-15 in test.go"
 	if desc != expectedDesc {
 		t.Errorf("Expected description '%s', got '%s'", expectedDesc, desc)
@@ -235,6 +239,7 @@ func TestInlineFunctionOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspaceForInline()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("InlineFunctionOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -251,6 +256,7 @@ func TestInlineFunctionOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expectedDesc := "Inline function 'utilityFunc' from utils.go into [main.go service.go]"
 	if desc != expectedDesc {
 		t.Errorf("Expected description '%s', got '%s'", expectedDesc, desc)

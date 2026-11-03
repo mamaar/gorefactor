@@ -45,6 +45,7 @@ func (op *ExtractConstantOperation) Validate(ws *pkgtypes.Workspace) error {
 	case req.Line < 1 || req.Column < 1:
 		return invalidExtractConstant("line and column must be 1-based positions")
 	}
+
 	_, _, err := ws.FindFile(req.SourceFile)
 	if errors.Is(err, pkgtypes.ErrFileNotFound) {
 		return &pkgtypes.RefactorError{
@@ -52,30 +53,37 @@ func (op *ExtractConstantOperation) Validate(ws *pkgtypes.Workspace) error {
 			Message: fmt.Sprintf("source file not found: %s", req.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.RefactoringPlan, error) {
 	name := op.Request.ConstantName
+
 	src, pkg, err := ws.FindFile(op.Request.SourceFile)
 	if err != nil {
 		return nil, err
 	}
+
 	if pkg == nil {
 		return nil, &pkgtypes.RefactorError{
 			Type:    pkgtypes.FileSystemError,
 			Message: fmt.Sprintf("source file not found: %s", op.Request.SourceFile),
 		}
 	}
+
 	if src.Generated {
 		return nil, invalidExtractConstant("%s is a generated file; change the generator's input and regenerate", src.Path)
 	}
+
 	if isExternalTest(pkg, src) {
 		return nil, invalidExtractConstant("%s belongs to the external test package %s", src.Path, src.AST.Name.Name)
 	}
+
 	if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 		return nil, invalidExtractConstant("package %s has no type information", pkg.ImportPath)
 	}
@@ -84,13 +92,16 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	if err != nil {
 		return nil, err
 	}
+
 	_, ok := pkg.TypesInfo.Types[selected]
 	if !ok {
 		return nil, invalidExtractConstant("the literal %s has no type information", selected.Value)
 	}
+
 	if err := op.checkPackageLevelName(pkg); err != nil {
 		return nil, err
 	}
+
 	files := constantScopeFiles(pkg)
 	for _, file := range files {
 		err := checkImportName(pkg, file, name)
@@ -98,6 +109,7 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 			return nil, err
 		}
 	}
+
 	home, err := op.declaringFile(pkg, src)
 	if err != nil {
 		return nil, err
@@ -107,6 +119,7 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	op.replaceEqualLiterals(files, pkg, selected, plan, ws, name)
 
 	insert := constantInsertOffset(ws, home)
+
 	plan.Changes = append(plan.Changes, pkgtypes.Change{
 		File:        home.Path,
 		Start:       insert,
@@ -117,6 +130,7 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	if !slices.Contains(plan.AffectedFiles, home.Path) {
 		plan.AffectedFiles = append(plan.AffectedFiles, home.Path)
 	}
+
 	return plan, nil
 }
 
@@ -126,19 +140,25 @@ func (op *ExtractConstantOperation) replaceEqualLiterals(files []*pkgtypes.File,
 		if len(lits) == 0 {
 			continue
 		}
+
 		if file.Generated {
 			for _, lit := range lits {
 				plan.SkippedSites = append(plan.SkippedSites, skippedLiteral(ws, file, lit, "generated file"))
 			}
+
 			continue
 		}
+
 		replaced := 0
+
 		for _, lit := range lits {
 			if shadowed(pkg, lit, name) {
 				plan.SkippedSites = append(plan.SkippedSites, skippedLiteral(ws, file, lit,
 					fmt.Sprintf("%s is declared locally here and would shadow the constant", name)))
+
 				continue
 			}
+
 			plan.Changes = append(plan.Changes, pkgtypes.Change{
 				File:        file.Path,
 				Start:       ws.FileSet.Position(lit.Pos()).Offset,
@@ -149,6 +169,7 @@ func (op *ExtractConstantOperation) replaceEqualLiterals(files []*pkgtypes.File,
 			})
 			replaced++
 		}
+
 		if replaced > 0 {
 			plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
 		}
@@ -166,6 +187,7 @@ func invalidExtractConstant(format string, args ...any) error {
 // constantScopeFiles returns the parsed non-external files of pkg ordered by path.
 func constantScopeFiles(pkg *pkgtypes.Package) []*pkgtypes.File {
 	var files []*pkgtypes.File
+
 	for _, m := range []map[string]*pkgtypes.File{pkg.Files, pkg.TestFiles} {
 		for _, f := range m {
 			if f.AST != nil && !isExternalTest(pkg, f) {
@@ -173,7 +195,9 @@ func constantScopeFiles(pkg *pkgtypes.Package) []*pkgtypes.File {
 			}
 		}
 	}
+
 	slices.SortFunc(files, func(a, b *pkgtypes.File) int { return strings.Compare(a.Path, b.Path) })
+
 	return files
 }
 
@@ -184,21 +208,26 @@ func isExternalTest(pkg *pkgtypes.Package, f *pkgtypes.File) bool {
 // literalAt returns the literal under the requested line and column of src.
 func (op *ExtractConstantOperation) literalAt(ws *pkgtypes.Workspace, src *pkgtypes.File) (*ast.BasicLit, error) {
 	req := op.Request
+
 	tf := ws.FileSet.File(src.AST.Pos())
 	if tf == nil || req.Line > tf.LineCount() {
 		return nil, invalidExtractConstant("line %d is outside %s", req.Line, src.Path)
 	}
+
 	pos := tf.LineStart(req.Line) + token.Pos(req.Column-1)
+
 	lineEnd := token.Pos(tf.Base() + tf.Size())
 	if req.Line < tf.LineCount() {
 		lineEnd = tf.LineStart(req.Line+1) - 1
 	}
+
 	if pos >= lineEnd {
 		return nil, invalidExtractConstant("column %d is outside line %d", req.Column, req.Line)
 	}
 
 	var found ast.Node
 	var inert = map[*ast.BasicLit]string{}
+
 	ast.Inspect(src.AST, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case nil:
@@ -210,21 +239,26 @@ func (op *ExtractConstantOperation) literalAt(ws *pkgtypes.Workspace, src *pkgty
 				inert[n.Tag] = "a struct tag"
 			}
 		}
+
 		if n.Pos() <= pos && pos < n.End() {
 			found = n
 			return true
 		}
+
 		return false
 	})
+
 	lit, ok := found.(*ast.BasicLit)
 	if !ok {
 		return nil, invalidExtractConstant("no literal at %d:%d: found %T; only INT, FLOAT, IMAG, CHAR and STRING literals can be extracted",
 			req.Line, req.Column, found)
 	}
+
 	what := inert[lit]
 	if what != "" {
 		return nil, invalidExtractConstant("the literal at %d:%d is %s and cannot be extracted", req.Line, req.Column, what)
 	}
+
 	return lit, nil
 }
 
@@ -232,13 +266,16 @@ func (op *ExtractConstantOperation) literalAt(ws *pkgtypes.Workspace, src *pkgty
 // and struct tags never match: go/types records no type for them.
 func (op *ExtractConstantOperation) equalLiterals(pkg *pkgtypes.Package, file *pkgtypes.File, selected *ast.BasicLit) []*ast.BasicLit {
 	var lits []*ast.BasicLit
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		lit, ok := n.(*ast.BasicLit)
 		if ok && sameLiteral(pkg.TypesInfo, selected, lit) {
 			lits = append(lits, lit)
 		}
+
 		return true
 	})
+
 	return lits
 }
 
@@ -249,11 +286,14 @@ func sameLiteral(info *gotypes.Info, a, b *ast.BasicLit) bool {
 	if a.Kind != b.Kind {
 		return false
 	}
+
 	_, ok := info.Types[b]
 	if !ok {
 		return false
 	}
+
 	av, bv := constant.MakeFromLiteral(a.Value, a.Kind, 0), constant.MakeFromLiteral(b.Value, b.Kind, 0)
+
 	return av.Kind() != constant.Unknown && bv.Kind() != constant.Unknown && constant.Compare(av, token.EQL, bv)
 }
 
@@ -262,23 +302,28 @@ func sameLiteral(info *gotypes.Info, a, b *ast.BasicLit) bool {
 // build constraints.
 func (op *ExtractConstantOperation) checkPackageLevelName(pkg *pkgtypes.Package) error {
 	name := op.Request.ConstantName
+
 	files, err := sourceFilesOf(op.Sources, pkg.Dir)
 	if err != nil {
 		return fmt.Errorf("check package level name: %w", err)
 	}
+
 	for _, f := range files {
 		if f.AST == nil || f.AST.Name.Name != pkg.Name {
 			continue
 		}
+
 		if declaresTopLevel(f.AST, name) {
 			return invalidExtractConstant("%s is already declared at package level in %s", name, f.Path)
 		}
+
 		for _, spec := range f.AST.Imports {
 			if spec.Name != nil && spec.Name.Name == name {
 				return invalidExtractConstant("%s is already the name of an import in %s", name, f.Path)
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -306,6 +351,7 @@ func declaresTopLevel(file *ast.File, name string) bool {
 			}
 		}
 	}
+
 	return false
 }
 
@@ -318,18 +364,21 @@ func checkImportName(pkg *pkgtypes.Package, file *pkgtypes.File, name string) er
 		switch {
 		case spec.Name != nil && spec.Name.Name == ".":
 			p, _ := strconv.Unquote(spec.Path.Value)
+
 			for _, imp := range pkg.TypesPkg.Imports() {
 				obj := imp.Scope().Lookup(name)
 				if imp.Path() == p && obj != nil && obj.Exported() {
 					return invalidExtractConstant("%s is dot-imported into %s", name, file.Path)
 				}
 			}
+
 			continue
 		case spec.Name != nil && spec.Name.Name == name:
 			return invalidExtractConstant("%s is already the name of an import in %s", name, file.Path)
 		case spec.Name != nil:
 			continue
 		}
+
 		imported := ""
 		if pn != nil {
 			imported = pn.Name()
@@ -339,10 +388,12 @@ func checkImportName(pkg *pkgtypes.Package, file *pkgtypes.File, name string) er
 				imported = path.Base(p)
 			}
 		}
+
 		if imported == name {
 			return invalidExtractConstant("%s is already the name of an import in %s", name, file.Path)
 		}
 	}
+
 	return nil
 }
 
@@ -351,25 +402,31 @@ func checkImportName(pkg *pkgtypes.Package, file *pkgtypes.File, name string) er
 // constant declared anywhere else would be undefined in some build.
 func (op *ExtractConstantOperation) declaringFile(pkg *pkgtypes.Package, src *pkgtypes.File) (*pkgtypes.File, error) {
 	production := slices.Collect(maps.Values(pkg.Files))
+
 	eligible := func(f *pkgtypes.File) bool {
 		if f.Generated || !slices.Contains(production, f) {
 			return false
 		}
+
 		sf := op.Sources.File(f.Path)
 		if sf == nil {
 			return false
 		}
+
 		c := analysis.ConstraintOf(sf)
+
 		return c.Expr == nil && c.Suffix == "" && !c.Cgo
 	}
 	if eligible(src) {
 		return src, nil
 	}
+
 	for _, f := range constantScopeFiles(pkg) {
 		if eligible(f) {
 			return f, nil
 		}
 	}
+
 	return nil, invalidExtractConstant("package %s has no unconstrained, non-test, non-generated file to declare the constant in", pkg.ImportPath)
 }
 
@@ -379,7 +436,9 @@ func shadowed(pkg *pkgtypes.Package, lit *ast.BasicLit, name string) bool {
 	if scope == nil {
 		return false
 	}
+
 	_, obj := scope.LookupParent(name, lit.Pos())
+
 	return obj != nil && obj.Parent() != pkg.TypesPkg.Scope()
 }
 
@@ -387,10 +446,12 @@ func skippedLiteral(ws *pkgtypes.Workspace, file *pkgtypes.File, lit *ast.BasicL
 	p := ws.FileSet.Position(lit.Pos())
 	start := bytes.LastIndexByte(file.OriginalContent[:p.Offset], '\n') + 1
 	end := len(file.OriginalContent)
+
 	i := bytes.IndexByte(file.OriginalContent[p.Offset:], '\n')
 	if i >= 0 {
 		end = p.Offset + i
 	}
+
 	return pkgtypes.SkippedSite{
 		File:    file.Path,
 		Line:    p.Line,
@@ -410,10 +471,13 @@ func constantInsertOffset(ws *pkgtypes.Workspace, file *pkgtypes.File) int {
 			end = gen.End()
 		}
 	}
+
 	off := ws.FileSet.Position(end).Offset
+
 	i := bytes.IndexByte(file.OriginalContent[off:], '\n')
 	if i >= 0 {
 		return off + i
 	}
+
 	return len(file.OriginalContent)
 }

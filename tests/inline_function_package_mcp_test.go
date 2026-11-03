@@ -12,6 +12,7 @@ const inlUse = "package p\n\nfunc Use() int { return f(1) }\n"
 func TestInlineFunction_SameNameInAnotherPackageIsLeftAlone(t *testing.T) {
 	const other = "package q\n\nfunc f(n int) int { return n * 100 }\n\nfunc Use() int { return f(2) }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": sdcF, "p/use.go": inlUse, "q/doc.go": "package q\n", "q/q.go": other, "p/doc.go": "package p\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

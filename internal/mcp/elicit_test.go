@@ -48,19 +48,23 @@ func TestCanConfirm(t *testing.T) {
 			ctx := context.Background()
 			server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "gorefactor-test", Version: "test"}, nil)
 			serverT, clientT := mcpsdk.NewInMemoryTransports()
+
 			serverSession, err := server.Connect(ctx, serverT, nil)
 			if err != nil {
 				t.Fatalf("server.Connect: %v", err)
 			}
+
 			t.Cleanup(func() { _ = serverSession.Close() })
 
 			// A "2025-11-25" client states its capabilities in the handshake,
 			// which is what the session holds before any request arrives.
 			client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "test-client", Version: "1.0"}, &mcpsdk.ClientOptions{Capabilities: tt.caps})
+
 			clientSession, err := client.Connect(ctx, clientT, &mcpsdk.ClientSessionOptions{ProtocolVersion: "2025-11-25"})
 			if err != nil {
 				t.Fatalf("client.Connect: %v", err)
 			}
+
 			t.Cleanup(func() { _ = clientSession.Close() })
 
 			got := canConfirm(serverSession)

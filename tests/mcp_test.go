@@ -291,6 +291,7 @@ func TestMCPTools(t *testing.T) {
 			tmpDir := copyFixture(t, tt.fixture)
 
 			ctx := context.Background()
+
 			sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 			defer sess.Close()
 
@@ -301,14 +302,17 @@ func TestMCPTools(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallTool(%s): %v", tt.tool, err)
 			}
+
 			if result.IsError {
 				var errMsg strings.Builder
+
 				for _, c := range result.Content {
 					tc, ok := c.(*mcpsdk.TextContent)
 					if ok {
 						errMsg.WriteString(tc.Text)
 					}
 				}
+
 				t.Fatalf("CallTool(%s) returned error: %s", tt.tool, errMsg.String())
 			}
 

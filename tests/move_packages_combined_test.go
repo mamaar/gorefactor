@@ -23,13 +23,16 @@ func movePackages(t *testing.T, dir string, mappings ...types.PackageMapping) (*
 	t.Helper()
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{Packages: mappings})
 	if err != nil {
 		return nil, fmt.Errorf("move packages: %w", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	return plan, nil
 }
 
@@ -39,12 +42,14 @@ func TestMovePackagesRewritesAFileImportingTwoMovedPackages(t *testing.T) {
 		"b/b.go":     pkgBSource,
 		"use/use.go": "package use\n\nimport (\n\t\"scratch/a\"\n\t\"scratch/b\"\n)\n\nfunc U() string { return a.Foo() + b.Bar() }\n",
 	})
+
 	_, err := movePackages(t, dir,
 		types.PackageMapping{SourcePackage: "a", TargetPackage: "lib/alpha"},
 		types.PackageMapping{SourcePackage: "b", TargetPackage: "lib/beta"})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
 	}
+
 	assertFileContains(t, dir, "use/use.go", `"scratch/lib/alpha"`)
 	assertFileContains(t, dir, "use/use.go", `"scratch/lib/beta"`)
 	assertFileContains(t, dir, "use/use.go", "alpha.Foo() + beta.Bar()")
@@ -56,12 +61,14 @@ func TestMovePackagesMovedPackageSeesAnotherMovedPackagesNewPath(t *testing.T) {
 		"a/a.go": "package a\n\nimport \"scratch/b\"\n\nfunc Foo() string { return b.Bar() }\n",
 		"b/b.go": pkgBSource,
 	})
+
 	_, err := movePackages(t, dir,
 		types.PackageMapping{SourcePackage: "a", TargetPackage: "lib/alpha"},
 		types.PackageMapping{SourcePackage: "b", TargetPackage: "lib/beta"})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
 	}
+
 	assertFileContains(t, dir, "lib/alpha/a.go", `"scratch/lib/beta"`)
 	assertFileContains(t, dir, "lib/alpha/a.go", "beta.Bar()")
 	vetAs(t, dir, "linux")
@@ -92,16 +99,19 @@ func TestMovePackagesRefusesConflictingMappingsAndWritesNothing(t *testing.T) {
 				"b/b.go":                 pkgBSource,
 				"lib/win/win_windows.go": "package win\n",
 			})
+
 			_, err := movePackages(t, dir, tc.mappings...)
 			if err == nil || !strings.Contains(err.Error(), tc.reason) {
 				t.Fatalf("expected a refusal containing %q, got: %v", tc.reason, err)
 			}
+
 			for _, rel := range []string{"a/a.go", "b/b.go", "lib/win/win_windows.go"} {
 				_, err := os.Stat(filepath.Join(dir, rel))
 				if err != nil {
 					t.Errorf("%s should be untouched: %v", rel, err)
 				}
 			}
+
 			_, err = os.Stat(filepath.Join(dir, "lib", "one"))
 			if !os.IsNotExist(err) {
 				t.Errorf("lib/one should not exist, stat err=%v", err)
@@ -117,13 +127,16 @@ func TestMovePackageToNonIdentifierDirKeepsPackageClause(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "old", TargetPackage: "lib/my-pkg"})
 	if err != nil {
 		t.Fatalf("MovePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "lib/my-pkg/old.go", "package old\n")
 	assertFileContains(t, dir, "use/use.go", `"scratch/lib/my-pkg"`)
 	vetAs(t, dir, "linux")
@@ -135,6 +148,7 @@ func TestMovePackagesViaMCPWithoutTargetDir(t *testing.T) {
 		"use/use.go": "package use\n\nimport \"scratch/old\"\n\nfunc U() string { return old.Foo() }\n",
 	})
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -147,9 +161,11 @@ func TestMovePackagesViaMCPWithoutTargetDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("move_packages returned an error result: %+v", result.Content)
 	}
+
 	assertFileContains(t, dir, "use/use.go", `"scratch/lib/fresh"`)
 	assertFileContains(t, dir, "use/use.go", "fresh.Foo()")
 }
@@ -161,13 +177,16 @@ func TestMovePackageOfMainKeepsQualifierInExternalTest(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "cmd/a", TargetPackage: "cmd/b"})
 	if err != nil {
 		t.Fatalf("MovePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "cmd/b/main_test.go", "main.Foo()")
 	vetAs(t, dir, "linux")
 }
@@ -179,12 +198,15 @@ func TestMovePackageRepathsImporterThatAlreadyDidNotParse(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "old", TargetPackage: "lib/old"})
 	if err != nil {
 		t.Fatalf("MovePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "use/use.go", `"scratch/lib/old"`)
 }

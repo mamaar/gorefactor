@@ -24,6 +24,7 @@ type Other struct{}
 
 func aliasFixture(t *testing.T) string {
 	t.Helper()
+
 	dir := t.TempDir()
 	for name, content := range map[string]string{
 		"go.mod":         "module example.com/mv\n\ngo 1.22\n",
@@ -65,12 +66,14 @@ func Plain() error { return model.FolderError{} }
 	} {
 		mustWrite(t, filepath.Join(dir, name), content)
 	}
+
 	return dir
 }
 
 func TestMoveSymbol_ReferenceQualifiersRespectExistingImports(t *testing.T) {
 	dir := aliasFixture(t)
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -78,16 +81,19 @@ func TestMoveSymbol_ReferenceQualifiersRespectExistingImports(t *testing.T) {
 	dry := map[string]any{"dry_run": true}
 	maps.Copy(dry, args)
 	dryOut := callJSON(t, sess, "move_symbol", dry)
+
 	diffs, _ := dryOut["diffs"].([]any)
 	if len(diffs) == 0 {
 		t.Fatalf("dry run returned no diffs: %v", dryOut)
 	}
+
 	callJSON(t, sess, "move_symbol", args)
 
 	both := mustRead(t, filepath.Join(dir, "c/both.go"))
 	if !strings.Contains(both, "bmodel.FolderError{}") || !strings.Contains(both, "model.Other{}") {
 		t.Errorf("c/both.go wrong:\n%s", both)
 	}
+
 	if strings.Count(both, "example.com/mv/b/model") != 1 || !strings.Contains(both, `"example.com/mv/a/model"`) {
 		t.Errorf("c/both.go imports wrong:\n%s", both)
 	}
@@ -96,6 +102,7 @@ func TestMoveSymbol_ReferenceQualifiersRespectExistingImports(t *testing.T) {
 	if strings.Contains(only, "amodel") || strings.Contains(only, "a/model") {
 		t.Errorf("e/only.go keeps unused source import:\n%s", only)
 	}
+
 	if !strings.Contains(only, "bmodel.FolderError{}") || !strings.Contains(only, `bmodel "example.com/mv/b/model"`) || !strings.Contains(only, "model.X{}") {
 		t.Errorf("e/only.go wrong:\n%s", only)
 	}
@@ -112,6 +119,7 @@ func TestMoveSymbol_ReferenceQualifiersRespectExistingImports(t *testing.T) {
 
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("module does not vet clean after the move:\n%s", out)
@@ -132,8 +140,10 @@ func (l LayerError) Error() string { return "layer error" }
 	mustWrite(t, filepath.Join(dir, "b/model/m.go"), "package model\n\ntype Existing struct{}\n")
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
+
 	callJSON(t, sess, "move_symbol", map[string]any{"symbol": "LayerError", "from_package": "a/model", "to_package": "b/model"})
 
 	target := mustRead(t, filepath.Join(dir, "b/model/m.go"))

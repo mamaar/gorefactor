@@ -29,10 +29,12 @@ func TestView_WarmExternalsChecksWhatTheWorkspaceImports(t *testing.T) {
 			t.Errorf("%s type-checked = %v, want %v", path, n != nil && n.checked, want)
 		}
 	}
+
 	pkg := v.Workspace.Packages[filepath.Join(root, "p")]
 	if pkg.TypesChecked {
 		t.Error("warming the externals type-checked a workspace package")
 	}
+
 	checkedPackage(t, v, filepath.Join(root, "p"))
 }
 
@@ -45,31 +47,38 @@ func TestView_DropTypeInfoKeepsWhatTheChecksRecorded(t *testing.T) {
 	})
 	v := set.Primary()
 	dirs := []string{filepath.Join(root, "p"), filepath.Join(root, "q")}
+
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
 	}
+
 	views := []*View{v}
+
 	before := UncheckedFiles(views, dirs)
 	if len(before) != 1 || before[0].Source.Name != "bad_test.go" {
 		t.Fatalf("unchecked before the drop = %+v, want bad_test.go", before)
 	}
 
 	v.DropTypeInfo()
+
 	for _, pkg := range v.Workspace.Packages {
 		if pkg.TypesInfo != nil || pkg.TypesPkg != nil {
 			t.Errorf("%s still holds type information", pkg.ImportPath)
 		}
 	}
+
 	after := UncheckedFiles(views, dirs)
 	if !reflect.DeepEqual(after, before) {
 		t.Errorf("unchecked after the drop = %+v, want %+v", after, before)
 	}
 
 	v.ReleaseTypeInfo()
+
 	q := checkedPackage(t, v, dirs[1])
 	if useDefinitionFile(t, v, q, "q.go", "F") != "p.go" {
 		t.Error("q does not resolve p.F after the re-check")
 	}
+
 	again := UncheckedFiles(views, dirs)
 	if len(again) != 1 || again[0].Reason != before[0].Reason {
 		t.Errorf("unchecked after the re-check = %+v, want %+v", again, before)

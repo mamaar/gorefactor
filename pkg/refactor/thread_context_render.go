@@ -58,6 +58,7 @@ func (op *ThreadContextOperation) RenderChanges(ws *pkgtypes.Workspace) ([]pkgty
 	if op.plan == nil {
 		return nil, fmt.Errorf("thread context plan not built: call Validate or Execute first")
 	}
+
 	return renderThreadPlan(ws, op.plan)
 }
 
@@ -90,11 +91,13 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 			return nil, fmt.Errorf(
 				"internal error: %s is in threadPlan.Funcs but has no resolvable declaration", funcLabel(f))
 		}
+
 		ft := fd.FuncType()
 		if ft == nil || ft.Params == nil {
 			return nil, fmt.Errorf(
 				"internal error: %s is in threadPlan.Funcs but has no resolvable signature", funcLabel(f))
 		}
+
 		changes = append(changes, insertCtxParam(ws, fd.File, ft, name, bodyUsesCtx(plan, f, fd))...)
 		needsContext[fd.File.Path] = true
 	}
@@ -106,6 +109,7 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 	// 2. Call sites: for every recorded call-site decision, either insert a
 	// new argument or replace an existing fabricated-root one.
 	var err2 error
+
 	changes, err2 = renderCallSites(plan, ws, changes, needsContext)
 	if err2 != nil {
 		return nil, err2
@@ -115,6 +119,7 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 	// statements that would become illegal redeclarations now that ctx is a
 	// parameter.
 	var err error
+
 	changes, err = renderFakeRootDeletions(plan, ws, changes)
 	if err != nil {
 		return nil, err
@@ -143,6 +148,7 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		if !needed || hasImport(ws, path, "context") {
 			continue
 		}
+
 		imp := GenerateAddImportChange(ws, path, "", "context")
 		if imp != nil {
 			changes = append(changes, *imp)
@@ -161,19 +167,24 @@ func renderCallSites(plan *threadPlan, ws *pkgtypes.Workspace, changes []pkgtype
 				Reason:  fmt.Sprintf("shadowed context: %s cannot be written here, so the call to %s needs a ctx argument by hand", edit.Expr, funcLabel(edit.Callee)),
 				Snippet: funcLabel(edit.Callee),
 			})
+
 			continue
 		}
+
 		change, importFile, err := renderCallEdit(ws, plan, edit)
 		if err != nil {
 			return changes, fmt.Errorf("render thread plan: %w", err)
 		}
+
 		if change != nil {
 			changes = append(changes, *change)
 		}
+
 		if importFile != "" {
 			needsContext[importFile] = true
 		}
 	}
+
 	return changes, nil
 }
 
@@ -184,6 +195,7 @@ func renderFakeRootDeletions(plan *threadPlan, ws *pkgtypes.Workspace, changes [
 			return changes, fmt.Errorf(
 				"internal error: %s has a recorded fake-root deletion but no resolvable declaration", funcLabel(f))
 		}
+
 		del := renderFakeDeletion(ws, fd.File, stmt, funcLabel(f))
 		if plan.WithoutCancel {
 			del = renderFakeWithoutCancel(ws, fd.File, stmt, plan.Funcs[f], funcLabel(f))
@@ -198,12 +210,15 @@ func renderFakeRootDeletions(plan *threadPlan, ws *pkgtypes.Workspace, changes [
 			if existing.File != del.File || existing.Start != existing.End || existing.Start < del.Start || existing.Start >= del.End {
 				continue
 			}
+
 			return changes, fmt.Errorf(
 				"internal error: fake ctx deletion in %s [%d,%d) unexpectedly contains an insertion at %d",
 				del.File, del.Start, del.End, existing.Start)
 		}
+
 		changes = append(changes, del)
 	}
+
 	return changes, nil
 }
 
@@ -244,10 +259,12 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 			start := ws.FileSet.Position(call.Pos()).Offset
 			end := ws.FileSet.Position(call.End()).Offset
 			old := string(fd.File.OriginalContent[start:end])
+
 			text := name
 			if plan.WithoutCancel {
 				text = "context.WithoutCancel(" + name + ")"
 			}
+
 			changes = append(changes, pkgtypes.Change{
 				File:    fd.File.Path,
 				Start:   start,
@@ -274,6 +291,7 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 		if a.File != b.File {
 			return strings.Compare(a.File, b.File)
 		}
+
 		return a.Start - b.Start
 	})
 
@@ -284,19 +302,23 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 // nested function literals unless intoClosures.
 func internalRootContextCalls(body *ast.BlockStmt, intoClosures bool) []*ast.CallExpr {
 	var calls []*ast.CallExpr
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		_, isLit := n.(*ast.FuncLit)
 		if isLit && !intoClosures {
 			return false
 		}
+
 		call, ok := n.(*ast.CallExpr)
 		if !ok || !isRootContextCall(call) {
 			return true
 		}
+
 		calls = append(calls, call)
 		// A root context call takes no arguments, so nothing nested inside.
 		return false
 	})
+
 	return calls
 }
 
@@ -313,6 +335,7 @@ func overlapsAny(c pkgtypes.Change, others []pkgtypes.Change) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -325,25 +348,32 @@ func overlapsAny(c pkgtypes.Change, others []pkgtypes.Change) bool {
 func insertCtxParam(ws *pkgtypes.Workspace, file *pkgtypes.File, ft *ast.FuncType, name string, used bool) []pkgtypes.Change {
 	list := ft.Params.List
 	unnamed := len(list) > 0 && len(list[0].Names) == 0
+
 	text := name + " context.Context"
 	if unnamed && !used {
 		text = "context.Context"
 	}
+
 	if len(list) > 0 {
 		text += ", "
 	}
+
 	head := ft.Params.Opening + 1
 	var rest []pkgtypes.Change
+
 	if unnamed && used {
 		for i, field := range list {
 			if i == 0 && field.Type.Pos() == head {
 				text += "_ " // one insertion: two at an offset would not keep their order
 				continue
 			}
+
 			rest = append(rest, ctxInsertion(ws, file, field.Type.Pos(), "_ ", "Name unused parameter"))
 		}
 	}
+
 	changes := []pkgtypes.Change{ctxInsertion(ws, file, head, text, fmt.Sprintf("Add %s context.Context parameter", name))}
+
 	return append(changes, rest...)
 }
 
@@ -359,15 +389,18 @@ func bodyUsesCtx(plan *threadPlan, f *gotypes.Func, fd *funcDecl) bool {
 	if fd.Decl == nil || fd.Decl.Body == nil {
 		return false
 	}
+
 	if plan.Fake[f] != nil || hasInternalRootContext(fd.Decl.Body) {
 		return true
 	}
+
 	name := plan.Funcs[f]
 	for _, edit := range plan.ArgFor {
 		if edit.Site.Fn == fd.Decl && edit.Expr == name {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -389,6 +422,7 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 		if len(call.Args) > 0 {
 			text += ", "
 		}
+
 		offset := ws.FileSet.Position(call.Lparen).Offset + 1
 		change := &pkgtypes.Change{
 			File:    site.File.Path,
@@ -402,6 +436,7 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 			// that function's isFragment check.
 			Description: fmt.Sprintf("Pass %s as argument to call to %s", edit.Expr, funcLabel(callee)),
 		}
+
 		return change, importFileFor(site.File.Path, edit.Expr), nil
 	}
 
@@ -426,16 +461,20 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 			// call site; emit nothing rather than guess or panic.
 			return nil, "", nil
 		}
+
 		arg := call.Args[idx]
 		if !isRootContextCall(arg) {
 			return nil, "", nil
 		}
+
 		start := ws.FileSet.Position(arg.Pos()).Offset
 		end := ws.FileSet.Position(arg.End()).Offset
+
 		text := edit.Expr
 		if plan.WithoutCancel && !strings.HasPrefix(text, "context.") {
 			text = "context.WithoutCancel(" + text + ")"
 		}
+
 		change := &pkgtypes.Change{
 			File:        site.File.Path,
 			Start:       start,
@@ -444,6 +483,7 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 			NewText:     text,
 			Description: fmt.Sprintf("Replace fabricated root context with %s at call to %s", edit.Expr, funcLabel(callee)),
 		}
+
 		return change, importFileFor(site.File.Path, edit.Expr), nil
 	}
 
@@ -472,6 +512,7 @@ func importFileFor(filePath, text string) string {
 	if strings.Contains(text, "context.") {
 		return filePath
 	}
+
 	return ""
 }
 
@@ -484,6 +525,7 @@ func importFileFor(filePath, text string) string {
 func renderFakeDeletion(ws *pkgtypes.Workspace, file *pkgtypes.File, stmt *ast.AssignStmt, label string) pkgtypes.Change {
 	start := ws.FileSet.Position(stmt.Pos()).Offset
 	end := ws.FileSet.Position(stmt.End()).Offset
+
 	return ctxAssignDeletionChange(file.Path, file.OriginalContent, start, end, label)
 }
 
@@ -494,11 +536,14 @@ func contextShadowed(pkg *pkgtypes.Package, pos token.Pos) bool {
 	if inner == nil {
 		return false
 	}
+
 	_, obj := inner.LookupParent("context", pos)
 	if obj == nil {
 		return false
 	}
+
 	pn, ok := obj.(*gotypes.PkgName)
+
 	return !ok || pn.Imported().Path() != "context"
 }
 
@@ -508,10 +553,12 @@ func contextShadowed(pkg *pkgtypes.Package, pos token.Pos) bool {
 func renderFakeWithoutCancel(ws *pkgtypes.Workspace, file *pkgtypes.File, stmt *ast.AssignStmt, param, label string) pkgtypes.Change {
 	start := ws.FileSet.Position(stmt.Pos()).Offset
 	end := ws.FileSet.Position(stmt.End()).Offset
+
 	text := "ctx := context.WithoutCancel(" + param + ")"
 	if param == "ctx" {
 		text = "ctx = context.WithoutCancel(ctx)"
 	}
+
 	return pkgtypes.Change{
 		File:        file.Path,
 		Start:       start,
@@ -532,11 +579,13 @@ func ctxParamIndex(f *gotypes.Func) (int, bool) {
 	if !ok {
 		return 0, false
 	}
+
 	params := sig.Params()
 	for i := range params.Len() {
 		if analysis.IsContextType(params.At(i).Type()) {
 			return i, true
 		}
 	}
+
 	return 0, false
 }

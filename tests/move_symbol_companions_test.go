@@ -175,6 +175,7 @@ func UseCache() {
 	}
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -189,6 +190,7 @@ func UseCache() {
 	if err != nil {
 		t.Fatalf("CallTool transport error (server likely crashed/disconnected): %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("move_symbol returned an error result: %+v", result.Content)
 	}
@@ -223,6 +225,7 @@ func UseCache() {
 		} {
 			assertFileOmits(t, tmpDir, common, notWant)
 		}
+
 		assertFileContains(t, tmpDir, common, "func Unrelated()")
 	})
 
@@ -245,6 +248,7 @@ func UseCache() {
 	// above; only actually building the result does.
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = tmpDir
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("fixture module does not compile after move_symbol (this is the actual bug):\n%s", out)
@@ -287,6 +291,7 @@ func DebugDump() {
 `)
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), tmpDir)
 	defer sess.Close()
 
@@ -301,6 +306,7 @@ func DebugDump() {
 	if err != nil {
 		t.Fatalf("CallTool transport error (server likely crashed/disconnected): %v", err)
 	}
+
 	if !result.IsError {
 		t.Fatalf("expected move_symbol to refuse the move (DebugDump would be stranded), got success: %+v", result.Content)
 	}
@@ -311,6 +317,7 @@ func DebugDump() {
 	if !strings.Contains(common, "type MemCache struct") {
 		t.Errorf("expected refused move to leave MemCache in place, got:\n%s", common)
 	}
+
 	if _, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache")); !os.IsNotExist(err) {
 		t.Errorf("expected refused move to not create the target package, stat err=%v", err)
 	}
@@ -318,9 +325,11 @@ func DebugDump() {
 
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
 	}
+
 	return string(data)
 }

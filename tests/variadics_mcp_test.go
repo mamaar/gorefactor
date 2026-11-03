@@ -46,46 +46,59 @@ const variadicsModule = "module example.com/vari\n\ngo 1.21\n"
 // callVariadics runs detect_variadics over files, with args when non-nil.
 func callVariadics(t *testing.T, args map[string]any, files map[string]string) variadicsJSON {
 	t.Helper()
+
 	if args == nil {
 		args = map[string]any{}
 	}
+
 	files["go.mod"] = variadicsModule
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "detect_variadics", Arguments: args})
 	if err != nil {
 		t.Fatalf("detect_variadics: %v", err)
 	}
+
 	if res.IsError {
 		t.Fatalf("detect_variadics: %s", errText(res))
 	}
+
 	var out variadicsJSON
 	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
+
 	if out.TotalCount != len(out.Variadics) {
 		t.Errorf("total_count %d, want %d", out.TotalCount, len(out.Variadics))
 	}
+
 	return out
 }
 
 // findVariadic returns the single finding named function declared in base.
 func findVariadic(t *testing.T, out variadicsJSON, base, function string) variadicJSON {
 	t.Helper()
+
 	for _, v := range out.Variadics {
 		if v.Function == function && filepath.Base(v.File) == base {
 			return v
 		}
 	}
+
 	t.Fatalf("no finding %s in %s: %+v", function, base, out.Variadics)
+
 	return variadicJSON{}
 }
 
 // checkShape compares the call-site counts of v, ignoring where it is declared.
 func checkShape(t *testing.T, got variadicJSON, want variadicJSON) {
 	t.Helper()
+
 	g := [6]int{got.CallSites, got.ZeroArgs, got.OneArg, got.ManyArgs, got.Spread, got.ValueUses}
+
 	w := [6]int{want.CallSites, want.ZeroArgs, want.OneArg, want.ManyArgs, want.Spread, want.ValueUses}
 	if g != w {
 		t.Errorf("%s [call_sites zero one many spread value_uses] = %v, want %v", got.Function, g, w)
@@ -97,7 +110,9 @@ func variadicNames(out variadicsJSON) []string {
 	for _, v := range out.Variadics {
 		names = append(names, v.Function)
 	}
+
 	slices.Sort(names)
+
 	return names
 }
 
@@ -125,11 +140,14 @@ func use(xs []int) {
 	if !slices.Equal(got, []string{"F"}) {
 		t.Fatalf("listed %v, want only F", got)
 	}
+
 	f := findVariadic(t, out, "a.go", "F")
 	checkShape(t, f, variadicJSON{CallSites: 6, ZeroArgs: 1, OneArg: 1, ManyArgs: 3, Spread: 1})
+
 	if f.Signature != "func F(prefix string, xs ...int)" {
 		t.Errorf("signature = %q", f.Signature)
 	}
+
 	if f.File != "a/a.go" || f.Line != 5 || f.Column != 6 {
 		t.Errorf("position = %s:%d:%d", f.File, f.Line, f.Column)
 	}
@@ -273,6 +291,7 @@ func use() { F(1) }
 	if !slices.Equal(got, []string{"F"}) {
 		t.Fatalf("listed %v, want only F", got)
 	}
+
 	checkShape(t, findVariadic(t, out, "a.go", "F"), variadicJSON{CallSites: 1, OneArg: 1})
 }
 
@@ -314,16 +333,20 @@ func Sys(xs ...int) {}
 	if len(out.BuildConfigs) < 2 {
 		t.Fatalf("build_configs = %v, want several", out.BuildConfigs)
 	}
+
 	checkShape(t, findVariadic(t, out, "a.go", "F"), variadicJSON{CallSites: 2, ZeroArgs: 1, ManyArgs: 1})
 
 	want := variadicJSON{CallSites: 2, OneArg: 1, Spread: 1}
+
 	for _, base := range []string{"sys_linux.go", "sys_darwin.go", "sys_windows.go"} {
 		sys := findVariadic(t, out, base, "Sys")
 		checkShape(t, sys, want)
+
 		if len(sys.Configs) == 0 {
 			t.Errorf("%s: configs is empty, want the configurations declaring it", base)
 		}
 	}
+
 	f := findVariadic(t, out, "a.go", "F")
 	if len(f.Configs) != 0 {
 		t.Errorf("F: configs = %v, want none when every configuration declares it", f.Configs)
@@ -350,10 +373,12 @@ func Run() { lib.F(1) }
 
 	for _, pkg := range []string{"example.com/vari/lib", "lib"} {
 		out := callVariadics(t, map[string]any{"package": pkg}, files())
+
 		got := variadicNames(out)
 		if !slices.Equal(got, []string{"F"}) {
 			t.Fatalf("package %q listed %v, want only F", pkg, got)
 		}
+
 		checkShape(t, findVariadic(t, out, "lib.go", "F"), variadicJSON{CallSites: 1, OneArg: 1})
 	}
 
@@ -485,6 +510,7 @@ func onWindows() { X(1, 2) }
 	for _, base := range []string{"x_linux.go", "x_darwin.go"} {
 		checkShape(t, findVariadic(t, out, base, "X"), variadicJSON{CallSites: 1, ManyArgs: 1})
 	}
+
 	for _, v := range out.Variadics {
 		if filepath.Base(v.File) == "x_windows.go" {
 			t.Errorf("listed generated declaration %+v", v)
@@ -508,6 +534,7 @@ func P(xs ...int) {}
 func A(xs ...int) {}
 `,
 		})
+
 		got := variadicNames(out)
 		if !slices.Equal(got, []string{"P", "W"}) {
 			t.Errorf("package %q listed %v, want P and W", pkg, got)
@@ -543,13 +570,17 @@ func Clean(xs ...int) {}
 	checkShape(t, findVariadic(t, out, "a.go", "F"), variadicJSON{CallSites: 1, ZeroArgs: 1})
 
 	files := []string{}
+
 	for _, e := range out.TypeErrors {
 		if e.Error == "" {
 			t.Errorf("%s has no error text", e.File)
 		}
+
 		files = append(files, e.File)
 	}
+
 	slices.Sort(files)
+
 	if !slices.Equal(files, []string{"a/a.go", "a/broken.go"}) {
 		t.Errorf("type_error_files = %v, want a/a.go and a/broken.go", files)
 	}

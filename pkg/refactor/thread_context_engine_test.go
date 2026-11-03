@@ -24,17 +24,21 @@ func writeThreadContextWorkspace(t *testing.T, files map[string]string) string {
 	if !ok {
 		files["go.mod"] = "module example.com/threadtest\n\ngo 1.21\n"
 	}
+
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0o755)
 		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
 		}
 	}
+
 	return dir
 }
 
@@ -89,6 +93,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if len(plan.Changes) == 0 {
 		t.Fatalf("expected ThreadContext to produce changes, got none")
 	}
@@ -102,6 +107,7 @@ func main() {
 	// Second, independent proof: build the whole module from its root. This
 	// does not depend on the engine's own validateCompilation logic at all.
 	cmd := exec.Command("go", "build", "./...")
+
 	cmd.Dir = dir
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build ./... failed after ThreadContext: %v\n%s", err, out)
@@ -111,6 +117,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("reading rewritten foo/lib.go: %v", err)
 	}
+
 	if !strings.Contains(string(rewritten), "ctx context.Context") {
 		t.Errorf("expected foo/lib.go to gain a ctx context.Context parameter, got:\n%s", rewritten)
 	}
@@ -119,6 +126,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("reading rewritten cmd/app/main.go: %v", err)
 	}
+
 	if !strings.Contains(string(rewrittenMain), "context.TODO()") {
 		t.Errorf("expected cmd/app/main.go's root (main) to pass context.TODO(), got:\n%s", rewrittenMain)
 	}
@@ -154,9 +162,11 @@ func main() { target() }
 	if err != nil {
 		t.Fatalf("ThreadContext: %v", err)
 	}
+
 	if len(plan.Changes) == 0 {
 		t.Fatalf("expected changes")
 	}
+
 	if len(plan.Operations) != 1 {
 		t.Fatalf("expected exactly one operation on the plan, got %d", len(plan.Operations))
 	}

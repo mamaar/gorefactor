@@ -102,11 +102,13 @@ func buildCallgraphWorkspace(t *testing.T) (*types.Workspace, *ReferenceIndex) {
 	if err != nil {
 		t.Fatalf("parse dep: %v", err)
 	}
+
 	depInfo := &gotypes.Info{
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
 	depConf := gotypes.Config{}
+
 	depPkg, err := depConf.Check("example.com/dep", fset, []*ast.File{depFile}, depInfo)
 	if err != nil {
 		t.Fatalf("type-check dep: %v", err)
@@ -116,10 +118,12 @@ func buildCallgraphWorkspace(t *testing.T) (*types.Workspace, *ReferenceIndex) {
 	if err != nil {
 		t.Fatalf("parse main: %v", err)
 	}
+
 	mainTestFile, err := parser.ParseFile(fset, "main_test.go", callgraphMainTestSrc, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse main_test: %v", err)
 	}
+
 	mainInfo := &gotypes.Info{
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
@@ -129,6 +133,7 @@ func buildCallgraphWorkspace(t *testing.T) (*types.Workspace, *ReferenceIndex) {
 			if path == "example.com/dep" {
 				return depPkg, nil
 			}
+
 			return nil, fmt.Errorf("unknown import %q", path)
 		}),
 	}
@@ -178,6 +183,7 @@ func buildCallgraphWorkspace(t *testing.T) (*types.Workspace, *ReferenceIndex) {
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	idx := resolver.BuildReferenceIndex()
+
 	return ws, idx
 }
 
@@ -193,22 +199,28 @@ func lookupPkgObj(t *testing.T, pkg *gotypes.Package, name string) gotypes.Objec
 		if obj == nil {
 			t.Fatalf("%q not found in package %s", name, pkg.Path())
 		}
+
 		return canonicalObject(obj)
 	}
+
 	obj := pkg.Scope().Lookup(typeName)
 	if obj == nil {
 		t.Fatalf("type %q not found in package %s", typeName, pkg.Path())
 	}
+
 	named, ok := obj.Type().(*gotypes.Named)
 	if !ok {
 		t.Fatalf("%q is not a named type", typeName)
 	}
+
 	for m := range named.Methods() {
 		if m.Name() == methodName {
 			return canonicalObject(m)
 		}
 	}
+
 	t.Fatalf("method %q not found on %q", methodName, typeName)
+
 	return nil
 }
 
@@ -234,17 +246,21 @@ func TestCallSitesOf_DirectAndMethodCalls(t *testing.T) {
 	}
 
 	m := lookupPkgObj(t, mainPkg, "Server.M")
+
 	methodSites := idx.CallSitesOf(m)
 	if len(methodSites) != 1 {
 		t.Fatalf("CallSitesOf(Server.M) = %d sites, want 1", len(methodSites))
 	}
+
 	site := methodSites[0]
 	if site.Fn == nil || site.Fn.Name.Name != "useMethod" {
 		t.Errorf("method call site Fn = %v, want useMethod", site.Fn)
 	}
+
 	if site.Lit != nil {
 		t.Errorf("method call site Lit = %v, want nil (not inside a closure)", site.Lit)
 	}
+
 	if site.Pkg != mainTypesPkg {
 		t.Errorf("method call site Pkg = %v, want the main package", site.Pkg)
 	}
@@ -264,6 +280,7 @@ func TestCallSitesOf_ClosuresAndTestFile(t *testing.T) {
 	sites := idx.CallSitesOf(seed)
 
 	var direct, goSites, deferSites, testFileSites []CallSite
+
 	for _, s := range sites {
 		switch {
 		case s.File.Path == "main_test.go":
@@ -281,6 +298,7 @@ func TestCallSitesOf_ClosuresAndTestFile(t *testing.T) {
 		if len(direct) == 0 {
 			t.Error("did not find the direct call site in direct()")
 		}
+
 		for _, s := range direct {
 			if s.Lit != nil {
 				t.Errorf("direct-call site Lit = %v, want nil", s.Lit)
@@ -292,10 +310,12 @@ func TestCallSitesOf_ClosuresAndTestFile(t *testing.T) {
 		if len(goSites) == 0 {
 			t.Error("did not find the go func(){...}() call site")
 		}
+
 		for _, s := range goSites {
 			if s.Fn == nil || s.Fn.Name.Name != "closures" {
 				t.Errorf("go-closure site Fn = %v, want closures", s.Fn)
 			}
+
 			if s.InDefer {
 				t.Errorf("go-closure site has InDefer == true, want false")
 			}
@@ -306,10 +326,12 @@ func TestCallSitesOf_ClosuresAndTestFile(t *testing.T) {
 		if len(deferSites) == 0 {
 			t.Error("did not find the defer func(){...}() call site")
 		}
+
 		for _, s := range deferSites {
 			if s.Fn == nil || s.Fn.Name.Name != "closures" {
 				t.Errorf("defer-closure site Fn = %v, want closures", s.Fn)
 			}
+
 			if s.InGo {
 				t.Errorf("defer-closure site has InGo == true, want false")
 			}
@@ -320,10 +342,12 @@ func TestCallSitesOf_ClosuresAndTestFile(t *testing.T) {
 		if len(testFileSites) == 0 {
 			t.Error("did not find the call site in main_test.go")
 		}
+
 		for _, s := range testFileSites {
 			if s.Fn == nil || s.Fn.Name.Name != "testHelperCallsSeed" {
 				t.Errorf("test-file site Fn = %v, want testHelperCallsSeed", s.Fn)
 			}
+
 			if s.Lit != nil {
 				t.Errorf("test-file site Lit = %v, want nil", s.Lit)
 			}
@@ -343,10 +367,12 @@ func TestNonCallUsesOf(t *testing.T) {
 	if len(uses) != 2 {
 		t.Fatalf("NonCallUsesOf(Seed) = %d, want 2 (var h = Seed, Register(Seed))", len(uses))
 	}
+
 	for _, u := range uses {
 		if u.File.Path != "main.go" {
 			t.Errorf("unexpected file for non-call use: %s", u.File.Path)
 		}
+
 		if u.Ident == nil || u.Ident.Name != "Seed" {
 			t.Errorf("unexpected ident for non-call use: %v", u.Ident)
 		}
@@ -366,33 +392,40 @@ func TestCallSitesAndNonCallUses_Disjoint(t *testing.T) {
 	nonCalls := idx.NonCallUsesOf(seed)
 
 	seen := make(map[token.Pos]bool)
+
 	for _, s := range calls {
 		pos := s.Call.Pos()
 		if seen[pos] {
 			t.Errorf("position %v reported twice within CallSitesOf", pos)
 		}
+
 		seen[pos] = true
 	}
+
 	for _, u := range nonCalls {
 		if seen[u.Pos] {
 			t.Errorf("NonCallUsesOf position %v overlaps a CallSitesOf site", u.Pos)
 		}
+
 		seen[u.Pos] = true
 	}
 
 	// Every raw go/types Use of Seed across the workspace must land in
 	// exactly one of the two sets above.
 	var totalUses int
+
 	for _, pkg := range ws.Packages {
 		if pkg.TypesInfo == nil {
 			continue
 		}
+
 		for _, obj := range pkg.TypesInfo.Uses {
 			if obj == seed {
 				totalUses++
 			}
 		}
 	}
+
 	if totalUses != len(seen) {
 		t.Fatalf("raw Uses(Seed) = %d, but CallSitesOf+NonCallUsesOf cover %d distinct positions", totalUses, len(seen))
 	}
@@ -413,6 +446,7 @@ func TestCallSitesOf_GenericInstantiation(t *testing.T) {
 
 	// Cross-package plain generic function: dep.F[int]().
 	fOrigin := lookupPkgObj(t, depPkg, "F")
+
 	fSites := idx.CallSitesOf(fOrigin)
 	if len(fSites) != 1 {
 		t.Fatalf("CallSitesOf(F) = %d, want 1", len(fSites))
@@ -423,21 +457,27 @@ func TestCallSitesOf_GenericInstantiation(t *testing.T) {
 	// object the type checker produced, not yet passed through
 	// canonicalObject.
 	var rawGetObj gotypes.Object
+
 	ast.Inspect(mainPkg.Files["main.go"].AST, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok || fn.Name.Name != "useBox" {
 			return true
 		}
+
 		ast.Inspect(fn, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
 			if !ok || sel.Sel.Name != "Get" {
 				return true
 			}
+
 			rawGetObj = mainPkg.TypesInfo.Uses[sel.Sel]
+
 			return false
 		})
+
 		return false
 	})
+
 	if rawGetObj == nil {
 		t.Fatal("could not find raw Uses entry for Box[int].Get() call")
 	}
@@ -448,10 +488,12 @@ func TestCallSitesOf_GenericInstantiation(t *testing.T) {
 	}
 
 	rawSites := idx.CallSitesOf(rawGetObj)
+
 	originSites := idx.CallSitesOf(getOrigin)
 	if len(rawSites) != 1 || len(originSites) != 1 {
 		t.Fatalf("CallSitesOf(instantiated Get) = %d, CallSitesOf(origin Get) = %d, want 1 and 1", len(rawSites), len(originSites))
 	}
+
 	if rawSites[0].Call.Pos() != originSites[0].Call.Pos() {
 		t.Fatalf("instantiated and origin Get lookups found different call sites")
 	}
@@ -469,6 +511,7 @@ func TestHasTypeInfo(t *testing.T) {
 func Foo() {}
 func Bar() { Foo() }
 `
+
 	astFile, err := parser.ParseFile(fset, "untyped.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -499,6 +542,7 @@ func Bar() { Foo() }
 	p := NewParser(logger)
 	p.importer = &workspaceImporter{ws: ws, fset: ws.FileSet, parser: p}
 	p.EnsureTypeChecked(ws, pkg)
+
 	if pkg.TypesPkg == nil {
 		t.Fatal("expected package to type-check successfully")
 	}

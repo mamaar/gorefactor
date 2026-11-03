@@ -59,17 +59,20 @@ func (e *DefaultEngine) AlwaysNilErrorsAcrossConfigs(req AlwaysNilErrorsRequest)
 		calls:      make(map[declKey]map[token.Pos]bool),
 		logger:     e.logger,
 	}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("always nil errors across configs: %w", err)
 	}
 	defer e.endRun(run)
+
 	for _, v := range views {
 		err := run.visit(v)
 		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
+
 	return run.report(views), nil
 }
 
@@ -100,37 +103,47 @@ func (r *alwaysNilRun) visit(v *analysis.View) error {
 	if !idx.HasTypeInfo() {
 		return fmt.Errorf("no package has type information")
 	}
+
 	ws := v.Workspace
 	decls := buildFuncDeclIndex(ws)
 	survey := surveyInterfaces(ws)
+
 	for fn, decl := range decls {
 		if decl.Decl == nil || decl.Decl.Body == nil || decl.File.Generated || !r.wanted(decl.Pkg) {
 			continue
 		}
+
 		symbol, ok := types.SymbolKeyOf(fn)
 		if !ok {
 			continue
 		}
+
 		key := declKey{symbol, fn.Pkg().Name()}
 		site := declSite{decl.File.Path, fn.Pos()}
 		r.declaredIn[site] = append(r.declaredIn[site], v.Config.String())
 		r.declViews[key]++
 		r.recordSignature(key, declShape(decl))
+
 		if !alwaysNilError(decl.Pkg.TypesInfo, fn, decl.Decl) {
 			continue
 		}
+
 		r.nilViews[key]++
 		j := r.judge(v, idx, decls, survey, fn, key, decl)
 		r.add(v, fn, decl, key, j)
+
 		if r.calls[key] == nil {
 			r.calls[key] = make(map[token.Pos]bool)
 		}
+
 		for _, call := range idx.CallSitesOf(fn) {
 			r.calls[key][call.Call.Lparen] = true
 		}
 	}
+
 	r.collectTypeErrors(v)
 	r.planned(v, nil)
+
 	return nil
 }
 
@@ -145,14 +158,17 @@ type nilJudgement struct {
 // does in a view, and the checks it runs on the finished plan.
 func (r *alwaysNilRun) judge(v *analysis.View, idx *analysis.ReferenceIndex, decls map[*gotypes.Func]*funcDecl, survey *ifaceSurvey, fn *gotypes.Func, key declKey, decl *funcDecl) nilJudgement {
 	var members []*gotypes.Func
+
 	if fn.Signature().Recv() != nil {
 		var err error
+
 		members, err = propagatedMembers(survey, fn, func(f *gotypes.Func, ext ifaceCandidate) error {
 			return externalInterfaceError("change", f, ext)
 		})
 		if err != nil {
 			return nilJudgement{reason: err.Error()}
 		}
+
 		for _, m := range members {
 			why := propagatedRefusal(decls, m)
 			if why != "" {
@@ -168,28 +184,35 @@ func (r *alwaysNilRun) judge(v *analysis.View, idx *analysis.ReferenceIndex, dec
 		NewReturns: returns[:len(returns)-1], PropagateToInterface: len(members) > 0, CachedIndex: idx,
 	}.operation(r.logger)
 	ws := v.Workspace
+
 	err := op.Validate(ws)
 	if err != nil {
 		return nilJudgement{reason: err.Error()}
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		if len(op.refusals) > 0 {
 			return nilJudgement{reason: slices.MinFunc(op.refusals, compareRefusals).String()}
 		}
+
 		return nilJudgement{reason: err.Error()}
 	}
+
 	err = GeneratedFileEdits(plan.Changes)
 	if err != nil {
 		return nilJudgement{reason: err.Error()}
 	}
+
 	check := VerifyPlanTypesWithImporter(ws, plan, v.Parser.Importer())
 	if len(check.NewErrors) > 0 {
 		return nilJudgement{reason: "the change would introduce type errors: " + check.NewErrors[0]}
 	}
+
 	if check.Skipped != "" {
 		return nilJudgement{reason: "the change could not be type-checked and is unverified: " + check.Skipped}
 	}
+
 	return nilJudgement{propagate: len(members) > 0}
 }
 
@@ -200,15 +223,18 @@ func propagatedRefusal(decls map[*gotypes.Func]*funcDecl, m *gotypes.Func) strin
 	if d == nil {
 		return fmt.Sprintf("it changes with %s, whose declaration is not in the workspace", funcLabel(m))
 	}
+
 	if d.Decl == nil || alwaysNilError(d.Pkg.TypesInfo, m, d.Decl) {
 		return "" // an interface method has no body
 	}
+
 	return fmt.Sprintf("%s does not always return nil, so propagate would drop its error result", funcLabel(m))
 }
 
 // add records fn as always nil in one view. The first reason any view gives is kept.
 func (r *alwaysNilRun) add(v *analysis.View, fn *gotypes.Func, decl *funcDecl, key declKey, j nilJudgement) {
 	site := declSite{decl.File.Path, fn.Pos()}
+
 	d := r.decls[site]
 	if d == nil {
 		pos := v.Workspace.FileSet.Position(fn.Pos())
@@ -217,9 +243,11 @@ func (r *alwaysNilRun) add(v *analysis.View, fn *gotypes.Func, decl *funcDecl, k
 		d.File, d.Line, d.Column = decl.File.Path, pos.Line, pos.Column
 		r.decls[site] = d
 	}
+
 	if d.Reason == "" {
 		d.Reason = j.reason
 	}
+
 	d.Propagate = d.Propagate || j.propagate
 }
 
@@ -229,23 +257,30 @@ func (r *alwaysNilRun) report(views []*analysis.View) *AlwaysNilErrorsReport {
 		if r.nilViews[d.key] != r.declViews[d.key] {
 			continue // some configuration returns a non-nil error
 		}
+
 		f := d.AlwaysNilErrorFinding
+
 		declaring := r.declaredIn[site]
 		if len(declaring) != len(views) {
 			f.Configs = declaring
 		}
+
 		f.CallSites = len(r.calls[d.key])
+
 		f.Reason = d.Reason
 		if f.Reason == "" {
 			f.Reason = r.signatureRefusal(d.key, d.Function, d.File, d.shape)
 		}
+
 		f.Fixable = f.Reason == ""
 		f.Propagate = f.Fixable && d.Propagate
 		out.Findings = append(out.Findings, f)
 	}
+
 	slices.SortFunc(out.Findings, func(a, b AlwaysNilErrorFinding) int {
 		return cmp.Or(strings.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Column, b.Column))
 	})
+
 	return out
 }
 
@@ -257,15 +292,19 @@ var errorType = gotypes.Universe.Lookup("error").Type()
 // neither does a bare return or one that forwards another call's results.
 func alwaysNilError(info *gotypes.Info, fn *gotypes.Func, decl *ast.FuncDecl) bool {
 	results := fn.Signature().Results()
+
 	n := results.Len()
 	if n == 0 || !gotypes.Identical(results.At(n-1).Type(), errorType) || mentionsNamedError(info, decl) {
 		return false
 	}
+
 	returns, nilOnly := 0, true
+
 	walkBodyForReturnStmts(decl.Body, func(ret *ast.ReturnStmt) {
 		returns++
 		nilOnly = nilOnly && len(ret.Results) == n && isUniverseNil(info, ret.Results[n-1])
 	})
+
 	return returns > 0 && nilOnly
 }
 
@@ -277,20 +316,26 @@ func mentionsNamedError(info *gotypes.Info, decl *ast.FuncDecl) bool {
 	if len(fields) == 0 || len(fields[len(fields)-1].Names) == 0 {
 		return false
 	}
+
 	names := fields[len(fields)-1].Names
+
 	name := names[len(names)-1]
 	if name.Name == "_" {
 		return false
 	}
+
 	obj := info.Defs[name]
 	mentioned := false
+
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
 		id, ok := n.(*ast.Ident)
 		if ok && info.Uses[id] == obj {
 			mentioned = true
 		}
+
 		return !mentioned
 	})
+
 	return mentioned
 }
 
@@ -300,6 +345,8 @@ func isUniverseNil(info *gotypes.Info, e ast.Expr) bool {
 	if !ok {
 		return false
 	}
+
 	_, isNil := info.Uses[id].(*gotypes.Nil)
+
 	return isNil
 }

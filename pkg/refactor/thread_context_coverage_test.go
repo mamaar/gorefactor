@@ -24,20 +24,24 @@ var (
 
 func planSeed(t *testing.T, eng *DefaultEngine) *types.RefactoringPlan {
 	t.Helper()
+
 	plan, err := eng.ThreadContextAcrossConfigs(types.ThreadContextRequest{FunctionName: "Seed", SourceFile: "p/p.go"})
 	if err != nil {
 		t.Fatalf("ThreadContextAcrossConfigs: %v", err)
 	}
+
 	return plan
 }
 
 func changesIn(plan *types.RefactoringPlan, path string) []string {
 	var out []string
+
 	for _, c := range sortedChanges(plan) {
 		if c.File == path {
 			out = append(out, c.NewText)
 		}
 	}
+
 	return out
 }
 
@@ -45,13 +49,16 @@ func changesIn(plan *types.RefactoringPlan, path string) []string {
 func uncoveredPaths(t *testing.T, plan *types.RefactoringPlan, dir string) []string {
 	t.Helper()
 	var out []string
+
 	for _, u := range plan.Coverage.Uncovered {
 		rel, err := filepath.Rel(dir, u.Path)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		out = append(out, filepath.ToSlash(rel))
 	}
+
 	return out
 }
 
@@ -76,26 +83,33 @@ func TestThreadContextAcrossConfigs_ExcludedTestFileMentioningSeedIsReportedAndS
 	if !reflect.DeepEqual(got, []string{"t.Context()"}) {
 		t.Errorf("changes in p_test.go = %q, want the ctx argument", got)
 	}
+
 	bad := filepath.Join(dir, "p/bad_test.go")
+
 	if len(plan.Coverage.Uncovered) != 1 {
 		t.Fatalf("Coverage.Uncovered = %+v, want bad_test.go", plan.Coverage.Uncovered)
 	}
+
 	u := plan.Coverage.Uncovered[0]
 	if u.Path != bad || !reflect.DeepEqual(u.Configs, []string{linuxName}) || !strings.Contains(u.Reason, "could not import example.com/missing/dep") {
 		t.Errorf("uncovered = %+v", u)
 	}
+
 	if len(plan.SkippedSites) != 1 {
 		t.Fatalf("SkippedSites = %+v, want one in bad_test.go", plan.SkippedSites)
 	}
+
 	s := plan.SkippedSites[0]
 	if s.File != bad || s.Line != 6 || s.Snippet != "Seed()" {
 		t.Errorf("skipped site = %+v, want bad_test.go:6 Seed()", s)
 	}
+
 	for _, want := range []string{"Seed", linuxName, "could not import"} {
 		if !strings.Contains(s.Reason, want) {
 			t.Errorf("skipped site reason %q does not mention %q", s.Reason, want)
 		}
 	}
+
 	if len(changesIn(plan, bad)) != 0 {
 		t.Errorf("bad_test.go has changes: %q", changesIn(plan, bad))
 	}
@@ -113,6 +127,7 @@ func TestThreadContextAcrossConfigs_ExcludedTestFileNotMentioningSeedIsOnlyListe
 	if !reflect.DeepEqual(got, []string{"p/bad_test.go"}) {
 		t.Errorf("uncovered = %v, want p/bad_test.go", got)
 	}
+
 	if len(plan.SkippedSites) != 0 {
 		t.Errorf("SkippedSites = %+v, want none", plan.SkippedSites)
 	}
@@ -131,18 +146,23 @@ func TestThreadContextAcrossConfigs_FileExcludedInOneViewButCheckedInAnotherIsCo
 	if !reflect.DeepEqual(plan.Coverage.Configs, []string{linuxName, tagxName}) {
 		t.Fatalf("Coverage.Configs = %v", plan.Coverage.Configs)
 	}
+
 	got := changesIn(plan, filepath.Join(dir, "p/shared_test.go"))
 	if !reflect.DeepEqual(got, []string{"t.Context()"}) {
 		t.Errorf("changes in shared_test.go = %q, want the ctx argument from the primary view", got)
 	}
+
 	tagged := filepath.Join(dir, "p/tagged_test.go")
+
 	if len(plan.Coverage.Uncovered) != 1 {
 		t.Fatalf("Coverage.Uncovered = %+v, want only tagged_test.go", plan.Coverage.Uncovered)
 	}
+
 	u := plan.Coverage.Uncovered[0]
 	if u.Path != tagged || !reflect.DeepEqual(u.Configs, []string{tagxName}) {
 		t.Errorf("uncovered = %+v, want tagged_test.go under %s", u, tagxName)
 	}
+
 	if len(plan.SkippedSites) != 1 || plan.SkippedSites[0].File != tagged {
 		t.Errorf("SkippedSites = %+v, want one in tagged_test.go", plan.SkippedSites)
 	}
@@ -157,6 +177,7 @@ func TestThreadContextAcrossConfigs_UnattributedTestsInReachedPackageAbortNaming
 	if err == nil {
 		t.Fatal("expected an abort")
 	}
+
 	for _, want := range []string{"build configuration " + tagxName, "example.com/threadtest/p", "undefined: h2"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err does not contain %q: %v", want, err)
@@ -174,6 +195,7 @@ func TestThreadContextAcrossConfigs_UnattributedTestsInUnreachedPackageDoNotAbor
 	if len(got) != 1 {
 		t.Errorf("changes in p_test.go = %q", got)
 	}
+
 	if len(plan.Coverage.Uncovered) != 0 {
 		t.Errorf("Coverage.Uncovered = %v, want none", uncoveredPaths(t, plan, dir))
 	}
@@ -205,13 +227,16 @@ func TestThreadContextAcrossConfigs_IgnoredFileInReachedDirMentioningSeedIsRepor
 	plan := planSeed(t, eng)
 
 	gen := filepath.Join(dir, "p/gen.go")
+
 	if len(plan.Coverage.Uncovered) != 1 {
 		t.Fatalf("Coverage.Uncovered = %+v, want gen.go", plan.Coverage.Uncovered)
 	}
+
 	u := plan.Coverage.Uncovered[0]
 	if u.Path != gen || len(u.Configs) != 0 || u.Reason != "//go:build ignore" {
 		t.Errorf("uncovered = %+v", u)
 	}
+
 	if len(plan.SkippedSites) != 1 || plan.SkippedSites[0].File != gen || plan.SkippedSites[0].Line != 5 {
 		t.Errorf("SkippedSites = %+v, want gen.go:5", plan.SkippedSites)
 	}
@@ -227,6 +252,7 @@ func TestThreadContext_UnattributedTestsInReachedPackageAbortInASingleView(t *te
 	if err == nil || !strings.Contains(err.Error(), "example.com/threadtest/p") {
 		t.Fatalf("err = %v, want an abort naming the package", err)
 	}
+
 	if strings.Contains(err.Error(), "build configuration") {
 		t.Errorf("single-view abort names a configuration: %v", err)
 	}

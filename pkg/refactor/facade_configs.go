@@ -58,22 +58,27 @@ func (b *facadeBuilder) add(importPath string, files []*analysis.SourceFile, kee
 		if f.AST == nil {
 			continue
 		}
+
 		key := facadeKeyOf(f)
 		if key == (facadeKey{}) {
 			b.unconstrained = true
 		}
+
 		for _, d := range exportedDecls(f.AST) {
 			if !keep(d.name) {
 				continue
 			}
+
 			ff := b.files[key]
 			if ff == nil {
 				ff = &facadeFile{key: key, decls: make(map[string]map[facadeDecl]bool)}
 				b.files[key] = ff
 			}
+
 			if ff.decls[importPath] == nil {
 				ff.decls[importPath] = make(map[facadeDecl]bool)
 			}
+
 			ff.decls[importPath][d] = true
 		}
 	}
@@ -83,6 +88,7 @@ func (b *facadeBuilder) empty() bool { return len(b.files) == 0 }
 
 func facadeKeyOf(f *analysis.SourceFile) facadeKey {
 	c := analysis.ConstraintOf(f)
+
 	expr := c.Expr
 	if c.Cgo {
 		cgo := &constraint.TagExpr{Tag: "cgo"}
@@ -92,10 +98,12 @@ func facadeKeyOf(f *analysis.SourceFile) facadeKey {
 			expr = &constraint.AndExpr{X: expr, Y: cgo}
 		}
 	}
+
 	key := facadeKey{suffix: c.Suffix}
 	if expr != nil {
 		key.expr = expr.String()
 	}
+
 	return key
 }
 
@@ -103,6 +111,7 @@ func facadeKeyOf(f *analysis.SourceFile) facadeKey {
 // re-export: generic functions and types cannot be aliased and are left out.
 func exportedDecls(f *ast.File) []facadeDecl {
 	var out []facadeDecl
+
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
@@ -121,6 +130,7 @@ func exportedDecls(f *ast.File) []facadeDecl {
 					if d.Tok == token.CONST {
 						keyword = "const"
 					}
+
 					for _, n := range s.Names {
 						if n.IsExported() {
 							out = append(out, facadeDecl{n.Name, keyword})
@@ -130,6 +140,7 @@ func exportedDecls(f *ast.File) []facadeDecl {
 			}
 		}
 	}
+
 	return out
 }
 
@@ -139,19 +150,24 @@ var nonWord = regexp.MustCompile(`[^a-z0-9]+`)
 // resolves to the same constraint, and that is not in taken.
 func facadeFileName(key facadeKey, taken map[string]bool) string {
 	words := ""
+
 	if key.expr != "" {
 		r := strings.NewReplacer("&&", " and ", "||", " or ", "!", " not ")
 		words = strings.Trim(nonWord.ReplaceAllString(r.Replace(strings.ToLower(key.expr)), "_"), "_")
 	}
+
 	for n := 1; ; n++ {
 		name := "facade"
+
 		w := words
 		if n > 1 {
 			w = fmt.Sprintf("%s_%d", words, n)
 		}
+
 		if w != "" {
 			name += "_" + strings.TrimPrefix(w, "_")
 		}
+
 		switch {
 		case key.suffix != "":
 			name += "_" + key.suffix
@@ -159,6 +175,7 @@ func facadeFileName(key facadeKey, taken map[string]bool) string {
 			// A trailing GOOS or GOARCH word would otherwise constrain the file.
 			name += "_tags"
 		}
+
 		name += ".go"
 		if !taken[name] {
 			return name
@@ -174,19 +191,25 @@ func (ff *facadeFile) render(pkgName string) string {
 	} else if ff.key.suffix == "" {
 		fmt.Fprintf(&sb, "// Package %s provides a facade for accessing related functionality.\n", pkgName)
 	}
+
 	fmt.Fprintf(&sb, "// %s\npackage %s\n\n", facadeMarker, pkgName)
+
 	imports := slices.Sorted(maps.Keys(ff.decls))
 	if len(imports) > 0 {
 		sb.WriteString("import (\n")
+
 		for _, imp := range imports {
 			fmt.Fprintf(&sb, "\t%q\n", imp)
 		}
+
 		sb.WriteString(")\n\n")
 	}
+
 	for _, imp := range imports {
 		decls := slices.SortedFunc(maps.Keys(ff.decls[imp]), func(a, b facadeDecl) int { return strings.Compare(a.name, b.name) })
 		for _, d := range decls {
 			fmt.Fprintf(&sb, "// %s is re-exported from %s\n", d.name, imp)
+
 			if d.keyword == "type" {
 				fmt.Fprintf(&sb, "type %s = %s.%s\n\n", d.name, path.Base(imp), d.name)
 			} else {
@@ -194,6 +217,7 @@ func (ff *facadeFile) render(pkgName string) string {
 			}
 		}
 	}
+
 	return sb.String()
 }
 
@@ -207,19 +231,23 @@ func (b *facadeBuilder) planFacadeDir(plan *types.RefactoringPlan, tree *analysi
 	if b.unconstrained && !b.empty() && b.files[facadeKey{}] == nil {
 		b.files[facadeKey{}] = &facadeFile{decls: make(map[string]map[facadeDecl]bool)}
 	}
+
 	existing := make(map[string]*analysis.SourceFile)
 	for _, f := range tree.Dir(dir) {
 		existing[f.Name] = f
 	}
+
 	keys := slices.SortedFunc(maps.Keys(b.files), func(x, y facadeKey) int {
 		return strings.Compare(x.expr+"\x00"+x.suffix, y.expr+"\x00"+y.suffix)
 	})
+
 	wanted := make(map[string]bool)
 	for _, key := range keys {
 		name := facadeFileName(key, wanted)
 		wanted[name] = true
 		file := filepath.Join(dir, name)
 		content := b.files[key].render(pkgName)
+
 		old, found := existing[name]
 		switch {
 		case !found:
@@ -234,16 +262,20 @@ func (b *facadeBuilder) planFacadeDir(plan *types.RefactoringPlan, tree *analysi
 				OldText: string(old.Content), NewText: content,
 				Description: fmt.Sprintf("Regenerate facade file %s", file)})
 		}
+
 		plan.AffectedFiles = append(plan.AffectedFiles, file)
 	}
+
 	for name, f := range existing {
 		if wanted[name] || !isGeneratedFacade(f) {
 			continue
 		}
+
 		plan.Changes = append(plan.Changes, types.Change{File: f.Path, Delete: true,
 			Description: fmt.Sprintf("Remove stale facade file %s", f.Path)})
 		plan.AffectedFiles = append(plan.AffectedFiles, f.Path)
 	}
+
 	return nil
 }
 
@@ -269,13 +301,16 @@ func packageFiles(files []*analysis.SourceFile, uncovered map[string]bool) (stri
 	})
 	count := make(map[string]int)
 	name := ""
+
 	for _, f := range candidates {
 		n := f.AST.Name.Name
+
 		count[n]++
 		if count[n] > count[name] {
 			name = n
 		}
 	}
+
 	return name, slices.DeleteFunc(candidates, func(f *analysis.SourceFile) bool { return f.AST.Name.Name != name })
 }
 
@@ -285,18 +320,21 @@ func uncoveredSet(c analysis.Covering) map[string]bool {
 	for _, u := range c.Uncovered {
 		out[u.Path] = true
 	}
+
 	return out
 }
 
 // importPathDirs maps the import path of every source-tree directory to it.
 func importPathDirs(ws *types.Workspace, tree *analysis.SourceTree) map[string]string {
 	out := make(map[string]string)
+
 	for _, dir := range tree.Dirs() {
 		ip := packagePathToImportPath(ws, dir)
 		if ip != "" {
 			out[ip] = dir
 		}
 	}
+
 	return out
 }
 
@@ -306,8 +344,10 @@ func isFacadePackage(files []*analysis.SourceFile) bool {
 	if len(files) == 0 {
 		return false
 	}
+
 	for _, file := range files {
 		inImports := false
+
 		for line := range strings.SplitSeq(string(file.Content), "\n") {
 			trimmed := strings.TrimSpace(line)
 			switch {
@@ -322,6 +362,7 @@ func isFacadePackage(files []*analysis.SourceFile) bool {
 				strings.HasPrefix(trimmed, "import "):
 				continue
 			}
+
 			isReexport := (strings.HasPrefix(trimmed, "type ") || strings.HasPrefix(trimmed, "var ") || strings.HasPrefix(trimmed, "const ")) &&
 				strings.Contains(trimmed, " = ")
 			if !isReexport {
@@ -329,6 +370,7 @@ func isFacadePackage(files []*analysis.SourceFile) bool {
 			}
 		}
 	}
+
 	return true
 }
 
@@ -354,6 +396,7 @@ func (op *GenerateFacadesOperation) Validate(ws *types.Workspace) error {
 	if op.Request.ModulesDir == "" {
 		return fmt.Errorf("modules directory cannot be empty")
 	}
+
 	if op.Request.TargetDir == "" {
 		return fmt.Errorf("target directory cannot be empty")
 	}
@@ -373,6 +416,7 @@ func (op *GenerateFacadesOperation) Execute(ws *types.Workspace) (*types.Refacto
 		if len(op.Request.ExportTypes) == 0 {
 			return true
 		}
+
 		return slices.ContainsFunc(op.Request.ExportTypes, func(et string) bool {
 			return strings.Contains(strings.ToLower(name), strings.ToLower(et))
 		})
@@ -384,20 +428,26 @@ func (op *GenerateFacadesOperation) Execute(ws *types.Workspace) (*types.Refacto
 		if !strings.HasPrefix(dir, modulesDirAbs) || strings.Contains(dir, string(filepath.Separator)+"testdata") {
 			continue
 		}
+
 		files, err := sourceFilesOf(op.Sources, dir)
 		if err != nil {
 			return nil, err
 		}
+
 		name, files := packageFiles(files, uncovered)
+
 		importPath := packagePathToImportPath(ws, dir)
 		if name == "" || name == "main" || importPath == "" {
 			continue
 		}
+
 		b := newFacadeBuilder()
 		b.add(importPath, files, keep)
+
 		if b.empty() {
 			continue
 		}
+
 		target := filepath.Join(ws.RootPath, op.Request.TargetDir, name)
 		if err := b.planFacadeDir(plan, op.Sources, target, name); err != nil {
 			return nil, err
@@ -429,6 +479,7 @@ func (op *UpdateFacadesOperation) Validate(ws *types.Workspace) error {
 	if len(op.Request.FacadePackages) == 0 && !op.Request.AutoDetect {
 		return fmt.Errorf("no facade packages specified and auto_detect is false")
 	}
+
 	return nil
 }
 
@@ -441,12 +492,15 @@ func (op *UpdateFacadesOperation) Execute(ws *types.Workspace) (*types.Refactori
 	}
 
 	var facadeDirs []string
+
 	for _, p := range op.Request.FacadePackages {
 		if !filepath.IsAbs(p) {
 			p = filepath.Join(ws.RootPath, p)
 		}
+
 		facadeDirs = append(facadeDirs, filepath.Clean(p))
 	}
+
 	if op.Request.AutoDetect {
 		for _, dir := range op.Sources.Dirs() {
 			if isFacadePackage(nonTestFiles(op.Sources.Dir(dir))) && !slices.Contains(facadeDirs, dir) {
@@ -458,29 +512,36 @@ func (op *UpdateFacadesOperation) Execute(ws *types.Workspace) (*types.Refactori
 	sourceDirs := importPathDirs(ws, op.Sources)
 	uncovered := uncoveredSet(op.Covering)
 	keepAll := func(string) bool { return true }
+
 	for _, facadeDir := range facadeDirs {
 		files, err := sourceFilesOf(op.Sources, facadeDir)
 		if err != nil {
 			return nil, err
 		}
+
 		pkgName, files := packageFiles(files, uncovered)
 
 		b := newFacadeBuilder()
+
 		for _, f := range files {
 			for _, imp := range f.AST.Imports {
 				importPath := strings.Trim(imp.Path.Value, `"`)
+
 				dir, ok := sourceDirs[importPath]
 				if !ok {
 					continue
 				}
+
 				srcFiles, err := sourceFilesOf(op.Sources, dir)
 				if err != nil {
 					return nil, err
 				}
+
 				_, srcFiles = packageFiles(srcFiles, uncovered)
 				b.add(importPath, srcFiles, keepAll)
 			}
 		}
+
 		if err := b.planFacadeDir(plan, op.Sources, facadeDir, pkgName); err != nil {
 			return nil, err
 		}

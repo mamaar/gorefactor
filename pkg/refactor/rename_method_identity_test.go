@@ -13,19 +13,24 @@ import (
 // relative to dir.
 func renamedByFile(t *testing.T, dir string, plan *types.RefactoringPlan) map[string]int {
 	t.Helper()
+
 	out := make(map[string]int)
+
 	for _, c := range plan.Changes {
 		rel, err := filepath.Rel(dir, c.File)
 		if err != nil {
 			t.Fatal(err)
 		}
+
 		out[filepath.ToSlash(rel)]++
 	}
+
 	return out
 }
 
 func assertRenamed(t *testing.T, dir string, plan *types.RefactoringPlan, want map[string]int) {
 	t.Helper()
+
 	got := renamedByFile(t, dir, plan)
 	if !maps.Equal(got, want) {
 		t.Errorf("changes per file = %v, want %v", got, want)
@@ -37,6 +42,7 @@ func renameMethodPlan(t *testing.T, files map[string]string, req types.RenameMet
 	eng, dir := loadConfigsEngine(t, files)
 	req.PackagePath = types.ResolvePackagePath(eng.WorkspaceSet().Primary().Workspace, req.PackagePath)
 	plan, err := eng.RenameMethodAcrossConfigs(req)
+
 	return plan, dir, err
 }
 
@@ -51,6 +57,7 @@ func TestRenameMethod_LeavesPackageFunctionOfSameNameAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	assertRenamed(t, dir, plan, map[string]int{"p/t.go": 1, "r/r.go": 1})
 }
 
@@ -62,6 +69,7 @@ func TestRenameMethod_LeavesSameNamedMethodOfOtherTypeAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	assertRenamed(t, dir, plan, map[string]int{"p/t.go": 2})
 }
 
@@ -74,6 +82,7 @@ func TestRenameMethod_FollowsEmbeddingExplicitAndPromoted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	assertRenamed(t, dir, plan, map[string]int{"p/t.go": 1, "w/w.go": 3})
 }
 
@@ -85,6 +94,7 @@ func TestRenameMethod_RenamesMethodValuesAndExpressions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	assertRenamed(t, dir, plan, map[string]int{"p/t.go": 3})
 }
 
@@ -96,6 +106,7 @@ func TestRenameMethod_RenamesMethodExpressionOfValueReceiver(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	assertRenamed(t, dir, plan, map[string]int{"p/t.go": 4})
 }
 

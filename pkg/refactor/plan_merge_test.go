@@ -18,6 +18,7 @@ func repl(file string, start, end int, old, text, desc string) types.Change {
 
 func planOf(changes ...types.Change) *types.RefactoringPlan {
 	var files []string
+
 	seen := map[string]bool{}
 	for _, c := range changes {
 		if !seen[c.File] {
@@ -25,11 +26,13 @@ func planOf(changes ...types.Change) *types.RefactoringPlan {
 			files = append(files, c.File)
 		}
 	}
+
 	return &types.RefactoringPlan{Changes: changes, AffectedFiles: files, Reversible: true}
 }
 
 func TestMergeConfigPlans_Changes(t *testing.T) {
 	const f = "/ws/a.go"
+
 	tests := []struct {
 		name  string
 		plans []ConfigPlan
@@ -121,6 +124,7 @@ func TestMergeConfigPlans_Changes(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
+
 			if !reflect.DeepEqual(got.Changes, tt.want) {
 				t.Errorf("changes = %+v, want %+v", got.Changes, tt.want)
 			}
@@ -130,6 +134,7 @@ func TestMergeConfigPlans_Changes(t *testing.T) {
 
 func TestMergeConfigPlans_Conflicts(t *testing.T) {
 	const f = "/ws/a.go"
+
 	tests := []struct {
 		name     string
 		plans    []ConfigPlan
@@ -174,11 +179,13 @@ func TestMergeConfigPlans_Conflicts(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
+
 			for _, s := range tt.contains {
 				if !strings.Contains(err.Error(), s) {
 					t.Errorf("error %q missing %q", err, s)
 				}
 			}
+
 			_, err2 := MergeConfigPlans(tt.plans)
 			if err2 == nil || err2.Error() != err.Error() {
 				t.Errorf("error not deterministic: %v vs %v", err, err2)
@@ -206,16 +213,20 @@ func TestMergeConfigPlans_OtherFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := []string{"/ws/a.go", "/ws/b.go", "/ws/c.go"}
 	if !reflect.DeepEqual(got.AffectedFiles, want) {
 		t.Errorf("AffectedFiles = %v, want %v", got.AffectedFiles, want)
 	}
+
 	if want := []types.SkippedSite{s1, s2}; !reflect.DeepEqual(got.SkippedSites, want) {
 		t.Errorf("SkippedSites = %v, want %v", got.SkippedSites, want)
 	}
+
 	if got.Reversible {
 		t.Error("Reversible = true, want false when any plan is irreversible")
 	}
+
 	if got.Impact != p1.Impact {
 		t.Error("Impact is not the first non-nil one")
 	}
@@ -223,10 +234,12 @@ func TestMergeConfigPlans_OtherFields(t *testing.T) {
 
 func TestMergeConfigPlans_Inputs(t *testing.T) {
 	const f = "/ws/a.go"
+
 	_, err := MergeConfigPlans(nil)
 	if err == nil {
 		t.Error("zero plans: expected error")
 	}
+
 	_, err = MergeConfigPlans([]ConfigPlan{{"a", nil}, {"b", nil}})
 	if err == nil {
 		t.Error("all-nil plans: expected error")
@@ -236,23 +249,28 @@ func TestMergeConfigPlans_Inputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := []types.Change{ins(f, 1, "x", "d")}
 	if !reflect.DeepEqual(got.Changes, want) {
 		t.Errorf("changes = %+v, want %+v", got.Changes, want)
 	}
 
 	p := planOf(ins(f, 5, "x", "d"), ins(f, 5, "x", "d"), repl(f, 1, 3, "ab", "c", "r"))
+
 	self, err := MergeConfigPlans([]ConfigPlan{{"a", p}, {"b", p}})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !reflect.DeepEqual(self, p) {
 		t.Errorf("self-merge = %+v, want %+v", self, p)
 	}
+
 	one, err := MergeConfigPlans([]ConfigPlan{{"a", p}})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !reflect.DeepEqual(one, p) {
 		t.Errorf("single-plan merge = %+v, want %+v", one, p)
 	}
@@ -276,16 +294,20 @@ func TestMergeConfigPlans_ContextThreadingAppliesEachEditOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(got.Changes) != 3 {
 		t.Fatalf("got %d changes, want 3", len(got.Changes))
 	}
+
 	if err := assertNoOverlappingChanges(got.Changes); err != nil {
 		t.Fatalf("overlap assertion: %v", err)
 	}
+
 	out, err := NewSerializer().ApplyChangesToContent([]byte(src), got.Changes)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	want := "package p\n\nimport \"context\"\n\nfunc F(ctx context.Context) {}\n\nfunc G() { F(ctx) }\n"
 	if string(out) != want {
 		t.Errorf("applied = %q, want %q", out, want)

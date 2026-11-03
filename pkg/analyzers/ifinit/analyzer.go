@@ -101,6 +101,7 @@ func analyzeFile(pass *analysis.Pass, file *ast.File, content []byte) []*Result 
 			if d.Body == nil {
 				continue
 			}
+
 			w.currentFunc = d.Name.Name
 			w.walkList(d.Body.List, functionScopeNames(d))
 		case *ast.GenDecl:
@@ -148,12 +149,14 @@ func (w *walker) walkStmt(stmt ast.Stmt, list []ast.Stmt, idx int, declared scop
 		w.processFuncLitsIn(s.Init)
 		w.processFuncLitsIn(s.Cond)
 		w.processFuncLitsIn(s.Post)
+
 		if s.Body != nil {
 			w.walkList(s.Body.List, make(scope))
 		}
 	case *ast.RangeStmt:
 		// Explicitly not matched.
 		w.processFuncLitsIn(s.X)
+
 		if s.Body != nil {
 			w.walkList(s.Body.List, make(scope))
 		}
@@ -172,6 +175,7 @@ func (w *walker) walkSelectClauses(s *ast.SelectStmt) {
 	if s.Body == nil {
 		return
 	}
+
 	for _, c := range s.Body.List {
 		cc, ok := c.(*ast.CommClause)
 		if ok {
@@ -187,6 +191,7 @@ func (w *walker) recordDefinedNames(s *ast.AssignStmt, declared scope) {
 		if !ok || id.Name == "_" {
 			continue
 		}
+
 		dn, exists := declared[id.Name]
 		switch {
 		case !exists && s.Tok == token.DEFINE:
@@ -207,16 +212,20 @@ func (w *walker) unhoistCaptured(declared scope, assign *ast.AssignStmt, node as
 	if assign.Tok != token.DEFINE {
 		return
 	}
+
 	for _, lhs := range assign.Lhs {
 		id, ok := lhs.(*ast.Ident)
 		if !ok {
 			continue
 		}
+
 		dn, exists := declared[id.Name]
+
 		obj := w.pass.TypesInfo.Defs[id]
 		if !exists || !dn.hoisted || obj == nil || !w.captures(node, obj) {
 			continue
 		}
+
 		dn.hoisted = false
 		declared[id.Name] = dn
 	}
@@ -226,16 +235,20 @@ func (w *walker) unhoistCaptured(declared scope, assign *ast.AssignStmt, node as
 func (w *walker) captures(node ast.Node, obj types.Object) bool {
 	uses := func(n ast.Node) bool {
 		found := false
+
 		ast.Inspect(n, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
 			if ok && w.pass.TypesInfo.Uses[id] == obj {
 				found = true
 			}
+
 			return !found
 		})
+
 		return found
 	}
 	found := false
+
 	ast.Inspect(node, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
@@ -244,8 +257,10 @@ func (w *walker) captures(node ast.Node, obj types.Object) bool {
 		case *ast.UnaryExpr:
 			found = found || n.Op == token.AND && uses(n.X)
 		}
+
 		return !found
 	})
+
 	return found
 }
 
@@ -311,14 +326,17 @@ func (w *walker) handleSwitch(node *ast.SwitchStmt, declared scope, guarded bool
 	if node.Body == nil {
 		return
 	}
+
 	for _, c := range node.Body.List {
 		cc, ok := c.(*ast.CaseClause)
 		if !ok {
 			continue
 		}
+
 		for _, e := range cc.List {
 			w.processFuncLitsIn(e)
 		}
+
 		w.walkList(cc.Body, make(scope))
 	}
 }
@@ -334,6 +352,7 @@ func (w *walker) handleTypeSwitch(node *ast.TypeSwitchStmt, declared scope, guar
 	if node.Body == nil {
 		return
 	}
+
 	for _, c := range node.Body.List {
 		cc, ok := c.(*ast.CaseClause)
 		if ok {
@@ -357,16 +376,20 @@ func (w *walker) handleTypeSwitch(node *ast.TypeSwitchStmt, declared scope, guar
 // name still reads as colliding, and canReuse will conservatively skip.
 func (w *walker) typeSwitchClauseScope(node *ast.TypeSwitchStmt, cc *ast.CaseClause) scope {
 	seed := make(scope)
+
 	assign, ok := node.Assign.(*ast.AssignStmt)
 	if !ok {
 		return seed
 	}
+
 	for _, lhs := range assign.Lhs {
 		id, ok := lhs.(*ast.Ident)
 		if !ok || id.Name == "_" {
 			continue
 		}
+
 		dn := declaredName{ident: id}
+
 		info := w.pass.TypesInfo
 		if info != nil && info.Implicits != nil {
 			obj := info.Implicits[cc]
@@ -374,8 +397,10 @@ func (w *walker) typeSwitchClauseScope(node *ast.TypeSwitchStmt, cc *ast.CaseCla
 				dn.obj = obj
 			}
 		}
+
 		seed[id.Name] = dn
 	}
+
 	return seed
 }
 
@@ -387,17 +412,21 @@ func (w *walker) typeSwitchClauseScope(node *ast.TypeSwitchStmt, cc *ast.CaseCla
 // no Implicits lookup is needed.
 func commClauseScope(cc *ast.CommClause) scope {
 	seed := make(scope)
+
 	assign, ok := cc.Comm.(*ast.AssignStmt)
 	if !ok || assign.Tok != token.DEFINE {
 		return seed
 	}
+
 	for _, lhs := range assign.Lhs {
 		id, ok := lhs.(*ast.Ident)
 		if !ok || id.Name == "_" {
 			continue
 		}
+
 		seed[id.Name] = declaredName{ident: id}
 	}
+
 	return seed
 }
 
@@ -408,13 +437,16 @@ func matchInitAssign(init ast.Stmt) (*ast.AssignStmt, bool) {
 	if init == nil {
 		return nil, false
 	}
+
 	assign, ok := init.(*ast.AssignStmt)
 	if !ok {
 		return nil, false
 	}
+
 	if assign.Tok != token.DEFINE && assign.Tok != token.ASSIGN {
 		return nil, false
 	}
+
 	return assign, true
 }
 
@@ -438,6 +470,7 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 
 	if assign.Tok != token.DEFINE || !checkCollisions {
 		var newNames []*ast.Ident
+
 		if assign.Tok == token.DEFINE {
 			for _, lhs := range assign.Lhs {
 				id, ok := lhs.(*ast.Ident)
@@ -446,15 +479,18 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 				}
 			}
 		}
+
 		return emission{text: fullText, newNames: newNames}
 	}
 
 	var colliding, newOnes []*ast.Ident
+
 	for _, lhs := range assign.Lhs {
 		id, ok := lhs.(*ast.Ident)
 		if !ok || id.Name == "_" {
 			continue
 		}
+
 		_, exists := declared[id.Name]
 		if exists {
 			colliding = append(colliding, id)
@@ -469,10 +505,12 @@ func (w *walker) decideEmission(assign *ast.AssignStmt, declared scope, checkCol
 			return emission{skip: true, reason: reason}
 		}
 	}
+
 	if len(newOnes) > 0 || len(colliding) == 0 {
 		// ':=' is legal unchanged: it declares at least one new name.
 		return emission{text: fullText, newNames: newOnes}
 	}
+
 	return emission{text: w.rewriteDefineToAssign(assign)}
 }
 
@@ -489,6 +527,7 @@ func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declar
 
 	for _, id := range colliding {
 		idx := lhsIndex(assign, id)
+
 		rhsType := w.rhsTypeAt(assign, idx)
 		if rhsType == nil {
 			return false, "type information unavailable"
@@ -498,6 +537,7 @@ func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declar
 		if !ok {
 			return false, "type information unavailable"
 		}
+
 		if !dn.hoisted {
 			return false, "name " + id.Name + " is already declared in this scope; reusing it would overwrite it"
 		}
@@ -509,6 +549,7 @@ func (w *walker) canReuse(assign *ast.AssignStmt, colliding []*ast.Ident, declar
 				obj = info.Uses[dn.ident]
 			}
 		}
+
 		if obj == nil || obj.Type() == nil {
 			return false, "type information unavailable"
 		}
@@ -531,11 +572,14 @@ func (w *walker) resolveCascade(list []ast.Stmt, idx int, declared scope, newNam
 	if len(newNames) == 0 || list == nil {
 		return nil, nil, true, ""
 	}
+
 	reason = w.laterConflict(list[idx+1:], newNames)
 	if reason != "" {
 		return nil, nil, false, reason
 	}
+
 	augmented := augmentScope(declared, newNames)
+
 	return w.forwardCascade(list, idx, declared, augmented, cascaded)
 }
 
@@ -549,6 +593,7 @@ func (w *walker) laterConflict(rest []ast.Stmt, newNames []*ast.Ident) string {
 	if len(rest) == 0 {
 		return ""
 	}
+
 	names := make(map[string]bool, len(newNames))
 	for _, id := range newNames {
 		names[id.Name] = true
@@ -559,18 +604,22 @@ func (w *walker) laterConflict(rest []ast.Stmt, newNames []*ast.Ident) string {
 		if !ok {
 			continue
 		}
+
 		gd, ok := decl.Decl.(*ast.GenDecl)
 		if !ok {
 			continue
 		}
+
 		for _, spec := range gd.Specs {
 			var declares []*ast.Ident
+
 			switch sp := spec.(type) {
 			case *ast.ValueSpec:
 				declares = sp.Names
 			case *ast.TypeSpec:
 				declares = []*ast.Ident{sp.Name}
 			}
+
 			for _, id := range declares {
 				if names[id.Name] {
 					return "hoisting would redeclare " + id.Name + ", which a later declaration in the same scope declares"
@@ -583,30 +632,37 @@ func (w *walker) laterConflict(rest []ast.Stmt, newNames []*ast.Ident) string {
 	if info == nil || info.Uses == nil {
 		return ""
 	}
+
 	captured := w.shadowedByHoist(rest, names, info)
 	if captured != "" {
 		return "hoisting would make a later use of " + captured + " refer to the hoisted variable instead of the outer " + captured
 	}
+
 	return ""
 }
 
 func (w *walker) shadowedByHoist(rest []ast.Stmt, names map[string]bool, info *types.Info) string {
 	lo, hi := rest[0].Pos(), rest[len(rest)-1].End()
 	captured := ""
+
 	for _, stmt := range rest {
 		ast.Inspect(stmt, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
 			if !ok || !names[id.Name] || captured != "" {
 				return captured == ""
 			}
+
 			obj := info.Uses[id]
 			if obj == nil || isMember(obj) || (obj.Pos() >= lo && obj.Pos() < hi) {
 				return true
 			}
+
 			captured = id.Name
+
 			return false
 		})
 	}
+
 	return captured
 }
 
@@ -621,6 +677,7 @@ func isMember(obj types.Object) bool {
 		sig, ok := o.Type().(*types.Signature)
 		return ok && sig.Recv() != nil
 	}
+
 	return false
 }
 
@@ -633,6 +690,7 @@ func augmentScope(declared scope, newNames []*ast.Ident) scope {
 	augmented := make(scope, len(declared)+len(newNames))
 	maps.Copy(augmented, declared)
 	augmented.hoist(newNames)
+
 	return augmented
 }
 
@@ -667,11 +725,13 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, declared, augmented scop
 
 		var reused []*ast.Ident
 		allDeclared := true
+
 		for _, lhs := range assign.Lhs {
 			id, idOk := lhs.(*ast.Ident)
 			if !idOk || id.Name == "_" {
 				continue
 			}
+
 			_, exists := augmented[id.Name]
 			if !exists {
 				allDeclared = false
@@ -684,6 +744,7 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, declared, augmented scop
 				reused = append(reused, id)
 			}
 		}
+
 		if len(reused) == 0 {
 			// Nothing this hoist introduced is involved: the statement
 			// compiles and means what it did.
@@ -694,12 +755,14 @@ func (w *walker) forwardCascade(list []ast.Stmt, i int, declared, augmented scop
 		if !reuseOK {
 			return nil, nil, false, "hoisting would make a later := reuse the hoisted variable: " + reuseReason
 		}
+
 		if !allDeclared {
 			// A still-new name keeps ':=' legal; the reused ones were checked.
 			continue
 		}
 
 		startOff := w.pass.Fset.Position(assign.Pos()).Offset
+
 		endOff := w.pass.Fset.Position(assign.End()).Offset
 		if startOff < 0 || endOff > len(w.content) || startOff >= endOff {
 			return nil, nil, false, "hoisting would invalidate a later := that cannot be downgraded: unable to compute a safe edit"
@@ -722,6 +785,7 @@ func lhsIndex(assign *ast.AssignStmt, id *ast.Ident) int {
 			return i
 		}
 	}
+
 	return -1
 }
 
@@ -732,12 +796,14 @@ func (w *walker) rhsTypeAt(assign *ast.AssignStmt, idx int) types.Type {
 	if idx < 0 {
 		return nil
 	}
+
 	info := w.pass.TypesInfo
 
 	if len(assign.Rhs) == len(assign.Lhs) {
 		if idx >= len(assign.Rhs) {
 			return nil
 		}
+
 		return info.TypeOf(assign.Rhs[idx])
 	}
 
@@ -746,23 +812,29 @@ func (w *walker) rhsTypeAt(assign *ast.AssignStmt, idx int) types.Type {
 		if t == nil {
 			return nil
 		}
+
 		tuple, ok := t.Underlying().(*types.Tuple)
 		if ok {
 			if idx >= tuple.Len() {
 				return nil
 			}
+
 			return tuple.At(idx).Type()
 		}
+
 		tuple, ok = t.(*types.Tuple)
 		if ok {
 			if idx >= tuple.Len() {
 				return nil
 			}
+
 			return tuple.At(idx).Type()
 		}
+
 		if idx == 0 {
 			return t
 		}
+
 		return nil
 	}
 
@@ -775,6 +847,7 @@ func (w *walker) rhsTypeAt(assign *ast.AssignStmt, idx int) types.Type {
 func (w *walker) rewriteDefineToAssign(assign *ast.AssignStmt) string {
 	before := w.text(assign.Pos(), assign.TokPos)
 	after := w.text(assign.TokPos+2, assign.End())
+
 	return before + "=" + after
 }
 
@@ -791,6 +864,7 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 	em := w.decideEmission(assign, declared, checkCollisions)
 
 	var fixes []analysis.SuggestedFix
+
 	if !em.skip {
 		if isElseIf {
 			fixes = w.buildElseIfFixes(node, em.text, condText)
@@ -809,6 +883,7 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 				if len(fixes) > 0 {
 					declared.hoist(em.newNames)
 					w.unhoistCaptured(declared, assign, node)
+
 					for _, t := range cascadeTargets {
 						cascaded[t] = true
 					}
@@ -844,6 +919,7 @@ func (w *walker) emitIfFix(node *ast.IfStmt, assign *ast.AssignStmt, declared sc
 func (w *walker) buildHeadIfFix(node *ast.IfStmt, initText, condText string, cascadeEdits []analysis.TextEdit) []analysis.SuggestedFix {
 	startOffset := w.pass.Fset.Position(node.Pos()).Offset
 	lbraceOffset := w.pass.Fset.Position(node.Body.Lbrace).Offset
+
 	endOffset := lbraceOffset + 1
 	if startOffset < 0 || endOffset > len(w.content) || startOffset >= endOffset {
 		return nil
@@ -879,6 +955,7 @@ func (w *walker) buildHeadIfFix(node *ast.IfStmt, initText, condText string, cas
 func (w *walker) buildElseIfFixes(node *ast.IfStmt, initText, condText string) []analysis.SuggestedFix {
 	startOffset := w.pass.Fset.Position(node.Pos()).Offset
 	lbraceOffset := w.pass.Fset.Position(node.Body.Lbrace).Offset
+
 	headerEnd := lbraceOffset + 1
 	if startOffset < 0 || headerEnd > len(w.content) || startOffset >= headerEnd {
 		return nil
@@ -888,6 +965,7 @@ func (w *walker) buildElseIfFixes(node *ast.IfStmt, initText, condText string) [
 	if tailOffset < 0 || tailOffset > len(w.content) {
 		return nil
 	}
+
 	indent := extractIndentation(w.content, startOffset)
 	innerIndent := indent + "\t"
 
@@ -922,6 +1000,7 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 	em := w.decideEmission(assign, declared, checkCollisions)
 
 	var fixes []analysis.SuggestedFix
+
 	if !em.skip {
 		cascadeEdits, cascadeTargets, cascadeOK, cascadeReason := w.resolveCascade(list, idx, declared, em.newNames, cascaded)
 		if !cascadeOK {
@@ -932,11 +1011,13 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 			if node.Tag != nil {
 				tagText = w.text(node.Tag.Pos(), node.Tag.End())
 			}
+
 			fixes = w.buildSwitchFix(node, em.text, tagText, cascadeEdits)
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
 				declared.hoist(em.newNames)
 				w.unhoistCaptured(declared, assign, node)
+
 				for _, t := range cascadeTargets {
 					cascaded[t] = true
 				}
@@ -968,6 +1049,7 @@ func (w *walker) emitSwitchFix(node *ast.SwitchStmt, assign *ast.AssignStmt, dec
 func (w *walker) buildSwitchFix(node *ast.SwitchStmt, initText, tagText string, cascadeEdits []analysis.TextEdit) []analysis.SuggestedFix {
 	startOffset := w.pass.Fset.Position(node.Pos()).Offset
 	lbraceOffset := w.pass.Fset.Position(node.Body.Lbrace).Offset
+
 	endOffset := lbraceOffset + 1
 	if startOffset < 0 || endOffset > len(w.content) || startOffset >= endOffset {
 		return nil
@@ -980,10 +1062,12 @@ func (w *walker) buildSwitchFix(node *ast.SwitchStmt, initText, tagText string, 
 	sb.WriteByte('\n')
 	sb.WriteString(indent)
 	sb.WriteString("switch ")
+
 	if tagText != "" {
 		sb.WriteString(tagText)
 		sb.WriteString(" ")
 	}
+
 	sb.WriteString("{")
 
 	edits := []analysis.TextEdit{{Pos: node.Pos(), End: node.Body.Lbrace + 1, NewText: []byte(sb.String())}}
@@ -1005,6 +1089,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 	var em emission
 	var vars []string
 	var expr string
+
 	if isAssign {
 		vars = lhsNames(assign)
 		expr = w.rhsText(assign)
@@ -1018,6 +1103,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 	snippet := sourceLine(w.content, pos.Line)
 
 	var fixes []analysis.SuggestedFix
+
 	if !em.skip {
 		cascadeEdits, cascadeTargets, cascadeOK, cascadeReason := w.resolveCascade(list, idx, declared, em.newNames, cascaded)
 		if !cascadeOK {
@@ -1031,6 +1117,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 			// See buildHeadIfFix: only commit if a fix was actually produced.
 			if len(fixes) > 0 {
 				declared.hoist(em.newNames)
+
 				for _, t := range cascadeTargets {
 					cascaded[t] = true
 				}
@@ -1062,6 +1149,7 @@ func (w *walker) emitTypeSwitchFix(node *ast.TypeSwitchStmt, declared scope, lis
 func (w *walker) buildTypeSwitchFix(node *ast.TypeSwitchStmt, initText, assignText string, cascadeEdits []analysis.TextEdit) []analysis.SuggestedFix {
 	startOffset := w.pass.Fset.Position(node.Pos()).Offset
 	lbraceOffset := w.pass.Fset.Position(node.Body.Lbrace).Offset
+
 	endOffset := lbraceOffset + 1
 	if startOffset < 0 || endOffset > len(w.content) || startOffset >= endOffset {
 		return nil
@@ -1097,15 +1185,18 @@ func (w *walker) processFuncLitsIn(node ast.Node) {
 	if node == nil {
 		return
 	}
+
 	ast.Inspect(node, func(n ast.Node) bool {
 		if n == nil {
 			return false
 		}
+
 		fl, ok := n.(*ast.FuncLit)
 		if ok {
 			w.walkFuncLit(fl)
 			return false
 		}
+
 		return true
 	})
 }
@@ -1114,10 +1205,12 @@ func (w *walker) walkFuncLit(fl *ast.FuncLit) {
 	if fl.Body == nil {
 		return
 	}
+
 	var params, results *ast.FieldList
 	if fl.Type != nil {
 		params, results = fl.Type.Params, fl.Type.Results
 	}
+
 	w.walkList(fl.Body.List, scopeNamesFromFields(params, results))
 }
 
@@ -1128,15 +1221,18 @@ func functionScopeNames(fn *ast.FuncDecl) scope {
 	if fn.Type != nil {
 		params, results = fn.Type.Params, fn.Type.Results
 	}
+
 	return scopeNamesFromFields(fn.Recv, params, results)
 }
 
 func scopeNamesFromFields(fieldLists ...*ast.FieldList) scope {
 	declared := make(scope)
+
 	for _, fl := range fieldLists {
 		if fl == nil {
 			continue
 		}
+
 		for _, field := range fl.List {
 			for _, name := range field.Names {
 				if name.Name != "_" {
@@ -1145,6 +1241,7 @@ func scopeNamesFromFields(fieldLists ...*ast.FieldList) scope {
 			}
 		}
 	}
+
 	return declared
 }
 
@@ -1153,14 +1250,17 @@ func (w *walker) recordDeclStmt(s *ast.DeclStmt, declared scope) {
 	if !ok {
 		return
 	}
+
 	if gd.Tok != token.VAR && gd.Tok != token.CONST {
 		return
 	}
+
 	for _, spec := range gd.Specs {
 		vs, ok := spec.(*ast.ValueSpec)
 		if !ok {
 			continue
 		}
+
 		for _, name := range vs.Names {
 			if name.Name != "_" {
 				declared[name.Name] = declaredName{ident: name}
@@ -1171,12 +1271,14 @@ func (w *walker) recordDeclStmt(s *ast.DeclStmt, declared scope) {
 
 func lhsNames(assign *ast.AssignStmt) []string {
 	var vars []string
+
 	for _, lhs := range assign.Lhs {
 		ident, ok := lhs.(*ast.Ident)
 		if ok {
 			vars = append(vars, ident.Name)
 		}
 	}
+
 	return vars
 }
 
@@ -1184,6 +1286,7 @@ func (w *walker) rhsText(assign *ast.AssignStmt) string {
 	if len(assign.Rhs) == 0 {
 		return ""
 	}
+
 	return w.text(assign.Rhs[0].Pos(), assign.Rhs[len(assign.Rhs)-1].End())
 }
 
@@ -1195,11 +1298,14 @@ func sourceText(fset *token.FileSet, content []byte, from, to token.Pos) string 
 	if len(content) == 0 {
 		return ""
 	}
+
 	start := fset.Position(from).Offset
+
 	end := fset.Position(to).Offset
 	if start < 0 || end < 0 || start >= len(content) || end > len(content) || start >= end {
 		return ""
 	}
+
 	return string(content[start:end])
 }
 
@@ -1207,10 +1313,12 @@ func sourceLine(content []byte, line int) string {
 	if len(content) == 0 {
 		return ""
 	}
+
 	lines := bytes.Split(content, []byte("\n"))
 	if line < 1 || line > len(lines) {
 		return ""
 	}
+
 	return string(bytes.TrimSpace(lines[line-1]))
 }
 
@@ -1220,6 +1328,7 @@ func extractIndentation(content []byte, offset int) string {
 		lineStart--
 	}
 	var buf bytes.Buffer
+
 	for i := lineStart; i < len(content); i++ {
 		if content[i] == ' ' || content[i] == '\t' {
 			buf.WriteByte(content[i])
@@ -1227,5 +1336,6 @@ func extractIndentation(content []byte, offset int) string {
 			break
 		}
 	}
+
 	return buf.String()
 }

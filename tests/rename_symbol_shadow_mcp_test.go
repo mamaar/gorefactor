@@ -52,6 +52,7 @@ func TestRenameSymbol_RefusesNewNameShadowedAtReference(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := writeInlineWorkspace(t, tc.files)
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -59,10 +60,12 @@ func TestRenameSymbol_RefusesNewNameShadowedAtReference(t *testing.T) {
 			if !res.IsError {
 				t.Fatalf("rename succeeded: %s", errText(res))
 			}
+
 			got := errText(res)
 			if !strings.Contains(got, tc.want) || !strings.Contains(got, "cannot rename helper to local") {
 				t.Errorf("error = %q, want it to contain %q", got, tc.want)
 			}
+
 			for rel, content := range tc.files {
 				assertFileUnchanged(t, dir, rel, content)
 			}
@@ -74,6 +77,7 @@ func TestRenameSymbol_AllowsNewNameUsedLocallyWhereSymbolIsNotReferenced(t *test
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/p.go": "package p\n\nfunc helper() int { return 1 }\n\nfunc Use() int { return helper() }\n\nfunc Other() int {\n\tlocal := 3\n\treturn local\n}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -81,10 +85,12 @@ func TestRenameSymbol_AllowsNewNameUsedLocallyWhereSymbolIsNotReferenced(t *test
 	if res.IsError {
 		t.Fatalf("rename failed: %s", errText(res))
 	}
+
 	got := fileText(t, dir, "p/p.go")
 	if !strings.Contains(got, "func local() int") || !strings.Contains(got, "return local()") {
 		t.Errorf("not renamed:\n%s", got)
 	}
+
 	goVets(t, dir, "")
 }
 
@@ -94,6 +100,7 @@ func TestRenameSymbol_RefusesNewNameShadowedInTaggedView(t *testing.T) {
 		"p/p_tagx.go": "//go:build tagx\n\npackage p\n\nfunc Use() int {\n\tlocal := 3\n\treturn local + helper()\n}\n",
 	}
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -101,6 +108,7 @@ func TestRenameSymbol_RefusesNewNameShadowedInTaggedView(t *testing.T) {
 	if !res.IsError || !strings.Contains(errText(res), "the name local refers to a local declaration (p/p_tagx.go:6)") {
 		t.Fatalf("result = %v %s", res.IsError, errText(res))
 	}
+
 	for rel, content := range files {
 		assertFileUnchanged(t, dir, rel, content)
 	}

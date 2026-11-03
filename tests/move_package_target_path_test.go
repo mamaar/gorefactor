@@ -61,6 +61,7 @@ func TestMovePackageTargetPathForms(t *testing.T) {
 			dir := writeMovePackageFixture(t)
 
 			ctx := context.Background()
+
 			sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -74,6 +75,7 @@ func TestMovePackageTargetPathForms(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallTool transport error: %v", err)
 			}
+
 			if result.IsError {
 				t.Fatalf("move_package returned an error result: %+v", result.Content)
 			}
@@ -106,6 +108,7 @@ func TestMovePackageTargetPathForms(t *testing.T) {
 			}
 
 			cmd := exec.Command("go", "build", "./...")
+
 			cmd.Dir = dir
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("workspace does not build after the move (this is the reported bug):\n%s", out)
@@ -126,6 +129,7 @@ func Existing() {}
 `)
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -139,6 +143,7 @@ func Existing() {}
 	if err != nil {
 		t.Fatalf("CallTool transport error: %v", err)
 	}
+
 	if !result.IsError {
 		t.Fatalf("expected move_package to refuse an existing target, got success: %+v", result.Content)
 	}
@@ -148,6 +153,7 @@ func Existing() {}
 	if _, err := os.Stat(filepath.Join(dir, "kartadm", "wms", "wms.go")); err != nil {
 		t.Errorf("source file should be untouched after a refusal: %v", err)
 	}
+
 	got := mustRead(t, filepath.Join(dir, "pkg", "wms", "existing.go"))
 	if !strings.Contains(got, "func Existing()") {
 		t.Errorf("existing target package was modified by a refused move:\n%s", got)
@@ -216,6 +222,7 @@ func TestMovePackagePlanPathsAreWorkspaceRooted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MovePackage: %v", err)
 			}
+
 			if len(plan.Changes) == 0 {
 				t.Fatal("plan has no changes")
 			}
@@ -225,6 +232,7 @@ func TestMovePackagePlanPathsAreWorkspaceRooted(t *testing.T) {
 					t.Errorf("change path is not absolute: %q (%s)", change.File, change.Description)
 					continue
 				}
+
 				rel, err := filepath.Rel(ws.RootPath, change.File)
 				if err != nil || strings.HasPrefix(rel, "..") {
 					t.Errorf("change path escapes the workspace root %s: %q (%s)",

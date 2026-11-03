@@ -14,21 +14,27 @@ import (
 
 func findImplementations(t *testing.T, files map[string]string, args map[string]any) (map[string]any, string) {
 	t.Helper()
+
 	files["go.mod"] = "module example.com/fimpl\n\ngo 1.21\n"
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "find_implementations", Arguments: args})
 	if err != nil {
 		t.Fatalf("find_implementations: %v", err)
 	}
+
 	if res.IsError {
 		return nil, errText(res)
 	}
+
 	var out map[string]any
 	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
+
 	return out, ""
 }
 
@@ -36,17 +42,22 @@ func findImplementations(t *testing.T, files map[string]string, args map[string]
 func entryNames(t *testing.T, out map[string]any, key string) []string {
 	t.Helper()
 	var names []string
+
 	items, _ := out[key].([]any)
 	for _, it := range items {
 		e := it.(map[string]any)
 		name := e["name"].(string)
+
 		ptr, _ := e["pointer_receiver"].(bool)
 		if ptr {
 			name = "*" + name
 		}
+
 		names = append(names, name)
 	}
+
 	slices.Sort(names)
+
 	return names
 }
 
@@ -63,7 +74,9 @@ func TestFindImplementations_InterfaceListsValueAndPointerImplementersOnly(t *te
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
+
 	got := entryNames(t, out, "implementations")
+
 	want := []string{"*B", "A"}
 	if !slices.Equal(got, want) {
 		t.Errorf("implementations = %v, want %v", got, want)
@@ -78,6 +91,7 @@ func TestFindImplementations_InterfaceWithMethodLocatesTheImplementingMethods(t 
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
+
 	e := out["implementations"].([]any)[0].(map[string]any)
 	if filepath.Base(e["file"].(string)) != "a.go" || e["line"].(float64) != 5 {
 		t.Errorf("method location = %v:%v, want a.go:5", e["file"], e["line"])
@@ -95,12 +109,14 @@ func TestFindImplementations_ConcreteTypeListsWorkspaceAndExternalInterfaces(t *
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
+
 	got := entryNames(t, out, "interfaces")
 	for _, want := range []string{"*Runner", "*Writer"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("interfaces = %v, missing %s", got, want)
 		}
 	}
+
 	for _, it := range out["interfaces"].([]any) {
 		e := it.(map[string]any)
 		if e["name"] == "Writer" && (e["package"] != "io" || e["external"] != true) {
@@ -119,12 +135,15 @@ func TestFindImplementations_FindsTypeDeclaredOnlyUnderAnotherConfig(t *testing.
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
+
 	got, want := entryNames(t, out, "implementations"), []string{"A", "B"}
 	if !slices.Equal(got, want) {
 		t.Errorf("implementations = %v, want %v", got, want)
 	}
+
 	for _, it := range out["implementations"].([]any) {
 		e := it.(map[string]any)
+
 		_, hasConfigs := e["configs"]
 		if (e["name"] == "B") != hasConfigs {
 			t.Errorf("entry %v: configs listed = %v, want only for B", e["name"], hasConfigs)

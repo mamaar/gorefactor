@@ -35,16 +35,21 @@ var V int
 
 func checkSymbolKeySrc(t *testing.T) *gotypes.Package {
 	t.Helper()
+
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, "p.go", symbolKeySrc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	conf := gotypes.Config{Importer: importer.Default()}
+
 	pkg, err := conf.Check("example.com/p", fset, []*ast.File{f}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return pkg
 }
 
@@ -83,6 +88,7 @@ func TestSymbolKeyOf_InstantiatedMethodSharesTheGenericKey(t *testing.T) {
 	pkg := checkSymbolKeySrc(t)
 	alias := gotypes.Unalias(pkg.Scope().Lookup("Alias").Type()).(*gotypes.Named)
 	got, ok := SymbolKeyOf(alias.Method(0))
+
 	want := (SymbolKey{"example.com/p", "Mem", "Save"})
 	if !ok || got != want {
 		t.Errorf("SymbolKeyOf = %v, %v; want %v", got, ok, want)
@@ -91,16 +97,20 @@ func TestSymbolKeyOf_InstantiatedMethodSharesTheGenericKey(t *testing.T) {
 
 func TestSymbolKeyOf_UnstableNamesHaveNoKey(t *testing.T) {
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, "p.go", symbolKeySrc, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	info := &gotypes.Info{Defs: make(map[*ast.Ident]gotypes.Object)}
 	conf := gotypes.Config{Importer: importer.Default()}
+
 	_, err = conf.Check("example.com/p", fset, []*ast.File{f}, info)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for ident, obj := range info.Defs {
 		switch ident.Name {
 		case "init", "_", "local":
@@ -114,24 +124,31 @@ func TestSymbolKeyOf_UnstableNamesHaveNoKey(t *testing.T) {
 
 func TestSymbolKeySet(t *testing.T) {
 	a, b := SymbolKey{"p", "", "a"}, SymbolKey{"p", "T", "b"}
+
 	set := SymbolKeySet{}
 	if !set.AddAll(SymbolKeySet{a: {}}) {
 		t.Error("adding a new key reported no growth")
 	}
+
 	if set.AddAll(SymbolKeySet{a: {}}) {
 		t.Error("adding a present key reported growth")
 	}
+
 	if !set.Has(a) || set.Has(b) {
 		t.Errorf("membership wrong: %v", set)
 	}
+
 	if !set.ContainsAll(SymbolKeySet{a: {}}) || set.ContainsAll(SymbolKeySet{a: {}, b: {}}) {
 		t.Error("ContainsAll wrong")
 	}
+
 	clone := set.Clone()
 	clone.AddAll(SymbolKeySet{b: {}})
+
 	if set.Has(b) {
 		t.Error("Clone shares storage")
 	}
+
 	got := b.String()
 	if got != "p.T.b" {
 		t.Errorf("String = %q", got)
@@ -145,5 +162,6 @@ func (s SymbolKeySet) ContainsAll(other SymbolKeySet) bool {
 			return false
 		}
 	}
+
 	return true
 }

@@ -103,6 +103,7 @@ func TestValidator_validateChanges(t *testing.T) {
 
 	// Should have no critical issues
 	criticalIssues := 0
+
 	for _, issue := range issues {
 		if issue.Severity == refactorTypes.Error {
 			criticalIssues++
@@ -127,6 +128,7 @@ func TestValidator_validateChanges_Overlapping(t *testing.T) {
 
 	// Should have at least one error
 	hasError := false
+
 	for _, issue := range issues {
 		if issue.Severity == refactorTypes.Error {
 			hasError = true
@@ -152,6 +154,7 @@ func TestValidator_validateChanges_InvalidBounds(t *testing.T) {
 
 	// Should have at least two errors
 	errorCount := 0
+
 	for _, issue := range issues {
 		if issue.Severity == refactorTypes.Error {
 			errorCount++

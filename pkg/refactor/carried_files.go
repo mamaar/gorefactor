@@ -30,17 +30,22 @@ func walkTree(root string) ([]treeEntry, error) {
 		if err != nil || d.IsDir() {
 			return err
 		}
+
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
+
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
 		}
+
 		entries = append(entries, treeEntry{path: path, rel: rel, mode: info.Mode(), size: info.Size()})
+
 		return nil
 	})
+
 	return entries, err
 }
 
@@ -61,12 +66,15 @@ func (e treeEntry) isGoSource() bool { return filepath.Ext(e.rel) == ".go" && e.
 // package down to its own directly holds non-testdata Go files or a go.mod.
 func carriedByPackages(moves []dirMove) ([]fileMove, error) {
 	var carried []fileMove
+
 	for _, m := range moves {
 		entries, err := walkTree(m.source)
 		if err != nil {
 			return nil, err
 		}
+
 		boundaries := make(map[string]bool)
+
 		for _, e := range entries {
 			name := filepath.Base(e.rel)
 			if !hasPart(e.rel, "testdata") && (name == "go.mod" || filepath.Ext(name) == ".go") {
@@ -74,18 +82,23 @@ func carriedByPackages(moves []dirMove) ([]fileMove, error) {
 			}
 		}
 		var keep []treeEntry
+
 		for _, e := range entries {
 			if e.isGoSource() && filepath.Dir(e.rel) == "." || inOtherPackage(e.rel, boundaries) {
 				continue
 			}
+
 			keep = append(keep, e)
 		}
+
 		moved, err := toFileMoves(m, keep)
 		if err != nil {
 			return nil, err
 		}
+
 		carried = append(carried, moved...)
 	}
+
 	return carried, nil
 }
 
@@ -96,6 +109,7 @@ func inOtherPackage(rel string, boundaries map[string]bool) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -106,20 +120,25 @@ func carriedByDir(root dirMove, packages []dirMove) ([]fileMove, error) {
 	for _, p := range packages {
 		isPackageDir[p.source] = true
 	}
+
 	entries, err := walkTree(root.source)
 	if err != nil {
 		return nil, fmt.Errorf("carried by dir: %w", err)
 	}
 	var keep []treeEntry
+
 	for _, e := range entries {
 		if filepath.Base(e.rel) == "go.mod" && e.rel != "go.mod" && !hasPart(e.rel, "testdata") {
 			return nil, fmt.Errorf("cannot move %s: it is a module boundary inside the directory", e.path)
 		}
+
 		if e.isGoSource() && isPackageDir[filepath.Dir(e.path)] {
 			continue
 		}
+
 		keep = append(keep, e)
 	}
+
 	return toFileMoves(root, keep)
 }
 
@@ -136,13 +155,17 @@ func toFileMoves(m dirMove, entries []treeEntry) ([]fileMove, error) {
 		case holdsRepositoryDir(e.rel):
 			return nil, fmt.Errorf("cannot move %s: it is inside a .git directory", e.path)
 		}
+
 		target := filepath.Join(m.target, e.rel)
+
 		_, err := os.Lstat(target)
 		if err == nil {
 			return nil, fmt.Errorf("cannot move %s: %s already exists", e.path, target)
 		}
+
 		moves = append(moves, fileMove{source: e.path, target: target, mode: e.mode.Perm()})
 	}
+
 	return moves, nil
 }
 
@@ -158,5 +181,6 @@ func holdsRepositoryDir(rel string) bool {
 			return true
 		}
 	}
+
 	return parts[len(parts)-1] == ".git"
 }

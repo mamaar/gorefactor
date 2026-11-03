@@ -61,6 +61,7 @@ func (e *DefaultEngine) DetectCycles() (*CyclesReport, error) {
 	defer e.endRun(importsRun{})
 
 	graph := mergeGraphs(views)
+
 	return &CyclesReport{
 		Configs:    viewNames(views),
 		Cycles:     importPathCycles(views, graph.ImportCycles),
@@ -82,6 +83,7 @@ func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDepend
 	primary := views[0].Workspace
 	// Suggested moves match references by type information when available.
 	e.EnsureTypeChecked(primary)
+
 	op := &AnalyzeDependenciesOperation{Request: req}
 	if err := op.Validate(primary); err != nil {
 		return nil, fmt.Errorf("analyze dependencies operation validation failed: %w", err)
@@ -89,17 +91,21 @@ func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDepend
 
 	graph := mergeGraphs(views)
 	union := unionWorkspace(views, graph)
+
 	wss := make([]*types.Workspace, len(views))
 	for i, v := range views {
 		wss[i] = v.Workspace
 	}
+
 	impact := &types.ImpactAnalysis{PackageCoupling: packageCouplingOf(union, declaredSymbolCounts(wss...))}
 	if req.DetectBackwardsDeps {
 		impact.BackwardsDependencies = detectBackwardsDependencies(union)
 	}
+
 	if req.SuggestMoves {
 		impact.SuggestedMoves = op.generateSuggestedMoves(primary)
 	}
+
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -107,6 +113,7 @@ func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDepend
 		Reversible:    true,
 		Impact:        impact,
 	}
+
 	return &DependenciesReport{Configs: viewNames(views), Graph: graph, Plan: plan}, nil
 }
 
@@ -115,6 +122,7 @@ func viewNames(views []*analysis.View) []string {
 	for i, v := range views {
 		names[i] = v.Config.String()
 	}
+
 	return names
 }
 
@@ -126,22 +134,27 @@ func mergeGraphs(views []*analysis.View) DependencyGraphReport {
 		PackageDeps:    make(map[string][]string),
 	}
 	cycles := make([][]groupedCycle, len(views))
+
 	testCycles := make([][]groupedCycle, len(views))
 	for i, v := range views {
 		g := v.Workspace.Dependencies
 		unionInto(out.PackageImports, g.PackageImports)
 		unionInto(out.PackageDeps, g.PackageDeps)
+
 		production := analysis.ImportGraph(v.Workspace).Production
 		for _, c := range g.ImportCycles {
 			cycles[i] = append(cycles[i], groupedCycle{c, strings.Join(analysis.Component(production, c[0]), "\x00")})
 		}
+
 		for _, c := range g.TestImportCycles {
 			testCycles[i] = append(testCycles[i], groupedCycle{c, c[0]})
 		}
 	}
+
 	configs := viewNames(views)
 	out.ImportCycles = mergeCycles(configs, cycles)
 	out.TestImportCycles = mergeCycles(configs, testCycles)
+
 	return out
 }
 
@@ -166,6 +179,7 @@ func unionInto(into, from map[string][]string) {
 // and naming every configuration where the group is cyclic.
 func mergeCycles(configs []string, perView [][]groupedCycle) []ImportCycle {
 	found := make(map[string]*ImportCycle)
+
 	for i, cycles := range perView {
 		for _, c := range cycles {
 			f := found[c.group]
@@ -173,17 +187,22 @@ func mergeCycles(configs []string, perView [][]groupedCycle) []ImportCycle {
 				f = &ImportCycle{Packages: c.path}
 				found[c.group] = f
 			}
+
 			f.Configs = append(f.Configs, configs[i])
 		}
 	}
+
 	out := make([]ImportCycle, 0, len(found))
 	for _, f := range found {
 		if len(f.Configs) == len(configs) {
 			f.Configs = nil
 		}
+
 		out = append(out, *f)
 	}
+
 	slices.SortFunc(out, func(a, b ImportCycle) int { return slices.Compare(a.Packages, b.Packages) })
+
 	return out
 }
 
@@ -195,8 +214,10 @@ func importPathCycles(views []*analysis.View, cycles []ImportCycle) []ImportCycl
 		for j, fsPath := range c.Packages {
 			named[j] = importPathIn(views, fsPath)
 		}
+
 		out[i] = ImportCycle{Packages: named, Configs: c.Configs}
 	}
+
 	return out
 }
 
@@ -209,6 +230,7 @@ func importPathIn(views []*analysis.View, fsPath string) string {
 			return pkg.ImportPath
 		}
 	}
+
 	return importPathOf(views[0].Workspace, fsPath)
 }
 
@@ -231,6 +253,7 @@ func unionWorkspace(views []*analysis.View, graph DependencyGraphReport) *types.
 				union.Packages[path] = pkg
 			}
 		}
+
 		for importPath, path := range v.Workspace.ImportToPath {
 			_, ok := union.ImportToPath[importPath]
 			if !ok {
@@ -238,6 +261,7 @@ func unionWorkspace(views []*analysis.View, graph DependencyGraphReport) *types.
 			}
 		}
 	}
+
 	return union
 }
 
@@ -246,14 +270,17 @@ func unionWorkspace(views []*analysis.View, graph DependencyGraphReport) *types.
 // several of them include counts once.
 func declaredSymbolCounts(wss ...*types.Workspace) map[string]int {
 	seen := make(map[string]map[declSite]bool)
+
 	for _, ws := range wss {
 		for path, pkg := range ws.Packages {
 			if seen[path] == nil {
 				seen[path] = make(map[declSite]bool)
 			}
+
 			if pkg.Symbols == nil {
 				continue
 			}
+
 			for _, group := range []map[string]*types.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
 				for _, sym := range group {
 					seen[path][declSite{sym.File, sym.Position}] = true
@@ -261,9 +288,11 @@ func declaredSymbolCounts(wss ...*types.Workspace) map[string]int {
 			}
 		}
 	}
+
 	counts := make(map[string]int, len(seen))
 	for path, sites := range seen {
 		counts[path] = len(sites)
 	}
+
 	return counts
 }

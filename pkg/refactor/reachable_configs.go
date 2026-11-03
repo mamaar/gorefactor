@@ -54,7 +54,9 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 	if req.Entry == "" || len(req.Targets) == 0 {
 		return nil, fmt.Errorf("entry and targets are required")
 	}
+
 	run := &reachableRun{req: req, found: make(map[declSite]*ReachableFinding), bodiless: make(map[analysis.BodilessPackage]*BodilessFinding), resolved: make(map[string]bool), dirs: make(map[string]bool)}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("reachable across configs: %w", err)
@@ -63,32 +65,40 @@ func (e *DefaultEngine) ReachableAcrossConfigs(req ReachableRequest) (*Reachable
 
 	out := &ReachableReport{Configs: make([]string, len(views))}
 	entryViews := 0
+
 	for i, v := range views {
 		out.Configs[i] = v.Config.String()
+
 		ok, err := run.visit(e, v)
 		if err != nil {
 			return nil, viewError(views, v, err)
 		}
+
 		if ok {
 			entryViews++
 		}
 	}
+
 	if entryViews == 0 && run.entryErr != nil {
 		return nil, run.entryErr
 	}
+
 	if entryViews == 0 {
 		return nil, fmt.Errorf("entry package %q not found in any build configuration", req.Entry)
 	}
+
 	for _, spec := range req.Targets {
 		if !run.resolved[spec] {
 			return nil, fmt.Errorf("unknown target %q", spec)
 		}
 	}
+
 	if req.Within != "" && !run.withinReached {
 		return nil, cmp.Or(run.withinErr, fmt.Errorf("unknown within_function %q", req.Within))
 	}
 
 	collectReportSites(run, views, out)
+
 	return out, nil
 }
 
@@ -97,14 +107,18 @@ func collectReportSites(run *reachableRun, views []*analysis.View, out *Reachabl
 		if len(f.Configs) == len(views) {
 			f.Configs = nil
 		}
+
 		out.Sites = append(out.Sites, *f)
 	}
+
 	for _, b := range run.bodiless {
 		if len(b.Configs) == len(views) {
 			b.Configs = nil
 		}
+
 		out.Bodiless = append(out.Bodiless, *b)
 	}
+
 	slices.SortFunc(out.Bodiless, func(a, b BodilessFinding) int { return cmp.Compare(a.Package, b.Package) })
 	slices.SortFunc(out.Sites, func(a, b ReachableFinding) int {
 		return cmp.Or(cmp.Compare(a.Package, b.Package), cmp.Compare(a.File, b.File), cmp.Compare(a.Pos, b.Pos), cmp.Compare(a.Target, b.Target))
@@ -129,13 +143,16 @@ type reachableRun struct {
 // package, which a build tag may exclude.
 func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 	defer r.planned(v, nil)
+
 	idx := r.indexOf(v)
+
 	entry := v.Workspace.Packages[types.ResolvePackagePath(v.Workspace, r.req.Entry)]
 	if entry == nil {
 		return false, nil
 	}
 
 	var specs []string
+
 	for _, spec := range r.req.Targets {
 		_, err := analysis.ResolveTargets(v.Workspace, []string{spec})
 		if err == nil {
@@ -143,6 +160,7 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 			specs = append(specs, spec)
 		}
 	}
+
 	targets, err := analysis.ResolveTargets(v.Workspace, specs)
 	if err != nil {
 		return true, err
@@ -150,39 +168,51 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 
 	a := analysis.NewUnusedAnalyzer(v.Workspace, e.logger)
 	a.SetIndex(idx)
+
 	if r.req.Within != "" {
 		key, ok, err := withinKey(v.Workspace, r.req.Within)
 		if err != nil {
 			return true, err
 		}
+
 		if !ok {
 			return true, nil // another build configuration may declare it
 		}
+
 		a.SetWithin(key)
 	}
+
 	sites, bodiless, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
+
 	_, ok := errors.AsType[*analysis.WithinUnreachedError](err)
 	if ok {
 		r.withinErr = err
 		return true, nil
 	}
+
 	var entryBodiless *analysis.EntryBodilessError
 	if errors.As(err, &entryBodiless) {
 		r.entryErr = cmp.Or(r.entryErr, err)
 		bodiless, err = []analysis.BodilessPackage{{Package: entryBodiless.Package, Reason: entryBodiless.Reason}}, nil
 	}
+
 	if err != nil {
 		return true, err
 	}
+
 	r.recordBodiless(bodiless, v)
+
 	if entryBodiless != nil {
 		return false, nil
 	}
+
 	r.withinReached = true
 	for _, dir := range a.ReachableDirs(entry, r.req.IncludeTests) {
 		r.dirs[dir] = true
 	}
+
 	r.recordSites(sites, v)
+
 	return true, nil
 }
 
@@ -193,6 +223,7 @@ func (r *reachableRun) recordBodiless(bodiless []analysis.BodilessPackage, v *an
 			f = &BodilessFinding{BodilessPackage: b}
 			r.bodiless[b] = f
 		}
+
 		f.Configs = append(f.Configs, v.Config.String())
 	}
 }
@@ -200,11 +231,13 @@ func (r *reachableRun) recordBodiless(bodiless []analysis.BodilessPackage, v *an
 func (r *reachableRun) recordSites(sites []analysis.ReachableSite, v *analysis.View) {
 	for _, s := range sites {
 		key := declSite{s.File, s.Pos}
+
 		f := r.found[key]
 		if f == nil {
 			f = &ReachableFinding{ReachableSite: s}
 			r.found[key] = f
 		}
+
 		f.Configs = append(f.Configs, v.Config.String())
 	}
 }
@@ -216,13 +249,17 @@ func withinKey(ws *types.Workspace, spec string) (key types.SymbolKey, ok bool, 
 	if rerr != nil {
 		return key, false, nil
 	}
+
 	if len(targets) != 1 {
 		return key, false, fmt.Errorf("within_function %q must name one function or method", spec)
 	}
+
 	fn, isFunc := targets[0].Obj.(*gotypes.Func)
 	if !isFunc {
 		return key, false, fmt.Errorf("within_function %q is not a function or method", spec)
 	}
+
 	key, ok = types.SymbolKeyOf(canonicalFunc(fn))
+
 	return key, ok, nil
 }

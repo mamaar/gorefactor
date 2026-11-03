@@ -56,6 +56,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().CleanAliases(ws, types.CleanAliasesRequest{
 			Workspace:         ws.RootPath,
 			PreserveConflicts: in.PreserveConflicts,
@@ -64,10 +65,12 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "clean aliases", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -82,6 +85,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		rules := make([]types.AliasRule, len(in.Rules))
 		for i, r := range in.Rules {
 			rules[i] = types.AliasRule{
@@ -89,6 +93,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 				Alias:          r.Alias,
 			}
 		}
+
 		plan, err := state.GetEngine().StandardizeImports(ws, types.StandardizeImportsRequest{
 			Workspace: ws.RootPath,
 			Rules:     rules,
@@ -98,10 +103,12 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "standardize imports", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -116,13 +123,16 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		strategy := types.UseFullNames
+
 		switch in.Strategy {
 		case "shortest_unique":
 			strategy = types.UseShortestUnique
 		case "custom_alias":
 			strategy = types.UseCustomAlias
 		}
+
 		plan, err := state.GetEngine().ResolveAliasConflicts(ws, types.ResolveAliasConflictsRequest{
 			Workspace: ws.RootPath,
 			Strategy:  strategy,
@@ -131,10 +141,12 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "resolve alias conflicts", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -149,6 +161,7 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().ConvertAliases(ws, types.ConvertAliasesRequest{
 			Workspace:     ws.RootPath,
 			ToFullNames:   in.ToFullNames,
@@ -158,10 +171,12 @@ func registerImportTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "convert aliases", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }
@@ -175,5 +190,6 @@ func absPaths(root string, paths []string) []string {
 			abs[i] = filepath.Join(root, p)
 		}
 	}
+
 	return abs
 }

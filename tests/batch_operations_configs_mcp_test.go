@@ -19,15 +19,18 @@ func batchArgs(dryRun bool, steps ...string) map[string]any {
 	if dryRun {
 		args["dry_run"] = true
 	}
+
 	return args
 }
 
 func batchError(t *testing.T, sess *mcptest.Session, args map[string]any) string {
 	t.Helper()
+
 	res := callTool(t, sess, "batch_operations", args)
 	if !res.IsError {
 		t.Fatalf("batch_operations succeeded, want an error: %s", errText(res))
 	}
+
 	return errText(res)
 }
 
@@ -35,6 +38,7 @@ func TestBatchOperations_RenameSymbolRewritesFileOnlyATagCompiles(t *testing.T) 
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": batchF, "p/use.go": batchUse, "p/use_tagx.go": batchUseTagx,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -44,10 +48,12 @@ func TestBatchOperations_RenameSymbolRewritesFileOnlyATagCompiles(t *testing.T) 
 	assertFileContains(t, dir, "p/f.go", "func g(n int) int")
 	assertFileContains(t, dir, "p/use.go", "g(1)")
 	assertFileContains(t, dir, "p/use_tagx.go", "g(2)")
+
 	configs, _ := out["build_configs"].([]any)
 	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
+
 	goVets(t, dir, "", "tagx")
 }
 
@@ -56,6 +62,7 @@ func TestBatchOperations_RenameMethodOnInterfaceRenamesImplementationsAndCalls(t
 		"p/i.go":   "package p\n\ntype I interface{ M() }\n\ntype A struct{}\n\nfunc (A) M() {}\n",
 		"p/use.go": "package p\n\nfunc Use(i I) { i.M() }\n\nfunc UseA(a A) { a.M() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -71,6 +78,7 @@ func TestBatchOperations_RenameMethodOnInterfaceRenamesImplementationsAndCalls(t
 
 func TestBatchOperations_OverlappingStepsFailAndWriteNothing(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": batchF, "p/use.go": batchUse})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -81,15 +89,18 @@ func TestBatchOperations_OverlappingStepsFailAndWriteNothing(t *testing.T) {
 	if !strings.Contains(msg, "step 1") || !strings.Contains(msg, "step 2") {
 		t.Errorf("error does not name both steps: %s", msg)
 	}
+
 	if strings.Contains(msg, ":0:0:") {
 		t.Errorf("error carries a bogus position: %s", msg)
 	}
+
 	assertFileUnchanged(t, dir, "p/f.go", batchF)
 	assertFileUnchanged(t, dir, "p/use.go", batchUse)
 }
 
 func TestBatchOperations_FailingStepNamesItAndWritesNothing(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": batchF, "p/use.go": batchUse})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -100,12 +111,14 @@ func TestBatchOperations_FailingStepNamesItAndWritesNothing(t *testing.T) {
 	if !strings.Contains(msg, "step 2") {
 		t.Errorf("error does not name step 2: %s", msg)
 	}
+
 	assertFileUnchanged(t, dir, "p/f.go", batchF)
 	assertFileUnchanged(t, dir, "p/use.go", batchUse)
 }
 
 func TestBatchOperations_DryRunReturnsDiffsAndWritesNothing(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": batchF, "p/use.go": batchUse})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -116,6 +129,7 @@ func TestBatchOperations_DryRunReturnsDiffsAndWritesNothing(t *testing.T) {
 	if len(diffs) != 2 {
 		t.Errorf("diffs = %v, want one per changed file", out["diffs"])
 	}
+
 	assertFileUnchanged(t, dir, "p/f.go", batchF)
 	assertFileUnchanged(t, dir, "p/use.go", batchUse)
 }
@@ -126,6 +140,7 @@ func TestBatchOperations_RenamePackageStepAndRenameSymbolStepCombine(t *testing.
 		"q/use.go": "package q\n\nimport \"example.com/threadmcp/p\"\n\nfunc Use() int { return p.Exported() }\n",
 		"p/e.go":   "package p\n\nfunc Exported() int { return f(1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -143,25 +158,30 @@ const batchQ = "package q\n\nfunc Q() int { return 1 }\n"
 
 func batchPackageStepWorkspace(t *testing.T) (string, map[string]string) {
 	t.Helper()
+
 	files := map[string]string{
 		"src/s.go":   "package src\n\nfunc One() int { return 1 }\n\ntype T struct{ V int }\n\nfunc (T) M() {}\n",
 		"q/q.go":     batchQ,
 		"use/use.go": "package use\n\nimport (\n\t\"example.com/threadmcp/q\"\n\t\"example.com/threadmcp/src\"\n)\n\nfunc Use() int { return src.One() + q.Q() }\n",
 		"other/o.go": "package other\n\nfunc Z() int { return 1 }\n",
 	}
+
 	return writeInlineWorkspace(t, files), files
 }
 
 func assertBatchRefusedUnchanged(t *testing.T, dir string, files map[string]string, msg string, wantSteps ...string) {
 	t.Helper()
+
 	for _, step := range wantSteps {
 		if !strings.Contains(msg, step) {
 			t.Errorf("error does not mention %q: %s", step, msg)
 		}
 	}
+
 	if !strings.Contains(msg, "separate") {
 		t.Errorf("error does not tell the user to run separate calls: %s", msg)
 	}
+
 	for rel, want := range files {
 		if rel != "go.mod" {
 			assertFileUnchanged(t, dir, rel, want)
@@ -171,6 +191,7 @@ func assertBatchRefusedUnchanged(t *testing.T, dir string, files map[string]stri
 
 func TestBatchOperations_RenamePackageAndMoveSymbolIntoItIsRefused(t *testing.T) {
 	dir, files := batchPackageStepWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -179,6 +200,7 @@ func TestBatchOperations_RenamePackageAndMoveSymbolIntoItIsRefused(t *testing.T)
 		`{"type":"move_symbol","symbol":"One","from_package":"src","to_package":"q"}`))
 
 	assertBatchRefusedUnchanged(t, dir, files, msg, "step 1", "step 2")
+
 	if strings.Contains(msg, ":0:0:") {
 		t.Errorf("error carries a bogus position: %s", msg)
 	}
@@ -186,6 +208,7 @@ func TestBatchOperations_RenamePackageAndMoveSymbolIntoItIsRefused(t *testing.T)
 
 func TestBatchOperations_RenamePackageAndStepOnAnotherPackageBuilds(t *testing.T) {
 	dir, _ := batchPackageStepWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -202,6 +225,7 @@ func TestBatchOperations_RenamePackageAndStepOnAnotherPackageBuilds(t *testing.T
 
 func TestBatchOperations_MovePackageAndRenameSymbolInIsRefused(t *testing.T) {
 	dir, files := batchPackageStepWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -214,6 +238,7 @@ func TestBatchOperations_MovePackageAndRenameSymbolInIsRefused(t *testing.T) {
 
 func TestBatchOperations_TwoPackageStepsOnSamePackageAreRefused(t *testing.T) {
 	dir, files := batchPackageStepWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -226,6 +251,7 @@ func TestBatchOperations_TwoPackageStepsOnSamePackageAreRefused(t *testing.T) {
 
 func TestBatchOperations_PackageStepWithWorkspaceWideStepIsRefused(t *testing.T) {
 	dir, files := batchPackageStepWorkspace(t)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

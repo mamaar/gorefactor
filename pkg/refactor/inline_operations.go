@@ -40,12 +40,14 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 			Message: "method name cannot be empty",
 		}
 	}
+
 	if op.SourceStruct == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "source struct cannot be empty",
 		}
 	}
+
 	if op.TargetFile == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -62,10 +64,12 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
 		if err != nil {
 			continue
 		}
+
 		if structSymbol.Kind == types.TypeSymbol {
 			sourcePackage = pkg
 			break
@@ -104,6 +108,7 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
 		}
 	}
+
 	if err != nil {
 		return err
 	}
@@ -123,6 +128,7 @@ func (op *InlineMethodOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	if err != nil {
 		return nil, err
 	}
+
 	methodSymbol, _ := op.methodSymbol(ws)
 	callLocations = referenceSites(ws, op.CachedIndex, methodSymbol).keep(op.TargetFile, callLocations)
 
@@ -188,17 +194,21 @@ func referenceSites(ws *types.Workspace, idx *analysis.ReferenceIndex, sym *type
 	if idx == nil || sym == nil {
 		return nil
 	}
+
 	refs, err := quietResolver(ws).FindReferencesIndexed(sym, idx)
 	if err != nil {
 		return nil
 	}
+
 	sites := make(callSites)
 	for _, ref := range refs {
 		if sites[ref.File] == nil {
 			sites[ref.File] = make(map[int]bool)
 		}
+
 		sites[ref.File][ref.Offset] = true
 	}
+
 	return sites
 }
 
@@ -208,6 +218,7 @@ func (c callSites) count() int {
 	for _, offsets := range c {
 		n += len(offsets)
 	}
+
 	return n
 }
 
@@ -217,11 +228,13 @@ func (c callSites) keep(file string, calls []MethodCall) []MethodCall {
 		return calls
 	}
 	var kept []MethodCall
+
 	for _, call := range calls {
 		if c[file][call.NameOffset] {
 			kept = append(kept, call)
 		}
 	}
+
 	return kept
 }
 
@@ -254,23 +267,28 @@ func (op *InlineMethodOperation) methodSymbol(ws *types.Workspace) (*types.Symbo
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
 		if err != nil || structSymbol.Kind != types.TypeSymbol {
 			continue
 		}
+
 		for _, method := range pkg.Symbols.Methods[op.SourceStruct] {
 			if method.Name == op.MethodName {
 				return method, pkg
 			}
 		}
+
 		return nil, pkg
 	}
+
 	return nil, nil
 }
 
 func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol *types.Symbol) (MethodImpl, error) {
 	// Parse the file to find the method body
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, methodSymbol.File, content, parser.ParseComments)
 	if err != nil {
 		return MethodImpl{}, &types.RefactorError{
@@ -285,11 +303,13 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 		if !ok {
 			continue
 		}
+
 		if funcDecl.Name.Name != op.MethodName || funcDecl.Recv == nil {
 			continue
 		}
 		// Extract parameter names
 		var paramNames []string
+
 		if funcDecl.Type.Params != nil {
 			for _, field := range funcDecl.Type.Params.List {
 				for _, name := range field.Names {
@@ -302,23 +322,29 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 		if funcDecl.Body == nil {
 			continue
 		}
+
 		start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+
 		end := fset.Position(funcDecl.Body.Rbrace).Offset
 		if start >= len(content) || end > len(content) {
 			continue
 		}
+
 		impl := MethodImpl{
 			Body:         content[start:end],
 			ParamNames:   paramNames,
 			ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
 		}
+
 		names := funcDecl.Recv.List[0].Names
 		if len(names) == 1 && names[0].Name != "_" {
 			impl.Receiver = names[0].Name
 		}
+
 		if funcDecl.Type.Results != nil {
 			impl.ResultType = sourceText(fset, content, funcDecl.Type.Results)
 		}
+
 		return impl, nil
 	}
 
@@ -336,12 +362,14 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 			Message: fmt.Sprintf("target file not found: %s", op.TargetFile),
 		}
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("find method calls: %w", err)
 	}
 
 	// Parse and find method calls
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, op.TargetFile, targetFile.OriginalContent, parser.ParseComments)
 	if err != nil {
 		return nil, &types.RefactorError{
@@ -351,6 +379,7 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 	}
 
 	var calls []MethodCall
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		callExpr, ok := n.(*ast.CallExpr)
 		if ok {
@@ -358,14 +387,17 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 			if ok {
 				if selExpr.Sel.Name == op.MethodName {
 					start := fset.Position(callExpr.Pos()).Offset
+
 					end := fset.Position(callExpr.End()).Offset
 					if start < len(targetFile.OriginalContent) && end <= len(targetFile.OriginalContent) {
 						callText := string(targetFile.OriginalContent[start:end])
 
 						// Extract arguments
 						var args []string
+
 						for _, arg := range callExpr.Args {
 							argStart := fset.Position(arg.Pos()).Offset
+
 							argEnd := fset.Position(arg.End()).Offset
 							if argStart < len(targetFile.OriginalContent) && argEnd <= len(targetFile.OriginalContent) {
 								args = append(args, string(targetFile.OriginalContent[argStart:argEnd]))
@@ -384,6 +416,7 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 				}
 			}
 		}
+
 		return true
 	})
 
@@ -401,10 +434,12 @@ func receiverOperand(receiver string) string {
 	if err != nil {
 		return "(" + receiver + ")"
 	}
+
 	switch expr.(type) {
 	case *ast.Ident, *ast.SelectorExpr, *ast.CallExpr, *ast.IndexExpr, *ast.ParenExpr:
 		return receiver
 	}
+
 	return "(" + receiver + ")"
 }
 
@@ -415,7 +450,9 @@ func evaluatesCode(receiver string) bool {
 	if err != nil {
 		return true
 	}
+
 	found := false
+
 	ast.Inspect(expr, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.CallExpr:
@@ -423,8 +460,10 @@ func evaluatesCode(receiver string) bool {
 		case *ast.UnaryExpr:
 			found = found || n.Op == token.ARROW
 		}
+
 		return !found
 	})
+
 	return found
 }
 
@@ -433,11 +472,13 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 
 	// Build param→arg substitution map
 	paramToArg := make(map[string]string)
+
 	for i, name := range impl.ParamNames {
 		if i < len(arguments) {
 			paramToArg[name] = arguments[i]
 		}
 	}
+
 	if impl.Receiver != "" {
 		paramToArg[impl.Receiver] = receiverOperand(receiver)
 	}
@@ -446,6 +487,7 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 	// Wrap in a dummy function so it's valid Go.
 	wrapped := "package p\nfunc _() {\n" + body + "\n}"
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
 	if err == nil {
 		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
@@ -459,8 +501,10 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 					if impl.Receiver != "" && countIdents(expr, impl.Receiver) > 1 && evaluatesCode(receiver) {
 						delete(paramToArg, impl.Receiver)
 						inner := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
+
 						return fmt.Sprintf("func(%s %s) %s { return %s }(%s)", impl.Receiver, impl.ReceiverType, impl.ResultType, inner, receiver)
 					}
+
 					return replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
 				}
 			}
@@ -470,6 +514,7 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 	if err != nil {
 		return body
 	}
+
 	return inlineStatements(impl, receiver, arguments, fset, wrapped, f.Decls[0].(*ast.FuncDecl).Body)
 }
 
@@ -479,31 +524,38 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 func inlineStatements(impl MethodImpl, receiver string, arguments []string, fset *token.FileSet, src string, block *ast.BlockStmt) string {
 	subst := make(map[string]string)
 	var binds []string
+
 	bind := func(name, expr string, force bool) {
 		if !force && !evaluatesCode(expr) {
 			subst[name] = receiverOperand(expr)
 			return
 		}
+
 		temp := name + "_"
 		for strings.Contains(src, temp) || strings.Contains(receiver, temp) || strings.Contains(strings.Join(arguments, "\x00"), temp) {
 			temp += "_"
 		}
+
 		binds = append(binds, temp+" := "+expr)
 		subst[name] = temp
 	}
 	if impl.Receiver != "" {
 		bind(impl.Receiver, receiver, !strings.HasPrefix(impl.ReceiverType, "*") && writesFieldsOf(block, impl.Receiver))
 	}
+
 	for i, name := range impl.ParamNames {
 		if i < len(arguments) {
 			bind(name, arguments[i], false)
 		}
 	}
+
 	text := replaceIdentsInExpr(block, subst, fset, src)
+
 	text = strings.TrimSpace(text[1 : len(text)-1])
 	if len(binds) == 0 {
 		return text
 	}
+
 	return "{\n" + strings.Join(binds, "\n") + "\n" + text + "\n}"
 }
 
@@ -526,6 +578,7 @@ func writesFieldsOf(block *ast.BlockStmt, name string) bool {
 		}
 	}
 	found := false
+
 	ast.Inspect(block, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.AssignStmt:
@@ -536,8 +589,10 @@ func writesFieldsOf(block *ast.BlockStmt, name string) bool {
 		case *ast.IncDecStmt:
 			found = found || rooted(n.X)
 		}
+
 		return !found
 	})
+
 	return found
 }
 
@@ -552,17 +607,20 @@ func inspectIdents(expr ast.Node, visit func(*ast.Ident)) {
 		case *ast.Ident:
 			visit(n)
 		}
+
 		return true
 	})
 }
 
 func countIdents(expr ast.Expr, name string) int {
 	count := 0
+
 	inspectIdents(expr, func(id *ast.Ident) {
 		if id.Name == name {
 			count++
 		}
 	})
+
 	return count
 }
 
@@ -575,11 +633,13 @@ func replaceIdentsInExpr(expr ast.Node, paramToArg map[string]string, fset *toke
 		text       string
 	}
 	var replacements []replacement
+
 	inspectIdents(expr, func(ident *ast.Ident) {
 		arg, exists := paramToArg[ident.Name]
 		if !exists || ident.Obj != nil {
 			return
 		}
+
 		start := fset.Position(ident.Pos()).Offset
 		end := fset.Position(ident.End()).Offset
 		replacements = append(replacements, replacement{start, end, arg})
@@ -592,7 +652,6 @@ func replaceIdentsInExpr(expr ast.Node, paramToArg map[string]string, fset *toke
 
 	// Apply replacements in reverse order (adjusted to be relative to exprText)
 	for _, r := range slices.Backward(replacements) {
-
 		relStart := r.start - exprStart
 		relEnd := r.end - exprStart
 		exprText = exprText[:relStart] + r.text + exprText[relEnd:]
@@ -604,6 +663,7 @@ func replaceIdentsInExpr(expr ast.Node, paramToArg map[string]string, fset *toke
 // replaceIdentToken does a token-aware replacement of identifier tokens in Go source text.
 func replaceIdentToken(src, oldIdent, newText string) string {
 	var result strings.Builder
+
 	remainder := src
 	for len(remainder) > 0 {
 		idx := strings.Index(remainder, oldIdent)
@@ -614,16 +674,19 @@ func replaceIdentToken(src, oldIdent, newText string) string {
 		// Check that the character before and after are not identifier characters
 		before := idx == 0 || !isIdentChar(remainder[idx-1]) && remainder[idx-1] != '.'
 		afterIdx := idx + len(oldIdent)
+
 		after := afterIdx >= len(remainder) || !isIdentChar(remainder[afterIdx])
 		if before && after {
 			result.WriteString(remainder[:idx])
 			result.WriteString(newText)
+
 			remainder = remainder[afterIdx:]
 		} else {
 			result.WriteString(remainder[:afterIdx])
 			remainder = remainder[afterIdx:]
 		}
 	}
+
 	return result.String()
 }
 
@@ -646,12 +709,14 @@ func (op *InlineVariableOperation) Validate(ws *types.Workspace) error {
 			Message: "variable name cannot be empty",
 		}
 	}
+
 	if op.SourceFile == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "source file cannot be empty",
 		}
 	}
+
 	if op.StartLine > op.EndLine {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -735,11 +800,13 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return "", fmt.Errorf("find variable value: %w", err)
 	}
 
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
 	if err != nil {
 		return "", &types.RefactorError{
@@ -750,6 +817,7 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 
 	// Find the variable declaration and its value
 	var value string
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		genDecl, ok := n.(*ast.GenDecl)
 		if ok && genDecl.Tok == token.VAR {
@@ -758,6 +826,7 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 				if !ok {
 					continue
 				}
+
 				for i, name := range valueSpec.Names {
 					if name.Name != op.VariableName || i >= len(valueSpec.Values) {
 						continue
@@ -765,6 +834,7 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 					// Extract the value expression
 					valueExpr := valueSpec.Values[i]
 					start := fset.Position(valueExpr.Pos()).Offset
+
 					end := fset.Position(valueExpr.End()).Offset
 					if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
 						value = string(sourceFile.OriginalContent[start:end])
@@ -782,11 +852,14 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 				if !ok || ident.Name != op.VariableName {
 					continue
 				}
+
 				if i >= len(assignStmt.Rhs) {
 					continue
 				}
+
 				valueExpr := assignStmt.Rhs[i]
 				start := fset.Position(valueExpr.Pos()).Offset
+
 				end := fset.Position(valueExpr.End()).Offset
 				if start < len(sourceFile.OriginalContent) && end <= len(sourceFile.OriginalContent) {
 					value = string(sourceFile.OriginalContent[start:end])
@@ -817,11 +890,13 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("find variable references: %w", err)
 	}
 
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
 	if err != nil {
 		return nil, &types.RefactorError{
@@ -832,20 +907,24 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 
 	// First pass: find the declaring ident's position so we can exclude it.
 	var declPos token.Pos
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		if declPos.IsValid() {
 			return false
 		}
+
 		switch node := n.(type) {
 		case *ast.GenDecl:
 			if node.Tok != token.VAR {
 				return true
 			}
+
 			for _, spec := range node.Specs {
 				vs, ok := spec.(*ast.ValueSpec)
 				if !ok {
 					continue
 				}
+
 				for _, name := range vs.Names {
 					if name.Name == op.VariableName {
 						declPos = name.Pos()
@@ -857,6 +936,7 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 			if node.Tok != token.DEFINE {
 				return true
 			}
+
 			for _, lhs := range node.Lhs {
 				ident, ok := lhs.(*ast.Ident)
 				if ok && ident.Name == op.VariableName {
@@ -865,17 +945,20 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 				}
 			}
 		}
+
 		return true
 	})
 
 	// Second pass: collect all references, skipping the declaration ident.
 	var references []VariableReference
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		ident, ok := n.(*ast.Ident)
 		if ok && ident.Name == op.VariableName {
 			if declPos.IsValid() && ident.Pos() == declPos {
 				return true // skip declaration
 			}
+
 			start := fset.Position(ident.Pos()).Offset
 			end := fset.Position(ident.End()).Offset
 			references = append(references, VariableReference{
@@ -883,6 +966,7 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 				End:   end,
 			})
 		}
+
 		return true
 	})
 
@@ -897,11 +981,13 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 			Message: fmt.Sprintf("source file not found: %s", op.SourceFile),
 		}
 	}
+
 	if err != nil {
 		return 0, 0, fmt.Errorf("find variable declaration: %w", err)
 	}
 
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, op.SourceFile, sourceFile.OriginalContent, parser.ParseComments)
 	if err != nil {
 		return 0, 0, &types.RefactorError{
@@ -918,16 +1004,19 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 		if found {
 			return false
 		}
+
 		switch node := n.(type) {
 		case *ast.GenDecl:
 			if node.Tok != token.VAR {
 				return true
 			}
+
 			for _, spec := range node.Specs {
 				valueSpec, ok := spec.(*ast.ValueSpec)
 				if !ok {
 					continue
 				}
+
 				for _, name := range valueSpec.Names {
 					if name.Name != op.VariableName {
 						continue
@@ -945,7 +1034,9 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 					if declEnd < len(content) && content[declEnd] == '\n' {
 						declEnd++
 					}
+
 					found = true
+
 					return false
 				}
 			}
@@ -953,20 +1044,26 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 			if node.Tok != token.DEFINE {
 				return true
 			}
+
 			for _, lhs := range node.Lhs {
 				ident, ok := lhs.(*ast.Ident)
 				if !ok || ident.Name != op.VariableName {
 					continue
 				}
+
 				declStart = fset.Position(node.Pos()).Offset
+
 				declEnd = fset.Position(node.End()).Offset
 				if declEnd < len(content) && content[declEnd] == '\n' {
 					declEnd++
 				}
+
 				found = true
+
 				return false
 			}
 		}
+
 		return true
 	})
 
@@ -1005,12 +1102,14 @@ func (op *InlineFunctionOperation) Validate(ws *types.Workspace) error {
 			Message: "function name cannot be empty",
 		}
 	}
+
 	if op.SourceFile == "" {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: "source file cannot be empty",
 		}
 	}
+
 	if len(op.TargetFiles) == 0 {
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
@@ -1033,16 +1132,19 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 
 	// A bare call can only name the function from inside its own package.
 	funcSymbol, sourcePackage, _ := op.functionSymbol(ws)
+
 	sites := referenceSites(ws, op.CachedIndex, funcSymbol)
 	for _, targetFile := range op.TargetFiles {
 		_, targetPackage, _ := ws.FindFile(targetFile)
 		if targetPackage != sourcePackage {
 			continue
 		}
+
 		calls, err := op.findFunctionCalls(ws, targetFile)
 		if err != nil {
 			continue // Skip files with errors
 		}
+
 		calls = sites.keep(targetFile, calls)
 
 		// Replace each call with inlined implementation
@@ -1071,6 +1173,7 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 	}
 
 	var affectedPackages []string
+
 	for _, file := range affectedFiles {
 		pkg := findPackageForFile(ws, file)
 		if pkg != nil {
@@ -1102,9 +1205,11 @@ func (op *InlineFunctionOperation) functionSymbol(ws *types.Workspace) (*types.S
 	if errors.Is(err, types.ErrFileNotFound) {
 		return nil, nil, nil
 	}
+
 	if err != nil || pkg.Symbols == nil {
 		return nil, pkg, err
 	}
+
 	return pkg.Symbols.Functions[op.FunctionName], pkg, nil
 }
 
@@ -1113,6 +1218,7 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 	if err != nil {
 		return MethodImpl{}, fmt.Errorf("find function implementation: %w", err)
 	}
+
 	if funcSymbol == nil {
 		return MethodImpl{}, &types.RefactorError{
 			Type:    types.SymbolNotFound,
@@ -1131,6 +1237,7 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 
 	content := string(file.OriginalContent)
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, funcSymbol.File, content, parser.ParseComments)
 	if err != nil {
 		return MethodImpl{}, &types.RefactorError{
@@ -1148,6 +1255,7 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 
 		// Extract parameter names
 		var paramNames []string
+
 		if funcDecl.Type.Params != nil {
 			for _, field := range funcDecl.Type.Params.List {
 				for _, name := range field.Names {
@@ -1160,11 +1268,14 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 		if funcDecl.Body == nil {
 			continue
 		}
+
 		start := fset.Position(funcDecl.Body.Lbrace).Offset + 1
+
 		end := fset.Position(funcDecl.Body.Rbrace).Offset
 		if start >= len(content) || end > len(content) {
 			continue
 		}
+
 		return MethodImpl{
 			Body:       content[start:end],
 			ParamNames: paramNames,
@@ -1185,11 +1296,13 @@ func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, target
 			Message: fmt.Sprintf("target file not found: %s", targetFile),
 		}
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("find function calls: %w", err)
 	}
 
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, targetFile, file.OriginalContent, parser.ParseComments)
 	if err != nil {
 		return nil, &types.RefactorError{
@@ -1199,6 +1312,7 @@ func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, target
 	}
 
 	var calls []MethodCall
+
 	ast.Inspect(astFile, func(n ast.Node) bool {
 		callExpr, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -1211,15 +1325,19 @@ func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, target
 		}
 
 		start := fset.Position(callExpr.Pos()).Offset
+
 		end := fset.Position(callExpr.End()).Offset
 		if start >= len(file.OriginalContent) || end > len(file.OriginalContent) {
 			return true
 		}
+
 		callText := string(file.OriginalContent[start:end])
 
 		var args []string
+
 		for _, arg := range callExpr.Args {
 			argStart := fset.Position(arg.Pos()).Offset
+
 			argEnd := fset.Position(arg.End()).Offset
 			if argStart < len(file.OriginalContent) && argEnd <= len(file.OriginalContent) {
 				args = append(args, string(file.OriginalContent[argStart:argEnd]))
@@ -1233,6 +1351,7 @@ func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, target
 			Arguments:  args,
 			NameOffset: fset.Position(ident.Pos()).Offset,
 		})
+
 		return true
 	})
 
@@ -1244,6 +1363,7 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 
 	// Build param→arg substitution map
 	paramToArg := make(map[string]string)
+
 	for i, name := range impl.ParamNames {
 		if i < len(arguments) {
 			paramToArg[name] = arguments[i]
@@ -1253,6 +1373,7 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 	// Try to parse the body as a single return expression.
 	wrapped := "package p\nfunc _() {\n" + body + "\n}"
 	fset := token.NewFileSet()
+
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
 	if err == nil {
 		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
@@ -1263,6 +1384,7 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 				if ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
 					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
+
 					return result
 				}
 			}
@@ -1274,5 +1396,6 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 	for param, arg := range paramToArg {
 		result = replaceIdentToken(result, param, arg)
 	}
+
 	return result
 }

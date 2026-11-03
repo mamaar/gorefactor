@@ -14,8 +14,10 @@ func planDump(plan *types.RefactoringPlan, err error) string {
 	if err != nil {
 		return "error: " + err.Error()
 	}
+
 	files := slices.Clone(plan.AffectedFiles)
 	slices.Sort(files)
+
 	return fmt.Sprintf("changes %+v\nfiles %v\ncoverage %+v\nskipped %+v",
 		sortedChanges(plan), files, plan.Coverage, plan.SkippedSites)
 }
@@ -80,12 +82,16 @@ func TestPlanAcrossConfigs_PlansLikeKeepingEveryViewLoaded(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+
 			plan, _, err := planAcrossViews(views, &threadContextPlanner{engine: eng, req: threadReq}, maxConfigRounds)
+
 			want := planDump(plan, err)
 			if got != want || again != want {
 				t.Errorf("thread plans differ:\n got %s\nagain %s\n want %s", got, again, want)
 			}
+
 			plan, _, err = planAcrossViews(views, &addContextParameterPlanner{engine: eng, req: addReq}, maxConfigRounds)
+
 			want = planDump(plan, err)
 			if gotAdd != want {
 				t.Errorf("add plans differ:\n got %s\nwant %s", gotAdd, want)

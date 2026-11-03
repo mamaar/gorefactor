@@ -20,15 +20,18 @@ func (op *ChangeSignatureOperation) signatureMembers(
 	if err != nil {
 		return nil, err
 	}
+
 	if err := stdMethodError("change", seed); err != nil {
 		return nil, err
 	}
+
 	survey := surveyInterfaces(ws)
 	if !isIface && !op.PropagateToInterface {
 		ext, ok := survey.externalInterfaceOf(seed)
 		if ok {
 			return nil, externalInterfaceError("change", seed, ext)
 		}
+
 		satisfied := survey.expansionOf(seed)
 		if len(satisfied) > 0 {
 			return nil, &pkgtypes.RefactorError{
@@ -38,6 +41,7 @@ func (op *ChangeSignatureOperation) signatureMembers(
 					funcLabel(seed), labelsOf(satisfied)),
 			}
 		}
+
 		return nil, nil
 	}
 
@@ -47,12 +51,14 @@ func (op *ChangeSignatureOperation) signatureMembers(
 	if err != nil {
 		return nil, err
 	}
+
 	for _, m := range members {
 		err := stdMethodError("change", m)
 		if err != nil {
 			return nil, err
 		}
 	}
+
 	return members, nil
 }
 
@@ -64,6 +70,7 @@ func propagatedMembers(survey *ifaceSurvey, seed *gotypes.Func, refuse func(*got
 	if err != nil {
 		return nil, fmt.Errorf("propagated members: %w", err)
 	}
+
 	return members[1:], nil // the closure starts with the seed
 }
 
@@ -76,6 +83,7 @@ func methodObject(ws *pkgtypes.Workspace, pkg *pkgtypes.Package, typeName, metho
 			Message: fmt.Sprintf("method %s.%s not found in package %s", typeName, methodName, pkg.ImportPath),
 		}
 	}
+
 	return resolveMethod(pkg, typeName, methodName, sym.Position)
 }
 
@@ -84,6 +92,7 @@ func labelsOf(funcs []*gotypes.Func) string {
 	for i, f := range funcs {
 		labels[i] = funcLabel(f)
 	}
+
 	return strings.Join(labels, ", ")
 }
 
@@ -95,13 +104,16 @@ func (op *ChangeSignatureOperation) applyMembers(
 	if len(members) == 0 {
 		return nil, nil
 	}
+
 	decls := buildFuncDeclIndex(ws)
 	var symbols []*pkgtypes.Symbol
+
 	for _, m := range members {
 		sym, err := memberSymbol(ws, m)
 		if err != nil {
 			return nil, err
 		}
+
 		d := decls[canonicalFunc(m)]
 		if d == nil {
 			return nil, &pkgtypes.RefactorError{
@@ -109,18 +121,25 @@ func (op *ChangeSignatureOperation) applyMembers(
 				Message: fmt.Sprintf("cannot change %s: its declaration is not in a file of the workspace; no changes were made", funcLabel(m)),
 			}
 		}
+
 		recv := receiverNamed(m).Obj().Name()
+
 		change, err := op.memberChange(ws, d, recv, m.Name())
 		if err != nil {
 			return nil, err
 		}
+
 		plan.Changes = append(plan.Changes, change)
+
 		op.recordAltered(d.Pkg, recv, m.Name(), d.File.Path)
+
 		if !contains(plan.AffectedFiles, d.File.Path) {
 			plan.AffectedFiles = append(plan.AffectedFiles, d.File.Path)
 		}
+
 		symbols = append(symbols, sym)
 	}
+
 	return symbols, nil
 }
 
@@ -129,8 +148,10 @@ func (op *ChangeSignatureOperation) memberChange(ws *pkgtypes.Workspace, d *func
 	if d.IfaceField != nil {
 		return op.generateInterfaceMethodSignatureChange(ws, d.File, recv, name)
 	}
+
 	if op.RemoveParam {
 		op.checkRemovedUnused(ws, d.Pkg, d.Decl)
 	}
+
 	return op.signatureChange(ws, d.File, d.Decl, fmt.Sprintf("Update implementation %s.%s", recv, name)), nil
 }

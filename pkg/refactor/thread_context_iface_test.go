@@ -19,13 +19,16 @@ func methodLabel(f *gotypes.Func) string {
 	if !ok || sig.Recv() == nil {
 		return f.Name()
 	}
+
 	t := sig.Recv().Type()
 	if p, ok := t.(*gotypes.Pointer); ok {
 		t = p.Elem()
 	}
+
 	if n, ok := t.(*gotypes.Named); ok {
 		return n.Obj().Name() + "." + f.Name()
 	}
+
 	return f.Name()
 }
 
@@ -34,7 +37,9 @@ func gainingLabels(plan *threadPlan) []string {
 	for f := range plan.Funcs {
 		out = append(out, methodLabel(f))
 	}
+
 	slices.Sort(out)
+
 	return out
 }
 
@@ -94,26 +99,33 @@ func TestThreadContext_InterfaceMethodDeclIsRepresentable(t *testing.T) {
 	}, "store/store.go", "MemStore.Save")
 
 	var ifaceMethod *funcDecl
+
 	for f, fd := range plan.Decls {
 		if methodLabel(f) == "Store.Save" {
 			ifaceMethod = fd
 		}
 	}
+
 	if ifaceMethod == nil {
 		t.Fatalf("Store.Save has no entry in plan.Decls")
 	}
+
 	if !ifaceMethod.IsInterfaceMethod() {
 		t.Fatalf("Store.Save must be recorded as an interface method")
 	}
+
 	if ifaceMethod.Decl != nil {
 		t.Errorf("an interface method has no *ast.FuncDecl; got %v", ifaceMethod.Decl)
 	}
+
 	if ifaceMethod.FuncType() == nil || ifaceMethod.FuncType().Params == nil {
 		t.Fatalf("render needs a FuncType with Params to insert into")
 	}
+
 	if !ifaceMethod.FuncType().Params.Opening.IsValid() {
 		t.Errorf("Params.Opening must be a valid insertion position")
 	}
+
 	if ifaceMethod.File == nil || !strings.HasSuffix(ifaceMethod.File.Path, "store.go") {
 		t.Errorf("render needs the owning file, got %v", ifaceMethod.File)
 	}
@@ -188,12 +200,15 @@ var _ http.Handler = &H{}
 	if !strings.Contains(err.Error(), "net/http.Handler") {
 		t.Fatalf("error must name the external interface by package path, got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "ServeHTTP") {
 		t.Fatalf("error must name the offending method, got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "the seed itself") {
 		t.Fatalf("a seed-level abort must say so rather than blaming a reached function, got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "No changes were made") {
 		t.Fatalf("error must state that nothing was mutated, got: %v", err)
 	}
@@ -218,16 +233,20 @@ var _ http.Handler = &H{}
 	before := string(ws.Packages[findPkgPath(t, ws, "srv")].Files[srvFileKey(t, ws)].OriginalContent)
 
 	op := &ThreadContextOperation{FunctionName: "H.ServeHTTP", SourceFile: "srv/srv.go"}
+
 	plan, err := op.Execute(ws)
 	if err == nil {
 		t.Fatalf("expected abort")
 	}
+
 	if plan != nil {
 		t.Errorf("an aborting Execute must return no plan, got %v", plan)
 	}
+
 	if op.plan != nil {
 		t.Errorf("an aborting Execute must leave no plan-of-record, got %v", op.plan)
 	}
+
 	after := string(ws.Packages[findPkgPath(t, ws, "srv")].Files[srvFileKey(t, ws)].OriginalContent)
 	if before != after {
 		t.Errorf("the abort mutated file content")
@@ -236,26 +255,33 @@ var _ http.Handler = &H{}
 
 func findPkgPath(t *testing.T, ws *pkgtypes.Workspace, name string) string {
 	t.Helper()
+
 	for path, pkg := range ws.Packages {
 		if pkg.Name == name {
 			return path
 		}
 	}
+
 	t.Fatalf("package %q not found", name)
+
 	return ""
 }
 
 func srvFileKey(t *testing.T, ws *pkgtypes.Workspace) string {
 	t.Helper()
+
 	for _, pkg := range ws.Packages {
 		if pkg.Name != "srv" {
 			continue
 		}
+
 		for key := range pkg.Files {
 			return key
 		}
 	}
+
 	t.Fatalf("srv file not found")
+
 	return ""
 }
 
@@ -284,9 +310,11 @@ func target() {}
 	if !strings.Contains(err.Error(), "io.Writer") {
 		t.Fatalf("error must name io.Writer, got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "Write") {
 		t.Fatalf("error must name the offending method, got: %v", err)
 	}
+
 	if strings.Contains(err.Error(), "the seed itself") {
 		t.Fatalf("a transitively-reached offender must not be reported as the seed, got: %v", err)
 	}
@@ -331,17 +359,21 @@ var _ sort.Interface = &Items{}
 	pkg := findPackageByName(t, ws, "s")
 	items := pkg.TypesPkg.Scope().Lookup("Items").Type()
 	var sortIface *gotypes.Interface
+
 	for _, imp := range pkg.TypesPkg.Imports() {
 		if imp.Path() == "sort" {
 			sortIface = imp.Scope().Lookup("Interface").Type().Underlying().(*gotypes.Interface)
 		}
 	}
+
 	if sortIface == nil {
 		t.Fatalf("could not resolve sort.Interface")
 	}
+
 	if gotypes.Implements(items, sortIface) {
 		t.Fatalf("precondition broken: Items must NOT satisfy sort.Interface by value")
 	}
+
 	if !gotypes.Implements(gotypes.NewPointer(items), sortIface) {
 		t.Fatalf("precondition broken: *Items must satisfy sort.Interface")
 	}
@@ -351,6 +383,7 @@ var _ sort.Interface = &Items{}
 		t.Fatalf("a value-receiver method satisfying an external interface only via the pointer "+
 			"method set must still abort, naming sort.Interface; got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "Len") {
 		t.Fatalf("error must name the offending method, got: %v", err)
 	}
@@ -382,6 +415,7 @@ func show(t Temp) { fmt.Println(t.String()) }
 	if !strings.Contains(err.Error(), "fmt.Stringer") {
 		t.Fatalf("an interface satisfied but never mentioned must still abort, got: %v", err)
 	}
+
 	if !strings.Contains(err.Error(), "String") {
 		t.Fatalf("error must name the offending method, got: %v", err)
 	}
@@ -409,6 +443,7 @@ func run(ctx context.Context, s Store) { s.Save(1) }
 	}, "store/store.go", "MemStore.Save")
 
 	assertNames(t, gainingLabels(plan), []string{"MemStore.Save", "Store.Save"}, "Funcs")
+
 	got := argIn(t, plan, "run")
 	if got != "ctx" {
 		t.Errorf("run already has a ctx and must pass it, got %q", got)
@@ -460,6 +495,7 @@ func use() {
 	if err == nil {
 		t.Fatal("want an error for an interface declared inside a function")
 	}
+
 	for _, want := range []string{
 		"saver.Save",
 		"store/store.go:9",
@@ -470,6 +506,7 @@ func use() {
 			t.Errorf("error must mention %q, got: %v", want, err)
 		}
 	}
+
 	if strings.Contains(err.Error(), "may have failed to type-check") {
 		t.Errorf("error must not guess at a failed type-check, got: %v", err)
 	}

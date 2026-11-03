@@ -41,6 +41,7 @@ func (op *MoveByDependenciesOperation) Validate(ws *types.Workspace) error {
 	if op.Request.Workspace == "" {
 		return fmt.Errorf("workspace path cannot be empty")
 	}
+
 	return nil
 }
 
@@ -50,6 +51,7 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 	if !op.Request.AnalyzeOnly {
 		return nil, fmt.Errorf("moving shared symbols is planned by the engine, not by Execute")
 	}
+
 	plan := &types.RefactoringPlan{
 		Operations:    []types.Operation{op},
 		Changes:       make([]types.Change, 0),
@@ -70,10 +72,12 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 		if from == "" {
 			from = c.pkg.Path
 		}
+
 		to := c.targetImportPath
 		if to == "" {
 			to = c.targetFSPath
 		}
+
 		suggestedMoves = append(suggestedMoves, types.SuggestedMove{
 			Symbol:              c.symbol.Name,
 			FromPackage:         from,
@@ -82,6 +86,7 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 			ReferencingPackages: c.referencingPackages,
 		})
 		affectedPackagesSet[from] = true
+
 		affectedSymbols = append(affectedSymbols, c.symbol)
 	}
 
@@ -89,6 +94,7 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 	for pkg := range affectedPackagesSet {
 		affectedPackages = append(affectedPackages, pkg)
 	}
+
 	sort.Strings(affectedPackages)
 
 	plan.Impact = &types.ImpactAnalysis{
@@ -97,6 +103,7 @@ func (op *MoveByDependenciesOperation) Execute(ws *types.Workspace) (*types.Refa
 		AffectedPackages: affectedPackages,
 		AffectedSymbols:  affectedSymbols,
 	}
+
 	return plan, nil
 }
 
@@ -117,16 +124,20 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 	targetImportPath := op.getTargetImportPath(ws)
 
 	var candidates []sharedSymbolCandidate
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		if targetFSPath != "" && filepath.Clean(pkg.Path) == filepath.Clean(targetFSPath) {
 			continue
 		}
+
 		if isKeepInternal(pkg, op.Request.KeepInternal) {
 			continue
 		}
+
 		for _, sym := range getAllExportedSymbols(pkg) {
 			refs, err := resolver.FindReferencesIndexed(sym, idx)
 			if err != nil || len(refs) == 0 {
@@ -135,25 +146,30 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 
 			// Collect distinct external referencing package identifiers
 			externalSet := make(map[string]bool)
+
 			for _, ref := range refs {
 				refPkg := fileToPackage[ref.File]
 				if refPkg == nil || refPkg == pkg {
 					continue
 				}
+
 				pkgID := refPkg.ImportPath
 				if pkgID == "" {
 					pkgID = refPkg.Path
 				}
+
 				externalSet[pkgID] = true
 			}
 
 			if len(externalSet) < 2 {
 				continue
 			}
+
 			refPkgs := make([]string, 0, len(externalSet))
 			for pkgID := range externalSet {
 				refPkgs = append(refPkgs, pkgID)
 			}
+
 			sort.Strings(refPkgs)
 			candidates = append(candidates, sharedSymbolCandidate{
 				symbol:              sym,
@@ -168,6 +184,7 @@ func (op *MoveByDependenciesOperation) identifySharedSymbols(ws *types.Workspace
 	slices.SortFunc(candidates, func(a, b sharedSymbolCandidate) int {
 		return cmp.Or(strings.Compare(a.pkg.Path, b.pkg.Path), strings.Compare(a.symbol.Name, b.symbol.Name))
 	})
+
 	return candidates
 }
 
@@ -175,6 +192,7 @@ func (op *MoveByDependenciesOperation) getTargetFSPath(ws *types.Workspace) stri
 	if op.Request.MoveSharedTo != "" {
 		return filepath.Join(ws.RootPath, op.Request.MoveSharedTo)
 	}
+
 	return ""
 }
 
@@ -182,20 +200,24 @@ func (op *MoveByDependenciesOperation) getTargetImportPath(ws *types.Workspace) 
 	if op.Request.MoveSharedTo != "" && ws.Module != nil {
 		return ws.Module.Path + "/" + op.Request.MoveSharedTo
 	}
+
 	return ""
 }
 
 // buildFilePackageIndex returns a map of absolute file path → Package for all files in the workspace.
 func buildFilePackageIndex(ws *types.Workspace) map[string]*types.Package {
 	index := make(map[string]*types.Package)
+
 	for _, pkg := range ws.Packages {
 		for _, f := range pkg.Files {
 			index[f.Path] = pkg
 		}
+
 		for _, f := range pkg.TestFiles {
 			index[f.Path] = pkg
 		}
 	}
+
 	return index
 }
 
@@ -205,26 +227,31 @@ func getAllExportedSymbols(pkg *types.Package) []*types.Symbol {
 		return nil
 	}
 	var result []*types.Symbol
+
 	for _, sym := range pkg.Symbols.Functions {
 		if sym.Exported {
 			result = append(result, sym)
 		}
 	}
+
 	for _, sym := range pkg.Symbols.Types {
 		if sym.Exported {
 			result = append(result, sym)
 		}
 	}
+
 	for _, sym := range pkg.Symbols.Variables {
 		if sym.Exported {
 			result = append(result, sym)
 		}
 	}
+
 	for _, sym := range pkg.Symbols.Constants {
 		if sym.Exported {
 			result = append(result, sym)
 		}
 	}
+
 	return result
 }
 
@@ -235,6 +262,7 @@ func isKeepInternal(pkg *types.Package, keepInternal []string) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -244,6 +272,7 @@ func computeIncomingDeps(ws *types.Workspace) map[string]int {
 	if ws.Dependencies == nil {
 		return result
 	}
+
 	for _, importPaths := range ws.Dependencies.PackageImports {
 		for _, importPath := range importPaths {
 			toFSPath, ok := ws.ImportToPath[importPath]
@@ -252,6 +281,7 @@ func computeIncomingDeps(ws *types.Workspace) map[string]int {
 			}
 		}
 	}
+
 	return result
 }
 
@@ -272,6 +302,7 @@ func (op *OrganizeByLayersOperation) Validate(ws *types.Workspace) error {
 	if op.Request.Workspace == "" {
 		return fmt.Errorf("workspace path cannot be empty")
 	}
+
 	return nil
 }
 
@@ -288,6 +319,7 @@ func (op *OrganizeByLayersOperation) Execute(ws *types.Workspace) (*types.Refact
 		for _, pkg := range ws.Packages {
 			for _, file := range pkg.Files {
 				changes := op.reorderImportsByLayers(ws, file)
+
 				plan.Changes = append(plan.Changes, changes...)
 				if len(changes) > 0 {
 					plan.AffectedFiles = append(plan.AffectedFiles, file.Path)
@@ -376,16 +408,19 @@ func (op *OrganizeByLayersOperation) reorderImportsByLayers(ws *types.Workspace,
 		if sorted[i].tier != sorted[j].tier {
 			return sorted[i].tier < sorted[j].tier
 		}
+
 		return sorted[i].importPath < sorted[j].importPath
 	})
 
 	alreadySorted := true
+
 	for i := range entries {
 		if entries[i].importPath != sorted[i].importPath {
 			alreadySorted = false
 			break
 		}
 	}
+
 	if alreadySorted {
 		return nil
 	}
@@ -399,6 +434,7 @@ func (op *OrganizeByLayersOperation) reorderImportsByLayers(ws *types.Workspace,
 	}
 
 	oldBlock := string(content[blockStart:blockEnd])
+
 	newBlockStr := newBlock.String()
 	if oldBlock == newBlockStr {
 		return nil
@@ -431,6 +467,7 @@ func (op *OrganizeByLayersOperation) classifyImportTier(ws *types.Workspace, imp
 		case "Application":
 			return 4
 		}
+
 		return 1 // project-local but unclassified → treat as external tier
 	}
 	// External (third-party)
@@ -446,9 +483,11 @@ func (op *OrganizeByLayersOperation) generateLayerReport(ws *types.Workspace) st
 	if op.Request.DomainLayer != "" {
 		fmt.Fprintf(&report, "**Domain Layer**: %s\n", op.Request.DomainLayer)
 	}
+
 	if op.Request.InfrastructureLayer != "" {
 		fmt.Fprintf(&report, "**Infrastructure Layer**: %s\n", op.Request.InfrastructureLayer)
 	}
+
 	if op.Request.ApplicationLayer != "" {
 		fmt.Fprintf(&report, "**Application Layer**: %s\n", op.Request.ApplicationLayer)
 	}
@@ -467,12 +506,15 @@ func (op *OrganizeByLayersOperation) classifyPackage(packagePath string) string 
 	if strings.HasPrefix(packagePath, op.Request.DomainLayer) {
 		return "Domain"
 	}
+
 	if strings.HasPrefix(packagePath, op.Request.InfrastructureLayer) {
 		return "Infrastructure"
 	}
+
 	if strings.HasPrefix(packagePath, op.Request.ApplicationLayer) {
 		return "Application"
 	}
+
 	return "Unclassified"
 }
 
@@ -481,10 +523,12 @@ func importPathOf(ws *types.Workspace, fsPath string) string {
 	if pkg != nil && pkg.ImportPath != "" {
 		return pkg.ImportPath
 	}
+
 	rel, err := filepath.Rel(ws.RootPath, fsPath)
 	if err == nil {
 		return filepath.ToSlash(rel)
 	}
+
 	return fsPath
 }
 
@@ -505,6 +549,7 @@ func (op *AnalyzeDependenciesOperation) Validate(ws *types.Workspace) error {
 	if op.Request.Workspace == "" {
 		return fmt.Errorf("workspace path cannot be empty")
 	}
+
 	return nil
 }
 
@@ -524,9 +569,11 @@ func (op *AnalyzeDependenciesOperation) Execute(ws *types.Workspace) (*types.Ref
 	if op.Request.DetectBackwardsDeps {
 		impact.BackwardsDependencies = detectBackwardsDependencies(ws)
 	}
+
 	if op.Request.SuggestMoves {
 		impact.SuggestedMoves = op.generateSuggestedMoves(ws)
 	}
+
 	plan.Impact = impact
 
 	return plan, nil
@@ -537,6 +584,7 @@ func ensureDependencyGraph(ws *types.Workspace) {
 	if ws.Dependencies != nil {
 		return
 	}
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	_ = analysis.NewDependencyAnalyzer(ws, logger).BuildDependencyGraph()
 }
@@ -545,14 +593,17 @@ func ensureDependencyGraph(ws *types.Workspace) {
 // by filesystem path.
 func packageCouplingOf(ws *types.Workspace, symbolCounts map[string]int) map[string]types.PackageCouplingInfo {
 	incoming := computeIncomingDeps(ws)
+
 	coupling := make(map[string]types.PackageCouplingInfo, len(ws.Packages))
 	for fsPath := range ws.Packages {
 		info := types.PackageCouplingInfo{IncomingDeps: incoming[fsPath], SymbolCount: symbolCounts[fsPath]}
 		if ws.Dependencies != nil {
 			info.OutgoingDeps = len(ws.Dependencies.PackageImports[fsPath])
 		}
+
 		coupling[fsPath] = info
 	}
+
 	return coupling
 }
 
@@ -562,6 +613,7 @@ func packageCouplingOf(ws *types.Workspace, symbolCounts map[string]int) map[str
 //	2 = outer (handler/http/infra/repository/…)
 func packageTier(importPath string) int {
 	lower := strings.ToLower(importPath)
+
 	outerKeywords := []string{"handler", "controller", "http", "api", "grpc",
 		"infra", "adapter", "repository", "persistence", "delivery", "transport"}
 	for _, kw := range outerKeywords {
@@ -569,18 +621,21 @@ func packageTier(importPath string) int {
 			return 2
 		}
 	}
+
 	middleKeywords := []string{"service", "usecase", "application", "/app/"}
 	for _, kw := range middleKeywords {
 		if strings.Contains(lower, kw) {
 			return 1
 		}
 	}
+
 	innerKeywords := []string{"domain", "core", "model", "entity"}
 	for _, kw := range innerKeywords {
 		if strings.Contains(lower, kw) {
 			return 0
 		}
 	}
+
 	return -1
 }
 
@@ -589,24 +644,29 @@ func detectBackwardsDependencies(ws *types.Workspace) []types.BackwardDependency
 	if ws.Dependencies == nil {
 		return deps
 	}
+
 	for fromFSPath, importPaths := range ws.Dependencies.PackageImports {
 		fromPkg, ok := ws.Packages[fromFSPath]
 		if !ok {
 			continue
 		}
+
 		fromTier := packageTier(fromPkg.ImportPath)
 		if fromTier < 0 {
 			continue
 		}
+
 		for _, importPath := range importPaths {
 			toTier := packageTier(importPath)
 			if toTier <= fromTier {
 				continue
 			}
+
 			from := fromPkg.ImportPath
 			if from == "" {
 				from = fromPkg.Path
 			}
+
 			deps = append(deps, types.BackwardDependency{
 				From:   from,
 				To:     importPath,
@@ -614,6 +674,7 @@ func detectBackwardsDependencies(ws *types.Workspace) []types.BackwardDependency
 			})
 		}
 	}
+
 	return deps
 }
 
@@ -624,34 +685,43 @@ func (op *AnalyzeDependenciesOperation) generateSuggestedMoves(ws *types.Workspa
 	idx := resolver.BuildReferenceIndex()
 
 	moves := []types.SuggestedMove{}
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		for _, sym := range getAllExportedSymbols(pkg) {
 			refs, err := resolver.FindReferencesIndexed(sym, idx)
 			if err != nil || len(refs) == 0 {
 				continue
 			}
+
 			externalSet := make(map[string]bool)
+
 			for _, ref := range refs {
 				refPkg := fileToPackage[ref.File]
 				if refPkg == nil || refPkg == pkg {
 					continue
 				}
+
 				pkgID := refPkg.ImportPath
 				if pkgID == "" {
 					pkgID = refPkg.Path
 				}
+
 				externalSet[pkgID] = true
 			}
+
 			if len(externalSet) < 2 {
 				continue
 			}
+
 			from := pkg.ImportPath
 			if from == "" {
 				from = pkg.Path
 			}
+
 			referrers := slices.Sorted(maps.Keys(externalSet))
 			moves = append(moves, types.SuggestedMove{
 				Symbol:              sym.Name,
@@ -662,11 +732,14 @@ func (op *AnalyzeDependenciesOperation) generateSuggestedMoves(ws *types.Workspa
 			})
 		}
 	}
+
 	sort.Slice(moves, func(i, j int) bool {
 		if moves[i].FromPackage != moves[j].FromPackage {
 			return moves[i].FromPackage < moves[j].FromPackage
 		}
+
 		return moves[i].Symbol < moves[j].Symbol
 	})
+
 	return moves
 }

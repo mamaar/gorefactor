@@ -29,6 +29,7 @@ func ImportGraph(ws *types.Workspace) Imports {
 		g.Production[path] = localImports(ws, path, pkg.Files)
 		g.Test[path] = localImports(ws, path, pkg.TestFiles)
 	}
+
 	return g
 }
 
@@ -38,6 +39,7 @@ func (g Imports) Union() map[string][]string {
 	union := make(map[string][]string, len(g.Production))
 	for path, prod := range g.Production {
 		seen := make(map[string]bool)
+
 		for _, tos := range [][]string{prod, g.Test[path]} {
 			for _, to := range tos {
 				if !seen[to] {
@@ -46,18 +48,22 @@ func (g Imports) Union() map[string][]string {
 				}
 			}
 		}
+
 		sort.Strings(union[path])
 	}
+
 	return union
 }
 
 func localImports(ws *types.Workspace, path string, files map[string]*types.File) []string {
 	var out []string
 	seen := make(map[string]bool)
+
 	for _, file := range files {
 		if file.AST == nil || isExternalTestFile(file.AST) {
 			continue
 		}
+
 		for _, imp := range file.AST.Imports {
 			to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
 			if ok && to != path && !seen[to] {
@@ -66,7 +72,9 @@ func localImports(ws *types.Workspace, path string, files map[string]*types.File
 			}
 		}
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -89,19 +97,24 @@ func Importers(ws *types.Workspace, paths []string) []string {
 			}
 		}
 	}
+
 	seen := make(map[string]bool)
 	var out []string
+
 	for work := slices.Clone(paths); len(work) > 0; work = work[1:] {
 		for _, from := range importedBy[work[0]] {
 			if seen[from] {
 				continue
 			}
+
 			seen[from] = true
 			out = append(out, from)
 			work = append(work, from)
 		}
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -110,11 +123,13 @@ func fileImports(ws *types.Workspace, file *types.File) []string {
 		return nil
 	}
 	var out []string
+
 	for _, imp := range file.AST.Imports {
 		to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
 		if ok {
 			out = append(out, to)
 		}
 	}
+
 	return out
 }

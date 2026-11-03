@@ -9,24 +9,30 @@ import (
 
 func newSourceFile(t *testing.T, name, src string) *SourceFile {
 	t.Helper()
+
 	f := &SourceFile{Path: "/w/" + name, Dir: "/w", Name: name, Content: []byte(src)}
+
 	f.AST, f.Err = parser.ParseFile(token.NewFileSet(), f.Path, f.Content, parser.ParseComments)
 	if f.Err != nil {
 		t.Fatal(f.Err)
 	}
+
 	return f
 }
 
 func TestBuildConfig_KeyIgnoresTagOrderAndDuplicates(t *testing.T) {
 	a := BuildConfig{GOOS: "linux", GOARCH: "amd64", Cgo: true, Tags: []string{"b", "a", "b"}}
+
 	b := NewBuildConfig("linux", "amd64", true, "a", "b")
 	if a.Key() != b.Key() {
 		t.Errorf("keys differ: %q vs %q", a.Key(), b.Key())
 	}
+
 	got, want := b.Key(), "linux/amd64/cgo/a,b"
 	if got != want {
 		t.Errorf("Key() = %q, want %q", got, want)
 	}
+
 	got, want = NewBuildConfig("linux", "amd64", false).Key(), "linux/amd64/nocgo/"
 	if got != want {
 		t.Errorf("Key() = %q, want %q", got, want)
@@ -35,16 +41,21 @@ func TestBuildConfig_KeyIgnoresTagOrderAndDuplicates(t *testing.T) {
 
 func TestBuildConfig_StringIsDeltaFromDefault(t *testing.T) {
 	def := DefaultBuildConfig()
+
 	got := def.String()
 	if got != "default" {
 		t.Errorf("default String() = %q", got)
 	}
+
 	cfg := NewBuildConfig("plan9", def.GOARCH, !def.Cgo, "fts5", "gcp_integration")
+
 	got, want := cfg.String(), "GOOS=plan9 cgo="+onOff(!def.Cgo)+" tags=fts5,gcp_integration"
 	if got != want {
 		t.Errorf("String() = %q, want %q", got, want)
 	}
+
 	cfg = NewBuildConfig(def.GOOS, "s390x", def.Cgo)
+
 	got, want = cfg.String(), "GOARCH=s390x"
 	if got != want {
 		t.Errorf("String() = %q, want %q", got, want)
@@ -60,6 +71,7 @@ func TestDefaultBuildConfig_MirrorsGoBuildDefault(t *testing.T) {
 
 func TestBuildConfig_MatchesFile(t *testing.T) {
 	linux := NewBuildConfig("linux", "amd64", false)
+
 	tests := []struct {
 		name string
 		cfg  BuildConfig

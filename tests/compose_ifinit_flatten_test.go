@@ -34,28 +34,34 @@ func TestComposeIfInitThenFlatten(t *testing.T) {
 		t.Helper()
 
 		dir := copyFixture(t, "compose_ifinit_then_flatten")
+
 		sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 		defer sess.Close()
 
 		call := func(tool string, args map[string]any) map[string]any {
 			t.Helper()
+
 			res, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{Name: tool, Arguments: args})
 			if err != nil {
 				t.Fatalf("CallTool(%s): %v", tool, err)
 			}
+
 			if res.IsError {
 				t.Fatalf("CallTool(%s) returned error: %s", tool, errText(res))
 			}
+
 			var decoded map[string]any
 			if err := json.Unmarshal([]byte(errText(res)), &decoded); err != nil {
 				t.Fatalf("decoding %s result: %v", tool, err)
 			}
+
 			return decoded
 		}
 
 		if hoistFirst {
 			call("fix_if_init_assignments", map[string]any{})
 		}
+
 		result := call("fix_deep_if_else_chains", map[string]any{})
 
 		// The MCP server runs with SkipCompilation, and the serializer writes
@@ -91,6 +97,7 @@ func TestComposeIfInitThenFlatten(t *testing.T) {
 		if got > 2 {
 			t.Errorf("expected every statement at one level of indentation, got %d:\n%s", got-1, body)
 		}
+
 		if strings.Contains(body, "else") {
 			t.Errorf("no else should survive the flattening:\n%s", body)
 		}
@@ -105,6 +112,7 @@ func TestComposeIfInitThenFlatten(t *testing.T) {
 		if !strings.Contains(body, "if typeKey, ok := attributes[c.TypeField]; ok {") {
 			t.Errorf("the if-init header should have been kept intact:\n%s", body)
 		}
+
 		if strings.Contains(body, "else") {
 			t.Errorf("the elses should still have been dropped:\n%s", body)
 		}
@@ -127,6 +135,7 @@ func mustBuild(t *testing.T, dir string) {
 
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("the rewritten fixture does not build:\n%s", out)
@@ -137,6 +146,7 @@ func mustBuild(t *testing.T, dir string) {
 // lists it used to report them.
 func reasonsIn(result map[string]any) string {
 	var reasons []string
+
 	for _, key := range []string{"partial", "unfixable"} {
 		items, _ := result[key].([]any)
 		for _, item := range items {
@@ -144,12 +154,14 @@ func reasonsIn(result map[string]any) string {
 			if !ok {
 				continue
 			}
+
 			reason, _ := m["reason"].(string)
 			if reason != "" {
 				reasons = append(reasons, reason)
 			}
 		}
 	}
+
 	return strings.Join(reasons, " | ")
 }
 
@@ -157,14 +169,17 @@ func reasonsIn(result map[string]any) string {
 // test measures nesting without re-parsing.
 func maxIndent(src string) int {
 	deepest := 0
+
 	for line := range strings.SplitSeq(src, "\n") {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+
 		tabs := len(line) - len(strings.TrimLeft(line, "\t"))
 		if tabs > deepest {
 			deepest = tabs
 		}
 	}
+
 	return deepest
 }

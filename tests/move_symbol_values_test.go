@@ -17,6 +17,7 @@ func moveSymbolsCall(t *testing.T, sess *mcptest.Session, from, to string, symbo
 
 func assertFileOmits(t *testing.T, dir, rel, unwanted string) {
 	t.Helper()
+
 	got := fileTextOrEmpty(t, dir, rel)
 	if strings.Contains(got, unwanted) {
 		t.Errorf("%s contains %q:\n%s", rel, unwanted, got)
@@ -25,9 +26,11 @@ func assertFileOmits(t *testing.T, dir, rel, unwanted string) {
 
 func assertRefused(t *testing.T, res *mcpsdk.CallToolResult, wants ...string) {
 	t.Helper()
+
 	if !res.IsError {
 		t.Fatalf("move succeeded, want a refusal mentioning %q", wants)
 	}
+
 	for _, want := range wants {
 		if !strings.Contains(errText(res), want) {
 			t.Errorf("refusal = %s, want it to mention %q", errText(res), want)
@@ -41,6 +44,7 @@ func TestMoveSymbol_MovesAConstantAndAVariableWithTheirDocAndRewritesReferrers(t
 		"src/src.go": src,
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc A() int { src.Counter++; return src.Limit + src.Counter }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -64,6 +68,7 @@ func TestMoveSymbol_LiftsOneConstantOutOfASelfContainedGroup(t *testing.T) {
 		"src/src.go": "package src\n\nconst (\n\t// A is one.\n\tA = 1\n\tB = 2\n)\n",
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc F() int { return src.A + src.B }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -84,6 +89,7 @@ func TestMoveSymbol_RemovesASelfContainedGroupWhenAllItsConstantsMove(t *testing
 		"src/src.go": "package src\n\nfunc Keep() int { return 1 }\n\nconst (\n\tA = 1\n\tB = 2\n)\n",
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc F() int { return src.A + src.B }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -103,6 +109,7 @@ const iotaSrc = "package src\n\ntype Kind int\n\n// Kinds of thing.\nconst (\n\t
 
 func TestMoveSymbol_RefusesPartOfAnIotaGroupNamingTheRest(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": iotaSrc})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -117,6 +124,7 @@ func TestMoveSymbol_MovesAWholeIotaGroupVerbatimAndTheTargetImportsTheTypeLeftBe
 		"src/src.go": iotaSrc,
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc F() src.Kind { return src.B }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -135,6 +143,7 @@ func TestMoveSymbol_MovesAWholeIotaGroupVerbatimAndTheTargetImportsTheTypeLeftBe
 func TestMoveSymbol_RefusesAnIotaGroupAsAnImportCycleWhenTheTypeLeftBehindUsesIt(t *testing.T) {
 	const src = iotaSrc + "\nfunc (k Kind) IsA() bool { return k == A }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -150,6 +159,7 @@ func TestMoveSymbol_MovesATypeWithItsMethodAndTheConstantsTheMethodUses(t *testi
 		"src/src.go": src,
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc F() bool { return src.Kind(1).IsA() || src.B == src.C }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -167,6 +177,7 @@ func TestMoveSymbol_MovesATypeWithItsMethodAndTheConstantsTheMethodUses(t *testi
 func TestMoveSymbol_RefusesATypeAloneAsAnImportCycleWhenItsMethodUsesConstantsLeftBehind(t *testing.T) {
 	const src = iotaSrc + "\nfunc (k Kind) IsA() bool { return k == A }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -179,6 +190,7 @@ func TestMoveSymbol_RefusesATypeAloneAsAnImportCycleWhenItsMethodUsesConstantsLe
 func TestMoveSymbol_MovesVariablesDeclaredTogetherOnlyTogether(t *testing.T) {
 	const src = "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n\nvar a, b = Pair()\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -189,6 +201,7 @@ func TestMoveSymbol_MovesVariablesDeclaredTogetherOnlyTogether(t *testing.T) {
 	if res := moveSymbolsCall(t, sess, "src", "dst", "a", "b"); res.IsError {
 		t.Fatalf("move a, b: %s", errText(res))
 	}
+
 	assertFileContains(t, dir, "dst/dst.go", "var a, b = src.Pair()")
 	assertFileUnchanged(t, dir, "src/src.go", "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n")
 	goVets(t, dir, "")
@@ -197,6 +210,7 @@ func TestMoveSymbol_MovesVariablesDeclaredTogetherOnlyTogether(t *testing.T) {
 func TestMoveSymbol_RefusesAVariableWhoseInitializerCallsAnUnexportedFunctionLeftBehind(t *testing.T) {
 	const src = "package src\n\nfunc build() int { return 1 }\n\nvar X = build()\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -209,6 +223,7 @@ func TestMoveSymbol_RefusesAVariableWhoseInitializerCallsAnUnexportedFunctionLef
 func TestMoveSymbol_CarriesBlankNamesAlongAndRefusesToMoveThem(t *testing.T) {
 	const src = "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n\nvar _, b = Pair()\n\nvar (\n\tx int\n\t_ = Pair\n)\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -237,6 +252,7 @@ func TestMoveSymbol_RewritesAConstantUsedInInPackageAndExternalTestFiles(t *test
 		"src/src_test.go": "package src\n\nimport \"testing\"\n\nfunc TestIn(t *testing.T) {\n\tif Limit != 3 {\n\t\tt.Fatal()\n\t}\n}\n",
 		"src/ext_test.go": "package src_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/src\"\n)\n\nfunc TestOut(t *testing.T) {\n\tif src.Limit != 3 {\n\t\tt.Fatal()\n\t}\n}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -253,6 +269,7 @@ func TestMoveSymbol_RewritesAConstantUsedInInPackageAndExternalTestFiles(t *test
 func TestMoveSymbol_RefusesAConstantDeclaredInAGeneratedFile(t *testing.T) {
 	const src = "// Code generated by gen. DO NOT EDIT.\n\npackage src\n\nconst Limit = 3\n"
 	dir := writeInlineWorkspace(t, map[string]string{"src/gen.go": src})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -264,6 +281,7 @@ func TestMoveSymbol_RefusesAConstantDeclaredInAGeneratedFile(t *testing.T) {
 
 func TestMoveSymbol_RequiresExactlyOneOfSymbolAndSymbols(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"src/src.go": "package src\n\nconst Limit = 3\n"})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -282,6 +300,7 @@ func TestMoveByDependencies_MovesASharedConstantAndSkipsOneFromAnIotaGroup(t *te
 		"a/a.go":     "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc F() (int, int) { return src.Limit, int(src.A) }\n",
 		"b/b.go":     "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc G() (int, int) { return src.Limit, int(src.A) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -291,6 +310,7 @@ func TestMoveByDependencies_MovesASharedConstantAndSkipsOneFromAnIotaGroup(t *te
 	if !strings.Contains(sites, "A not moved: ") || !strings.Contains(sites, "cannot move A: it is declared in an iota group with B; move them together") {
 		t.Errorf("skipped_sites = %s, want A skipped as part of an iota group", sites)
 	}
+
 	assertFileContains(t, dir, "shared/shared.go", "const Limit = 3")
 	assertFileContains(t, dir, "a/a.go", "shared.Limit, int(src.A)")
 	assertFileContains(t, dir, "src/src.go", "A Kind = iota")
@@ -299,6 +319,7 @@ func TestMoveByDependencies_MovesASharedConstantAndSkipsOneFromAnIotaGroup(t *te
 
 func skippedReasons(out map[string]any) []string {
 	var reasons []string
+
 	sites, _ := out["skipped_sites"].([]any)
 	for _, s := range sites {
 		m, ok := s.(map[string]any)
@@ -309,5 +330,6 @@ func skippedReasons(out map[string]any) []string {
 			}
 		}
 	}
+
 	return reasons
 }

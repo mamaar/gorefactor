@@ -36,6 +36,7 @@ func setupWorkspace(t *testing.T) (*WorkspaceUpdater, string) {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	u := NewUpdater(set, logger)
+
 	return u, dir
 }
 
@@ -49,6 +50,7 @@ func TestUpdater_ModifyReParsesFile(t *testing.T) {
 	if pkg == nil {
 		t.Fatal("expected package at pkg/a")
 	}
+
 	if pkg.Symbols == nil || len(pkg.Symbols.Functions) != 1 {
 		t.Fatalf("expected 1 function, got %d", safeFuncCount(pkg))
 	}
@@ -67,24 +69,28 @@ func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
 	u, dir := setupWorkspace(t)
 	pkgDir := filepath.Join(dir, "pkg", "a")
 	filePath := filepath.Join(pkgDir, "a.go")
+
 	pkg := u.FindPackage(pkgDir)
 	if pkg == nil {
 		t.Fatal("expected package at pkg/a")
 	}
 
 	u.set.Primary().Parser.EnsureTypeChecked(u.set.Primary().Workspace, pkg)
+
 	if !pkg.TypesChecked || pkg.TypesInfo == nil {
 		t.Fatal("expected initial type information")
 	}
 
 	_ = os.WriteFile(filePath, []byte("package a\n\nfunc Hello() {}\nfunc World() int { return 1 }\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: filePath, Op: fsnotify.Write}})
+
 	if pkg.TypesChecked || pkg.TypesInfo != nil || pkg.TypesPkg != nil {
 		t.Fatal("reparsed package retained stale type information")
 	}
 
 	u.set.Primary().Parser.EnsureTypeChecked(u.set.Primary().Workspace, pkg)
 	var world *ast.FuncDecl
+
 	for _, file := range pkg.Files {
 		for _, decl := range file.AST.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -93,6 +99,7 @@ func TestUpdater_ModifyInvalidatesAndRefreshesTypeInformation(t *testing.T) {
 			}
 		}
 	}
+
 	if world == nil || pkg.TypesInfo.Defs[world.Name] == nil {
 		t.Fatal("fresh type information does not describe the reparsed World declaration")
 	}
@@ -106,6 +113,7 @@ func TestUpdater_CreateAddsToPackage(t *testing.T) {
 	if pkg == nil {
 		t.Fatal("expected package at pkg/a")
 	}
+
 	initialFiles := len(pkg.Files)
 
 	// Create a new file in the existing package
@@ -117,6 +125,7 @@ func TestUpdater_CreateAddsToPackage(t *testing.T) {
 	if len(pkg.Files) != initialFiles+1 {
 		t.Fatalf("expected %d files, got %d", initialFiles+1, len(pkg.Files))
 	}
+
 	_, ok := pkg.Files["b.go"]
 	if !ok {
 		t.Fatal("b.go not found in package files")
@@ -136,6 +145,7 @@ func TestUpdater_DeleteRemovesFromPackage(t *testing.T) {
 	if pkg == nil {
 		t.Fatal("expected package")
 	}
+
 	if len(pkg.Files) != 2 {
 		t.Fatalf("expected 2 files, got %d", len(pkg.Files))
 	}
@@ -149,6 +159,7 @@ func TestUpdater_DeleteRemovesFromPackage(t *testing.T) {
 	if len(pkg.Files) != 1 {
 		t.Fatalf("expected 1 file after delete, got %d", len(pkg.Files))
 	}
+
 	_, ok := pkg.Files["a.go"]
 	if ok {
 		t.Fatal("a.go should have been removed")
@@ -228,6 +239,7 @@ func TestUpdater_NewDirectoryCreatesPackage(t *testing.T) {
 	if pkg == nil {
 		t.Fatal("new package not found")
 	}
+
 	if pkg.Name != "b" {
 		t.Fatalf("expected package name 'b', got %q", pkg.Name)
 	}
@@ -248,9 +260,11 @@ func TestUpdater_CreateOfNonMatchingFileLeavesPackageUnchanged(t *testing.T) {
 	if ok || len(pkg.Files) != 1 {
 		t.Fatalf("package files = %v, want only a.go", pkg.Files)
 	}
+
 	if pkg.Symbols.FindSymbol("Hidden") != nil {
 		t.Fatal("symbol of an excluded file entered the package")
 	}
+
 	if u.set.Sources().File(newPath) == nil {
 		t.Fatal("excluded file must still be recorded in the source tree")
 	}
@@ -280,6 +294,7 @@ func TestUpdater_ModifyAddingConstraintRemovesFileFromPackage(t *testing.T) {
 	extra := filepath.Join(pkgDir, "b.go")
 	_ = os.WriteFile(extra, []byte("package a\n\nfunc Extra() {}\n"), 0644)
 	u.HandleChanges([]ChangeEvent{{Path: extra, Op: fsnotify.Create}})
+
 	if pkg.Symbols.FindSymbol("Extra") == nil {
 		t.Fatal("precondition: Extra should be in the package")
 	}
@@ -291,6 +306,7 @@ func TestUpdater_ModifyAddingConstraintRemovesFileFromPackage(t *testing.T) {
 	if ok {
 		t.Fatal("b.go should have left the package")
 	}
+
 	if pkg.Symbols.FindSymbol("Extra") != nil {
 		t.Fatal("symbol of the excluded file is still in the package")
 	}
@@ -329,6 +345,7 @@ func TestUpdater_ModifyToUnparsableFileRemovesItFromPackage(t *testing.T) {
 	if ok {
 		t.Fatal("unparsable file should not be in the package")
 	}
+
 	src := u.set.Sources().File(extra)
 	if src == nil || src.Err == nil {
 		t.Fatal("parse error should be recorded in the source tree")
@@ -339,6 +356,7 @@ func safeFuncCount(pkg *types.Package) int {
 	if pkg.Symbols == nil {
 		return 0
 	}
+
 	return len(pkg.Symbols.Functions)
 }
 
@@ -361,14 +379,17 @@ func TestUpdater_RemovingPackageDropsItFromDependencyGraph(t *testing.T) {
 	u.HandleChanges([]ChangeEvent{{Path: aFile, Op: fsnotify.Remove}})
 
 	g = u.set.Primary().Workspace.Dependencies
+
 	_, ok := g.PackageImports[aDir]
 	if ok {
 		t.Errorf("PackageImports still has %s", aDir)
 	}
+
 	_, ok = g.PackageDeps[aDir]
 	if ok {
 		t.Errorf("PackageDeps still has key %s", aDir)
 	}
+
 	if slices.Contains(g.PackageDeps[bDir], aDir) {
 		t.Errorf("PackageDeps[b] = %v, still lists removed %s", g.PackageDeps[bDir], aDir)
 	}

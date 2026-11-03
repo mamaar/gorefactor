@@ -52,6 +52,7 @@ func ParsePattern(s string) (Pattern, bool) {
 			return p, true
 		}
 	}
+
 	return "", false
 }
 
@@ -80,6 +81,7 @@ func defaultConfig() config {
 	for _, p := range AllPatterns {
 		patterns[p] = true
 	}
+
 	return config{minBodyLines: 3, patterns: patterns}
 }
 
@@ -101,10 +103,12 @@ func WithPatterns(patterns ...Pattern) Option {
 		if len(patterns) == 0 {
 			return
 		}
+
 		selected := make(map[Pattern]bool, len(patterns))
 		for _, p := range patterns {
 			selected[p] = true
 		}
+
 		c.patterns = selected
 	}
 }
@@ -123,6 +127,7 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	for _, opt := range opts {
 		opt(&cfg)
 	}
+
 	return &analysis.Analyzer{
 		Name:     "earlyreturn",
 		Doc:      "detects conditionals that should be inverted into early-return guard clauses",
@@ -183,8 +188,10 @@ func (w *walker) walkFile(file *ast.File) {
 			if !ok || lit.Body == nil {
 				return true
 			}
+
 			name := fn.Name.Name + ".func"
 			w.walkStmts(lit.Body.List, blockFuncBody, name, lit.Type, stmtfacts.SignatureNames(nil, lit.Type))
+
 			return true
 		})
 	}
@@ -222,6 +229,7 @@ func (w *walker) descend(stmt ast.Stmt, fnName string, fnType *ast.FuncType) {
 	switch s := stmt.(type) {
 	case *ast.IfStmt:
 		w.walkStmts(s.Body.List, blockOther, fnName, fnType, nil)
+
 		switch e := s.Else.(type) {
 		case *ast.BlockStmt:
 			w.walkStmts(e.List, blockOther, fnName, fnType, nil)
@@ -258,6 +266,7 @@ func (w *walker) walkClauses(body *ast.BlockStmt, fnName string, fnType *ast.Fun
 	if body == nil {
 		return
 	}
+
 	for _, clause := range body.List {
 		switch c := clause.(type) {
 		case *ast.CaseClause:
@@ -282,6 +291,7 @@ func assignedNames(stmt ast.Stmt) map[string]bool {
 	for _, lhs := range assign.Lhs {
 		stmtfacts.AddName(names, lhs)
 	}
+
 	return names
 }
 
@@ -316,12 +326,15 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 	}
 
 	exit := "continue"
+
 	if pattern == PatternGuardClause {
 		var ok bool
+
 		exit, ok = bareReturn(fnType)
 		if !ok {
 			w.record(ifStmt, pattern, fnName, bodyLines, false,
 				"function has unnamed results, so the guard would have to invent return values")
+
 			return false
 		}
 	}
@@ -330,10 +343,12 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 	if clash != "" {
 		w.record(ifStmt, pattern, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the body would redeclare %q in the enclosing scope", clash))
+
 		return false
 	}
 
 	inverted := srctext.InvertCondition(w.pass.Fset, w.content, w.pass.TypesInfo, ifStmt.Cond)
+
 	bodyText := srctext.BlockText(w.pass.Fset, w.content, ifStmt.Body)
 	if inverted == "" || bodyText == "" {
 		w.record(ifStmt, pattern, fnName, bodyLines, false, "source text for the condition or body is unavailable")
@@ -343,8 +358,10 @@ func (w *walker) tryGuard(ifStmt *ast.IfStmt, pattern Pattern, fnName string, fn
 	indent := srctext.Indentation(w.content, w.pass.Fset.Position(ifStmt.Pos()).Offset)
 	newText := "if " + inverted + " {\n\t" + exit + "\n}\n" + srctext.Normalize(bodyText)
 	newText = srctext.ApplyIndent(newText, indent)
+
 	w.record(ifStmt, pattern, fnName, bodyLines, true, "")
 	w.report(ifStmt, pattern, newText)
+
 	return true
 }
 
@@ -375,11 +392,13 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 	if clash != "" {
 		w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, false,
 			fmt.Sprintf("dedenting the else branch would redeclare %q in the enclosing scope", clash))
+
 		return false
 	}
 
 	condText := srctext.ExprText(w.pass.Fset, w.content, ifStmt.Cond)
 	ifBodyText := srctext.BlockText(w.pass.Fset, w.content, ifStmt.Body)
+
 	elseBodyText := srctext.BlockText(w.pass.Fset, w.content, elseBlock)
 	if condText == "" || ifBodyText == "" || elseBodyText == "" {
 		w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, false, "source text for the branches is unavailable")
@@ -391,8 +410,10 @@ func (w *walker) tryElseAfterReturn(ifStmt *ast.IfStmt, fnName string, scopeName
 		srctext.IndentLines(srctext.Normalize(ifBodyText), "\t") + "\n}\n" +
 		srctext.Normalize(elseBodyText)
 	newText = srctext.ApplyIndent(newText, indent)
+
 	w.record(ifStmt, PatternElseAfterReturn, fnName, bodyLines, true, "")
 	w.report(ifStmt, PatternElseAfterReturn, newText)
+
 	return true
 }
 
@@ -455,10 +476,12 @@ func suggestion(pattern Pattern) string {
 func (w *walker) blockLines(block *ast.BlockStmt) int {
 	start := w.pass.Fset.Position(block.Lbrace).Line
 	end := w.pass.Fset.Position(block.Rbrace).Line
+
 	lines := end - start - 1
 	if lines > 0 {
 		return lines
 	}
+
 	return 0
 }
 
@@ -473,10 +496,12 @@ func bareReturn(fnType *ast.FuncType) (string, bool) {
 	if fnType == nil || fnType.Results == nil || len(fnType.Results.List) == 0 {
 		return "return", true
 	}
+
 	for _, field := range fnType.Results.List {
 		if len(field.Names) == 0 {
 			return "", false
 		}
 	}
+
 	return "return", true
 }

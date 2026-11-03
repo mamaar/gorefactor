@@ -42,9 +42,11 @@ func run(pass *analysis.Pass) []*Result {
 		if ast.IsGenerated(file) {
 			continue
 		}
+
 		content := fd.Content[pass.Fset.Position(file.Pos()).Filename]
 		for _, decl := range file.Decls {
 			name := ""
+
 			fn, ok := decl.(*ast.FuncDecl)
 			if ok {
 				name = funcName(fn)
@@ -52,11 +54,13 @@ func run(pass *analysis.Pass) []*Result {
 					results = append(results, checkFunc(pass, fn.Type, fn.Body, name, false, content)...)
 				}
 			}
+
 			ast.Inspect(decl, func(n ast.Node) bool {
 				lit, ok := n.(*ast.FuncLit)
 				if ok {
 					results = append(results, checkFunc(pass, lit.Type, lit.Body, name, true, content)...)
 				}
+
 				return true
 			})
 		}
@@ -66,8 +70,10 @@ func run(pass *analysis.Pass) []*Result {
 		if results[i].File != results[j].File {
 			return results[i].File < results[j].File
 		}
+
 		return results[i].Line < results[j].Line
 	})
+
 	return results
 }
 
@@ -80,6 +86,7 @@ func checkFunc(pass *analysis.Pass, ft *ast.FuncType, body *ast.BlockStmt, name 
 	}
 
 	var results []*Result
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		switch n := n.(type) {
 		case *ast.FuncLit:
@@ -88,6 +95,7 @@ func checkFunc(pass *analysis.Pass, ft *ast.FuncType, body *ast.BlockStmt, name 
 			if len(n.Results) != len(resultTypes)+1 || !allNil(pass.TypesInfo, n.Results) {
 				return true
 			}
+
 			pos := pass.Fset.Position(n.Pos())
 			results = append(results, &Result{
 				File:        pos.Filename,
@@ -99,8 +107,10 @@ func checkFunc(pass *analysis.Pass, ft *ast.FuncType, body *ast.BlockStmt, name 
 				Code:        sourceLine(content, pos.Line),
 			})
 		}
+
 		return true
 	})
+
 	return results
 }
 
@@ -111,19 +121,23 @@ func valueResultTypes(info *types.Info, ft *ast.FuncType) []string {
 		return nil
 	}
 	var all []ast.Expr
+
 	for _, field := range ft.Results.List {
 		n := max(len(field.Names), 1)
 		for range n {
 			all = append(all, field.Type)
 		}
 	}
+
 	if len(all) < 2 || !isError(info, all[len(all)-1]) {
 		return nil
 	}
+
 	out := make([]string, len(all)-1)
 	for i, e := range all[:len(all)-1] {
 		out[i] = types.ExprString(e)
 	}
+
 	return out
 }
 
@@ -135,7 +149,9 @@ func isError(info *types.Info, e ast.Expr) bool {
 	if t != nil {
 		return types.Identical(t, errorType)
 	}
+
 	id, ok := e.(*ast.Ident)
+
 	return ok && id.Name == "error"
 }
 
@@ -147,11 +163,13 @@ func allNil(info *types.Info, exprs []ast.Expr) bool {
 		if !ok || id.Name != "nil" {
 			return false
 		}
+
 		obj, ok := info.Uses[id]
 		if ok && obj != nilObj {
 			return false
 		}
 	}
+
 	return true
 }
 
@@ -159,6 +177,7 @@ func funcName(fn *ast.FuncDecl) string {
 	if fn.Recv == nil || len(fn.Recv.List) == 0 {
 		return fn.Name.Name
 	}
+
 	return baseTypeName(fn.Recv.List[0].Type) + "." + fn.Name.Name
 }
 
@@ -175,6 +194,7 @@ func baseTypeName(e ast.Expr) string {
 	case *ast.IndexListExpr:
 		return baseTypeName(t.X)
 	}
+
 	return types.ExprString(e)
 }
 
@@ -183,5 +203,6 @@ func sourceLine(content []byte, line int) string {
 	if line < 1 || line > len(lines) {
 		return ""
 	}
+
 	return string(bytes.TrimSpace(lines[line-1]))
 }

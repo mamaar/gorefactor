@@ -16,15 +16,19 @@ import (
 // returns it the way a load without type information lists it.
 func listedExternal(t *testing.T, dir, path, name, src string, imports ...*packages.Package) *packages.Package {
 	t.Helper()
+
 	file := filepath.Join(dir, name+".go")
+
 	err := os.WriteFile(file, []byte(src), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	pkg := &packages.Package{ID: path, PkgPath: path, Name: name, CompiledGoFiles: []string{file}, Imports: map[string]*packages.Package{}}
 	for _, imp := range imports {
 		pkg.Imports[imp.PkgPath] = imp
 	}
+
 	return pkg
 }
 
@@ -42,19 +46,24 @@ func TestExternal_TypeCheckedFromListedFilesWithoutBodies(t *testing.T) {
 	set.Primary().Parser.loadPackages = loader.load
 
 	pkg := checkedPackage(t, set.Primary(), filepath.Join(root, "p"))
+
 	got := pkg.TypesPkg.Scope().Lookup("V").Type().String()
 	if got != "int" {
 		t.Errorf("V has type %s, want int", got)
 	}
+
 	mode := loader.cfgs[0].Mode
 	if mode&packages.NeedTypes != 0 || mode&packages.NeedCompiledGoFiles == 0 {
 		t.Errorf("load mode = %v: want the compiled files listed and no types", mode)
 	}
+
 	externals := set.Primary().Parser.importer.ext
+
 	n := externals.byPath["example.org/unused"]
 	if n == nil || n.checked {
 		t.Errorf("a listed package nothing imports was type-checked: %+v", n)
 	}
+
 	n = externals.byPath["example.org/dep"]
 	if n == nil || !n.checked {
 		t.Errorf("the dependency of an imported package was not type-checked: %+v", n)
@@ -66,6 +75,7 @@ func TestExternal_SizesFollowTheViewsArchitecture(t *testing.T) {
 		"p/p.go": "package p\n\nimport \"example.org/ext\"\n\nvar V = ext.Word\n",
 	})
 	dir := t.TempDir()
+
 	ext := listedExternal(t, dir, "example.org/ext", "ext",
 		"package ext\n\nimport \"unsafe\"\n\nvar Word [unsafe.Sizeof(uintptr(0))]byte\n")
 	for goarch, want := range map[string]string{"386": "[4]byte", "amd64": "[8]byte"} {
@@ -73,6 +83,7 @@ func TestExternal_SizesFollowTheViewsArchitecture(t *testing.T) {
 		parser.loadPackages = (&recordingLoader{pkgs: []*packages.Package{ext}}).load
 		pkg := ws.Packages[filepath.Join(root, "p")]
 		parser.EnsureTypeChecked(ws, pkg)
+
 		got := pkg.TypesPkg.Scope().Lookup("V").Type().String()
 		if got != want {
 			t.Errorf("GOARCH=%s: V has type %s, want %s", goarch, got, want)
@@ -83,12 +94,15 @@ func TestExternal_SizesFollowTheViewsArchitecture(t *testing.T) {
 // excludedCause returns the recorded reason the check of dir left out file.
 func excludedCause(t *testing.T, v *View, dir, file string) string {
 	t.Helper()
+
 	pkg := v.Workspace.Packages[dir]
 	v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+
 	cause := pkg.ExcludedTestFiles[file]
 	if cause == nil {
 		t.Fatalf("%s was not excluded; excluded: %v, TypesErr: %v", file, pkg.ExcludedTestFiles, pkg.TypesErr)
 	}
+
 	return cause.Error()
 }
 
@@ -106,6 +120,7 @@ func TestExternal_PackageListedWithoutNameReportsItsListingError(t *testing.T) {
 	if !strings.Contains(cause, "could not import example.org/absent") || !strings.Contains(cause, "module lookup disabled by GOPROXY=off") {
 		t.Errorf("cause must carry the listing error, got: %s", cause)
 	}
+
 	if strings.Contains(cause, "invalid package name") {
 		t.Errorf("cause must not blame the package name, got: %s", cause)
 	}
@@ -117,10 +132,12 @@ func TestExternal_ModuleMissingFromTheModuleCacheIsNamedAsSuch(t *testing.T) {
 		"p/p_test.go": "package p\n\nimport \"example.org/absent\"\n\nvar _ = absent.New\n",
 	})
 	gomod := "module example.com/w\n\ngo 1.22\n\nrequire example.org/absent v1.0.0\n"
+
 	err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(gomod), 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	set, err := LoadWorkspaceSet(root, setPrimary, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

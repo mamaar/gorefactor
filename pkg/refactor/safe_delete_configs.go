@@ -42,14 +42,17 @@ func (p *safeDeletePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) 
 		p.planned(v, nil)
 		return configResult{absent: p.wrap(notFound), declared: declared}, nil
 	}
+
 	targets, err := op.targetsOf(ws, roots)
 	if err != nil {
 		return configResult{}, p.wrap(err)
 	}
+
 	blocking, err := op.blockingAmong(ws, targets)
 	if err != nil {
 		return configResult{}, p.wrap(err)
 	}
+
 	blocking = outsideFiles(blocking, v.ExcludedTestFiles())
 
 	plan := op.removalPlan(ws, targets, blocking)
@@ -66,12 +69,16 @@ func (p *safeDeletePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) 
 		addSymbolKey(res.changed, t.symbol)
 		res.reach.names = append(res.reach.names, t.symbol.Name)
 	}
+
 	for i, ref := range blocking {
 		res.blockers[i] = types.Blocker{Reference: ref}
 	}
+
 	res.blockers = append(res.blockers, unresolvedUses(v, targets)...)
+
 	op.dropAnalysis()
 	p.planned(v, plan)
+
 	return res, nil
 }
 
@@ -80,17 +87,21 @@ func (p *safeDeletePlanner) planIn(v *analysis.View, linked types.SymbolKeySet) 
 // could name a target: inside an erroring expression a use has no type.
 func unresolvedUses(v *analysis.View, targets []deletionTarget) []types.Blocker {
 	ws := v.Workspace
+
 	names := make(map[string]bool, len(targets))
 	for _, t := range targets {
 		names[t.symbol.Name] = true
 	}
 	var out []types.Blocker
+
 	for _, m := range unresolvedMentions(v, names) {
 		if insideTargets(ws, targets, &m.Reference) || !usesAnyTarget(m, targets) {
 			continue
 		}
+
 		out = append(out, m.blocker())
 	}
+
 	return out
 }
 
@@ -101,10 +112,12 @@ func usesAnyTarget(m unresolvedMention, targets []deletionTarget) bool {
 		if !ok || t.symbol.Name != m.name {
 			continue
 		}
+
 		if mayUse(filepath.Dir(m.File), m.file.AST, key, filepath.Dir(t.file.Path)) {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -113,8 +126,10 @@ func (p *safeDeletePlanner) refuse(blockers []types.Blocker) error {
 	if p.req.Force || len(blockers) == 0 {
 		return nil
 	}
+
 	err := p.operation(nil).refusal(len(blockers))
 	err.Message += blockerNotes(blockers)
+
 	return p.wrap(err)
 }
 
@@ -122,6 +137,7 @@ func (p *safeDeletePlanner) wrap(err error) error {
 	if p.errPrefix == "" {
 		return err
 	}
+
 	return fmt.Errorf("%s: %w", p.errPrefix, err)
 }
 
@@ -130,18 +146,22 @@ func (p *safeDeletePlanner) wrap(err error) error {
 func blockerNotes(blockers []types.Blocker) string {
 	var b strings.Builder
 	listed := 0
+
 	for _, blocker := range blockers {
 		note := blocker.Note()
 		if note == "" {
 			continue
 		}
+
 		if listed++; listed <= maxListedBlockers {
 			fmt.Fprintf(&b, "\n  %s:%d%s", blocker.File, blocker.Line, note)
 		}
 	}
+
 	if listed > maxListedBlockers {
 		fmt.Fprintf(&b, "\n  …and %d more", listed-maxListedBlockers)
 	}
+
 	return b.String()
 }
 
@@ -152,11 +172,13 @@ func outsideFiles(refs []types.Reference, skip map[string]bool) []types.Referenc
 	if len(skip) == 0 {
 		return refs
 	}
+
 	kept := make([]types.Reference, 0, len(refs))
 	for _, ref := range refs {
 		if !skip[ref.File] {
 			kept = append(kept, ref)
 		}
 	}
+
 	return kept
 }

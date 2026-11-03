@@ -43,6 +43,7 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() *types.DependencyGraph {
 	}
 
 	da.workspace.Dependencies = graph
+
 	return graph
 }
 
@@ -52,10 +53,12 @@ func (da *DependencyAnalyzer) collectPackageImports(pkg *types.Package, imports 
 	}
 
 	var pkgImports []string
+
 	for _, file := range pkg.Files {
 		if file.AST == nil {
 			continue
 		}
+
 		for _, imp := range file.AST.Imports {
 			if imp.Path != nil {
 				pkgImports = append(pkgImports, imp.Path.Value[1:len(imp.Path.Value)-1])
@@ -73,16 +76,20 @@ func (da *DependencyAnalyzer) collectPackageImports(pkg *types.Package, imports 
 // start itself is included only when it lies on a cycle.
 func reachable(edges map[string][]string, start string) map[string]bool {
 	seen := make(map[string]bool)
+
 	stack := slices.Clone(edges[start])
 	for len(stack) > 0 {
 		n := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
+
 		if seen[n] {
 			continue
 		}
+
 		seen[n] = true
 		stack = append(stack, edges[n]...)
 	}
+
 	return seen
 }
 
@@ -91,14 +98,17 @@ func transitiveClose(edges map[string][]string) map[string][]string {
 	result := make(map[string][]string, len(edges))
 	for pkg := range edges {
 		deps := make([]string, 0)
+
 		for dep := range reachable(edges, pkg) {
 			if dep != pkg {
 				deps = append(deps, dep)
 			}
 		}
+
 		slices.Sort(deps)
 		result[pkg] = deps
 	}
+
 	return result
 }
 
@@ -107,29 +117,36 @@ func transitiveClose(edges map[string][]string) map[string][]string {
 func shortestPath(edges map[string][]string, starts []string, target string) []string {
 	prev := make(map[string]string)
 	seen := make(map[string]bool)
+
 	queue := slices.Clone(starts)
 	for _, s := range starts {
 		seen[s] = true
 	}
+
 	for len(queue) > 0 {
 		n := queue[0]
 		queue = queue[1:]
+
 		if n == target {
 			path := []string{n}
 			for p, ok := prev[n]; ok; p, ok = prev[p] {
 				path = append([]string{p}, path...)
 			}
+
 			return path
 		}
+
 		for _, next := range edges[n] {
 			if seen[next] {
 				continue
 			}
+
 			seen[next] = true
 			prev[next] = n
 			queue = append(queue, next)
 		}
 	}
+
 	return nil
 }
 
@@ -140,25 +157,31 @@ func importCycles(edges map[string][]string) [][]string {
 	for n := range edges {
 		nodes = append(nodes, n)
 	}
+
 	slices.Sort(nodes)
 
 	cycles := make([][]string, 0)
+
 	covered := make(map[string]bool)
 	for _, start := range nodes {
 		if covered[start] {
 			continue
 		}
+
 		reach := reachable(edges, start)
 		if !reach[start] {
 			continue
 		}
+
 		for n := range reach {
 			if reachable(edges, n)[start] {
 				covered[n] = true
 			}
 		}
+
 		cycles = append(cycles, append([]string{start}, shortestPath(edges, edges[start], start)...))
 	}
+
 	return cycles
 }
 
@@ -166,12 +189,15 @@ func importCycles(edges map[string][]string) [][]string {
 // start in edges.
 func Component(edges map[string][]string, start string) []string {
 	var members []string
+
 	for n := range reachable(edges, start) {
 		if reachable(edges, n)[start] {
 			members = append(members, n)
 		}
 	}
+
 	slices.Sort(members)
+
 	return members
 }
 
@@ -182,20 +208,25 @@ func testImportCycles(g Imports) [][]string {
 	for p := range g.Test {
 		pkgs = append(pkgs, p)
 	}
+
 	slices.Sort(pkgs)
 
 	cycles := make([][]string, 0)
+
 	for _, p := range pkgs {
 		var best []string
+
 		for _, t := range g.Test[p] {
 			path := shortestPath(g.Production, []string{t}, p)
 			if path != nil && (best == nil || len(path) < len(best)) {
 				best = path
 			}
 		}
+
 		if best != nil {
 			cycles = append(cycles, append([]string{p}, best...))
 		}
 	}
+
 	return cycles
 }

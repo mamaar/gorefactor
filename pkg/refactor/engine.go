@@ -117,6 +117,7 @@ func (e *DefaultEngine) primaryConfig() analysis.BuildConfig {
 	if e.config != nil && e.config.BuildConfig != nil {
 		return *e.config.BuildConfig
 	}
+
 	return analysis.DefaultBuildConfig()
 }
 
@@ -126,10 +127,12 @@ func (e *DefaultEngine) viewOf(ws *types.Workspace) *analysis.View {
 	if e.set == nil {
 		return nil
 	}
+
 	v := e.set.ViewOf(ws)
 	if v != nil {
 		return v
 	}
+
 	return e.set.Primary()
 }
 
@@ -138,6 +141,7 @@ func (e *DefaultEngine) parserFor(ws *types.Workspace) *analysis.GoParser {
 	if v != nil {
 		return v.Parser
 	}
+
 	return nil
 }
 
@@ -154,6 +158,7 @@ func (e *DefaultEngine) LoadWorkspace(path string) (*types.Workspace, error) {
 		e.logger.Error("workspace loading failed", "path", path, "err", err)
 		return nil, fmt.Errorf("failed to parse workspace: %w", err)
 	}
+
 	e.set = set
 	workspace := set.Primary().Workspace
 
@@ -162,11 +167,13 @@ func (e *DefaultEngine) LoadWorkspace(path string) (*types.Workspace, error) {
 		workspaceModules, _ := DiscoverWorkspaceModules(workspace.RootPath)
 		// Filter out the current module from workspace modules
 		var filtered []string
+
 		for _, wm := range workspaceModules {
 			if wm != workspace.Module.Path {
 				filtered = append(filtered, wm)
 			}
 		}
+
 		e.serializer.SetModuleInfo(workspace.Module.Path, filtered)
 	}
 
@@ -202,6 +209,7 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 	req.UpdateTests = true
 
 	operation := &MoveSymbolOperation{Request: req}
+
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
@@ -229,6 +237,7 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 func (e *DefaultEngine) MoveSymbolAcrossConfigs(req types.MoveSymbolRequest) (*types.RefactoringPlan, error) {
 	req.CreateTarget = true
 	req.UpdateTests = true
+
 	return e.planAcrossConfigs(&moveSymbolPlanner{req: req})
 }
 
@@ -264,11 +273,13 @@ func (e *DefaultEngine) RenameSymbolAcrossConfigs(req types.RenameSymbolRequest)
 // RenamePackage implements package renaming
 func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePackageRequest) (*types.RefactoringPlan, error) {
 	run := &typesRun{}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("rename package: %w", err)
 	}
 	defer e.endRun(run)
+
 	operation := &RenamePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -281,6 +292,7 @@ func (e *DefaultEngine) RenamePackage(ws *types.Workspace, req types.RenamePacka
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate rename package plan: %w", err)
 	}
+
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
 	plan.Operations = []types.Operation{operation}
@@ -370,10 +382,13 @@ func (e *DefaultEngine) ThreadContext(ws *types.Workspace, req types.ThreadConte
 	if err != nil {
 		return nil, err
 	}
+
 	if req.EntryPackage != "" || len(req.CallSitesOf) > 0 {
 		return nil, fmt.Errorf("entry_package and call_sites_of need every build configuration; use ThreadContextAcrossConfigs")
 	}
+
 	plan, _, err := e.threadContext(ws, e.parserFor(ws), nil, req, nil, stop, nil)
+
 	return plan, err
 }
 
@@ -385,6 +400,7 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 	if err != nil {
 		return nil, err
 	}
+
 	wss := make([]*types.Workspace, len(views))
 	for i, v := range views {
 		wss[i] = v.Workspace
@@ -394,6 +410,7 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 	if err != nil {
 		return nil, err
 	}
+
 	var reach *EntryReach
 	if req.EntryPackage != "" {
 		reach, err = e.entryReach(views, req.EntryPackage, req.WithinFunction)
@@ -401,16 +418,20 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 			return nil, err
 		}
 	}
+
 	planner := &threadContextPlanner{engine: e, req: req, stop: stop, reach: reach, resolved: make(map[string]bool)}
+
 	plan, err := e.planAcrossConfigs(planner)
 	if err != nil {
 		return nil, err
 	}
+
 	for _, spec := range req.CallSitesOf {
 		if !planner.resolved[spec] {
 			return nil, fmt.Errorf("unknown target %q", spec)
 		}
 	}
+
 	return plan, nil
 }
 
@@ -421,11 +442,13 @@ func addImportClosure(set map[string]bool, ws *types.Workspace, path string) {
 	if set[path] {
 		return
 	}
+
 	set[path] = true
 	for _, pkg := range ws.Packages {
 		if pkg.ImportPath != path || pkg.TypesPkg == nil {
 			continue
 		}
+
 		for _, imp := range pkg.TypesPkg.Imports() {
 			if ws.ImportToPath[imp.Path()] != "" {
 				addImportClosure(set, ws, imp.Path())
@@ -442,26 +465,33 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry, within string)
 	if within != "" {
 		reach.Within = make(types.SymbolKeySet)
 	}
+
 	withinReached := false
 	var entryErr error
 	analysed := 0
+
 	for _, v := range views {
 		pkg := v.Workspace.Packages[types.ResolvePackagePath(v.Workspace, entry)]
 		if pkg == nil {
 			continue
 		}
+
 		ensureTypeChecked(v.Parser, v.Workspace)
+
 		a := analysis.NewUnusedAnalyzer(v.Workspace, e.logger)
 		if within != "" {
 			key, ok, err := withinKey(v.Workspace, within)
 			if err != nil {
 				return nil, fmt.Errorf("entry reach: %w", err)
 			}
+
 			if ok {
 				a.SetWithin(key)
 			}
 		}
+
 		funcs, scoped, bodiless, err := a.ReachedFuncsWithin(pkg)
+
 		var bodilessEntry *analysis.EntryBodilessError
 		switch {
 		case errors.As(err, &bodilessEntry):
@@ -470,20 +500,28 @@ func (e *DefaultEngine) entryReach(views []*analysis.View, entry, within string)
 		case err != nil:
 			return nil, viewError(views, v, err)
 		}
+
 		analysed++
+
 		maps.Copy(reach.Funcs, funcs)
+
 		if scoped != nil {
 			withinReached = true
+
 			maps.Copy(reach.Within, scoped)
 		}
+
 		addBodilessClosures(bodiless, reach, v)
 	}
+
 	if analysed == 0 {
 		return nil, cmp.Or(entryErr, fmt.Errorf("entry package %q not found in any build configuration", entry))
 	}
+
 	if within != "" && !withinReached {
 		return nil, fmt.Errorf("within_function %q is not declared or not reached by the entry program", within)
 	}
+
 	return reach, nil
 }
 
@@ -511,12 +549,15 @@ func (p *threadContextPlanner) planIn(v *analysis.View, linked types.SymbolKeySe
 	if err != nil && !isSymbolNotFound(err) {
 		return configResult{}, err
 	}
+
 	res := configResult{absent: err, declared: declaredFuncKeys(v.Workspace)}
 	if err == nil {
 		res = configResult{plan: plan, changed: op.GainedKeys(), reach: op.reach(), declared: res.declared}
 		maps.Copy(p.resolved, op.ResolvedCallSites())
 	}
+
 	p.planned(v, plan)
+
 	return res, nil
 }
 
@@ -770,6 +811,7 @@ func (e *DefaultEngine) InlineMethod(ws *types.Workspace, req types.InlineMethod
 func (e *DefaultEngine) InlineMethodAcrossConfigs(req types.InlineMethodRequest) (*types.RefactoringPlan, error) {
 	p := &inlineMethodPlanner{req: req}
 	p.name = req.SourceStruct + "." + req.MethodName
+
 	return e.planAcrossConfigs(p)
 }
 
@@ -831,6 +873,7 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 func (e *DefaultEngine) InlineFunctionAcrossConfigs(req types.InlineFunctionRequest) (*types.RefactoringPlan, error) {
 	p := &inlineFunctionPlanner{req: req}
 	p.name = req.FunctionName
+
 	return e.planAcrossConfigs(p)
 }
 
@@ -848,10 +891,12 @@ func (e *DefaultEngine) SafeDeleteBlockingReferences(req types.SafeDeleteRequest
 // configuration type-checks, refuses the delete unless req.Force is set.
 func (e *DefaultEngine) SafeDeleteAcrossConfigs(req types.SafeDeleteRequest) (*types.RefactoringPlan, error) {
 	p := &safeDeletePlanner{req: req, errPrefix: "safe delete operation validation failed"}
+
 	err := p.operation(nil).validateRequest()
 	if err != nil {
 		return nil, p.wrap(err)
 	}
+
 	return e.planAcrossConfigs(p)
 }
 
@@ -865,6 +910,7 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 	}
 
 	e.EnsureTypeChecked(ws)
+
 	err := operation.Validate(ws)
 	if err != nil {
 		return nil, fmt.Errorf("safe delete operation validation failed: %w", err)
@@ -906,11 +952,14 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 // configuration that declares it.
 func (e *DefaultEngine) ChangeSignatureAcrossConfigs(req ChangeSignatureRequest) (*types.RefactoringPlan, error) {
 	p := &changeSignaturePlanner{engine: e, req: req}
+
 	plan, err := e.planAcrossConfigs(p)
 	if err != nil {
 		return nil, err
 	}
+
 	p.reportTypeChecks(plan)
+
 	return plan, nil
 }
 
@@ -931,6 +980,7 @@ func ensureTypeChecked(parser *analysis.GoParser, ws *types.Workspace) {
 	if parser == nil {
 		return
 	}
+
 	for _, pkg := range ws.Packages {
 		parser.EnsureTypeChecked(ws, pkg)
 	}
@@ -953,11 +1003,14 @@ func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath st
 	if parser == nil {
 		return
 	}
+
 	if pkgPath == "" {
 		e.EnsureTypeChecked(ws)
 		return
 	}
+
 	resolved := types.ResolvePackagePath(ws, pkgPath)
+
 	pkg, ok := ws.Packages[resolved]
 	if ok {
 		parser.EnsureTypeChecked(ws, pkg)
@@ -976,6 +1029,7 @@ func (e *DefaultEngine) Importer(ws *types.Workspace) gotypes.Importer {
 	if parser == nil {
 		return nil
 	}
+
 	return parser.Importer()
 }
 
@@ -992,6 +1046,7 @@ func (e *DefaultEngine) ExecutePlan(plan *types.RefactoringPlan) error {
 		if issue.Severity != types.Error {
 			continue
 		}
+
 		return &types.RefactorError{
 			Type:    types.InvalidOperation,
 			Message: fmt.Sprintf("cannot execute plan due to critical issue: %s", issue.Description),
@@ -1032,6 +1087,7 @@ func (e *DefaultEngine) validateCompilation(affectedFiles []string) error {
 
 	// Get unique directories that need compilation checking
 	dirsToCheck := make(map[string]bool)
+
 	for _, file := range affectedFiles {
 		dir := filepath.Dir(file)
 		dirsToCheck[dir] = true
@@ -1114,11 +1170,13 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	req.UpdateImports = true
 
 	run := &typesRun{}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("move package: %w", err)
 	}
 	defer e.endRun(run)
+
 	operation := &MovePackageOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -1131,6 +1189,7 @@ func (e *DefaultEngine) MovePackage(ws *types.Workspace, req types.MovePackageRe
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move package plan: %w", err)
 	}
+
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
 	plan.Operations = []types.Operation{operation}
@@ -1144,11 +1203,13 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	req.UpdateImports = true
 
 	run := &typesRun{}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("move dir: %w", err)
 	}
 	defer e.endRun(run)
+
 	operation := &MoveDirOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -1161,6 +1222,7 @@ func (e *DefaultEngine) MoveDir(ws *types.Workspace, req types.MoveDirRequest) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move directory plan: %w", err)
 	}
+
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
 	plan.Operations = []types.Operation{operation}
@@ -1175,11 +1237,13 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	req.UpdateImports = true
 
 	run := &typesRun{}
+
 	views, err := e.beginRun(run)
 	if err != nil {
 		return nil, fmt.Errorf("move packages: %w", err)
 	}
 	defer e.endRun(run)
+
 	operation := &MovePackagesOperation{Request: req, Sources: e.set.Sources(), Views: views}
 
 	// Validate the operation
@@ -1192,6 +1256,7 @@ func (e *DefaultEngine) MovePackages(ws *types.Workspace, req types.MovePackages
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move packages plan: %w", err)
 	}
+
 	plan.Coverage.Configs = configNames(e.set.Covering().Configs)
 
 	plan.Operations = []types.Operation{operation}
@@ -1286,6 +1351,7 @@ func (e *DefaultEngine) CleanAliases(ws *types.Workspace, req types.CleanAliases
 // StandardizeImports implements standardizing import aliases
 func (e *DefaultEngine) StandardizeImports(ws *types.Workspace, req types.StandardizeImportsRequest) (*types.RefactoringPlan, error) {
 	operation := &StandardizeImportsOperation{Request: req}
+
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
@@ -1362,12 +1428,14 @@ func (e *DefaultEngine) MoveByDependencies(ws *types.Workspace, req types.MoveBy
 
 	// Analysis runs in the default configuration; each move is checked under all of them
 	var plan *types.RefactoringPlan
+
 	var err error
 	if req.AnalyzeOnly {
 		plan, err = operation.Execute(ws)
 	} else {
 		plan, err = e.moveSharedSymbols(ws, operation, e.MoveSymbolAcrossConfigs)
 	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate move by dependencies plan: %w", err)
 	}
@@ -1437,5 +1505,6 @@ func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOper
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate batch operations plan: %w", err)
 	}
+
 	return plan, nil
 }

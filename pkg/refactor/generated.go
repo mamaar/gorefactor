@@ -20,6 +20,7 @@ func IsGeneratedSource(filename string, src []byte) bool {
 	if err != nil {
 		return false
 	}
+
 	return ast.IsGenerated(file)
 }
 
@@ -28,21 +29,28 @@ func IsGeneratedSource(filename string, src []byte) bool {
 func GeneratedFileEdits(changes []refactorTypes.Change) error {
 	seen := make(map[string]bool)
 	var offending []string
+
 	for _, change := range changes {
 		if change.Relocation || seen[change.File] || filepath.Ext(change.File) != ".go" {
 			continue
 		}
+
 		seen[change.File] = true
+
 		src, err := os.ReadFile(change.File)
 		if err != nil || !IsGeneratedSource(change.File, src) {
 			continue
 		}
+
 		offending = append(offending, change.File)
 	}
+
 	if len(offending) == 0 {
 		return nil
 	}
+
 	sort.Strings(offending)
+
 	return &refactorTypes.RefactorError{
 		Type: refactorTypes.InvalidOperation,
 		Message: fmt.Sprintf(
@@ -64,6 +72,7 @@ func generatedFile(ws *refactorTypes.Workspace, path string) *refactorTypes.File
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -73,6 +82,7 @@ func rootRelative(ws *refactorTypes.Workspace, path string) string {
 	if err == nil {
 		path = rel
 	}
+
 	return filepath.ToSlash(path)
 }
 
@@ -80,17 +90,21 @@ func rootRelative(ws *refactorTypes.Workspace, path string) string {
 // declared in a generated file, blaming the requested symbol.
 func (op *MoveSymbolOperation) checkGeneratedDeclarations(ws *refactorTypes.Workspace, moving []*movingSymbol) error {
 	refs := op.Request.Refs()
+
 	for _, m := range moving {
 		if m.file == nil || !m.file.Generated {
 			continue
 		}
+
 		what := "it is declared"
+
 		switch {
 		case m.typ != nil:
 			what = fmt.Sprintf("its method %s is declared", m.sym.Name)
 		case m.sym.Name != refs[m.owner].Name:
 			what = fmt.Sprintf("its companion %s is declared", m.sym.Name)
 		}
+
 		return op.blame(len(refs), m.owner, &refactorTypes.RefactorError{
 			Type: refactorTypes.InvalidOperation,
 			Message: fmt.Sprintf("cannot move %s: %s in the generated file %s; change the generator's input and regenerate",
@@ -98,6 +112,7 @@ func (op *MoveSymbolOperation) checkGeneratedDeclarations(ws *refactorTypes.Work
 			File: m.file.Path,
 		})
 	}
+
 	return nil
 }
 
@@ -105,18 +120,22 @@ func (op *MoveSymbolOperation) checkGeneratedDeclarations(ws *refactorTypes.Work
 // moving symbol whose reference sits in it, or naming the file when none does.
 func (op *MoveSymbolOperation) checkGeneratedEdits(ws *refactorTypes.Workspace, moving []*movingSymbol, references []*refactorTypes.Reference, changes []refactorTypes.Change) error {
 	n := len(op.Request.Refs())
+
 	for _, c := range changes {
 		if generatedFile(ws, c.File) == nil {
 			continue
 		}
+
 		for _, ref := range references {
 			if ref.File != c.File {
 				continue
 			}
+
 			for _, m := range moving {
 				if m.typ != nil || m.sym != ref.Symbol {
 					continue
 				}
+
 				return op.blame(n, m.owner, &refactorTypes.RefactorError{
 					Type: refactorTypes.InvalidOperation,
 					Message: fmt.Sprintf("cannot move %s: it is referenced at %s:%d, in a generated file; change the generator's input and regenerate",
@@ -126,6 +145,7 @@ func (op *MoveSymbolOperation) checkGeneratedEdits(ws *refactorTypes.Workspace, 
 				})
 			}
 		}
+
 		return &refactorTypes.RefactorError{
 			Type: refactorTypes.InvalidOperation,
 			Message: fmt.Sprintf("cannot move %s: the move would edit the generated file %s; change the generator's input and regenerate",
@@ -133,6 +153,7 @@ func (op *MoveSymbolOperation) checkGeneratedEdits(ws *refactorTypes.Workspace, 
 			File: c.File,
 		}
 	}
+
 	return nil
 }
 
@@ -141,5 +162,6 @@ func (op *MoveSymbolOperation) blame(requested, index int, err error) error {
 	if requested > 1 {
 		return &groupMemberError{index: index, err: err}
 	}
+
 	return err
 }

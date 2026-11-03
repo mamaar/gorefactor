@@ -21,6 +21,7 @@ func TestChangeSignature_RemoveParamDropsTheRemovedArgument(t *testing.T) {
 			"func grouped(a, b, c int) int { return a + c }\n",
 		"p/use.go": "package p\n\nfunc Use() int { return first(1, 2, 3) + middle(4, \"x\", 5) + grouped(6, 7, 8) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -39,6 +40,7 @@ func TestChangeSignature_RemoveParamRemovesTheOnlyParameter(t *testing.T) {
 		"p/f.go":   "package p\n\ntype T struct{}\n\nfunc only(a int) {}\n\nfunc (T) M(a int) {}\n",
 		"p/use.go": "package p\n\nfunc Use() { only(1); T{}.M(2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -56,6 +58,7 @@ func TestChangeSignature_RemoveParamOnFunctionDeclaredInATestFile(t *testing.T) 
 		"p/p.go":      "package p\n",
 		"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(a, b int) int { return b }\n\nfunc TestIt(t *testing.T) { helper(1, 2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -71,6 +74,7 @@ func TestChangeSignature_RemoveParamKeepsFuncAndArrayTypedParameters(t *testing.
 		"p/f.go":   "package p\n\nfunc f(unused int, cb func(string) error, buf [4]byte) error { _ = buf; return cb(\"\") }\n",
 		"p/use.go": "package p\n\nfunc Use() error { return f(1, func(string) error { return nil }, [4]byte{}) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -87,6 +91,7 @@ func TestChangeSignature_RemoveParamRemovesUnusedTrailingVariadic(t *testing.T) 
 		"p/use.go":      "package p\n\nfunc Use() int { return f(1) }\n",
 		"p/use_test.go": "package p\n\nimport \"testing\"\n\nfunc TestUse(t *testing.T) { f(2) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -103,6 +108,7 @@ func TestChangeSignature_RemoveParamKeepsVariadicTailAndSpread(t *testing.T) {
 		"p/f.go":   "package p\n\nfunc f(skip int, xs ...int) int { return len(xs) }\n",
 		"p/use.go": "package p\n\nfunc Use(ys []int) int { return f(1, 2, 3) + f(1) + f(1, ys...) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -203,6 +209,7 @@ func TestChangeSignature_RemoveParamRefusals(t *testing.T) {
 			fSrc := "package p\n\n" + tt.target + "\n"
 			useSrc := "package p\n\n" + tt.use + "\n"
 			dir := writeInlineWorkspace(t, map[string]string{"p/f.go": fSrc, "p/use.go": useSrc})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -211,11 +218,13 @@ func TestChangeSignature_RemoveParamRefusals(t *testing.T) {
 			if !res.IsError {
 				t.Fatalf("want a refusal, got success: %s", errText(res))
 			}
+
 			for _, want := range tt.contains {
 				if !strings.Contains(errText(res), want) {
 					t.Errorf("error %q does not contain %q", errText(res), want)
 				}
 			}
+
 			assertFileUnchanged(t, dir, "p/f.go", fSrc)
 			assertFileUnchanged(t, dir, "p/use.go", useSrc)
 		})
@@ -230,6 +239,7 @@ func TestChangeSignature_RemoveParamOnInterfaceMethodUpdatesImplementationsAndCa
 		"p/a.go":     "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n",
 		"p/b.go":     "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + 1 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -246,6 +256,7 @@ func TestChangeSignature_RemoveParamRefusesWhenImplementationBodyUsesIt(t *testi
 	a := "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n"
 	b := "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + m }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": removeParamIface, "p/a.go": a, "p/b.go": b})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -253,6 +264,7 @@ func TestChangeSignature_RemoveParamRefusesWhenImplementationBodyUsesIt(t *testi
 		"concrete target with propagate": removeParamArgs("A.Run", "p/a.go", param("n", "int")),
 		"interface target":               removeParamArgs("Runner.Run", "p/iface.go", param("n", "int")),
 	}
+
 	cases["concrete target with propagate"]["propagate"] = true
 	for name, args := range cases {
 		res := changeSig(t, sess, args)
@@ -260,6 +272,7 @@ func TestChangeSignature_RemoveParamRefusesWhenImplementationBodyUsesIt(t *testi
 			t.Errorf("%s: want a refusal naming b.go:5, got IsError=%v %q", name, res.IsError, errText(res))
 		}
 	}
+
 	assertFileUnchanged(t, dir, "p/iface.go", removeParamIface)
 	assertFileUnchanged(t, dir, "p/a.go", a)
 	assertFileUnchanged(t, dir, "p/b.go", b)
@@ -270,6 +283,7 @@ func TestChangeSignature_RemoveParamDropsConversionArgument(t *testing.T) {
 		"p/f.go":   "package p\n\nfunc f(a int, b int64) int { return a }\n",
 		"p/use.go": "package p\n\nfunc Use(x int) int { return f(1, int64(x)) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -285,8 +299,10 @@ func TestChangeSignature_PropagateRewritesCallsThroughTheInterface(t *testing.T)
 		"p/a.go":     "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n",
 		"p/b.go":     "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + 1 }\n",
 	}
+
 	t.Run("remove_param", func(t *testing.T) {
 		dir := writeInlineWorkspace(t, maps.Clone(files))
+
 		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 		defer sess.Close()
 
@@ -299,6 +315,7 @@ func TestChangeSignature_PropagateRewritesCallsThroughTheInterface(t *testing.T)
 	})
 	t.Run("add_param", func(t *testing.T) {
 		dir := writeInlineWorkspace(t, maps.Clone(files))
+
 		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 		defer sess.Close()
 
@@ -314,11 +331,13 @@ func TestChangeSignature_PropagateRewritesCallsThroughTheInterface(t *testing.T)
 
 func TestChangeSignature_ImplementationInTestFileIsRewrittenAndChecked(t *testing.T) {
 	a := "package p\n\ntype A struct{}\n\nfunc (A) Run(n, m int) int { return n }\n"
+
 	t.Run("rewritten", func(t *testing.T) {
 		dir := writeInlineWorkspace(t, map[string]string{
 			"p/iface.go": removeParamIface, "p/a.go": a,
 			"p/b_test.go": "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + 1 }\n",
 		})
+
 		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 		defer sess.Close()
 
@@ -330,6 +349,7 @@ func TestChangeSignature_ImplementationInTestFileIsRewrittenAndChecked(t *testin
 	t.Run("body use refused", func(t *testing.T) {
 		b := "package p\n\ntype B struct{}\n\nfunc (B) Run(n, m int) int { return n + m }\n"
 		dir := writeInlineWorkspace(t, map[string]string{"p/iface.go": removeParamIface, "p/a.go": a, "p/b_test.go": b})
+
 		sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 		defer sess.Close()
 
@@ -338,6 +358,7 @@ func TestChangeSignature_ImplementationInTestFileIsRewrittenAndChecked(t *testin
 		if !res.IsError || !strings.Contains(errText(res), "b_test.go:5") {
 			t.Errorf("want a refusal naming b_test.go:5, got IsError=%v %q", res.IsError, errText(res))
 		}
+
 		assertFileUnchanged(t, dir, "p/b_test.go", b)
 	})
 }
@@ -345,6 +366,7 @@ func TestChangeSignature_ImplementationInTestFileIsRewrittenAndChecked(t *testin
 func TestChangeSignature_GenericTargetIsRefusedForEverySubcommand(t *testing.T) {
 	f := "package p\n\nfunc f[T any](x T, n int) int { return n }\n"
 	use := "package p\n\nfunc Use() int { return f[string](\"a\", 1) + f(2, 3) }\n"
+
 	subcommands := map[string]map[string]any{
 		"add_param":     {"params": []map[string]any{param("x", "T"), param("n", "int"), param("m", "int")}, "default_value": "0", "position": 2},
 		"remove_param":  {"params": []map[string]any{param("x", "T")}},
@@ -354,8 +376,10 @@ func TestChangeSignature_GenericTargetIsRefusedForEverySubcommand(t *testing.T) 
 	for sub, extra := range subcommands {
 		t.Run(sub, func(t *testing.T) {
 			dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
+
 			args := map[string]any{"function_name": "f", "source_file": "p/f.go", "subcommand": sub}
 			maps.Copy(args, extra)
 
@@ -364,6 +388,7 @@ func TestChangeSignature_GenericTargetIsRefusedForEverySubcommand(t *testing.T) 
 			if !res.IsError || !strings.Contains(errText(res), "type parameters") {
 				t.Errorf("want a refusal mentioning type parameters, got IsError=%v %q", res.IsError, errText(res))
 			}
+
 			assertFileUnchanged(t, dir, "p/f.go", f)
 			assertFileUnchanged(t, dir, "p/use.go", use)
 		})
@@ -374,6 +399,7 @@ func TestChangeSignature_MethodOnGenericReceiverIsRefused(t *testing.T) {
 	f := "package p\n\ntype Stack[T any] struct{}\n\nfunc (s *Stack[T]) Push(x T, n int) int { return n }\n"
 	use := "package p\n\nfunc Use() int { return (&Stack[string]{}).Push(\"a\", 1) }\n"
 	dir := writeInlineWorkspace(t, map[string]string{"p/f.go": f, "p/use.go": use})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -385,6 +411,7 @@ func TestChangeSignature_MethodOnGenericReceiverIsRefused(t *testing.T) {
 	if !res.IsError || !strings.Contains(errText(res), "type parameters") {
 		t.Errorf("want a refusal mentioning type parameters, got IsError=%v %q", res.IsError, errText(res))
 	}
+
 	assertFileUnchanged(t, dir, "p/f.go", f)
 	assertFileUnchanged(t, dir, "p/use.go", use)
 }
@@ -417,6 +444,7 @@ func TestChangeSignature_RemoveParamDeletesTheSpanAndKeepsTheRestOfTheSignature(
 			dir := writeInlineWorkspace(t, map[string]string{
 				"p/f.go": "package p\n\n" + tc.target + "\n",
 			})
+
 			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -434,6 +462,7 @@ func TestChangeSignature_RemoveParamKeepsMultiLineSignaturesOfImplementationsAnd
 			"type One struct{}\n\nfunc (One) Do(\n\tx int, // first\n\ty string,\n) {\n\t_ = y\n}\n\n" +
 			"func use(d Doer) { d.Do(1, \"\") }\n\nvar _ Doer = One{}\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -451,6 +480,7 @@ func TestChangeSignature_RemoveParamResolvesTheTargetByObjectWhenAnExternalTestP
 		"lib/lib.go":      "package lib\n\nfunc helper(y string) {}\n\nfunc Use() { helper(\"\") }\n",
 		"lib/ext_test.go": "package lib_test\n\nimport \"testing\"\n\nfunc helper(a int, b string) {}\n\nfunc TestX(t *testing.T) { helper(1, \"\") }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -469,6 +499,7 @@ func TestChangeSignature_TestEntryPointsAreRefusedForEverySubcommand(t *testing.
 		"p/p_test.go": "package p\n\nimport \"testing\"\n\nfunc TestIt(t *testing.T) {}\n\nfunc BenchmarkIt(b *testing.B) {}\n\nfunc Testimony(t *testing.T, extra int) {}\n",
 	}
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -483,6 +514,7 @@ func TestChangeSignature_TestEntryPointsAreRefusedForEverySubcommand(t *testing.
 			t.Errorf("%v %v: IsError=%v %q, want a go test entry point refusal", args["function_name"], args["subcommand"], res.IsError, errText(res))
 		}
 	}
+
 	changeSigOK(t, sess, removeParamArgs("Testimony", "p/p_test.go", param("t", "*testing.T")))
 }
 
@@ -490,6 +522,7 @@ func TestChangeSignature_AddParamAppliesToAMultiLineSignature(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nfunc f(\n\tx int,\n\ty string,\n) string {\n\treturn y\n}\n\nfunc Use() string { return f(1, \"\") }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -509,6 +542,7 @@ func TestChangeSignature_RemoveParamPrunesImportUsedOnlyByParamType(t *testing.T
 		"p/f.go":   "package p\n\nimport \"io\"\n\nfunc f(w io.Writer, n int) int { return n }\n",
 		"p/use.go": "package p\n\nfunc Use() int { return f(nil, 1) }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -524,6 +558,7 @@ func TestChangeSignature_RemoveParamPrunesImportUsedOnlyByDroppedArgumentInAnoth
 		"p/f.go":   "package p\n\nfunc f(n int, s string) int { return len(s) }\n",
 		"p/use.go": "package p\n\nimport \"strconv\"\n\nfunc Use() int { return f(strconv.IntSize, \"x\") }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -538,6 +573,7 @@ func TestChangeSignature_RemoveParamKeepsImportStillUsedElsewhere(t *testing.T) 
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nimport \"io\"\n\nfunc f(w io.Writer, n int) int { return n }\n\nfunc g() io.Writer { return nil }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -551,6 +587,7 @@ func TestChangeSignature_RemoveParamPrunesAliasedImportUsedOnlyByParamType(t *te
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nimport stdio \"io\"\n\nfunc f(w stdio.Writer, n int) int { return n }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -564,6 +601,7 @@ func TestChangeSignature_RemoveParamNeverPrunesDotOrBlankImports(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{
 		"p/f.go": "package p\n\nimport (\n\t. \"strings\"\n\t_ \"embed\"\n\t\"io\"\n)\n\nfunc f(w io.Writer, b Builder, n int) int { _ = b; return n }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -580,6 +618,7 @@ func TestChangeSignature_RemoveParamPrunesImportOfImplementationInAnotherPackage
 		"p/iface.go": "package p\n\nimport \"io\"\n\ntype Runner interface{ Run(w io.Writer, n int) int }\n\nfunc Use(r Runner) int { return r.Run(nil, 1) }\n",
 		"q/impl.go":  "package q\n\nimport \"io\"\n\ntype A struct{}\n\nfunc (A) Run(w io.Writer, n int) int { return n }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -596,6 +635,7 @@ func TestChangeSignature_RemoveParamPrunesImportSharedByTwoDroppedArgumentsInOne
 		"p/f.go":   "package p\n\nfunc f(n int, s string) int { return len(s) }\n",
 		"p/use.go": "package p\n\nimport \"strconv\"\n\nfunc Use() int { return f(strconv.IntSize, \"a\") + f(strconv.IntSize, \"b\") }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

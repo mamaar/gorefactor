@@ -17,23 +17,29 @@ func checkShadowedAtReferences(ws *types.Workspace, symbol *types.Symbol, refs [
 	if pkg == nil || pkg.TypesPkg == nil {
 		return nil
 	}
+
 	for _, ref := range refs {
 		if findPackageForFile(ws, ref.File) != pkg {
 			continue
 		}
+
 		scope := pkg.TypesPkg.Scope().Innermost(ref.Position)
 		if scope == nil {
 			continue
 		}
+
 		_, obj := scope.LookupParent(newName, ref.Position)
 		if obj == nil || obj.Parent() == pkg.TypesPkg.Scope() || obj.Parent() == gotypes.Universe {
 			continue
 		}
+
 		kind := "a local declaration"
+
 		_, ok := obj.(*gotypes.PkgName)
 		if ok {
 			kind = "an import"
 		}
+
 		return &types.RefactorError{
 			Type: types.NameConflict,
 			Message: fmt.Sprintf("cannot rename %s to %s: at %s:%d the name %s refers to %s (%s)",
@@ -41,6 +47,7 @@ func checkShadowedAtReferences(ws *types.Workspace, symbol *types.Symbol, refs [
 			File: ref.File,
 		}
 	}
+
 	return nil
 }
 
@@ -55,5 +62,6 @@ func relToRoot(ws *types.Workspace, path string) string {
 	if err == nil {
 		return filepath.ToSlash(rel)
 	}
+
 	return path
 }

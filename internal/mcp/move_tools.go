@@ -28,7 +28,9 @@ func (in MoveSymbolInput) request(ws *types.Workspace) (types.MoveSymbolRequest,
 	if (in.Symbol == "") == (len(in.Symbols) == 0) {
 		return types.MoveSymbolRequest{}, fmt.Errorf("give exactly one of symbol and symbols")
 	}
+
 	from := types.ResolvePackagePath(ws, in.FromPackage)
+
 	req := types.MoveSymbolRequest{
 		SymbolName:  in.Symbol,
 		FromPackage: from,
@@ -38,6 +40,7 @@ func (in MoveSymbolInput) request(ws *types.Workspace) (types.MoveSymbolRequest,
 	for _, name := range in.Symbols {
 		req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: from, Name: name})
 	}
+
 	return req, nil
 }
 
@@ -46,6 +49,7 @@ func (in MoveSymbolInput) label() string {
 	if in.Symbol != "" {
 		return in.Symbol
 	}
+
 	return strings.Join(in.Symbols, ", ")
 }
 
@@ -83,14 +87,17 @@ type MovePackagesInput struct {
 func planMoveSymbol(state *MCPServer, in MoveSymbolInput) (*types.RefactoringPlan, error) {
 	state.RLock()
 	defer state.RUnlock()
+
 	ws, err := state.GetWorkspace()
 	if err != nil {
 		return nil, err
 	}
+
 	req, err := in.request(ws)
 	if err != nil {
 		return nil, err
 	}
+
 	return state.GetEngine().MoveSymbolAcrossConfigs(req)
 }
 
@@ -114,6 +121,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			if r == nil {
 				return
 			}
+
 			stack := debug.Stack()
 			state.logger.Error("panic in move_symbol handler",
 				"symbol", in.label(),
@@ -129,10 +137,12 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		planResult, err := executePlan(state, plan, "move symbol "+in.label(), in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(planResult), nil, nil
 	})
 
@@ -151,6 +161,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 		// that already exist, which a move destination does not. The operation
 		// resolves TargetPackage itself, as a path.
 		src := types.ResolvePackagePath(ws, in.SourcePackage)
+
 		plan, err := state.GetEngine().MovePackage(ws, types.MovePackageRequest{
 			SourcePackage: src,
 			TargetPackage: in.TargetPackage,
@@ -159,10 +170,12 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "move package", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -177,6 +190,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().MoveDir(ws, types.MoveDirRequest{
 			SourceDir: in.SourceDir,
 			TargetDir: in.TargetDir,
@@ -185,10 +199,12 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "move directory", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -203,6 +219,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		mappings := make([]types.PackageMapping, len(in.Packages))
 		for i, m := range in.Packages {
 			mappings[i] = types.PackageMapping{
@@ -211,6 +228,7 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 				TargetPackage: m.Target,
 			}
 		}
+
 		plan, err := state.GetEngine().MovePackages(ws, types.MovePackagesRequest{
 			Packages: mappings,
 		})
@@ -218,10 +236,12 @@ func registerMoveTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "move packages", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }

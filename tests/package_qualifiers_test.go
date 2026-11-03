@@ -15,9 +15,12 @@ const oldPkgSource = "package old\n\nfunc Foo() string { return \"\" }\n"
 // vetAs runs go vet in dir for goos.
 func vetAs(t *testing.T, dir, goos string) {
 	t.Helper()
+
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
+
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=", "GOOS="+goos, "GOARCH=amd64")
+
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Errorf("go vet (GOOS=%s) failed: %v\n%s", goos, err, out)
@@ -28,6 +31,7 @@ func renameOldToFresh(t *testing.T, dir, pkgDir string) *types.RefactoringPlan {
 	t.Helper()
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.RenamePackage(ws, types.RenamePackageRequest{
 		PackagePath:    filepath.Join(dir, pkgDir),
 		OldPackageName: "old",
@@ -37,9 +41,11 @@ func renameOldToFresh(t *testing.T, dir, pkgDir string) *types.RefactoringPlan {
 	if err != nil {
 		t.Fatalf("RenamePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	return plan
 }
 
@@ -47,23 +53,28 @@ func moveOldToFresh(t *testing.T, dir string) *types.RefactoringPlan {
 	t.Helper()
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackage(ws, types.MovePackageRequest{SourcePackage: "old", TargetPackage: "lib/fresh"})
 	if err != nil {
 		t.Fatalf("MovePackage: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	return plan
 }
 
 func assertSkipped(t *testing.T, plan *types.RefactoringPlan, fileSuffix string) {
 	t.Helper()
+
 	for _, s := range plan.SkippedSites {
 		if strings.HasSuffix(s.File, fileSuffix) {
 			return
 		}
 	}
+
 	t.Errorf("no skipped site for %s in %+v", fileSuffix, plan.SkippedSites)
 }
 
@@ -100,6 +111,7 @@ func U() string {
 			t.Errorf("use.go missing %q:\n%s", want, got)
 		}
 	}
+
 	vetAs(t, dir, "linux")
 }
 
@@ -135,15 +147,18 @@ func TestMovePackagesRewritesImporterQualifiers(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
 		Packages: []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
 	})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "use/use.go", "fresh.Foo()")
 	vetAs(t, dir, "linux")
 }
@@ -159,9 +174,11 @@ func TestMovePackageOnlyRepathsAliasedAndDotImports(t *testing.T) {
 	assertFileContains(t, dir, "use/a.go", `o "scratch/lib/fresh"`)
 	assertFileContains(t, dir, "use/a.go", "o.Foo()")
 	assertFileContains(t, dir, "use/b.go", `. "scratch/lib/fresh"`)
+
 	if len(plan.SkippedSites) != 0 {
 		t.Errorf("unexpected skipped sites: %+v", plan.SkippedSites)
 	}
+
 	vetAs(t, dir, "linux")
 }
 
@@ -204,6 +221,7 @@ func TestRenamePackageKeepsOldNameAsAliasWhenNewNameIsTaken(t *testing.T) {
 			assertFileContains(t, dir, "use/use.go", `old "scratch/old"`)
 			assertFileContains(t, dir, "use/use.go", "old.Foo()")
 			assertSkipped(t, plan, "use/use.go")
+
 			for _, goos := range tc.goos {
 				vetAs(t, dir, goos)
 			}
@@ -256,10 +274,12 @@ func TestMoveDirRenamesQualifiersOfTwoPackagesInOneFile(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MoveDir(ws, types.MoveDirRequest{SourceDir: "a", TargetDir: "b"})
 	if err != nil {
 		t.Fatalf("MoveDir: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
@@ -286,6 +306,7 @@ func TestRenamePackageRefusesUnparseableImporterNeedingQualifierEdits(t *testing
 	if err == nil || !strings.Contains(err.Error(), "bad.go") {
 		t.Fatalf("want refusal naming bad.go, got %v", err)
 	}
+
 	assertFileContains(t, dir, "old/old.go", "package old")
 }
 
@@ -296,15 +317,18 @@ func TestMovePackagesReportsImportsKeptAsAlias(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MovePackages(ws, types.MovePackagesRequest{
 		Packages: []types.PackageMapping{{SourcePackage: "old", TargetPackage: "lib/fresh"}},
 	})
 	if err != nil {
 		t.Fatalf("MovePackages: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "use/use.go", `old "scratch/lib/fresh"`)
 	assertSkipped(t, plan, "use/use.go")
 	vetAs(t, dir, "linux")
@@ -329,13 +353,16 @@ func TestMoveDirKeepsAliasWhenTwoPackagesGetTheSameName(t *testing.T) {
 	})
 	eng := createEngine(t)
 	ws := loadWorkspace(t, eng, dir)
+
 	plan, err := eng.MoveDir(ws, types.MoveDirRequest{SourceDir: "a", TargetDir: "b"})
 	if err != nil {
 		t.Fatalf("MoveDir: %v", err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
+
 	assertFileContains(t, dir, "use/use.go", "util.F() + bar.G()")
 	assertFileContains(t, dir, "use/use.go", `bar "scratch/b/y/util"`)
 	assertSkipped(t, plan, "use/use.go")

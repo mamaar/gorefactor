@@ -34,15 +34,20 @@ func planRenameView(c *viewIndexes, s renameStrategy, v *analysis.View, linked t
 	idx := c.indexOf(v)
 	ws := v.Workspace
 	declared := declaredSymbolKeys(ws)
+
 	renamed, plan, err := s.planWorkspace(ws, idx, linked)
 	if err != nil {
 		if !isSymbolNotFound(err) {
 			return configResult{}, err
 		}
+
 		c.planned(v, nil)
+
 		return configResult{absent: err, declared: declared}, nil
 	}
+
 	plan = withoutFiles(plan, v.ExcludedTestFiles())
+
 	r, ok := s.(renameRefuser)
 	if ok {
 		err := r.refuseIn(v, renamed)
@@ -50,8 +55,10 @@ func planRenameView(c *viewIndexes, s renameStrategy, v *analysis.View, linked t
 			return configResult{}, err
 		}
 	}
+
 	res := configResult{plan: plan, changed: renamed, reach: reachOf(plan, []string{s.oldName()}), declared: declared}
 	c.planned(v, plan)
+
 	return res, nil
 }
 
@@ -62,9 +69,11 @@ func withoutFiles(plan *types.RefactoringPlan, skip map[string]bool) *types.Refa
 	if len(skip) == 0 {
 		return plan
 	}
+
 	skipped := pathSet(skip)
 	plan.Changes = slices.DeleteFunc(plan.Changes, skipped.hasChange)
 	plan.AffectedFiles = slices.DeleteFunc(plan.AffectedFiles, skipped.has)
+
 	return plan
 }
 
@@ -87,23 +96,28 @@ func symbolKeyOf(sym *types.Symbol) (types.SymbolKey, bool) {
 		if sym.Parent == nil {
 			return types.SymbolKey{}, false
 		}
+
 		return types.SymbolKey{PkgPath: sym.Package, Recv: sym.Parent.Name, Name: sym.Name}, true
 	}
+
 	return types.SymbolKey{PkgPath: sym.Package, Name: sym.Name}, true
 }
 
 // declaredSymbolKeys returns the keys of every symbol the symbol tables of ws hold.
 func declaredSymbolKeys(ws *types.Workspace) types.SymbolKeySet {
 	keys := make(types.SymbolKeySet)
+
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols == nil {
 			continue
 		}
+
 		for _, table := range []map[string]*types.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
 			for _, sym := range table {
 				addSymbolKey(keys, sym)
 			}
 		}
+
 		for _, group := range []map[string][]*types.Symbol{pkg.Symbols.Methods, pkg.Symbols.Fields} {
 			for _, syms := range group {
 				for _, sym := range syms {
@@ -112,6 +126,7 @@ func declaredSymbolKeys(ws *types.Workspace) types.SymbolKeySet {
 			}
 		}
 	}
+
 	return keys
 }
 
@@ -128,6 +143,7 @@ func symbolForKey(ws *types.Workspace, key types.SymbolKey) *types.Symbol {
 	if pkg == nil || pkg.Symbols == nil {
 		return nil
 	}
+
 	table := pkg.Symbols
 	if key.Recv == "" {
 		for _, group := range []map[string]*types.Symbol{table.Functions, table.Types, table.Variables, table.Constants} {
@@ -136,8 +152,10 @@ func symbolForKey(ws *types.Workspace, key types.SymbolKey) *types.Symbol {
 				return sym
 			}
 		}
+
 		return nil
 	}
+
 	for _, group := range [][]*types.Symbol{table.Methods[key.Recv], table.Fields[key.Recv]} {
 		for _, sym := range group {
 			if sym.Name == key.Name {
@@ -145,6 +163,7 @@ func symbolForKey(ws *types.Workspace, key types.SymbolKey) *types.Symbol {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -156,11 +175,13 @@ func withLinkedSymbols(ws *types.Workspace, symbols []*types.Symbol, linked type
 		if have.Has(key) {
 			continue
 		}
+
 		sym := symbolForKey(ws, key)
 		if sym != nil {
 			symbols = append(symbols, sym)
 		}
 	}
+
 	return symbols
 }
 
@@ -169,7 +190,9 @@ func orderedKeys(set types.SymbolKeySet) []types.SymbolKey {
 	for key := range set {
 		keys = append(keys, key)
 	}
+
 	slices.SortFunc(keys, compareKeys)
+
 	return keys
 }
 
@@ -181,6 +204,7 @@ func keysOf(symbols []*types.Symbol) types.SymbolKeySet {
 	for _, sym := range symbols {
 		addSymbolKey(keys, sym)
 	}
+
 	return keys
 }
 
@@ -207,34 +231,42 @@ type memberRenames interface {
 // returns the requested operation's not-found error.
 func planMemberRenames(ws *types.Workspace, idx *analysis.ReferenceIndex, s memberRenames, linked types.SymbolKeySet) (types.SymbolKeySet, *types.RefactoringPlan, error) {
 	run := &memberRun{label: s.label(), renamed: make(types.SymbolKeySet)}
+
 	err := run.validate(ws, s.requestedOp(idx), true)
 	if err != nil {
 		return nil, nil, err
 	}
+
 	for _, key := range orderedKeys(linked) {
 		if run.renamed.Has(key) {
 			continue
 		}
+
 		op := s.linkedOp(ws, idx, key)
 		if op == nil {
 			continue
 		}
+
 		err := run.validate(ws, op, false)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
+
 	if len(run.ops) == 0 {
 		return nil, nil, fmt.Errorf("%s operation validation failed: %w", run.label, run.notFound)
 	}
 	var acc planAccum
+
 	for _, op := range run.ops {
 		plan, err := op.Execute(ws)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to generate %s plan: %w", run.label, err)
 		}
+
 		acc.add(plan)
 	}
+
 	return run.renamed, acc.plan(), nil
 }
 
@@ -254,12 +286,16 @@ func (r *memberRun) validate(ws *types.Workspace, op memberRename, requested boo
 		if requested {
 			r.notFound = err
 		}
+
 		return nil
 	}
+
 	if err != nil {
 		return fmt.Errorf("%s operation validation failed: %w", r.label, err)
 	}
+
 	r.ops = append(r.ops, op)
 	r.renamed.AddAll(keys)
+
 	return nil
 }

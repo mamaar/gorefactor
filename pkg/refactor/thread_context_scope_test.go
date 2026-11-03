@@ -15,23 +15,29 @@ import (
 func buildScopeWorkspace(t *testing.T, files map[string]string) *pkgtypes.Workspace {
 	t.Helper()
 	engine, ws := writeRenameFieldWorkspace(t, files)
+
 	de, ok := engine.(*DefaultEngine)
 	if !ok {
 		t.Fatalf("engine is not *DefaultEngine")
 	}
+
 	de.EnsureTypeChecked(ws)
+
 	return ws
 }
 
 // findPackageByName returns the single loaded package named name.
 func findPackageByName(t *testing.T, ws *pkgtypes.Workspace, name string) *pkgtypes.Package {
 	t.Helper()
+
 	for _, pkg := range ws.Packages {
 		if pkg.Name == name {
 			return pkg
 		}
 	}
+
 	t.Fatalf("package %q not found in workspace", name)
+
 	return nil
 }
 
@@ -44,6 +50,7 @@ func findFuncDecl(pkg *pkgtypes.Package, name string) *ast.FuncDecl {
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -52,9 +59,11 @@ func allScopeTestFiles(pkg *pkgtypes.Package) []*pkgtypes.File {
 	for _, f := range pkg.Files {
 		files = append(files, f)
 	}
+
 	for _, f := range pkg.TestFiles {
 		files = append(files, f)
 	}
+
 	return files
 }
 
@@ -62,42 +71,52 @@ func allScopeTestFiles(pkg *pkgtypes.Package) []*pkgtypes.File {
 // bare identifier name (e.g. a marker call like "mark()").
 func findCallTo(root ast.Node, name string) *ast.CallExpr {
 	var found *ast.CallExpr
+
 	ast.Inspect(root, func(n ast.Node) bool {
 		if found != nil {
 			return false
 		}
+
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
+
 		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == name {
 			found = call
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
 func findFuncLit(root ast.Node) *ast.FuncLit {
 	var found *ast.FuncLit
+
 	ast.Inspect(root, func(n ast.Node) bool {
 		if found != nil {
 			return false
 		}
+
 		lit, ok := n.(*ast.FuncLit)
 		if ok {
 			found = lit
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
 // findMarkCall returns the first call to mark() under root.
 func findMarkCall(root ast.Node) *ast.CallExpr {
 	var found *ast.CallExpr
+
 	ast.Inspect(root, func(n ast.Node) bool {
 		c, ok := n.(*ast.CallExpr)
 		if ok && found == nil {
@@ -106,8 +125,10 @@ func findMarkCall(root ast.Node) *ast.CallExpr {
 				found = c
 			}
 		}
+
 		return found == nil
 	})
+
 	return found
 }
 

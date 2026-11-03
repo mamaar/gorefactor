@@ -15,6 +15,7 @@ const (
 
 func TestRenameField_RefusesWhenProductionCycleHidesAUse(t *testing.T) {
 	dir := writeInlineWorkspace(t, map[string]string{"a/a.go": rfcA, "b/b.go": rfcB})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -23,12 +24,14 @@ func TestRenameField_RefusesWhenProductionCycleHidesAUse(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("rename_field succeeded: %s", errText(res))
 	}
+
 	got := errText(res)
 	for _, want := range []string{"b/b.go:7", "import cycle not allowed"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("error %q does not contain %q", got, want)
 		}
 	}
+
 	assertFileUnchanged(t, dir, "a/a.go", rfcA)
 	assertFileUnchanged(t, dir, "b/b.go", rfcB)
 }
@@ -38,6 +41,7 @@ func TestRenameField_WithoutCycleRenamesAcrossPackages(t *testing.T) {
 		"a/a.go": "package a\n\ntype T struct{ Fld int }\n",
 		"b/b.go": rfcB,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -46,9 +50,11 @@ func TestRenameField_WithoutCycleRenamesAcrossPackages(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("rename_field failed: %s", errText(res))
 	}
+
 	got := fileText(t, dir, "b/b.go")
 	if !strings.Contains(got, "t.Gld") {
 		t.Errorf("b.go not renamed:\n%s", got)
 	}
+
 	goVets(t, dir, "")
 }

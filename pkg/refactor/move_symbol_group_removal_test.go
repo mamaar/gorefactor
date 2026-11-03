@@ -18,16 +18,20 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 	eng, dir := loadConfigsEngine(t, map[string]string{"src/src.go": srcText})
 	ws := eng.WorkspaceSet().Primary().Workspace
 	eng.EnsureTypeChecked(ws)
+
 	req := types.MoveSymbolRequest{ToPackage: filepath.Join(dir, "dst"), CreateTarget: true}
 	for _, n := range names {
 		req.Symbols = append(req.Symbols, types.QualifiedSymbol{Package: filepath.Join(dir, "src"), Name: n})
 	}
+
 	plan, err := (&MoveSymbolOperation{Request: req}).Execute(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	srcPath := filepath.Join(dir, "src", "src.go")
 	var srcChanges []types.Change
+
 	for _, c := range plan.Changes {
 		switch c.File {
 		case srcPath:
@@ -36,18 +40,22 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 			dst = c.NewText
 		}
 	}
+
 	assertNoOverlap(t, srcChanges)
 	src = string(applyChangesInMemory([]byte(srcText), srcChanges))
 	writeAndVet(t, dir, src, dst)
+
 	if formatted, err := format.Source([]byte(src)); err == nil {
 		src = string(formatted)
 	}
+
 	return src, dst
 }
 
 // assertNoOverlap fails the test for each pair of overlapping changes.
 func assertNoOverlap(t *testing.T, changes []types.Change) {
 	t.Helper()
+
 	for i, a := range changes {
 		for _, b := range changes[i+1:] {
 			if a.Start < b.End && b.Start < a.End {
@@ -61,18 +69,22 @@ func assertNoOverlap(t *testing.T, changes []types.Change) {
 // if go vet rejects the result.
 func writeAndVet(t *testing.T, dir, src, dst string) {
 	t.Helper()
+
 	err := os.MkdirAll(filepath.Join(dir, "dst"), 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for p, text := range map[string]string{filepath.Join(dir, "src", "src.go"): src, filepath.Join(dir, "dst", "dst.go"): dst} {
 		err := os.WriteFile(p, []byte(text), 0o644)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
+
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Errorf("go vet failed: %v\n%s\nsrc:\n%s\ndst:\n%s", err, out, src, dst)
@@ -85,10 +97,12 @@ func TestMoveSymbol_GroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {
 	if strings.Contains(src, "type (") {
 		t.Errorf("source keeps the group shell:\n%s", src)
 	}
+
 	want := "package src\n\nfunc Keep() {}\n"
 	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
+
 	if !strings.Contains(dst, "type A int") || !strings.Contains(dst, "type B int") {
 		t.Errorf("target lacks the types:\n%s", dst)
 	}
@@ -100,6 +114,7 @@ func TestMoveSymbol_GroupDocAndSpecDocsRemovedWithFullyMovedGroup(t *testing.T) 
 	if strings.Contains(src, "Group doc") || strings.Contains(src, "type (") || strings.Contains(src, "A doc") {
 		t.Errorf("source keeps part of the group:\n%s", src)
 	}
+
 	if strings.Contains(dst, "Group doc") || !strings.Contains(dst, "A doc") || !strings.Contains(dst, "B doc") {
 		t.Errorf("target should carry spec docs only:\n%s", dst)
 	}
@@ -138,6 +153,7 @@ func TestMoveSymbol_FullyMovedGroupAtEndOfFileWithoutTrailingNewline(t *testing.
 	if strings.Contains(src, "type") {
 		t.Errorf("source keeps the group:\n%s", src)
 	}
+
 	if !strings.HasPrefix(src, "package src\n\nfunc Keep() {}\n") {
 		t.Errorf("source = %q", src)
 	}
@@ -150,6 +166,7 @@ func TestMoveSymbol_ConstantGroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {
 	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
+
 	if !strings.Contains(dst, "// A doc.\nconst A = 1") || !strings.Contains(dst, "// B doc.\nconst B = 2") {
 		t.Errorf("target lacks the constants with their docs:\n%s", dst)
 	}
@@ -162,6 +179,7 @@ func TestMoveSymbol_VariableGroupWithMultiNameSpecMovesAndLeavesNoShell(t *testi
 	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
+
 	if !strings.Contains(dst, "var a, b = src.Pair()") || !strings.Contains(dst, "var c ") {
 		t.Errorf("target lacks the variables:\n%s", dst)
 	}
@@ -174,6 +192,7 @@ func TestMoveSymbol_IotaGroupMovesVerbatimAndLeavesNothingBehind(t *testing.T) {
 	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
+
 	if !strings.Contains(dst, "// Doc.\nconst (\n\tA = iota\n\tB\n\t_\n\tC\n)") {
 		t.Errorf("target lacks the verbatim group:\n%s", dst)
 	}

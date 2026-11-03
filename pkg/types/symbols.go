@@ -88,30 +88,37 @@ func (st *SymbolTable) FindSymbol(name string) *Symbol {
 					return m
 				}
 			}
+
 			for _, f := range st.Fields[typeName] {
 				if f.Name == member {
 					return f
 				}
 			}
 		}
+
 		return nil
 	}
+
 	s, ok := st.Functions[name]
 	if ok {
 		return s
 	}
+
 	s, ok = st.Types[name]
 	if ok {
 		return s
 	}
+
 	s, ok = st.Variables[name]
 	if ok {
 		return s
 	}
+
 	s, ok = st.Constants[name]
 	if ok {
 		return s
 	}
+
 	for _, methods := range st.Methods {
 		for _, m := range methods {
 			if m.Name == name {
@@ -119,6 +126,7 @@ func (st *SymbolTable) FindSymbol(name string) *Symbol {
 			}
 		}
 	}
+
 	return nil
 }
 

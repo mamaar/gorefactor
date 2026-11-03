@@ -78,6 +78,7 @@ func truncateHunk(s string) string {
 	if len(s) <= maxHunkText {
 		return s
 	}
+
 	return s[:maxHunkText] + fmt.Sprintf("\n... [truncated, %d more bytes]", len(s)-maxHunkText)
 }
 
@@ -92,6 +93,7 @@ func buildDiffs(changes []types.Change) []FileDiff {
 	for f := range byFile {
 		files = append(files, f)
 	}
+
 	sort.Strings(files)
 
 	diffs := make([]FileDiff, 0, len(files))
@@ -102,16 +104,20 @@ func buildDiffs(changes []types.Change) []FileDiff {
 		})
 
 		fd := FileDiff{File: f, Action: "modify"}
+
 		for _, c := range fileChanges {
 			if c.Delete {
 				fd.Action = "delete"
 				fd.Hunks = nil
+
 				break
 			}
+
 			if c.Carried() {
 				fd.Hunks = append(fd.Hunks, DiffHunk{Description: c.Description, New: fmt.Sprintf("[file moved, %d bytes]", len(c.NewText))})
 				continue
 			}
+
 			fd.Hunks = append(fd.Hunks, DiffHunk{
 				Description: c.Description,
 				Start:       c.Start,
@@ -120,8 +126,10 @@ func buildDiffs(changes []types.Change) []FileDiff {
 				New:         truncateHunk(c.NewText),
 			})
 		}
+
 		diffs = append(diffs, fd)
 	}
+
 	return diffs
 }
 
@@ -168,24 +176,31 @@ func previewPlan(state *MCPServer, plan *types.RefactoringPlan, desc string) *Pl
 	if err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
+
 		return res
 	}
+
 	err = state.GetEngine().ValidateRefactoring(plan)
 	if err != nil {
 		res.Success = false
 		res.BlockingIssue = err.Error()
+
 		return res
 	}
+
 	if plan.Impact != nil {
 		for _, issue := range plan.Impact.PotentialIssues {
 			if issue.Severity != types.Error {
 				continue
 			}
+
 			res.Success = false
 			res.BlockingIssue = fmt.Sprintf("critical issue: %s", issue.Description)
+
 			return res
 		}
 	}
+
 	return res
 }
 
@@ -231,6 +246,7 @@ func planTypeErrors(plan *types.RefactoringPlan) []TypeErrorInfo {
 	for _, e := range plan.Coverage.TypeErrors {
 		out = append(out, TypeErrorInfo(e))
 	}
+
 	return out
 }
 
@@ -240,15 +256,19 @@ func planUncoveredFiles(state *MCPServer, plan *types.RefactoringPlan) []Uncover
 	if len(plan.Coverage.Uncovered) == 0 {
 		return nil
 	}
+
 	root := ""
+
 	ws, err := state.GetWorkspace()
 	if err == nil {
 		root = ws.RootPath
 	}
+
 	out := make([]UncoveredFileInfo, len(plan.Coverage.Uncovered))
 	for i, u := range plan.Coverage.Uncovered {
 		out[i] = UncoveredFileInfo{File: relativeTo(root, u.Path), Configs: u.Configs, Reason: u.Reason}
 	}
+
 	return out
 }
 
@@ -258,6 +278,7 @@ func planBuildConfigs(plan *types.RefactoringPlan) []string {
 	if len(plan.Coverage.Configs) < 2 {
 		return nil
 	}
+
 	return plan.Coverage.Configs
 }
 
@@ -276,9 +297,11 @@ func verificationBlocker(v *refactor.TypeCheckResult) string {
 	if len(v.NewErrors) > 0 {
 		return "applying this plan would introduce type errors: " + strings.Join(v.NewErrors, "; ")
 	}
+
 	if v.Skipped != "" {
 		return "the plan could not be verified against go/types: " + v.Skipped
 	}
+
 	return ""
 }
 
@@ -288,11 +311,13 @@ func withDryRun(out map[string]any, result *PlanResult) map[string]any {
 	if result.DryRun {
 		out["dry_run"] = true
 		out["diffs"] = result.Diffs
+
 		out["message"] = result.Description
 		if result.BlockingIssue != "" {
 			out["blocking_issue"] = result.BlockingIssue
 		}
 	}
+
 	return out
 }
 
@@ -300,6 +325,7 @@ func withDryRun(out map[string]any, result *PlanResult) map[string]any {
 // CallToolResult with a single TextContent block.
 func textResult(v any) *mcpsdk.CallToolResult {
 	b, _ := json.MarshalIndent(v, "", "  ")
+
 	return &mcpsdk.CallToolResult{
 		Content: []mcpsdk.Content{
 			&mcpsdk.TextContent{Text: string(b)},
@@ -311,5 +337,6 @@ func textResult(v any) *mcpsdk.CallToolResult {
 func errResult(err error) *mcpsdk.CallToolResult {
 	r := &mcpsdk.CallToolResult{}
 	r.SetError(err)
+
 	return r
 }

@@ -67,6 +67,7 @@ func (sa *ScopeAnalyzer) resolveBuiltinSymbol(name string) *types.Symbol {
 func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, pos token.Pos) *types.Symbol {
 	// Check cache first
 	cacheKey := fmt.Sprintf("%s:%s:%d", file.Path, identName, pos)
+
 	cached := sa.resolver.cache.GetIdentifierType(cacheKey)
 	if cached != nil {
 		return cached
@@ -85,6 +86,7 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 		if typeSymbol != nil {
 			sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
 		}
+
 		return typeSymbol
 	}
 
@@ -103,6 +105,7 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 	if typeSymbol != nil {
 		sa.resolver.cache.SetIdentifierType(cacheKey, typeSymbol)
 	}
+
 	return typeSymbol
 }
 
@@ -118,6 +121,7 @@ func (sa *ScopeAnalyzer) paramOrReceiverType(typeExpr ast.Expr, enclosingFunc *a
 				}
 			}
 		}
+
 		if typeExpr == nil && enclosingFunc.Type.Params != nil {
 			for _, field := range enclosingFunc.Type.Params.List {
 				for _, name := range field.Names {
@@ -129,11 +133,13 @@ func (sa *ScopeAnalyzer) paramOrReceiverType(typeExpr ast.Expr, enclosingFunc *a
 			}
 		}
 	}
+
 	return typeExpr
 }
 
 func (sa *ScopeAnalyzer) enclosingFuncDecl(file *types.File, pos token.Pos) *ast.FuncDecl {
 	var enclosingFunc *ast.FuncDecl
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		funcDecl, ok := n.(*ast.FuncDecl)
 		if ok {
@@ -142,13 +148,16 @@ func (sa *ScopeAnalyzer) enclosingFuncDecl(file *types.File, pos token.Pos) *ast
 				return false // Stop once we find it
 			}
 		}
+
 		return true
 	})
+
 	return enclosingFunc
 }
 
 func (sa *ScopeAnalyzer) localDeclarationType(enclosingFunc *ast.FuncDecl, identName string) ast.Expr {
 	var typeExpr ast.Expr
+
 	ast.Inspect(enclosingFunc, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.AssignStmt:
@@ -170,16 +179,20 @@ func (sa *ScopeAnalyzer) localDeclarationType(enclosingFunc *ast.FuncDecl, ident
 				if name.Name != identName {
 					continue
 				}
+
 				if node.Type != nil {
 					typeExpr = node.Type // Explicit type
 				} else if len(node.Values) > 0 {
 					typeExpr = sa.extractTypeFromExpression(node.Values[0]) // Infer from RHS
 				}
+
 				return false
 			}
 		}
+
 		return true
 	})
+
 	return typeExpr
 }
 
@@ -187,6 +200,7 @@ func (sa *ScopeAnalyzer) localDeclarationType(enclosingFunc *ast.FuncDecl, ident
 // This handles variables declared outside of any function.
 func (sa *ScopeAnalyzer) findPackageLevelVarType(identName string, file *types.File) *types.Symbol {
 	var typeExpr ast.Expr
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		genDecl, ok := n.(*ast.GenDecl)
 		if ok && genDecl.Tok == token.VAR {
@@ -195,19 +209,23 @@ func (sa *ScopeAnalyzer) findPackageLevelVarType(identName string, file *types.F
 				if !ok {
 					continue
 				}
+
 				for _, name := range valueSpec.Names {
 					if name.Name != identName {
 						continue
 					}
+
 					if valueSpec.Type != nil {
 						typeExpr = valueSpec.Type
 					} else if len(valueSpec.Values) > 0 {
 						typeExpr = sa.extractTypeFromExpression(valueSpec.Values[0])
 					}
+
 					return false
 				}
 			}
 		}
+
 		return true
 	})
 
@@ -234,6 +252,7 @@ func (sa *ScopeAnalyzer) extractTypeFromExpression(expr ast.Expr) ast.Expr {
 		if ok {
 			return ident
 		}
+
 		sel, ok := e.Fun.(*ast.SelectorExpr)
 		if ok {
 			return sel
@@ -241,6 +260,7 @@ func (sa *ScopeAnalyzer) extractTypeFromExpression(expr ast.Expr) ast.Expr {
 	case *ast.TypeAssertExpr: // x.(*Type)
 		return e.Type
 	}
+
 	return nil
 }
 
@@ -267,6 +287,7 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 				return sym
 			}
 		}
+
 		return nil
 
 	case *ast.SelectorExpr:
@@ -286,15 +307,18 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 				if importAlias != pkgIdent.Name {
 					continue
 				}
+
 				importPath := strings.Trim(imp.Path.Value, `"`)
 				// Try to find package by import path
 				if sa.resolver.workspace == nil {
 					continue
 				}
+
 				fsPath, ok := sa.resolver.workspace.ImportToPath[importPath]
 				if !ok {
 					continue
 				}
+
 				pkg := sa.resolver.workspace.Packages[fsPath]
 				if pkg != nil {
 					sym, _ := sa.resolver.ResolveSymbol(pkg, expr.Sel.Name)
@@ -302,6 +326,7 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 				}
 			}
 		}
+
 		return nil
 
 	case *ast.StarExpr:

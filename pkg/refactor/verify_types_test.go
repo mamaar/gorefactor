@@ -25,12 +25,15 @@ func writeVerifyTypesWorkspace(t *testing.T, files map[string]string) *types.Wor
 	if !ok {
 		files["go.mod"] = "module example.com/verifytest\n\ngo 1.21\n"
 	}
+
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0o755)
 		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
@@ -38,10 +41,12 @@ func writeVerifyTypesWorkspace(t *testing.T, files map[string]string) *types.Wor
 	}
 
 	engine := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
 	}
+
 	return ws
 }
 
@@ -49,6 +54,7 @@ func writeVerifyTypesWorkspace(t *testing.T, files map[string]string) *types.Wor
 // (e.g. "foo/lib.go").
 func findVerifyFile(t *testing.T, ws *types.Workspace, rel string) *types.File {
 	t.Helper()
+
 	for _, pkg := range ws.Packages {
 		for _, group := range []map[string]*types.File{pkg.Files, pkg.TestFiles} {
 			for _, f := range group {
@@ -58,7 +64,9 @@ func findVerifyFile(t *testing.T, ws *types.Workspace, rel string) *types.File {
 			}
 		}
 	}
+
 	t.Fatalf("file %s not found in workspace", rel)
+
 	return nil
 }
 
@@ -67,11 +75,14 @@ func findVerifyFile(t *testing.T, ws *types.Workspace, rel string) *types.File {
 // the actual file content instead of hand-counting them.
 func replaceChange(t *testing.T, f *types.File, oldText, newText string) types.Change {
 	t.Helper()
+
 	content := string(f.OriginalContent)
+
 	idx := strings.Index(content, oldText)
 	if idx < 0 {
 		t.Fatalf("substring %q not found in %s", oldText, f.Path)
 	}
+
 	return types.Change{
 		File:    f.Path,
 		Start:   idx,
@@ -104,12 +115,15 @@ func g() {
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if res.OK() {
 		t.Fatalf("expected a new type error, got none")
 	}
+
 	if len(res.NewErrors) != 1 {
 		t.Fatalf("expected exactly 1 new error, got %d: %v", len(res.NewErrors), res.NewErrors)
 	}
+
 	if !strings.Contains(res.NewErrors[0], "oops") {
 		t.Errorf("expected the new error to mention the bad argument, got: %s", res.NewErrors[0])
 	}
@@ -129,6 +143,7 @@ func g() {
 `,
 		}
 	}
+
 	for _, tc := range []struct {
 		name, newText string
 		wantOK        bool
@@ -145,6 +160,7 @@ func g() {
 			if res.Skipped != "" {
 				t.Fatalf("unexpected skip: %s", res.Skipped)
 			}
+
 			if res.OK() != tc.wantOK {
 				t.Fatalf("OK() = %v, want %v; new errors: %v", res.OK(), tc.wantOK, res.NewErrors)
 			}
@@ -163,6 +179,7 @@ func TestVerifyPlanTypes_ExternalTestFilesOnly(t *testing.T) {
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if res.OK() {
 		t.Fatal("expected a new type error, got none")
 	}
@@ -190,6 +207,7 @@ func g() {
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if !res.OK() {
 		t.Fatalf("expected OK, got new errors: %v", res.NewErrors)
 	}
@@ -221,6 +239,7 @@ func g() {
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if !res.OK() {
 		t.Fatalf("expected OK (pre-existing error must be suppressed by the baseline), got: %v", res.NewErrors)
 	}
@@ -251,17 +270,21 @@ func g() {
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if res.OK() {
 		t.Fatalf("expected a new type error")
 	}
+
 	if len(res.NewErrors) != 1 {
 		t.Fatalf("expected exactly 1 new error, got %d: %v", len(res.NewErrors), res.NewErrors)
 	}
+
 	for _, e := range res.NewErrors {
 		if strings.Contains(e, "nope") {
 			t.Fatalf("pre-existing error leaked into NewErrors: %s", e)
 		}
 	}
+
 	if !strings.Contains(res.NewErrors[0], "new") {
 		t.Errorf("expected the new error to mention the new bad argument, got: %s", res.NewErrors[0])
 	}
@@ -293,6 +316,7 @@ func f() {}
 	if res.Skipped == "" {
 		t.Fatalf("expected Skipped to be set for a change targeting an unknown file")
 	}
+
 	if !res.OK() {
 		t.Fatalf("expected NewErrors empty since nothing was actually checked, got: %v", res.NewErrors)
 	}
@@ -302,6 +326,7 @@ func f() {}
 // all" entry point.
 func TestVerifyPlanTypes_NilWorkspaceIsSkipped(t *testing.T) {
 	plan := &types.RefactoringPlan{Changes: []types.Change{{File: "x.go", Start: 0, End: 0, NewText: "x"}}}
+
 	res := VerifyPlanTypesWithImporter(nil, plan, nil)
 	if res.Skipped == "" {
 		t.Fatalf("expected Skipped to be set for a nil workspace")
@@ -323,6 +348,7 @@ func f() {}
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if !res.OK() {
 		t.Fatalf("expected OK for an empty plan, got: %v", res.NewErrors)
 	}
@@ -376,11 +402,14 @@ func main() {
 	// itself builds, so there would be no second "time" to disagree with.
 	parser := analysis.NewParser(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	parser.BindWorkspace(ws)
+
 	mainPkg, ok := ws.Packages[ws.RootPath]
 	if !ok {
 		t.Fatalf("root package not found at %s", ws.RootPath)
 	}
+
 	parser.EnsureTypeChecked(ws, mainPkg)
+
 	if mainPkg.TypesErr != nil {
 		t.Fatalf("baseline type-check of main failed: %v", mainPkg.TypesErr)
 	}
@@ -392,10 +421,12 @@ func main() {
 		"import (\n\t\"example.com/verifytest/b\"\n\t\"time\"\n)")
 
 	content := string(mainFile.OriginalContent)
+
 	fnIdx := strings.Index(content, "func main")
 	if fnIdx < 0 {
 		t.Fatalf("could not find %q in main.go", "func main")
 	}
+
 	fnChange := types.Change{
 		File:        mainFile.Path,
 		Start:       fnIdx,
@@ -414,6 +445,7 @@ func main() {
 	if good.Skipped != "" {
 		t.Fatalf("unexpected skip with shared importer: %s", good.Skipped)
 	}
+
 	if !good.OK() {
 		t.Fatalf("expected OK with the shared importer, got spurious error(s): %v", good.NewErrors)
 	}
@@ -428,16 +460,20 @@ func main() {
 	if buggy.Skipped != "" {
 		t.Fatalf("unexpected skip on the buggy path: %s", buggy.Skipped)
 	}
+
 	if buggy.OK() {
 		t.Fatalf("expected the fresh-importer path to reproduce the spurious cross-package type error, got none")
 	}
+
 	found := false
+
 	for _, e := range buggy.NewErrors {
 		if strings.Contains(e, "Duration") {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Fatalf("expected a spurious time.Duration mismatch, got: %v", buggy.NewErrors)
 	}
@@ -446,6 +482,7 @@ func main() {
 func TestVerifyPlanTypes_CgoPackageReportsNoNewErrors(t *testing.T) {
 	cfg := analysis.NewBuildConfig("linux", "amd64", true)
 	dir := t.TempDir()
+
 	files := map[string]string{
 		"go.mod": "module example.com/verifytest\n\ngo 1.21\n",
 		"main.go": `package main
@@ -472,7 +509,9 @@ func main() {
 			t.Fatal(err)
 		}
 	}
+
 	engine := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true, BuildConfig: &cfg}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)
@@ -485,6 +524,7 @@ func main() {
 	if res.Skipped != "" {
 		t.Fatalf("unexpected skip: %s", res.Skipped)
 	}
+
 	if !res.OK() {
 		t.Fatalf("expected OK, got new errors: %v", res.NewErrors)
 	}
@@ -503,6 +543,7 @@ func TestVerifyPlanTypes_PlanThatCannotBeAppliedIsANewErrorNotSkipped(t *testing
 	if res.Skipped != "" || res.OK() {
 		t.Fatalf("Skipped=%q NewErrors=%v, want a new error and no skip", res.Skipped, res.NewErrors)
 	}
+
 	if !strings.Contains(res.NewErrors[0], "cannot be applied") {
 		t.Errorf("error = %q", res.NewErrors[0])
 	}

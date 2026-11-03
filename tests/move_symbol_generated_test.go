@@ -18,9 +18,11 @@ const (
 
 func requireRefusal(t *testing.T, res *mcpsdk.CallToolResult, wants ...string) {
 	t.Helper()
+
 	if !res.IsError {
 		t.Fatalf("move succeeded, want a refusal naming %v", wants)
 	}
+
 	got := errText(res)
 	for _, want := range wants {
 		if !strings.Contains(got, want) {
@@ -35,6 +37,7 @@ func TestMoveSymbol_TypeWithMethodInGeneratedFileIsRefusedAtPlanTime(t *testing.
 		"src/kind_string.go": msgKindString,
 	}
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -50,6 +53,7 @@ func TestMoveSymbol_DryRunOfTypeWithGeneratedMethodReportsErrorNotPreview(t *tes
 		"src/kind.go":        msgKind,
 		"src/kind_string.go": msgKindString,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -67,6 +71,7 @@ func TestMoveSymbol_DryRunOfTypeWithGeneratedMethodReportsErrorNotPreview(t *tes
 func TestMoveSymbol_ReferenceInGeneratedFileIsRefusedNamingSymbolAndFile(t *testing.T) {
 	genRef := genHeader + "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc Gen() int { return src.Shared() }\n"
 	dir := mbdWorkspace(t, map[string]string{"a/zz_gen.go": genRef})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -80,6 +85,7 @@ func TestMoveSymbol_ReferenceInGeneratedFileIsRefusedNamingSymbolAndFile(t *test
 func TestMoveSymbol_ReferenceInGeneratedTestFileIsRefused(t *testing.T) {
 	genRef := genHeader + "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc gen() int { return src.Shared() }\n"
 	dir := mbdWorkspace(t, map[string]string{"a/zz_gen_test.go": genRef})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -96,6 +102,7 @@ func TestMoveByDependencies_CandidateReferencedFromGeneratedFileIsSkippedAndTheR
 		"b/b.go":      "package b\n\nimport \"example.com/threadmcp/src\"\n\nfunc B() int { return src.Shared() + src.Other() }\n",
 		"a/zz_gen.go": genHeader + "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc Gen() int { return src.Other() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -107,11 +114,14 @@ func TestMoveByDependencies_CandidateReferencedFromGeneratedFileIsSkippedAndTheR
 			t.Errorf("skipped_sites = %s, want it to mention %q", sites, want)
 		}
 	}
+
 	assertFileContains(t, dir, "shared/shared.go", "func Shared() int")
+
 	got := fileText(t, dir, "shared/shared.go")
 	if strings.Contains(got, "Other") {
 		t.Errorf("Other moved:\n%s", got)
 	}
+
 	assertFileContains(t, dir, "src/src.go", "func Other() int")
 	goVets(t, dir, "")
 }
@@ -122,6 +132,7 @@ func TestMoveSymbol_TargetFileSkipsGeneratedFile(t *testing.T) {
 		"dst/a_gen.go": genHeader + "package dst\n\nfunc G() int { return 2 }\n",
 		"dst/b.go":     "package dst\n\nfunc H() int { return 3 }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -141,6 +152,7 @@ func TestMoveSymbol_TargetPackageWithOnlyGeneratedFileGetsNewFile(t *testing.T) 
 		"src/src.go":   "package src\n\nfunc F() int { return 1 }\n",
 		"dst/a_gen.go": gen,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -157,6 +169,7 @@ func TestMoveSymbol_TargetPackageWithOnlyGeneratedFileGetsNewFile(t *testing.T) 
 func TestMoveSymbol_ReferenceInTaggedGeneratedFileIsRefused(t *testing.T) {
 	genRef := "//go:build tagx\n\n" + genHeader + "package a\n\nimport \"example.com/threadmcp/src\"\n\nfunc Gen() int { return src.Shared() }\n"
 	dir := mbdWorkspace(t, map[string]string{"a/zz_gen.go": genRef})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

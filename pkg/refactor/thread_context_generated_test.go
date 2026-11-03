@@ -36,18 +36,22 @@ func bridgeFiles() map[string]string {
 func generatedRefusal(t *testing.T, files map[string]string, sourceFile, funcName string) *pkgtypes.RefactorError {
 	t.Helper()
 	err := threadErrStopping(t, files, sourceFile, funcName, true, nil)
+
 	var re *pkgtypes.RefactorError
 	if !errors.As(err, &re) || re.Type != pkgtypes.InvalidOperation {
 		t.Fatalf("error is not an InvalidOperation RefactorError: %v", err)
 	}
+
 	if !strings.Contains(re.Message, "generated") || !strings.Contains(re.Message, "No changes were made.") {
 		t.Fatalf("not the generated-code refusal: %v", err)
 	}
+
 	return re
 }
 
 func assertContains(t *testing.T, msg string, wants ...string) {
 	t.Helper()
+
 	for _, want := range wants {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message lacks %q:\n%s", want, msg)
@@ -58,6 +62,7 @@ func assertContains(t *testing.T, msg string, wants ...string) {
 func assertNoStopSuggested(t *testing.T, msg string) {
 	t.Helper()
 	assertContains(t, msg, "No stop_at can avoid this")
+
 	if strings.Contains(msg, "pass stop_at") {
 		t.Errorf("message suggests a stop:\n%s", msg)
 	}
@@ -65,10 +70,12 @@ func assertNoStopSuggested(t *testing.T, msg string) {
 
 func TestThreadContext_LoaderMarksGeneratedFiles(t *testing.T) {
 	ws := buildScopeWorkspace(t, bridgeFiles())
+
 	got := make(map[string]bool)
 	for _, f := range allScopeTestFiles(findPackageByName(t, ws, "p")) {
 		got[filepath.Base(f.Path)] = f.Generated
 	}
+
 	if !got["gen.go"] || got["w.go"] {
 		t.Errorf("Generated = %v", got)
 	}
@@ -76,12 +83,14 @@ func TestThreadContext_LoaderMarksGeneratedFiles(t *testing.T) {
 
 func TestThreadContext_GeneratedInterfaceRefusesAndNamesTheImplementer(t *testing.T) {
 	re := generatedRefusal(t, bridgeFiles(), "p/w.go", "leaf")
+
 	want := "cannot thread context through leaf: the climb reaches generated code, which its generator " +
 		"would overwrite: p/gen.go (p/gen.go:5: Bridge.MapSearch would gain a ctx parameter). To keep the " +
 		`climb out of generated code, pass stop_at: ["p/w.go:Wrapper.MapSearch"]. No changes were made.`
 	if re.Message != want {
 		t.Errorf("message:\n got %s\nwant %s", re.Message, want)
 	}
+
 	if filepath.Base(re.File) != "gen.go" || re.Line != 5 {
 		t.Errorf("location = %s:%d", re.File, re.Line)
 	}
@@ -89,17 +98,21 @@ func TestThreadContext_GeneratedInterfaceRefusesAndNamesTheImplementer(t *testin
 
 func TestThreadContext_SuggestedStopKeepsThePlanOutOfGeneratedCode(t *testing.T) {
 	ws := buildScopeWorkspace(t, bridgeFiles())
+
 	stops, err := resolveStopAt([]*pkgtypes.Workspace{ws}, []string{"p/w.go:Wrapper.MapSearch"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	plan := threadPlanStopping(t, bridgeFiles(), "p/w.go", "leaf", stops)
 	assertNames(t, gainingLabels(plan), []string{"leaf"}, "Funcs")
+
 	for f, fd := range plan.Decls {
 		if fd.File.Generated {
 			t.Errorf("%s is declared in a generated file", funcLabel(f))
 		}
 	}
+
 	for _, edit := range plan.ArgFor {
 		if edit.Site.File.Generated {
 			t.Errorf("call edit in generated file %s", edit.Site.File.Path)
@@ -120,6 +133,7 @@ func (Idle) MapSearch() {}
 `
 	re := generatedRefusal(t, files, "p/w.go", "leaf")
 	assertContains(t, re.Message, `pass stop_at: ["p/w.go:Other.MapSearch", "p/w.go:Wrapper.MapSearch"]`)
+
 	if strings.Contains(re.Message, "Idle") {
 		t.Errorf("an implementer the climb never enters is listed:\n%s", re.Message)
 	}
@@ -199,6 +213,7 @@ func aCaller() {
 `,
 	}, "p/w.go", "leaf")
 	assertContains(t, re.Message, "p/agen.go (p/agen.go:6: call to helper); p/zgen.go (p/zgen.go:5: call to helper)")
+
 	if filepath.Base(re.File) != "agen.go" || re.Line != 6 {
 		t.Errorf("location = %s:%d", re.File, re.Line)
 	}
@@ -214,6 +229,7 @@ func leaf() {}
 func genCaller() { leaf() }
 `,
 	}, "p/w.go", "leaf")
+
 	want := "cannot thread context through leaf: the climb reaches generated code, which its generator " +
 		"would overwrite: p/gen.go (p/gen.go:5: call to leaf). No stop_at can avoid this: leaf is the " +
 		"function that gains the parameter; change the generator instead. No changes were made."

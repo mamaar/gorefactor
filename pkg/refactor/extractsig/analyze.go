@@ -171,6 +171,7 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	if ws == nil || pkg == nil || file == nil {
 		return nil, refuse("workspace, package and file are all required")
 	}
+
 	if ws.FileSet == nil {
 		return nil, refuse("workspace has no FileSet; positions cannot be resolved")
 	}
@@ -181,9 +182,11 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	if pkg.TypesInfo == nil || pkg.TypesPkg == nil {
 		return nil, refuse("type information is unavailable for package %s; type-check it before extracting", pkg.ImportPath)
 	}
+
 	if file.AST == nil {
 		return nil, refuse("file %s has no parsed AST", file.Path)
 	}
+
 	if startLine <= 0 || endLine < startLine {
 		return nil, refuse("invalid line range %d-%d", startLine, endLine)
 	}
@@ -203,6 +206,7 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	if err != nil {
 		return nil, err
 	}
+
 	err = a.checkControlFlow()
 	if err != nil {
 		return nil, err
@@ -214,10 +218,12 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	if err != nil {
 		return nil, err
 	}
+
 	params, err = a.hoistNoCopy(params)
 	if err != nil {
 		return nil, err
 	}
+
 	results, err := a.collectResults(params)
 	if err != nil {
 		return nil, err
@@ -236,12 +242,14 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	if err != nil {
 		return nil, err
 	}
+
 	a.dropRedundantDecls(res)
 
 	body, err := a.bodyText()
 	if err != nil {
 		return nil, err
 	}
+
 	res.BodyText = body
 	res.Imports = a.newImports
 
@@ -258,11 +266,13 @@ func (a *analyzer) line(p token.Pos) int { return a.fset.Position(p).Line }
 // that exactly spans [startLine,endLine].
 func (a *analyzer) locate(startLine, endLine int) error {
 	var fn *ast.FuncDecl
+
 	for _, decl := range a.file.AST.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
 		if !ok || fd.Body == nil {
 			continue
 		}
+
 		fs, fe := a.line(fd.Pos()), a.line(fd.End())
 		switch {
 		case startLine >= fs && endLine <= fe:
@@ -273,9 +283,11 @@ func (a *analyzer) locate(startLine, endLine int) error {
 			return refuse("line range %d-%d crosses the boundary of function %s; a block must lie inside a single function", startLine, endLine, fd.Name.Name)
 		}
 	}
+
 	if fn == nil {
 		return refuse("line range %d-%d is not inside a function body", startLine, endLine)
 	}
+
 	a.fn = fn
 
 	// Statement lists live in three shapes: block bodies, and the (un-braced)
@@ -287,6 +299,7 @@ func (a *analyzer) locate(startLine, endLine int) error {
 			if a.line(list[i].Pos()) != startLine {
 				continue
 			}
+
 			for j := i; j < len(list); j++ {
 				if a.line(list[j].End()) != endLine {
 					continue
@@ -301,6 +314,7 @@ func (a *analyzer) locate(startLine, endLine int) error {
 			}
 		}
 	}
+
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		switch x := n.(type) {
 		case *ast.BlockStmt:
@@ -310,8 +324,10 @@ func (a *analyzer) locate(startLine, endLine int) error {
 		case *ast.CommClause:
 			consider(x.Body)
 		}
+
 		return true
 	})
+
 	if best == nil {
 		return refuse("line range %d-%d does not align to statement boundaries; a block must start at the first line of a statement and end at the last line of a statement", startLine, endLine)
 	}
@@ -328,14 +344,17 @@ func (a *analyzer) locate(startLine, endLine int) error {
 // inside a closure.
 func (a *analyzer) locateInnerFunc() error {
 	a.innerBody = a.fn.Body
+
 	obj := a.info.Defs[a.fn.Name]
 	if obj == nil {
 		return refuse("function %s has no type information; type-checking of package %s is incomplete", a.fn.Name.Name, a.pkg.ImportPath)
 	}
+
 	sig, ok := obj.Type().(*gotypes.Signature)
 	if !ok {
 		return refuse("function %s does not have a signature type", a.fn.Name.Name)
 	}
+
 	a.innerSig = sig
 
 	// Innermost wins: nested literals are visited outside-in, so the last
@@ -345,6 +364,7 @@ func (a *analyzer) locateInnerFunc() error {
 		if !ok || lit.Body == nil {
 			return true
 		}
+
 		if lit.Body.Pos() <= a.blockStart && a.blockEnd <= lit.Body.End() {
 			litSig, ok := a.info.TypeOf(lit).(*gotypes.Signature)
 			if ok {
@@ -352,8 +372,10 @@ func (a *analyzer) locateInnerFunc() error {
 				a.innerSig = litSig
 			}
 		}
+
 		return true
 	})
+
 	return nil
 }
 
@@ -367,12 +389,14 @@ func (a *analyzer) locateInnerFunc() error {
 // extracted function's scope while still being referenced by the signature).
 func (a *analyzer) checkControlFlow() error {
 	labels := map[string]bool{}
+
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
 			ls, ok := n.(*ast.LabeledStmt)
 			if ok {
 				labels[ls.Label.Name] = true
 			}
+
 			return true
 		})
 	}
@@ -383,10 +407,12 @@ func (a *analyzer) checkControlFlow() error {
 	// when the selection happens to sit inside a loop in the original
 	// function — that loop is not coming along.
 	var walk func(n ast.Node, inLoop, inSwitch bool)
+
 	walk = func(n ast.Node, inLoop, inSwitch bool) {
 		if n == nil || walkErr != nil {
 			return
 		}
+
 		switch x := n.(type) {
 		case *ast.FuncLit:
 			// A closure has its own control flow; nothing inside it can
@@ -421,6 +447,7 @@ func (a *analyzer) checkControlFlow() error {
 					walkErr = refuse("block contains a `goto` whose target label is outside the selection")
 				}
 			}
+
 			return
 		case *ast.ForStmt:
 			walk(x.Body, true, false)
@@ -438,6 +465,7 @@ func (a *analyzer) checkControlFlow() error {
 			walk(x.Body, inLoop, true)
 			return
 		}
+
 		for _, child := range children(n) {
 			walk(child, inLoop, inSwitch)
 		}
@@ -445,6 +473,7 @@ func (a *analyzer) checkControlFlow() error {
 	for _, s := range a.stmts {
 		walk(s, false, false)
 	}
+
 	return walkErr
 }
 
@@ -455,17 +484,22 @@ func (a *analyzer) checkControlFlow() error {
 func children(n ast.Node) []ast.Node {
 	var out []ast.Node
 	first := true
+
 	ast.Inspect(n, func(c ast.Node) bool {
 		if first {
 			first = false
 			return true
 		}
+
 		if c == nil {
 			return false
 		}
+
 		out = append(out, c)
+
 		return false
 	})
+
 	return out
 }
 
@@ -481,6 +515,7 @@ func children(n ast.Node) []ast.Node {
 func (a *analyzer) collectIdents() []*ast.Ident {
 	var out []*ast.Ident
 	var visit func(ast.Node) bool
+
 	visit = func(n ast.Node) bool {
 		switch x := n.(type) {
 		case nil:
@@ -498,24 +533,30 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 			// Keys of a struct literal are field names; keys of a map or
 			// array literal are ordinary expressions and must be visited.
 			structLit := false
+
 			t := a.info.TypeOf(x)
 			if t != nil {
 				_, structLit = deref(t).Underlying().(*gotypes.Struct)
 			}
+
 			if x.Type != nil {
 				ast.Inspect(x.Type, visit)
 			}
+
 			for _, elt := range x.Elts {
 				kv, ok := elt.(*ast.KeyValueExpr)
 				if !ok {
 					ast.Inspect(elt, visit)
 					continue
 				}
+
 				if !structLit {
 					ast.Inspect(kv.Key, visit)
 				}
+
 				ast.Inspect(kv.Value, visit)
 			}
+
 			return false
 
 		case *ast.LabeledStmt:
@@ -531,12 +572,14 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 			if x.Type != nil {
 				ast.Inspect(x.Type, visit)
 			}
+
 			return false
 
 		case *ast.Ident:
 			out = append(out, x)
 			return false
 		}
+
 		return true
 	}
 	for _, s := range a.stmts {
@@ -546,6 +589,7 @@ func (a *analyzer) collectIdents() []*ast.Ident {
 	// node kinds list children out of source order. Parameter order is
 	// load-bearing for the generated signature, so sort explicitly.
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Pos() < out[j].Pos() })
+
 	return out
 }
 
@@ -557,6 +601,7 @@ func (a *analyzer) objectOf(id *ast.Ident) gotypes.Object {
 	if obj != nil {
 		return obj
 	}
+
 	return a.info.Defs[id]
 }
 
@@ -577,6 +622,7 @@ func (a *analyzer) isCapturedVar(obj gotypes.Object) bool {
 	if obj.Parent() == gotypes.Universe {
 		return false
 	}
+
 	switch v := obj.(type) {
 	case *gotypes.PkgName, *gotypes.TypeName, *gotypes.Builtin, *gotypes.Nil, *gotypes.Const, *gotypes.Label:
 		return false
@@ -598,9 +644,11 @@ func (a *analyzer) isCapturedVar(obj gotypes.Object) bool {
 	if pos < a.fn.Pos() || pos >= a.fn.End() {
 		return false
 	}
+
 	if pos >= a.blockStart && pos < a.blockEnd {
 		return false
 	}
+
 	return true
 }
 
@@ -611,29 +659,37 @@ func (a *analyzer) collectParams() ([]Param, error) {
 	var params []Param
 	a.paramObjs = nil
 	seen := map[gotypes.Object]bool{}
+
 	for _, id := range a.collectIdents() {
 		obj := a.objectOf(id)
 		if !a.isCapturedVar(obj) || seen[obj] {
 			continue
 		}
+
 		seen[obj] = true
+
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("collect params: %w", err)
 		}
+
 		byPointer := mustNotCopy(obj.Type())
 		if !byPointer && (a.writeFirst(obj) || a.knownZero(obj)) {
 			a.localObjs = append(a.localObjs, obj)
 			a.localDecls = append(a.localDecls, Result{Name: obj.Name(), Type: typeStr})
+
 			continue
 		}
+
 		if byPointer {
 			typeStr = "*" + typeStr
 			a.pointerObjs[obj] = true
 		}
+
 		params = append(params, Param{Name: obj.Name(), Type: typeStr, ByPointer: byPointer})
 		a.paramObjs = append(a.paramObjs, obj)
 	}
+
 	return params, nil
 }
 
@@ -650,20 +706,24 @@ func (a *analyzer) hoistNoCopy(params []Param) ([]Param, error) {
 		if !mustNotCopy(obj.Type()) || !a.usedAfterBlock(obj) {
 			continue
 		}
+
 		decl := a.topLevelVarDecl(obj)
 		if decl == nil {
 			return nil, refuse("variable %s is declared in the block and used after it, but its type must not be copied and its declaration is not a plain `var %s T` statement, so it can neither be returned nor hoisted to the call site", obj.Name(), obj.Name())
 		}
+
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("hoist: %w", err)
 		}
+
 		a.hoisted = append(a.hoisted, Result{Name: obj.Name(), Type: typeStr})
 		a.hoistEdits = append(a.hoistEdits, edit{a.offset(decl.Pos()), a.offset(decl.End()), ""})
 		a.pointerObjs[obj] = true
 		params = append(params, Param{Name: obj.Name(), Type: "*" + typeStr, ByPointer: true})
 		a.paramObjs = append(a.paramObjs, obj)
 	}
+
 	return params, nil
 }
 
@@ -675,15 +735,18 @@ func (a *analyzer) topLevelVarDecl(obj gotypes.Object) ast.Stmt {
 		if !ok {
 			continue
 		}
+
 		gd, ok := ds.Decl.(*ast.GenDecl)
 		if !ok || gd.Tok != token.VAR || len(gd.Specs) != 1 {
 			continue
 		}
+
 		spec := gd.Specs[0].(*ast.ValueSpec)
 		if len(spec.Names) == 1 && len(spec.Values) == 0 && a.info.Defs[spec.Names[0]] == obj {
 			return ds
 		}
 	}
+
 	return nil
 }
 
@@ -695,6 +758,7 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 	mutated := a.mutatedObjects()
 
 	var results []Result
+
 	for i, p := range params {
 		if mutated[a.paramObjs[i]] && !p.ByPointer && a.liveOut(a.paramObjs[i]) {
 			results = append(results, Result{Name: p.Name, Type: p.Type})
@@ -713,20 +777,26 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 		if !a.usedAfterBlock(obj) {
 			continue
 		}
+
 		if a.pointerObjs[obj] {
 			continue
 		}
+
 		zero, err := a.zeroExpr(obj.Type())
 		if err != nil {
 			return nil, fmt.Errorf("collect results: %w", err)
 		}
+
 		a.earlyOuts = append(a.earlyOuts, zero)
+
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("collect results: %w", err)
 		}
+
 		results = append(results, Result{Name: obj.Name(), Type: typeStr})
 	}
+
 	return results, nil
 }
 
@@ -740,6 +810,7 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 		if base == nil {
 			return
 		}
+
 		obj := a.objectOf(base)
 		if obj == nil {
 			return
@@ -751,6 +822,7 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 		if a.mutationVisibleToCaller(lhs) {
 			return
 		}
+
 		out[obj] = true
 	}
 
@@ -770,6 +842,7 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 				if x.Key != nil {
 					note(x.Key)
 				}
+
 				if x.Value != nil {
 					note(x.Value)
 				}
@@ -789,6 +862,7 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 				}
 			}
 		}
+
 		return true
 	}
 	for _, s := range a.stmts {
@@ -796,6 +870,7 @@ func (a *analyzer) mutatedObjects() map[gotypes.Object]bool {
 		// variable mutates it whenever it runs.
 		ast.Inspect(s, visit)
 	}
+
 	return out
 }
 
@@ -812,33 +887,40 @@ func (a *analyzer) notePointerReceiverCall(call *ast.CallExpr, out map[gotypes.O
 	if !ok {
 		return
 	}
+
 	fn, ok := a.info.Uses[sel.Sel].(*gotypes.Func)
 	if !ok {
 		return
 	}
+
 	sig, ok := fn.Type().(*gotypes.Signature)
 	if !ok || sig.Recv() == nil {
 		return
 	}
+
 	_, ok = sig.Recv().Type().(*gotypes.Pointer)
 	if !ok {
 		// Value receiver (or an interface method): the callee gets a copy.
 		return
 	}
+
 	recvType := a.info.TypeOf(sel.X)
 	if recvType == nil {
 		return
 	}
+
 	_, ok = recvType.Underlying().(*gotypes.Pointer)
 	if ok {
 		// Already a pointer, so no address is taken and the mutation is
 		// visible to the caller regardless.
 		return
 	}
+
 	base := baseIdent(sel.X)
 	if base == nil {
 		return
 	}
+
 	obj := a.objectOf(base)
 	if obj != nil && !a.mutationVisibleToCaller(sel.X) {
 		out[obj] = true
@@ -874,6 +956,7 @@ func (a *analyzer) mutationVisibleToCaller(lhs ast.Expr) bool {
 				return true
 			}
 		}
+
 		return a.mutationVisibleToCaller(e.X)
 	}
 	// A bare identifier: whole-value assignment, never visible.
@@ -907,31 +990,38 @@ func baseIdent(e ast.Expr) *ast.Ident {
 // declaration order.
 func (a *analyzer) blockDeclaredVars() []gotypes.Object {
 	var ids []*ast.Ident
+
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
 			id, ok := n.(*ast.Ident)
 			if ok {
 				ids = append(ids, id)
 			}
+
 			return true
 		})
 	}
+
 	sort.SliceStable(ids, func(i, j int) bool { return ids[i].Pos() < ids[j].Pos() })
 
 	var out []gotypes.Object
 	seen := map[gotypes.Object]bool{}
+
 	for _, id := range ids {
 		obj := a.info.Defs[id]
 		if obj == nil || obj.Name() == "_" || seen[obj] {
 			continue
 		}
+
 		v, ok := obj.(*gotypes.Var)
 		if !ok || v.IsField() {
 			continue
 		}
+
 		seen[obj] = true
 		out = append(out, obj)
 	}
+
 	return out
 }
 
@@ -944,22 +1034,28 @@ func (a *analyzer) blockDeclaredVars() []gotypes.Object {
 // block would no longer compile either.
 func (a *analyzer) usedAfterBlock(obj gotypes.Object) bool {
 	found := false
+
 	ast.Inspect(a.fn.Body, func(n ast.Node) bool {
 		if found {
 			return false
 		}
+
 		id, ok := n.(*ast.Ident)
 		if !ok {
 			return true
 		}
+
 		if id.Pos() < a.blockEnd {
 			return true
 		}
+
 		if a.info.Uses[id] == obj || a.info.Defs[id] == obj {
 			found = true
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -972,28 +1068,35 @@ func (a *analyzer) dropRedundantDecls(res *Analysis) {
 	for _, p := range res.Params {
 		existing[p.Name] = true
 	}
+
 	decls := map[string]*ast.DeclStmt{}
+
 	for _, obj := range a.localObjs {
 		ds := a.droppableDecl(obj)
 		if ds != nil && a.knownZero(obj) {
 			decls[obj.Name()] = ds
 			continue
 		}
+
 		existing[obj.Name()] = true
 	}
+
 	allFresh := !res.TailReturns && (!res.ErrGuard || !res.ErrExists)
 	for _, r := range res.Results {
 		allFresh = allFresh && !existing[r.Name]
 	}
+
 	resultNames := map[string]bool{}
 	for _, r := range res.Results {
 		resultNames[r.Name] = true
 	}
+
 	for _, obj := range a.localObjs {
 		ds := decls[obj.Name()]
 		if ds == nil || (resultNames[obj.Name()] && !allFresh) || (!resultNames[obj.Name()] && a.usedAfterBlock(obj)) {
 			continue
 		}
+
 		res.DroppedDecls = append(res.DroppedDecls, DroppedDecl{obj.Name(), a.offset(ds.Pos()), a.offset(ds.End())})
 	}
 }
@@ -1006,25 +1109,30 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 	if !a.hasBoundReturn() {
 		return nil
 	}
+
 	if a.innerBody != a.fn.Body {
 		// The selection lives in a closure, so its returns bind to the
 		// closure. Turning them into returns of a new top-level function
 		// would change which function they exit.
 		return refuse("block sits inside a function literal and contains `return`; its returns bind to the literal and cannot be extracted")
 	}
+
 	if !alwaysTerminates(a.stmts) {
 		return a.analyzeErrGuard(res)
 	}
 
 	res.TailReturns = true
+
 	results := a.innerSig.Results()
 	for v := range results.Variables() {
 		typeStr, err := a.renderType(v.Type(), "enclosing function result")
 		if err != nil {
 			return fmt.Errorf("analyze returns: %w", err)
 		}
+
 		res.EnclosingResults = append(res.EnclosingResults, Result{Name: v.Name(), Type: typeStr})
 	}
+
 	return nil
 }
 
@@ -1032,10 +1140,12 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 // the function the selection belongs to (as opposed to a nested closure).
 func (a *analyzer) hasBoundReturn() bool {
 	found := false
+
 	visit := func(n ast.Node) bool {
 		if found {
 			return false
 		}
+
 		switch n.(type) {
 		case *ast.FuncLit:
 			return false
@@ -1043,11 +1153,13 @@ func (a *analyzer) hasBoundReturn() bool {
 			found = true
 			return false
 		}
+
 		return true
 	}
 	for _, s := range a.stmts {
 		ast.Inspect(s, visit)
 	}
+
 	return found
 }
 
@@ -1061,6 +1173,7 @@ func alwaysTerminates(stmts []ast.Stmt) bool {
 	if len(stmts) == 0 {
 		return false
 	}
+
 	return terminates(stmts[len(stmts)-1])
 }
 
@@ -1102,6 +1215,7 @@ func terminates(s ast.Stmt) bool {
 		// does not need a default clause to be terminating.
 		return terminatingClauses(x.Body, false)
 	}
+
 	return false
 }
 
@@ -1112,32 +1226,40 @@ func terminatingClauses(body *ast.BlockStmt, needDefault bool) bool {
 	if body == nil {
 		return false
 	}
+
 	hasDefault := false
+
 	for _, cl := range body.List {
 		var list []ast.Stmt
+
 		switch c := cl.(type) {
 		case *ast.CaseClause:
 			if c.List == nil {
 				hasDefault = true
 			}
+
 			list = c.Body
 		case *ast.CommClause:
 			if c.Comm == nil {
 				hasDefault = true
 			}
+
 			list = c.Body
 		default:
 			return false
 		}
+
 		if !alwaysTerminates(list) {
 			return false
 		}
+
 		for _, s := range list {
 			if hasBreak(s, "", true) {
 				return false
 			}
 		}
 	}
+
 	return hasDefault || !needDefault
 }
 
@@ -1151,6 +1273,7 @@ func hasBreak(s ast.Stmt, label string, implicit bool) bool {
 			if x.Label == nil {
 				return implicit
 			}
+
 			return x.Label.Name == label
 		}
 	case *ast.BlockStmt:
@@ -1159,6 +1282,7 @@ func hasBreak(s ast.Stmt, label string, implicit bool) bool {
 		if hasBreak(x.Body, label, implicit) {
 			return true
 		}
+
 		return x.Else != nil && hasBreak(x.Else, label, implicit)
 	case *ast.CaseClause:
 		return hasBreakList(x.Body, label, false)
@@ -1179,6 +1303,7 @@ func hasBreak(s ast.Stmt, label string, implicit bool) bool {
 	case *ast.RangeStmt:
 		return label != "" && hasBreak(x.Body, label, false)
 	}
+
 	return false
 }
 
@@ -1188,6 +1313,7 @@ func hasBreakList(list []ast.Stmt, label string, implicit bool) bool {
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1198,6 +1324,7 @@ func isTerminalCall(e ast.Expr) bool {
 	if !ok {
 		return false
 	}
+
 	switch fn := call.Fun.(type) {
 	case *ast.Ident:
 		return fn.Name == "panic"
@@ -1206,11 +1333,13 @@ func isTerminalCall(e ast.Expr) bool {
 		if !ok {
 			return false
 		}
+
 		switch pkg.Name + "." + fn.Sel.Name {
 		case "os.Exit", "runtime.Goexit", "log.Fatal", "log.Fatalf", "log.Fatalln", "log.Panic", "log.Panicf", "log.Panicln":
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -1220,22 +1349,28 @@ func isTerminalCall(e ast.Expr) bool {
 
 func fileImportAliases(f *ast.File) map[string]string {
 	out := make(map[string]string)
+
 	for _, imp := range f.Imports {
 		path, err := strconv.Unquote(imp.Path.Value)
 		if err != nil {
 			continue
 		}
+
 		alias := ""
+
 		if imp.Name != nil {
 			if imp.Name.Name == "_" || imp.Name.Name == "." {
 				// Neither can be used to qualify a type name, so treat the
 				// package as not imported at all.
 				continue
 			}
+
 			alias = imp.Name.Name
 		}
+
 		out[path] = alias
 	}
+
 	return out
 }
 
@@ -1250,14 +1385,18 @@ func (a *analyzer) qualifier(p *gotypes.Package) string {
 	if p == nil || p == a.pkg.TypesPkg {
 		return ""
 	}
+
 	alias, ok := a.fileImports[p.Path()]
 	if ok {
 		if alias != "" {
 			return alias
 		}
+
 		return p.Name()
 	}
+
 	a.newImports[p.Path()] = p.Name()
+
 	return p.Name()
 }
 
@@ -1269,14 +1408,17 @@ func (a *analyzer) renderType(t gotypes.Type, what string) (string, error) {
 	if t == nil {
 		return "", refuse("the type of %s could not be determined", what)
 	}
+
 	b, ok := t.(*gotypes.Basic)
 	if ok && b.Kind() == gotypes.Invalid {
 		return "", refuse("the type of %s is invalid; the package does not type-check cleanly", what)
 	}
+
 	s := gotypes.TypeString(t, a.qualifier)
 	if s == "" || strings.Contains(s, "invalid type") {
 		return "", refuse("the type of %s could not be rendered (%q)", what, s)
 	}
+
 	return s, nil
 }
 
@@ -1284,10 +1426,12 @@ func deref(t gotypes.Type) gotypes.Type {
 	if t == nil {
 		return gotypes.Typ[gotypes.Invalid]
 	}
+
 	p, ok := t.Underlying().(*gotypes.Pointer)
 	if ok {
 		return p.Elem()
 	}
+
 	return t
 }
 
@@ -1304,7 +1448,9 @@ func (a *analyzer) bodyText() (string, error) {
 	if len(src) == 0 {
 		return "", refuse("source content for %s is unavailable", a.file.Path)
 	}
+
 	start := a.fset.Position(a.blockStart).Offset
+
 	end := a.fset.Position(a.blockEnd).Offset
 	if start < 0 || end > len(src) || start >= end {
 		return "", refuse("could not map the selected statements back to source offsets")
@@ -1317,12 +1463,14 @@ func (a *analyzer) bodyText() (string, error) {
 	for lineStart > 0 && src[lineStart-1] != '\n' {
 		lineStart--
 	}
+
 	if strings.TrimLeft(string(src[lineStart:start]), " \t") == "" {
 		start = lineStart
 	}
 
 	edits := append(a.pointerEdits(), a.guardEdits()...)
 	edits = append(edits, a.hoistEdits...)
+
 	return dedent(applyEdits(string(src[start:end]), start, edits)), nil
 }
 
@@ -1336,9 +1484,11 @@ type edit struct {
 // base.
 func applyEdits(s string, base int, edits []edit) string {
 	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+
 	for _, e := range edits {
 		s = s[:e.start-base] + e.text + s[e.end-base:]
 	}
+
 	return s
 }
 
@@ -1353,21 +1503,26 @@ func (a *analyzer) pointerEdits() []edit {
 	}
 	var edits []edit
 	var stack []ast.Node
+
 	for _, s := range a.stmts {
 		ast.Inspect(s, func(n ast.Node) bool {
 			if n == nil {
 				stack = stack[:len(stack)-1]
 				return true
 			}
+
 			stack = append(stack, n)
+
 			id, ok := n.(*ast.Ident)
 			if !ok || !a.pointerObjs[a.info.Uses[id]] {
 				return true
 			}
+
 			var parent ast.Node
 			if len(stack) > 1 {
 				parent = stack[len(stack)-2]
 			}
+
 			switch p := parent.(type) {
 			case *ast.SelectorExpr:
 				if p.X == id {
@@ -1379,10 +1534,13 @@ func (a *analyzer) pointerEdits() []edit {
 					return true
 				}
 			}
+
 			edits = append(edits, edit{a.offset(id.Pos()), a.offset(id.End()), "(*" + id.Name + ")"})
+
 			return true
 		})
 	}
+
 	return edits
 }
 
@@ -1394,10 +1552,12 @@ func (a *analyzer) guardEdits() []edit {
 		prefix = strings.Join(a.earlyOuts, ", ") + ", "
 	}
 	var edits []edit
+
 	for _, ret := range a.guardReturns {
 		last := ret.Results[len(ret.Results)-1]
 		edits = append(edits, edit{a.offset(ret.Results[0].Pos()), a.offset(last.Pos()), prefix})
 	}
+
 	return edits
 }
 
@@ -1411,34 +1571,42 @@ func dedent(s string) string {
 	lines := strings.Split(s, "\n")
 	prefix := ""
 	havePrefix := false
+
 	for _, ln := range lines {
 		if strings.TrimSpace(ln) == "" {
 			continue
 		}
+
 		ws := ln[:len(ln)-len(strings.TrimLeft(ln, " \t"))]
 		if !havePrefix {
 			prefix, havePrefix = ws, true
 			continue
 		}
+
 		prefix = commonPrefix(prefix, ws)
 		if prefix == "" {
 			break
 		}
 	}
+
 	if prefix == "" {
 		return s
 	}
+
 	for i, ln := range lines {
 		lines[i] = strings.TrimPrefix(ln, prefix)
 	}
+
 	return strings.Join(lines, "\n")
 }
 
 func commonPrefix(a, b string) string {
 	n := min(len(a), len(b))
+
 	i := 0
 	for i < n && a[i] == b[i] {
 		i++
 	}
+
 	return a[:i]
 }

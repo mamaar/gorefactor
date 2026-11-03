@@ -83,6 +83,7 @@ func (inProc) Token(service string, opts common.Opts) (string, error) {
 func lookup(ctx context.Context, service string) (string, error) { return service, ctx.Err() }
 `,
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

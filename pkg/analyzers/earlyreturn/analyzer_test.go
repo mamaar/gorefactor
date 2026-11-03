@@ -15,6 +15,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -46,6 +47,7 @@ func run(t *testing.T, src string, opts ...earlyreturn.Option) ([]*earlyreturn.R
 	t.Helper()
 
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, earlyreturn.NewAnalyzer(opts...), "")
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +57,7 @@ func run(t *testing.T, src string, opts ...earlyreturn.Option) ([]*earlyreturn.R
 	if !ok && rr.Result != nil {
 		t.Fatalf("unexpected result type %T", rr.Result)
 	}
+
 	return results, rr.Diagnostics
 }
 
@@ -64,6 +67,7 @@ func fixedText(t *testing.T, diags []analysis.Diagnostic) string {
 	t.Helper()
 
 	var texts []string
+
 	for _, d := range diags {
 		for _, fix := range d.SuggestedFixes {
 			for _, edit := range fix.TextEdits {
@@ -71,9 +75,11 @@ func fixedText(t *testing.T, diags []analysis.Diagnostic) string {
 			}
 		}
 	}
+
 	if len(texts) != 1 {
 		t.Fatalf("expected exactly 1 suggested fix, got %d", len(texts))
 	}
+
 	return texts[0]
 }
 
@@ -84,6 +90,7 @@ func assertParses(t *testing.T, stmts string) {
 	t.Helper()
 
 	src := "package p\n\nfunc wrapper() {\nfor {\n" + stmts + "\n}\n}\n"
+
 	_, err := parser.ParseFile(token.NewFileSet(), "", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("replacement text does not parse: %v\n%s", err, stmts)
@@ -92,9 +99,11 @@ func assertParses(t *testing.T, stmts string) {
 
 func onlyResult(t *testing.T, results []*earlyreturn.Result) *earlyreturn.Result {
 	t.Helper()
+
 	if len(results) != 1 {
 		t.Fatalf("expected 1 finding, got %d: %+v", len(results), results)
 	}
+
 	return results[0]
 }
 
@@ -115,18 +124,22 @@ func handle(enabled bool) {
 	if got.Pattern != earlyreturn.PatternGuardClause {
 		t.Errorf("pattern = %q, want %q", got.Pattern, earlyreturn.PatternGuardClause)
 	}
+
 	if !got.Fixable {
 		t.Errorf("expected fixable finding, reason: %s", got.Reason)
 	}
+
 	if got.Function != "handle" {
 		t.Errorf("function = %q, want handle", got.Function)
 	}
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
+
 	if !strings.HasPrefix(text, "if !enabled {\n\t\treturn\n\t}\n") {
 		t.Errorf("unexpected guard text:\n%s", text)
 	}
+
 	if !strings.Contains(text, "println(a + b)") {
 		t.Errorf("body not carried through:\n%s", text)
 	}
@@ -161,6 +174,7 @@ func handle(s stream) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
+
 	want := "if s.Filter == nil || s.Filter.MatchAll {\n\t\treturn\n\t}\n"
 	if !strings.HasPrefix(text, want) {
 		t.Errorf("guard text = %q, want prefix %q", text, want)
@@ -183,6 +197,7 @@ func handle(enabled bool) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
+
 	for _, want := range []string{"// why this matters", "// trailing note", "// closing note"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("comment %q dropped:\n%s", want, text)
@@ -218,6 +233,7 @@ func handle(enabled bool) {
 	}
 }
 `
+
 	results, _ := run(t, src)
 	if len(results) != 0 {
 		t.Errorf("expected no findings below the body-line threshold, got %+v", results)
@@ -242,6 +258,7 @@ func handle() {
 
 func compute() int { return 1 }
 `
+
 	results, _ := run(t, src)
 	if len(results) != 0 {
 		t.Errorf("expected no findings for an if with an init statement, got %+v", results)
@@ -269,9 +286,11 @@ func handle(enabled bool) {
 	if got.Fixable {
 		t.Error("expected the finding to be reported unfixable")
 	}
+
 	if !strings.Contains(got.Reason, "redeclare") {
 		t.Errorf("reason = %q, want it to mention redeclaration", got.Reason)
 	}
+
 	for _, d := range diags {
 		if len(d.SuggestedFixes) != 0 {
 			t.Error("an unfixable finding must not carry a suggested fix")
@@ -290,10 +309,12 @@ func handle(count int, enabled bool) {
 	}
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Fixable {
 		t.Errorf("expected unfixable: a parameter shares the function body scope")
 	}
+
 	if !strings.Contains(got.Reason, "count") {
 		t.Errorf("reason = %q, want it to name the clashing identifier", got.Reason)
 	}
@@ -313,10 +334,12 @@ func handle(enabled bool) error {
 	}
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Fixable {
 		t.Error("expected unfixable for unnamed results")
 	}
+
 	if !strings.Contains(got.Reason, "unnamed results") {
 		t.Errorf("reason = %q, want it to mention unnamed results", got.Reason)
 	}
@@ -337,6 +360,7 @@ func handle(enabled bool) (err error) {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
+
 	if !strings.HasPrefix(text, "if !enabled {\n\t\treturn\n\t}\n") {
 		t.Errorf("expected a bare return for named results:\n%s", text)
 	}
@@ -361,12 +385,14 @@ func handle(items []int) {
 	if got.Pattern != earlyreturn.PatternLoopContinue {
 		t.Errorf("pattern = %q, want %q", got.Pattern, earlyreturn.PatternLoopContinue)
 	}
+
 	if !got.Fixable {
 		t.Errorf("expected fixable, reason: %s", got.Reason)
 	}
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
+
 	if !strings.HasPrefix(text, "if item <= 0 {\n\t\t\tcontinue\n\t\t}\n") {
 		t.Errorf("unexpected continue guard:\n%s", text)
 	}
@@ -388,6 +414,7 @@ func handle(items []int) error {
 	return nil
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Pattern != earlyreturn.PatternLoopContinue || !got.Fixable {
 		t.Errorf("expected a fixable loop_continue finding, got %+v", got)
@@ -415,9 +442,11 @@ func handle(enabled bool) int {
 
 	text := fixedText(t, diags)
 	assertParses(t, text)
+
 	if strings.Contains(text, "else") {
 		t.Errorf("else branch should be gone:\n%s", text)
 	}
+
 	if !strings.HasPrefix(text, "if !enabled {\n") {
 		t.Errorf("condition should be left untouched:\n%s", text)
 	}
@@ -436,6 +465,7 @@ func handle(enabled bool) int {
 	}
 }
 `
+
 	got := onlyResult(t, mustResults(t, src, earlyreturn.WithMinBodyLines(10)))
 	if !got.Fixable {
 		t.Errorf("expected fixable, reason: %s", got.Reason)
@@ -458,6 +488,7 @@ func handle(enabled bool) {
 	_, diags := run(t, src)
 
 	text := fixedText(t, diags)
+
 	want := "if !enabled {\n\t\t\treturn\n\t\t}\n\t\tprintln(\"ok\")"
 	if text != want {
 		t.Errorf("replacement indentation mismatch\ngot:\n%s\nwant:\n%s", text, want)
@@ -475,6 +506,7 @@ func handle(enabled bool) {
 	}
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Pattern != earlyreturn.PatternElseAfterReturn || !got.Fixable {
 		t.Errorf("expected a fixable else_after_return finding, got %+v", got)
@@ -492,6 +524,7 @@ func handle(enabled bool) {
 	}
 }
 `
+
 	results, _ := run(t, src)
 	if len(results) != 0 {
 		t.Errorf("expected no findings when the if branch falls through, got %+v", results)
@@ -510,6 +543,7 @@ func handle(x int) int {
 	return 2
 }
 `
+
 	results, _ := run(t, src)
 	if len(results) != 0 {
 		t.Errorf("expected no findings for an else-if ladder, got %+v", results)
@@ -529,6 +563,7 @@ func handle() int {
 
 func compute() int { return 1 }
 `
+
 	results, _ := run(t, src)
 	if len(results) != 0 {
 		t.Errorf("expected no findings for an if with an init statement, got %+v", results)
@@ -579,10 +614,12 @@ func handle(items []int) {
 	}
 }
 `
+
 	results, _ := run(t, src, earlyreturn.WithPatterns(earlyreturn.PatternGuardClause))
 	if len(results) != 0 {
 		t.Errorf("loop_continue should be filtered out, got %+v", results)
 	}
+
 	results, _ = run(t, src, earlyreturn.WithPatterns(earlyreturn.PatternLoopContinue))
 	if len(results) != 1 {
 		t.Errorf("loop_continue should be reported when selected, got %+v", results)
@@ -602,10 +639,12 @@ func handle(enabled bool) {
 	}()
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Pattern != earlyreturn.PatternGuardClause || !got.Fixable {
 		t.Errorf("expected a fixable guard inside the literal, got %+v", got)
 	}
+
 	if !strings.Contains(got.Function, "handle") {
 		t.Errorf("function = %q, want it to reference the enclosing function", got.Function)
 	}
@@ -627,6 +666,7 @@ func handle(x int, enabled bool) {
 	}
 }
 `
+
 	results, _ := run(t, src)
 	if len(results) != 0 {
 		t.Errorf("expected no findings inside a case clause, got %+v", results)
@@ -638,6 +678,7 @@ func TestParsePattern(t *testing.T) {
 	if !ok || p != earlyreturn.PatternLoopContinue {
 		t.Errorf("ParsePattern(loop_continue) = %q, %v", p, ok)
 	}
+
 	_, ok = earlyreturn.ParsePattern("nonsense")
 	if ok {
 		t.Error("ParsePattern should reject unknown names")
@@ -647,6 +688,7 @@ func TestParsePattern(t *testing.T) {
 func mustResults(t *testing.T, src string, opts ...earlyreturn.Option) []*earlyreturn.Result {
 	t.Helper()
 	results, _ := run(t, src, opts...)
+
 	return results
 }
 
@@ -668,10 +710,12 @@ func handle(x any, enabled bool) {
 	}
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Fixable {
 		t.Error("expected unfixable: the type switch guard shares the clause body scope")
 	}
+
 	if !strings.Contains(got.Reason, "v") {
 		t.Errorf("reason = %q, want it to name the clashing identifier", got.Reason)
 	}
@@ -693,6 +737,7 @@ func handle(ch chan int, enabled bool) {
 	}
 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if got.Fixable {
 		t.Error("expected unfixable: the received variable shares the clause body scope")
@@ -719,6 +764,7 @@ func handle(enabled bool) {
 
 func compute() int { return 1 }
 `
+
 	got := onlyResult(t, mustResults(t, src))
 	if !got.Fixable {
 		t.Errorf("expected fixable: a clause body may shadow the switch init variable; reason: %s", got.Reason)

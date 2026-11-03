@@ -13,6 +13,7 @@ linters:
     - ineffassign
     - gocritic
     - misspell
+    - wsl_v5
     - nilnil
     - durationcheck
     - exptostd
@@ -28,3 +29,8 @@ linters:
     - mirror
     - intrange
     - copyloopvar
+
+  settings:
+    wsl_v5:
+      disable:
+        - decl

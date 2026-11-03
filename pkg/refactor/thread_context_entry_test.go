@@ -12,13 +12,16 @@ const entryPkg = "example.com/threadtest"
 func threadScoped(t *testing.T, files map[string]string, fn string) (*types.RefactoringPlan, string) {
 	t.Helper()
 	eng, dir := loadConfigsEngine(t, files)
+
 	plan, err := eng.ThreadContextAcrossConfigs(types.ThreadContextRequest{FunctionName: fn, SourceFile: "main.go", EntryPackage: entryPkg})
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := eng.ExecutePlan(plan); err != nil {
 		t.Fatal(err)
 	}
+
 	return plan, dir
 }
 
@@ -31,9 +34,11 @@ func TestThreadContextEntry_CallerOutsideTheEntryKeepsItsSignature(t *testing.T)
 	assertOnce(t, dir, "main.go", "func A(ctx context.Context) { S(ctx) }")
 	assertOnce(t, dir, "main.go", "func B() { S(context.TODO()) }")
 	assertOnce(t, dir, "main_test.go", "func helper(ctx context.Context) { S(ctx) }")
+
 	if len(plan.SkippedSites) != 1 || !strings.HasPrefix(plan.SkippedSites[0].Reason, "outside entry:") || plan.SkippedSites[0].Snippet != "B" {
 		t.Errorf("skipped = %+v, want B outside entry", plan.SkippedSites)
 	}
+
 	vetBuilds(t, dir, linuxBuild)
 }
 
@@ -59,7 +64,6 @@ func TestThreadContextEntry_RequiresAnEntryThatIsMain(t *testing.T) {
 	eng, _ := loadConfigsEngine(t, map[string]string{"main.go": "package main\n\nfunc S() {}\n\nfunc main() { S() }\n", "p/p.go": "package p\n"})
 
 	_, err := eng.ThreadContextAcrossConfigs(types.ThreadContextRequest{FunctionName: "S", SourceFile: "main.go", EntryPackage: entryPkg + "/p"})
-
 	if err == nil {
 		t.Error("want an error for a non-main entry")
 	}
@@ -75,26 +79,30 @@ func TestThreadContextEntry_PackagesDownstreamOfBodilessCodeCountAsReached(t *te
 	eng, _ := loadConfigsEngine(t, files)
 
 	plan, err := eng.ThreadContextAcrossConfigs(types.ThreadContextRequest{FunctionName: "S", SourceFile: "p/p.go", EntryPackage: entryPkg})
-
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, s := range plan.SkippedSites {
 		if s.Snippet == "G" {
 			t.Errorf("G is downstream of bodiless code, so it must be climbed, got %+v", s)
 		}
 	}
+
 	outside := false
 	for _, s := range plan.SkippedSites {
 		outside = outside || s.Snippet == "R"
 	}
+
 	if !outside {
 		t.Errorf("R is in a package no bodiless package imports, so it stays outside: %+v", plan.SkippedSites)
 	}
+
 	gained := false
 	for _, c := range plan.Changes {
 		gained = gained || (strings.HasSuffix(c.File, "p/p.go") && strings.Contains(c.NewText, "ctx context.Context"))
 	}
+
 	if !gained {
 		t.Errorf("no signature in p gained ctx: %+v", plan.Changes)
 	}
@@ -106,11 +114,13 @@ func TestThreadContextEntry_OutsideCallerThatGainsByExpansionIsNotReportedAsStop
 	}, "S")
 
 	assertOnce(t, dir, "main.go", "func (Y) M(ctx context.Context) { S(ctx) }")
+
 	for _, s := range plan.SkippedSites {
 		if strings.HasSuffix(s.Snippet, "Y.M") {
 			t.Errorf("Y.M gained ctx but is reported as stopped: %+v", s)
 		}
 	}
+
 	vetBuilds(t, dir, linuxBuild)
 }
 

@@ -10,6 +10,7 @@ import (
 // assertCallersPass fails unless the call site inside caller passes want.
 func assertCallersPass(t *testing.T, plan *threadPlan, caller, want string) {
 	t.Helper()
+
 	got := argIn(t, plan, caller)
 	if got != want {
 		t.Errorf("%s must pass %q, got %q", caller, want, got)
@@ -33,6 +34,7 @@ func TestThreadContext_TestingParamHelperIsRoot(t *testing.T) {
 			}, "p/lib.go", "Seed")
 			assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
 			assertCallersPass(t, plan, "h", tc.want)
+
 			for _, e := range plan.ArgFor {
 				fn := e.Site.Fn
 				if fn != nil && fn.Name.Name != "h" {
@@ -110,6 +112,7 @@ func TestThreadContext_SeedWithTestingParamStillGainsCtx(t *testing.T) {
 	}, "p/seed.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
 	assertCallersPass(t, plan, "TestX", "t.Context()")
+
 	if strings.Contains(strings.Join(gainingNames(plan), ","), "TestX") {
 		t.Error("TestX must not gain a parameter")
 	}
@@ -118,12 +121,15 @@ func TestThreadContext_SeedWithTestingParamStillGainsCtx(t *testing.T) {
 // renderedFile renders the plan and returns the rewritten content of path.
 func renderedFile(t *testing.T, ws *pkgtypes.Workspace, plan *threadPlan, path string) string {
 	t.Helper()
+
 	changes, err := renderThreadPlan(ws, plan)
 	if err != nil {
 		t.Fatalf("renderThreadPlan: %v", err)
 	}
+
 	got := renderedContent(t, ws, wsPath(ws, path), changes)
 	assertParses(t, path, got)
+
 	return got
 }
 
@@ -152,6 +158,7 @@ func TestThreadContext_ShadowedTestingParamInTestDeclUsesTODO(t *testing.T) {
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
 	assertCallersPass(t, plan, "TestX", "context.TODO()")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if strings.Contains(got, "t.Context()") {
 		t.Errorf("shadowed t must not be used:\n%s", got)
@@ -164,6 +171,7 @@ func TestThreadContext_ShadowedTestingParamInRunClosureUsesTODO(t *testing.T) {
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) {\n\tt.Run(\"a\", func(t *testing.T) {\n\t\tfor _, t := range []int{1} {\n\t\t\t_ = t\n\t\t\tSeed()\n\t\t}\n\t})\n}\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if !strings.Contains(got, "Seed(context.TODO())") || strings.Contains(got, "t.Context()") {
 		t.Errorf("expected context.TODO() and no t.Context():\n%s", got)
@@ -176,6 +184,7 @@ func TestThreadContext_HelperWithShadowedAndUnshadowedSites(t *testing.T) {
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tSeed()\n\tfor _, t := range items {\n\t\t_ = t\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, nil) }\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed", "helper"}, "Funcs")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if strings.Count(got, "Seed(ctx)") != 2 || strings.Contains(got, "Seed(t.Context())") {
 		t.Errorf("both Seed calls must pass the helper's ctx:\n%s", got)
@@ -188,6 +197,7 @@ func TestThreadContext_UnshadowedTestingParamPassesTContext(t *testing.T) {
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tfor _, i := range items {\n\t\t_ = i\n\t\tSeed()\n\t}\n}\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if !strings.Contains(got, "Seed(t.Context())") {
 		t.Errorf("expected t.Context():\n%s", got)
@@ -200,6 +210,7 @@ func TestThreadContext_TwoTestingParamsFirstShadowedSecondVisibleIsRoot(t *testi
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(a *testing.T, b *testing.T, items []int) {\n\tfor _, a := range items {\n\t\t_ = a\n\t\tSeed()\n\t}\n}\n\nfunc TestX(t *testing.T) { helper(t, t, nil) }\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
+
 	got := renderedFile(t, ws, plan, "p/x_test.go")
 	if !strings.Contains(got, "Seed(b.Context())") {
 		t.Errorf("expected the unshadowed second param b.Context():\n%s", got)

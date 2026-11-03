@@ -74,23 +74,29 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		if len(an.Results) > 0 {
 			return "", "", fmt.Errorf("block both returns from the enclosing function on every path and produces %d value(s) the following code still uses; that cannot be expressed as a single call", len(an.Results))
 		}
+
 		results = an.EnclosingResults
 	}
+
 	if an.ErrGuard {
 		results = append(slices.Clone(results), extractsig.Result{Type: "error"})
 	}
 
 	var b strings.Builder
 	b.WriteString("func ")
+
 	if recvDecl != "" {
 		b.WriteString("(" + recvDecl + ") ")
 	}
+
 	b.WriteString(name + "(" + strings.Join(sigParams, ", ") + ")")
 	writeResultTypes(results, &b)
 	b.WriteString(" {\n")
+
 	for _, d := range an.LocalDecls {
 		b.WriteString("var " + d.Name + " " + d.Type + "\n")
 	}
+
 	b.WriteString(an.BodyText)
 	writeTrailingReturn(an, &b)
 	b.WriteString("\n}\n")
@@ -118,6 +124,7 @@ func writeResultTypes(results []extractsig.Result, b *strings.Builder) {
 		for _, r := range results {
 			typeList = append(typeList, r.Type)
 		}
+
 		b.WriteString(" (" + strings.Join(typeList, ", ") + ")")
 	}
 }
@@ -128,6 +135,7 @@ func writeTrailingReturn(an *extractsig.Analysis, b *strings.Builder) {
 		for _, r := range an.Results {
 			names = append(names, r.Name)
 		}
+
 		b.WriteString("\nreturn " + strings.Join(append(names, "nil"), ", "))
 	} else if !an.TailReturns && len(an.Results) > 0 {
 		// TailReturns is false, so extractsig found no return bound to the
@@ -137,6 +145,7 @@ func writeTrailingReturn(an *extractsig.Analysis, b *strings.Builder) {
 		for _, r := range an.Results {
 			names = append(names, r.Name)
 		}
+
 		b.WriteString("\nreturn " + strings.Join(names, ", "))
 	}
 }
@@ -148,6 +157,7 @@ func hoistedDecls(an *extractsig.Analysis) string {
 	for _, h := range an.Hoisted {
 		b.WriteString("var " + h.Name + " " + h.Type + "\n")
 	}
+
 	return b.String()
 }
 
@@ -174,9 +184,11 @@ func callSite(an *extractsig.Analysis, callExpr string) string {
 	for _, p := range an.Params {
 		existing[p.Name] = true
 	}
+
 	for _, d := range an.LocalDecls {
 		existing[d.Name] = true
 	}
+
 	for _, d := range an.DroppedDecls {
 		delete(existing, d.Name)
 	}
@@ -186,43 +198,55 @@ func callSite(an *extractsig.Analysis, callExpr string) string {
 		outs = append(outs, extractsig.Result{Name: an.ErrName, Type: "error"})
 		existing[an.ErrName] = an.ErrExists
 	}
+
 	lhs := make([]string, 0, len(outs))
 	var fresh []extractsig.Result
+
 	for _, r := range outs {
 		lhs = append(lhs, r.Name)
 		if !existing[r.Name] {
 			fresh = append(fresh, r)
 		}
 	}
+
 	assign := strings.Join(lhs, ", ") + " := " + callExpr
+
 	if len(fresh) != len(outs) {
 		lines := make([]string, 0, len(fresh)+1)
 		for _, r := range fresh {
 			lines = append(lines, "var "+r.Name+" "+r.Type)
 		}
+
 		lines = append(lines, strings.Join(lhs, ", ")+" = "+callExpr)
 		assign = strings.Join(lines, "\n")
 	}
+
 	if !an.ErrGuard {
 		return assign
 	}
+
 	returned := append(slices.Clone(an.GuardZeros), an.ErrName)
+
 	return assign + "\nif " + an.ErrName + " != nil {\n\treturn " + strings.Join(returned, ", ") + "\n}"
 }
 
 func splitParamsAndArgs(an *extractsig.Analysis, recvIdx int) ([]string, []string) {
 	var sigParams, args []string
+
 	for i, p := range an.Params {
 		if i == recvIdx {
 			continue
 		}
+
 		sigParams = append(sigParams, p.Name+" "+p.Type)
 		if p.ByPointer {
 			args = append(args, "&"+p.Name)
 			continue
 		}
+
 		args = append(args, p.Name)
 	}
+
 	return sigParams, args
 }
 
@@ -230,16 +254,19 @@ func splitParamsAndArgs(an *extractsig.Analysis, recvIdx int) ([]string, []strin
 // throwaway package clause and stripping that clause off again.
 func formatDeclaration(declSrc string) (string, error) {
 	const hdr = "package p\n\n"
+
 	formatted, err := format.Source([]byte(hdr + declSrc))
 	if err != nil {
 		return "", fmt.Errorf("the generated declaration is not valid Go: %w", err)
 	}
+
 	out := strings.TrimPrefix(string(formatted), hdr)
 	if strings.HasPrefix(out, "package ") {
 		// gofmt reshaped the header (it should not, but a stale prefix here
 		// would end up written into the user's file).
 		return "", fmt.Errorf("could not strip the synthetic package clause from the generated declaration")
 	}
+
 	return strings.TrimRight(out, "\n"), nil
 }
 
@@ -253,10 +280,12 @@ func formatDeclaration(declSrc string) (string, error) {
 // literal travels with the defer and its timing is unchanged.
 func selectionHasDefer(stmts []ast.Stmt) bool {
 	found := false
+
 	visit := func(n ast.Node) bool {
 		if found {
 			return false
 		}
+
 		switch n.(type) {
 		case *ast.FuncLit:
 			return false
@@ -264,11 +293,13 @@ func selectionHasDefer(stmts []ast.Stmt) bool {
 			found = true
 			return false
 		}
+
 		return true
 	}
 	for _, s := range stmts {
 		ast.Inspect(s, visit)
 	}
+
 	return found
 }
 
@@ -280,10 +311,12 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 	if startLine < 1 || endLine > len(lines) || startLine > endLine {
 		return 0, 0, false
 	}
+
 	start := 0
 	for i := range startLine - 1 {
 		start += len(lines[i]) + 1
 	}
+
 	end := start
 	for i := startLine - 1; i < endLine; i++ {
 		end += len(lines[i])
@@ -291,6 +324,7 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 			end++ // the newline joining this line to the next
 		}
 	}
+
 	return start, end, true
 }
 
@@ -299,13 +333,16 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 func wholeLineIfAlone(content string, start, end int) (int, int) {
 	lineStart := strings.LastIndex(content[:start], "\n") + 1
 	lineEnd := len(content)
+
 	i := strings.Index(content[end:], "\n")
 	if i >= 0 {
 		lineEnd = end + i + 1
 	}
+
 	if strings.TrimSpace(content[lineStart:start]+content[end:lineEnd]) != "" {
 		return start, end
 	}
+
 	return lineStart, lineEnd
 }
 
@@ -329,6 +366,7 @@ func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports m
 	for path := range imports {
 		paths = append(paths, path)
 	}
+
 	sort.Strings(paths)
 
 	needed := make([]neededImport, 0, len(paths))
@@ -346,6 +384,7 @@ func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports m
 		if pkgName != lastPathSegment(path) {
 			alias = pkgName
 		}
+
 		needed = append(needed, neededImport{alias: alias, path: path})
 	}
 
@@ -353,6 +392,7 @@ func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports m
 	if change == nil {
 		return nil, errNoImportChange
 	}
+
 	return change, nil
 }
 
@@ -361,6 +401,7 @@ func lastPathSegment(path string) string {
 	if ok {
 		return after
 	}
+
 	return path
 }
 
@@ -396,6 +437,7 @@ func buildVerifiedExtractPlan(
 	importer gotypes.Importer,
 ) (*types.RefactoringPlan, error) {
 	content := string(sourceFile.OriginalContent)
+
 	blockStart, blockEnd, ok := lineByteSpan(content, startLine, endLine)
 	if !ok {
 		return nil, &types.RefactorError{
@@ -478,6 +520,7 @@ func buildVerifiedExtractPlan(
 				kind, name, strings.Join(verification.NewErrors, "\n  ")),
 		}
 	}
+
 	if verification.Skipped != "" {
 		return nil, &types.RefactorError{
 			Type: types.CompilationError,

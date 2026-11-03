@@ -18,6 +18,7 @@ func parseFuncBody(t *testing.T, src string) (*token.FileSet, []byte, *ast.Block
 	t.Helper()
 
 	fset := token.NewFileSet()
+
 	file, err := parser.ParseFile(fset, "src.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -31,6 +32,7 @@ func parseFuncBody(t *testing.T, src string) (*token.FileSet, []byte, *ast.Block
 	}
 
 	t.Fatal("no function declaration found")
+
 	return nil, nil, nil
 }
 
@@ -39,21 +41,25 @@ func firstIfStmt(t *testing.T, body *ast.BlockStmt) *ast.IfStmt {
 	t.Helper()
 
 	var found *ast.IfStmt
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		if found != nil {
 			return false
 		}
+
 		ifStmt, ok := n.(*ast.IfStmt)
 		if ok {
 			found = ifStmt
 			return false
 		}
+
 		return true
 	})
 
 	if found == nil {
 		t.Fatal("no if statement found")
 	}
+
 	return found
 }
 
@@ -111,6 +117,7 @@ func f(x bool) {
 	if strings.HasPrefix(got, "\n") || strings.HasSuffix(got, "\n") {
 		t.Errorf("expected blank edge lines trimmed, got %q", got)
 	}
+
 	if !strings.Contains(got, "a := 1\n\n") {
 		t.Errorf("expected interior blank line preserved, got %q", got)
 	}
@@ -202,6 +209,7 @@ func typeCheck(t *testing.T, src string) (*token.FileSet, []byte, *ast.BlockStmt
 	t.Helper()
 
 	fset := token.NewFileSet()
+
 	file, err := parser.ParseFile(fset, "src.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
@@ -211,6 +219,7 @@ func typeCheck(t *testing.T, src string) (*token.FileSet, []byte, *ast.BlockStmt
 		Types: make(map[ast.Expr]types.TypeAndValue),
 	}
 	conf := types.Config{Importer: importer.Default()}
+
 	_, err = conf.Check("p", fset, []*ast.File{file}, info)
 	if err != nil {
 		t.Fatalf("type check: %v", err)
@@ -224,6 +233,7 @@ func typeCheck(t *testing.T, src string) (*token.FileSet, []byte, *ast.BlockStmt
 	}
 
 	t.Fatal("no function declaration found")
+
 	return nil, nil, nil, nil
 }
 
@@ -358,21 +368,25 @@ func firstBinaryExpr(t *testing.T, body *ast.BlockStmt) *ast.BinaryExpr {
 	t.Helper()
 
 	var found *ast.BinaryExpr
+
 	ast.Inspect(body, func(n ast.Node) bool {
 		if found != nil {
 			return false
 		}
+
 		binExpr, ok := n.(*ast.BinaryExpr)
 		if ok {
 			found = binExpr
 			return false
 		}
+
 		return true
 	})
 
 	if found == nil {
 		t.Fatal("no binary expression found")
 	}
+
 	return found
 }
 
@@ -393,6 +407,7 @@ func TestIndentation_OutOfRange(t *testing.T) {
 	if got != "" {
 		t.Errorf("expected empty string for negative offset, got %q", got)
 	}
+
 	got = srctext.Indentation(content, len(content)+10)
 	if got != "" {
 		t.Errorf("expected empty string for out-of-range offset, got %q", got)

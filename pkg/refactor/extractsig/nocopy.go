@@ -15,6 +15,7 @@ func noCopy(t gotypes.Type, seen map[gotypes.Type]bool) bool {
 	if seen[t] {
 		return false
 	}
+
 	seen[t] = true
 
 	named, ok := t.(*gotypes.Named)
@@ -26,11 +27,13 @@ func noCopy(t gotypes.Type, seen map[gotypes.Type]bool) bool {
 				return true
 			}
 		}
+
 		ms := gotypes.NewMethodSet(gotypes.NewPointer(t))
 		if ms.Lookup(nil, "Lock") != nil && ms.Lookup(nil, "Unlock") != nil {
 			return true
 		}
 	}
+
 	switch u := t.Underlying().(type) {
 	case *gotypes.Struct:
 		for f := range u.Fields() {
@@ -41,5 +44,6 @@ func noCopy(t gotypes.Type, seen map[gotypes.Type]bool) bool {
 	case *gotypes.Array:
 		return noCopy(u.Elem(), seen)
 	}
+
 	return false
 }

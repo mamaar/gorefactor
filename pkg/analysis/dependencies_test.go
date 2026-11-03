@@ -14,6 +14,7 @@ import (
 func depGraph(t *testing.T, files map[string]string) (*types.DependencyGraph, string) {
 	t.Helper()
 	set, root := loadSet(t, files)
+
 	return set.Primary().Workspace.Dependencies, root
 }
 
@@ -29,6 +30,7 @@ func TestDependencyGraph_PackageDepsAreTransitiveFilesystemPaths(t *testing.T) {
 	if !slices.Equal(g.PackageDeps[a], want) {
 		t.Errorf("PackageDeps[a] = %v, want %v", g.PackageDeps[a], want)
 	}
+
 	if len(g.ImportCycles) != 0 || len(g.TestImportCycles) != 0 {
 		t.Errorf("unexpected cycles: %v %v", g.ImportCycles, g.TestImportCycles)
 	}
@@ -45,6 +47,7 @@ func TestDependencyGraph_ProductionCycleIsReportedOnce(t *testing.T) {
 	if !reflect.DeepEqual(g.ImportCycles, want) {
 		t.Errorf("ImportCycles = %v, want %v", g.ImportCycles, want)
 	}
+
 	if len(g.TestImportCycles) != 0 {
 		t.Errorf("TestImportCycles = %v, want none", g.TestImportCycles)
 	}
@@ -61,6 +64,7 @@ func TestDependencyGraph_InPackageTestImportCycleIsSeparate(t *testing.T) {
 	if len(g.ImportCycles) != 0 {
 		t.Errorf("ImportCycles = %v, want none", g.ImportCycles)
 	}
+
 	want := [][]string{{a, b, a}}
 	if !reflect.DeepEqual(g.TestImportCycles, want) {
 		t.Errorf("TestImportCycles = %v, want %v", g.TestImportCycles, want)
@@ -107,6 +111,7 @@ func TestDependencyGraph_PackageImportsKeepRawImportStrings(t *testing.T) {
 	})
 
 	want := []string{"example.com/w/b", "fmt"}
+
 	got := g.PackageImports[filepath.Join(root, "a")]
 	if !slices.Equal(got, want) {
 		t.Errorf("PackageImports[a] = %v, want %v", got, want)

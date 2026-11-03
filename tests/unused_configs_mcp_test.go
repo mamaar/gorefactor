@@ -41,17 +41,22 @@ type unusedJSON struct {
 // callUnused calls the unused tool with args, none when nil.
 func callUnused(t *testing.T, args map[string]any, files map[string]string) (unusedJSON, map[string]any) {
 	t.Helper()
+
 	if args == nil {
 		args = map[string]any{}
 	}
+
 	dir := writeInlineWorkspace(t, files)
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
+
 	res, err := sess.CallTool(t.Context(), &mcpsdk.CallToolParams{Name: "unused", Arguments: args})
 	if err != nil || res.IsError {
 		t.Fatalf("unused: %v %s", err, errText(res))
 	}
 	var out unusedJSON
+
 	var raw map[string]any
 	for _, v := range []any{&out, &raw} {
 		err := json.Unmarshal([]byte(errText(res)), v)
@@ -59,6 +64,7 @@ func callUnused(t *testing.T, args map[string]any, files map[string]string) (unu
 			t.Fatalf("decode: %v\n%s", err, errText(res))
 		}
 	}
+
 	return out, raw
 }
 
@@ -68,7 +74,9 @@ func declarations(items []unusedItemJSON) []string {
 	for _, it := range items {
 		out = append(out, filepath.Base(it.File)+":"+it.Name)
 	}
+
 	sort.Strings(out)
+
 	return out
 }
 
@@ -82,6 +90,7 @@ func TestUnused_FunctionUsedOnlyFromTaggedFileIsNotReported(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"f.go:dead"}) {
 		t.Errorf("unused = %v, want only dead", got)
 	}
+
 	if len(out.BuildConfigs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out.BuildConfigs)
 	}
@@ -97,6 +106,7 @@ func TestUnused_FunctionDeclaredAndUnusedOnlyUnderTagIsReportedWithItsConfig(t *
 	if !reflect.DeepEqual(got, []string{"f_tagx.go:f"}) {
 		t.Fatalf("unused = %v, want f in f_tagx.go", got)
 	}
+
 	got = out.Unused[0].Configs
 	if !reflect.DeepEqual(got, []string{"tags=tagx"}) {
 		t.Errorf("configs = %v, want [tags=tagx]", got)
@@ -127,6 +137,7 @@ func TestUnused_UnusedSiblingsAreReportedPerDeclaration(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"f_default.go:f", "f_tagx.go:f"}) {
 		t.Fatalf("unused = %v, want both declarations of f", got)
 	}
+
 	for _, it := range out.Unused {
 		if len(it.Configs) != 1 {
 			t.Errorf("%s: configs = %v, want the one configuration declaring it", it.File, it.Configs)
@@ -144,10 +155,12 @@ func TestUnused_NameMentionedOnlyInUncheckedFileIsFlaggedPossiblyUsed(t *testing
 	if !reflect.DeepEqual(got, []string{"f.go:dead"}) {
 		t.Errorf("unused = %v, want only dead", got)
 	}
+
 	got = declarations(out.PossiblyUsed)
 	if !reflect.DeepEqual(got, []string{"f.go:f"}) {
 		t.Fatalf("possibly_used = %v, want f", got)
 	}
+
 	use := out.PossiblyUsed[0].PossibleUse
 	if use == nil || filepath.Base(use.File) != "bad_tagx_test.go" || use.Line != 12 || !reflect.DeepEqual(use.Configs, []string{"tags=tagx"}) {
 		t.Errorf("possible_use = %+v, want bad_tagx_test.go:12 under tags=tagx", use)
@@ -163,19 +176,24 @@ func TestUnused_SingleConfigOutputHasNoConfigFields(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"f.go:dead", "f.go:idle"}) || out.Count != 2 {
 		t.Errorf("unused = %v (count %d), want dead and idle", got, out.Count)
 	}
+
 	for _, key := range []string{"build_configs", "possibly_used"} {
 		_, ok := raw[key]
 		if ok {
 			t.Errorf("%s = %v, want the field omitted", key, raw[key])
 		}
 	}
+
 	for _, item := range raw["unused_symbols"].([]any) {
 		want := []string{"exported", "file", "kind", "line", "name", "package", "reason", "safe_to_delete"}
+
 		var got []string
 		for k := range item.(map[string]any) {
 			got = append(got, k)
 		}
+
 		sort.Strings(got)
+
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("item fields = %v, want %v", got, want)
 		}
@@ -203,6 +221,7 @@ func TestUnused_DeclarationInUncheckedFileIsNotItsOwnPossibleUse(t *testing.T) {
 	if !reflect.DeepEqual(got, []string{"bad_tagx_test.go:lonely"}) {
 		t.Errorf("unused = %v, want only lonely", got)
 	}
+
 	for _, it := range out.PossiblyUsed {
 		if it.Name == "lonely" {
 			t.Errorf("lonely is possibly used at %+v, want its declaration not to count", it.PossibleUse)
@@ -234,6 +253,7 @@ func itemNamed(items []unusedItemJSON, name string) *unusedItemJSON {
 			return &items[i]
 		}
 	}
+
 	return nil
 }
 
@@ -250,10 +270,12 @@ func TestUnused_ExportedFunctionCalledOnlyFromTestIsReportedWithIncludeExported(
 	if len(got) != 0 {
 		t.Errorf("default unused = %v, want none", got)
 	}
+
 	helper := itemNamed(withExported.Unused, "Helper")
 	if helper == nil {
 		t.Fatalf("unused = %v, want Helper", declarations(withExported.Unused))
 	}
+
 	if helper.Reason != "Only referenced from tests" || helper.SafeToDelete {
 		t.Errorf("Helper: reason %q, safe %v, want only tests and not safe", helper.Reason, helper.SafeToDelete)
 	}
@@ -266,10 +288,12 @@ func TestUnused_RequesterTypeConstructorDefaultVarMethodAndInterfaceBehindTestOn
 	})
 
 	want := []string{"f.go:Do", "f.go:Doer", "f.go:Fetch", "f.go:NewRequester", "f.go:Requester", "f.go:defaultRequester"}
+
 	got := declarations(out.Unused)
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("unused = %v, want %v", got, want)
 	}
+
 	for _, it := range out.Unused {
 		if it.SafeToDelete {
 			t.Errorf("%s is safe to delete, want not safe", it.Name)
@@ -287,9 +311,11 @@ func TestUnused_UnexportedFunctionCalledOnlyFromTestAndItsCalleeAreReportedByDef
 	if !reflect.DeepEqual(got, []string{"f.go:helper", "f.go:leaf"}) {
 		t.Fatalf("unused = %v, want helper and leaf", got)
 	}
+
 	if got := itemNamed(out.Unused, "helper").Reason; got != "Only referenced from tests" {
 		t.Errorf("helper reason = %q", got)
 	}
+
 	if got := itemNamed(out.Unused, "leaf").Reason; got != "Only referenced from unused code" {
 		t.Errorf("leaf reason = %q", got)
 	}
@@ -305,6 +331,7 @@ func TestUnused_ReferencedFromListsTheTestDeclarationThatUsesTheSymbol(t *testin
 	if helper == nil || len(helper.ReferencedFrom) != 1 {
 		t.Fatalf("helper = %+v, want one referenced_from entry", helper)
 	}
+
 	ref := helper.ReferencedFrom[0]
 	if ref.Name != "TestHelper" || filepath.Base(ref.File) != "f_test.go" || ref.Line != 5 {
 		t.Errorf("referenced_from = %+v, want TestHelper at f_test.go:5", ref)

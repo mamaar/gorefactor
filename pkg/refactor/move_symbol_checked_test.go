@@ -47,15 +47,19 @@ func TestMoveSymbolAcrossConfigs_PlanningCreatesNothingAndLeavesTheWorkspaceAsIt
 	if _, err := os.Stat(filepath.Join(dir, "dst")); !os.IsNotExist(err) {
 		t.Errorf("planning created the target directory, stat err = %v", err)
 	}
+
 	if len(ws.Packages) != packages {
 		t.Errorf("planning changed the workspace's packages: %d, want %d", len(ws.Packages), packages)
 	}
+
 	created := false
+
 	for _, c := range plan.Changes {
 		if c.File == filepath.Join(dir, "dst", "dst.go") && strings.Contains(c.NewText, "package dst") && strings.Contains(c.NewText, "func One() int") {
 			created = true
 		}
 	}
+
 	if !created {
 		t.Errorf("plan has no change creating dst/dst.go with the moved function: %+v", plan.Changes)
 	}

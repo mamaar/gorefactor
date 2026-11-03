@@ -77,10 +77,12 @@ func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 				if action == "delete" {
 					continue
 				}
+
 				hunks, ok := file["hunks"].([]any)
 				if !ok || len(hunks) == 0 {
 					t.Fatalf("%s: expected hunks in the diff, got %v", tc.tool, file["hunks"])
 				}
+
 				for i, h := range hunks {
 					hunk := h.(map[string]any)
 					start, _ := hunk["start"].(float64)
@@ -105,6 +107,7 @@ func TestDryRunPreviewsCarryBothSides(t *testing.T) {
 					if start == end {
 						continue
 					}
+
 					if old == "" {
 						t.Errorf("%s: hunk %d replaces bytes [%d,%d) but carries no before-text; "+
 							"the preview cannot be reviewed", tc.tool, i, int(start), int(end))

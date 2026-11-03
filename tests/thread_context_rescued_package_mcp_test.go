@@ -16,6 +16,7 @@ func TestAddContextParameter_Thread_SeedOfPackageWhoseTestsImportACycleBack(t *t
 		"x/x_test.go":           "package x\n\nimport \"example.com/threadmcp/common\"\n\nvar _ = common.TM{}\n",
 		"tile/tile.go":          "package tile\n\nimport \"example.com/threadmcp/common\"\n\nfunc Use(tm *common.TM) { tm.Get() }\n",
 	})
+
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 

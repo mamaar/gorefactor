@@ -20,6 +20,7 @@ func callToolOnFixture(t *testing.T, fixture, tool string, args map[string]any) 
 	dir := copyFixture(t, fixture)
 
 	ctx := t.Context()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -27,6 +28,7 @@ func callToolOnFixture(t *testing.T, fixture, tool string, args map[string]any) 
 	if err != nil {
 		t.Fatalf("CallTool(%s): %v", tool, err)
 	}
+
 	if result.IsError {
 		t.Fatalf("CallTool(%s) returned error: %s", tool, errText(result))
 	}
@@ -35,15 +37,18 @@ func callToolOnFixture(t *testing.T, fixture, tool string, args map[string]any) 
 	if err := json.Unmarshal([]byte(errText(result)), &decoded); err != nil {
 		t.Fatalf("decoding %s result: %v\n%s", tool, err, errText(result))
 	}
+
 	return dir, decoded
 }
 
 func readFile(t *testing.T, path string) string {
 	t.Helper()
+
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
+
 	return string(data)
 }
 
@@ -64,6 +69,7 @@ func TestFixEarlyReturns_PreviewsOnDryRun(t *testing.T) {
 	if applied {
 		t.Error("applied should be false when dry_run is set")
 	}
+
 	blocking, ok := result["blocking_issue"]
 	if ok {
 		t.Errorf("preview reported a blocking issue: %v", blocking)
@@ -77,16 +83,20 @@ func TestFixEarlyReturns_PreviewsOnDryRun(t *testing.T) {
 	// The diff must show both sides, so the reviewer can see what is being
 	// replaced rather than only what it becomes.
 	file := diffs[0].(map[string]any)
+
 	hunks, ok := file["hunks"].([]any)
 	if !ok || len(hunks) == 0 {
 		t.Fatalf("expected hunks in the diff, got %v", file["hunks"])
 	}
+
 	for i, h := range hunks {
 		hunk := h.(map[string]any)
+
 		old, _ := hunk["old"].(string)
 		if old == "" {
 			t.Errorf("hunk %d has no before-text; the preview cannot be reviewed", i)
 		}
+
 		next, _ := hunk["new"].(string)
 		if next == "" {
 			t.Errorf("hunk %d has no after-text", i)
@@ -112,10 +122,12 @@ func TestFixEarlyReturns_ReportsUnfixableSeparately(t *testing.T) {
 	}
 
 	item := unfixable[0].(map[string]any)
+
 	fn, _ := item["function_name"].(string)
 	if fn != "clamp" {
 		t.Errorf("unfixable finding = %q, want clamp", fn)
 	}
+
 	reason, _ := item["reason"].(string)
 	if reason == "" {
 		t.Error("an unfixable finding must explain why")
@@ -140,6 +152,7 @@ func TestDetectEarlyReturns_ReportsEveryPattern(t *testing.T) {
 	// Keyed by pattern+function: guard_clause legitimately matches twice, once
 	// rewritably (report) and once not (clamp).
 	seen := make(map[string]bool)
+
 	for _, v := range violations {
 		item := v.(map[string]any)
 		pattern, _ := item["pattern"].(string)
@@ -173,6 +186,7 @@ func TestDetectEarlyReturns_PatternFilter(t *testing.T) {
 	if len(violations) != 1 {
 		t.Fatalf("expected only the loop_continue finding, got %v", violations)
 	}
+
 	pattern, _ := violations[0].(map[string]any)["pattern"].(string)
 	if pattern != "loop_continue" {
 		t.Errorf("pattern = %q, want loop_continue", pattern)
@@ -183,6 +197,7 @@ func TestDetectEarlyReturns_RejectsUnknownPattern(t *testing.T) {
 	dir := copyFixture(t, "fix_early_returns")
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -193,6 +208,7 @@ func TestDetectEarlyReturns_RejectsUnknownPattern(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if !result.IsError {
 		t.Error("expected an unknown pattern name to be rejected rather than ignored")
 	}

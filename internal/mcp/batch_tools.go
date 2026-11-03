@@ -34,6 +34,7 @@ func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().BatchOperations(ws, types.BatchOperationRequest{
 			Operations: in.Operations,
 		})
@@ -41,10 +42,12 @@ func registerBatchTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "batch operations", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }

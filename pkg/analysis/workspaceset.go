@@ -31,19 +31,23 @@ func (v *View) ReferenceIndex() (*ReferenceIndex, error) {
 	v.refMu.RLock()
 	idx := v.refIndex
 	v.refMu.RUnlock()
+
 	if idx != nil {
 		return idx, nil
 	}
 
 	v.refMu.Lock()
 	defer v.refMu.Unlock()
+
 	if v.refIndex == nil {
 		idx := v.Resolver.BuildLazyReferenceIndex()
 		if idx == nil {
 			return nil, fmt.Errorf("failed to build reference index")
 		}
+
 		v.refIndex = idx
 	}
+
 	return v.refIndex, nil
 }
 
@@ -51,6 +55,7 @@ func (v *View) ReferenceIndex() (*ReferenceIndex, error) {
 func (v *View) InvalidateReferenceIndex() {
 	v.refMu.Lock()
 	defer v.refMu.Unlock()
+
 	v.refIndex = nil
 }
 
@@ -112,7 +117,9 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 		logger.Error("failed to get absolute path", "path", root, "err", err)
 		return nil, err
 	}
+
 	logger.Info("parsing workspace", "path", absRoot)
+
 	tree := NewSourceTree(token.NewFileSet())
 	if err := loadSources(tree, absRoot); err != nil {
 		logger.Error("workspace discovery failed", "path", root, "err", err)
@@ -126,11 +133,14 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 		tree:   tree,
 		views:  make(map[string]*View),
 	}
+
 	s.primary, err = s.buildView(primary)
 	if err != nil {
 		return nil, err
 	}
+
 	s.views[primary.Key()] = s.primary
+
 	return s, nil
 }
 
@@ -138,12 +148,14 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 // reads and parses nothing.
 func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	parser := newViewParser(s.logger, s.tree, cfg)
+
 	ws := parser.projectWorkspace(s.root, s.module)
 	if s.primary != nil {
 		parser.importer.fallback = s.primary.Parser.importer
 	}
 
 	resolver := NewSymbolResolver(ws, s.logger)
+
 	resolver.inspectors = s.tree.inspectors
 	for _, pkg := range ws.Packages {
 		_, err := resolver.BuildSymbolTable(pkg)
@@ -155,6 +167,7 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 
 	analyzer := NewDependencyAnalyzer(ws, s.logger)
 	_ = analyzer.BuildDependencyGraph()
+
 	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}, nil
 }
 
@@ -169,6 +182,7 @@ func (s *WorkspaceSet) Sources() *SourceTree { return s.tree }
 func (s *WorkspaceSet) Covering() Covering {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	return s.coveringLocked()
 }
 
@@ -177,6 +191,7 @@ func (s *WorkspaceSet) coveringLocked() Covering {
 		c := ComputeCovering(s.tree, s.primary.Config)
 		s.covering = &c
 	}
+
 	return *s.covering
 }
 
@@ -185,30 +200,38 @@ func (s *WorkspaceSet) coveringLocked() Covering {
 func (s *WorkspaceSet) Views() ([]*View, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	configs := s.coveringLocked().Configs
 	s.pruneLocked(configs)
+
 	views := make([]*View, 0, len(configs))
 	for _, cfg := range configs {
 		v, err := s.viewLocked(cfg)
 		if err != nil {
 			return nil, fmt.Errorf("build view %s: %w", cfg.Key(), err)
 		}
+
 		views = append(views, v)
 	}
+
 	return views, nil
 }
 
 func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
 	key := cfg.Key()
+
 	v := s.views[key]
 	if v != nil {
 		return v, nil
 	}
+
 	v, err := s.buildView(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("view locked: %w", err)
 	}
+
 	s.views[key] = v
+
 	return v, nil
 }
 
@@ -218,6 +241,7 @@ func (s *WorkspaceSet) pruneLocked(configs []BuildConfig) {
 	for _, cfg := range configs {
 		keep[cfg.Key()] = true
 	}
+
 	for key := range s.views {
 		if !keep[key] {
 			delete(s.views, key)
@@ -229,12 +253,14 @@ func (s *WorkspaceSet) pruneLocked(configs []BuildConfig) {
 // to be approximate only once a type-check has needed its third-party packages.
 func (s *WorkspaceSet) ApproximateViews() []ApproximateView {
 	var out []ApproximateView
+
 	for _, v := range s.BuiltViews() {
 		approx, err := v.Approximate()
 		if approx {
 			out = append(out, ApproximateView{Config: v.Config, Err: err})
 		}
 	}
+
 	return out
 }
 
@@ -243,18 +269,22 @@ func (s *WorkspaceSet) ApproximateViews() []ApproximateView {
 func (s *WorkspaceSet) BuiltViews() []*View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	views := []*View{s.primary}
 	if len(s.views) == 1 {
 		return views
 	}
+
 	configs := s.coveringLocked().Configs
 	s.pruneLocked(configs)
+
 	for _, cfg := range configs[1:] {
 		v := s.views[cfg.Key()]
 		if v != nil {
 			views = append(views, v)
 		}
 	}
+
 	return views
 }
 
@@ -262,11 +292,13 @@ func (s *WorkspaceSet) BuiltViews() []*View {
 func (s *WorkspaceSet) ViewOf(ws *types.Workspace) *View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for _, v := range s.views {
 		if v.Workspace == ws {
 			return v
 		}
 	}
+
 	return nil
 }
 
@@ -286,17 +318,22 @@ func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 	if !strings.HasSuffix(path, ".go") {
 		return nil, ErrSkippedSource
 	}
+
 	defer s.invalidateCovering()
+
 	path = absDir(path)
 	if InSkippedDir(s.root, filepath.Dir(path)) {
 		return nil, ErrSkippedSource
 	}
+
 	_, err := os.Stat(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
+
 		s.tree.Remove(path)
+
 		return nil, ErrSourceRemoved
 	}
 
@@ -306,17 +343,21 @@ func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 		if err != nil {
 			return nil, err
 		}
+
 		return s.tree.File(path), nil
 	}
+
 	if s.tree.File(path) != nil {
 		return s.tree.Replace(path)
 	}
+
 	return s.tree.Add(path)
 }
 
 func (s *WorkspaceSet) invalidateCovering() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	s.covering = nil
 }
 
@@ -324,6 +365,7 @@ func (s *WorkspaceSet) invalidateCovering() {
 func (s *WorkspaceSet) InvalidateReferenceIndexes() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	for _, v := range s.views {
 		v.InvalidateReferenceIndex()
 	}

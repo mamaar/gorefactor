@@ -77,6 +77,7 @@ func TestExtractMethodOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspace()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ExtractMethodOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -95,6 +96,7 @@ func TestExtractMethodOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expectedDesc := "Extract method 'extractedMethod' from lines 10-20 in test.go to TestStruct"
 	if desc != expectedDesc {
 		t.Errorf("Expected description '%s', got '%s'", expectedDesc, desc)
@@ -165,6 +167,7 @@ func TestExtractInterfaceOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspace()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ExtractInterfaceOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -182,6 +185,7 @@ func TestExtractInterfaceOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expectedDesc := "Extract interface 'TestInterface' from TestStruct with methods [Method1 Method2] to package interfaces"
 	if desc != expectedDesc {
 		t.Errorf("Expected description '%s', got '%s'", expectedDesc, desc)
@@ -257,6 +261,7 @@ func TestExtractVariableOperation_Validate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ws := createTestWorkspace()
+
 			err := tt.op.Validate(ws)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ExtractVariableOperation.Validate() error = %v, wantErr %v", err, tt.wantErr)
@@ -275,6 +280,7 @@ func TestExtractVariableOperation_Description(t *testing.T) {
 	}
 
 	desc := op.Description()
+
 	expectedDesc := "Extract variable 'extractedVar' from expression 'someComplexExpression()' at line 15 in test.go"
 	if desc != expectedDesc {
 		t.Errorf("Expected description '%s', got '%s'", expectedDesc, desc)

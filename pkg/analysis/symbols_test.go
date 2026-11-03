@@ -103,16 +103,20 @@ var TestVar = "test"
 		if len(symbolTable.Functions) != 1 {
 			t.Errorf("Expected 1 function, got %d", len(symbolTable.Functions))
 		}
+
 		testFunc, exists := symbolTable.Functions["TestFunction"]
 		if !exists {
 			t.Fatal("Expected to find TestFunction in symbol table")
 		}
+
 		if testFunc.Name != "TestFunction" {
 			t.Errorf("Expected function name 'TestFunction', got '%s'", testFunc.Name)
 		}
+
 		if testFunc.Kind != types.FunctionSymbol {
 			t.Errorf("Expected FunctionSymbol, got %v", testFunc.Kind)
 		}
+
 		if !testFunc.Exported {
 			t.Error("Expected TestFunction to be exported")
 		}
@@ -122,6 +126,7 @@ var TestVar = "test"
 		if len(symbolTable.Types) < 2 {
 			t.Errorf("Expected at least 2 types, got %d", len(symbolTable.Types))
 		}
+
 		testType, exists := symbolTable.Types["TestType"]
 		if !exists {
 			t.Error("Expected to find TestType in symbol table")
@@ -129,10 +134,12 @@ var TestVar = "test"
 			if testType.Kind != types.TypeSymbol {
 				t.Errorf("Expected TypeSymbol, got %v", testType.Kind)
 			}
+
 			if !testType.Exported {
 				t.Error("Expected TestType to be exported")
 			}
 		}
+
 		testInterface, exists := symbolTable.Types["TestInterface"]
 		if !exists {
 			t.Error("Expected to find TestInterface in symbol table")
@@ -145,13 +152,16 @@ var TestVar = "test"
 		if len(symbolTable.Variables) != 1 {
 			t.Errorf("Expected 1 variable, got %d", len(symbolTable.Variables))
 		}
+
 		testVar, exists := symbolTable.Variables["TestVar"]
 		if !exists {
 			t.Fatal("Expected to find TestVar in symbol table")
 		}
+
 		if testVar.Kind != types.VariableSymbol {
 			t.Errorf("Expected VariableSymbol, got %v", testVar.Kind)
 		}
+
 		if !testVar.Exported {
 			t.Error("Expected TestVar to be exported")
 		}
@@ -161,13 +171,16 @@ var TestVar = "test"
 		if len(symbolTable.Constants) != 1 {
 			t.Errorf("Expected 1 constant, got %d", len(symbolTable.Constants))
 		}
+
 		testConst, exists := symbolTable.Constants["TestConst"]
 		if !exists {
 			t.Fatal("Expected to find TestConst in symbol table")
 		}
+
 		if testConst.Kind != types.ConstantSymbol {
 			t.Errorf("Expected ConstantSymbol, got %v", testConst.Kind)
 		}
+
 		if !testConst.Exported {
 			t.Error("Expected TestConst to be exported")
 		}
@@ -177,6 +190,7 @@ var TestVar = "test"
 		if len(symbolTable.Methods) != 2 {
 			t.Errorf("Expected 2 method groups (TestType + TestInterface), got %d", len(symbolTable.Methods))
 		}
+
 		methods, exists := symbolTable.Methods["TestType"]
 		if !exists {
 			t.Error("Expected to find methods for TestType")
@@ -184,13 +198,16 @@ var TestVar = "test"
 			if len(methods) != 1 {
 				t.Fatalf("Expected 1 method for TestType, got %d", len(methods))
 			}
+
 			if methods[0].Name != "TestMethod" {
 				t.Errorf("Expected method name 'TestMethod', got '%s'", methods[0].Name)
 			}
+
 			if methods[0].Kind != types.MethodSymbol {
 				t.Errorf("Expected MethodSymbol, got %v", methods[0].Kind)
 			}
 		}
+
 		methods, exists = symbolTable.Methods["TestInterface"]
 		if !exists {
 			t.Error("Expected to find methods for TestInterface")
@@ -198,6 +215,7 @@ var TestVar = "test"
 			if len(methods) != 1 {
 				t.Fatalf("Expected 1 method for TestInterface, got %d", len(methods))
 			}
+
 			if methods[0].Name != "Method" {
 				t.Errorf("Expected interface method name 'Method', got '%s'", methods[0].Name)
 			}
@@ -241,6 +259,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to resolve function symbol: %v", err)
 	}
+
 	if symbol != funcSymbol {
 		t.Error("Expected to get the same function symbol")
 	}
@@ -250,6 +269,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to resolve type symbol: %v", err)
 	}
+
 	if symbol != typeSymbol {
 		t.Error("Expected to get the same type symbol")
 	}
@@ -259,6 +279,7 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	if err != nil {
 		t.Errorf("Failed to resolve method symbol: %v", err)
 	}
+
 	if symbol != methodSymbol {
 		t.Error("Expected to get the same method symbol")
 	}
@@ -350,12 +371,15 @@ func AnotherFunc() {
 		if ref.Symbol != testSymbol {
 			t.Error("Expected reference to point to test symbol")
 		}
+
 		if ref.File != "test.go" {
 			t.Errorf("Expected reference file to be 'test.go', got '%s'", ref.File)
 		}
+
 		if ref.Line <= 0 {
 			t.Errorf("Expected positive line number, got %d", ref.Line)
 		}
+
 		if ref.Column <= 0 {
 			t.Errorf("Expected positive column number, got %d", ref.Column)
 		}
@@ -420,6 +444,7 @@ func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "package test\n" + tc.source
+
 			astFile, err := parser.ParseFile(fileSet, "test.go", src, 0)
 			if err != nil {
 				t.Fatalf("Failed to parse source: %v", err)
@@ -427,12 +452,14 @@ func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 
 			// Find the function declaration
 			var funcDecl *ast.FuncDecl
+
 			ast.Inspect(astFile, func(n ast.Node) bool {
 				fd, ok := n.(*ast.FuncDecl)
 				if ok {
 					funcDecl = fd
 					return false
 				}
+
 				return true
 			})
 
@@ -451,6 +478,7 @@ func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 // createTypedTestWorkspace builds a workspace with full type-checking info for tests.
 func createTypedTestWorkspace(t *testing.T) (*types.Workspace, *SymbolResolver) {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	src := `package testpkg
@@ -483,6 +511,7 @@ var MyVar = "global"
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typesPkg, err := conf.Check("testpkg", fileSet, []*ast.File{astFile}, info)
 	if err != nil {
 		// Type errors may occur in isolation; continue
@@ -543,6 +572,7 @@ func TestObjectIndex_MatchesNameIndex(t *testing.T) {
 			nameIndex: idx.nameIndex,
 			// workspaceIdx nil — forces name path
 		}
+
 		nameRefs, err := resolver.FindReferencesIndexed(symbol, nameOnlyIdx)
 		if err != nil {
 			t.Fatalf("FindReferencesIndexed (name-only) failed for %s: %v", symbol.Name, err)
@@ -558,6 +588,7 @@ func TestObjectIndex_MatchesNameIndex(t *testing.T) {
 		if len(objPositions) != len(namePositions) {
 			t.Errorf("Symbol %s: object-path found %d refs, name-path found %d refs",
 				symbol.Name, len(objPositions), len(namePositions))
+
 			continue
 		}
 
@@ -575,6 +606,7 @@ func extractPositions(refs []*types.Reference) []int {
 	for i, r := range refs {
 		positions[i] = int(r.Position)
 	}
+
 	return positions
 }
 
@@ -587,6 +619,7 @@ func TestObjectIndex_NilWithoutTypesInfo(t *testing.T) {
 func Foo() {}
 func Bar() { Foo() }
 `
+
 	astFile, err := parser.ParseFile(fileSet, "untyped.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse: %v", err)
@@ -633,6 +666,7 @@ func Bar() { Foo() }
 	if err != nil {
 		t.Fatalf("FindReferencesIndexed failed: %v", err)
 	}
+
 	if len(refs) == 0 {
 		t.Error("Expected at least one reference to Foo via name path")
 	}
@@ -652,6 +686,7 @@ func TestObjectIndex_CrossPackageReferences(t *testing.T) {
 
 func SharedFunc() string { return "shared" }
 `
+
 	astA, err := parser.ParseFile(fileSet, "pkga.go", srcA, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse pkga: %v", err)
@@ -662,6 +697,7 @@ func SharedFunc() string { return "shared" }
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typsPkgA, err := confA.Check("pkga", fileSet, []*ast.File{astA}, infoA)
 	if err != nil {
 		_ = err
@@ -688,6 +724,7 @@ import "pkga"
 
 func Caller() string { return pkga.SharedFunc() }
 `
+
 	astB, err := parser.ParseFile(fileSet, "pkgb.go", srcB, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse pkgb: %v", err)
@@ -698,6 +735,7 @@ func Caller() string { return pkga.SharedFunc() }
 			if path == "pkga" {
 				return typsPkgA, nil
 			}
+
 			return importer.Default().Import(path)
 		}),
 	}
@@ -705,6 +743,7 @@ func Caller() string { return pkga.SharedFunc() }
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typsPkgB, err := confB.Check("pkgb", fileSet, []*ast.File{astB}, infoB)
 	if err != nil {
 		_ = err
@@ -805,6 +844,7 @@ type Greeter interface {
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typesPkg, err := conf.Check("fieldtest", fileSet, []*ast.File{astFile}, info)
 	if err != nil {
 		_ = err
@@ -832,6 +872,7 @@ type Greeter interface {
 	}
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	symbolTable, err := resolver.BuildSymbolTable(pkg)
 	if err != nil {
 		t.Fatalf("Failed to build symbol table: %v", err)
@@ -842,21 +883,25 @@ type Greeter interface {
 	if !exists {
 		t.Fatal("Expected symbolTable.Fields[\"User\"] to exist")
 	}
+
 	if len(userFields) != 2 {
 		t.Fatalf("Expected 2 fields for User, got %d", len(userFields))
 	}
 
 	var nameField *types.Symbol
+
 	t.Run("embedded field is not indexed", func(t *testing.T) {
 		for _, f := range userFields {
 			if f.Name == "Embedded" {
 				t.Error("Expected embedded field 'Embedded' to NOT be indexed")
 			}
+
 			if f.Name == "Name" {
 				nameField = f
 			}
 		}
 	})
+
 	if nameField == nil {
 		t.Fatal("Expected to find Name field symbol for User")
 	}
@@ -865,9 +910,11 @@ type Greeter interface {
 		if nameField.Kind != types.StructFieldSymbol {
 			t.Errorf("Expected StructFieldSymbol, got %v", nameField.Kind)
 		}
+
 		if !nameField.Exported {
 			t.Error("Expected Name field to be exported")
 		}
+
 		if nameField.Parent == nil || nameField.Parent.Name != "User" {
 			t.Error("Expected Name field's Parent to be the User type symbol")
 		}
@@ -875,19 +922,23 @@ type Greeter interface {
 
 	t.Run("position resolves to a struct field var", func(t *testing.T) {
 		var resolvedObj gotypes.Object
+
 		for ident, obj := range info.Defs {
 			if ident.Pos() == nameField.Position {
 				resolvedObj = obj
 				break
 			}
 		}
+
 		if resolvedObj == nil {
 			t.Fatal("Expected Name field's Position to resolve via TypesInfo.Defs")
 		}
+
 		fieldVar, ok := resolvedObj.(*gotypes.Var)
 		if !ok {
 			t.Fatalf("Expected resolved object to be *go/types.Var, got %T", resolvedObj)
 		}
+
 		if !fieldVar.IsField() {
 			t.Error("Expected resolved *go/types.Var to have IsField() == true")
 		}
@@ -940,6 +991,7 @@ func TestWorkspaceIndex_MatchesNameIndex(t *testing.T) {
 		nameOnlyIdx := &ReferenceIndex{
 			nameIndex: idx.nameIndex,
 		}
+
 		nameRefs, err := resolver.FindReferencesIndexed(symbol, nameOnlyIdx)
 		if err != nil {
 			t.Fatalf("FindReferencesIndexed (name-only) failed for %s: %v", symbol.Name, err)
@@ -954,8 +1006,10 @@ func TestWorkspaceIndex_MatchesNameIndex(t *testing.T) {
 		if len(wsPos) != len(namePos) {
 			t.Errorf("Symbol %s: workspace-path found %d refs, name-path found %d refs",
 				symbol.Name, len(wsPos), len(namePos))
+
 			continue
 		}
+
 		for i := range wsPos {
 			if wsPos[i] != namePos[i] {
 				t.Errorf("Symbol %s: ref position mismatch at index %d: ws=%d, name=%d",
@@ -974,6 +1028,7 @@ func TestWorkspaceIndex_NilWithoutTypesInfo(t *testing.T) {
 func Foo() {}
 func Bar() { Foo() }
 `
+
 	astFile, err := parser.ParseFile(fileSet, "untyped2.go", src, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse: %v", err)
@@ -1019,6 +1074,7 @@ func Bar() { Foo() }
 	if err != nil {
 		t.Fatalf("FindReferencesIndexed failed: %v", err)
 	}
+
 	if len(refs) == 0 {
 		t.Error("Expected at least one reference to Foo via name path")
 	}
@@ -1034,6 +1090,7 @@ func TestWorkspaceIndex_CrossPackageReferences(t *testing.T) {
 
 func SharedFunc() string { return "shared" }
 `
+
 	astA, err := parser.ParseFile(fileSet, "ws_pkga.go", srcA, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse pkga: %v", err)
@@ -1044,6 +1101,7 @@ func SharedFunc() string { return "shared" }
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typsPkgA, err := confA.Check("pkga", fileSet, []*ast.File{astA}, infoA)
 	if err != nil {
 		_ = err
@@ -1070,6 +1128,7 @@ import "pkga"
 
 func Caller() string { return pkga.SharedFunc() }
 `
+
 	astB, err := parser.ParseFile(fileSet, "ws_pkgb.go", srcB, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse pkgb: %v", err)
@@ -1080,6 +1139,7 @@ func Caller() string { return pkga.SharedFunc() }
 			if path == "pkga" {
 				return typsPkgA, nil
 			}
+
 			return importer.Default().Import(path)
 		}),
 	}
@@ -1087,6 +1147,7 @@ func Caller() string { return pkga.SharedFunc() }
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typsPkgB, err := confB.Check("pkgb", fileSet, []*ast.File{astB}, infoB)
 	if err != nil {
 		_ = err
@@ -1141,6 +1202,7 @@ func Caller() string { return pkga.SharedFunc() }
 	if err != nil {
 		t.Fatalf("FindReferencesIndexed failed: %v", err)
 	}
+
 	if len(refs) == 0 {
 		t.Error("Expected at least one cross-package reference to SharedFunc")
 	}
@@ -1156,6 +1218,7 @@ func Caller() string { return pkga.SharedFunc() }
 // FindMemberReferences tests.
 func createFieldRefTestWorkspace(t *testing.T) (*types.Workspace, *SymbolResolver, *types.Package) {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	src := `package fieldrefs
@@ -1195,6 +1258,7 @@ func Build() {
 		Defs: make(map[*ast.Ident]gotypes.Object),
 		Uses: make(map[*ast.Ident]gotypes.Object),
 	}
+
 	typesPkg, err := conf.Check("fieldrefs", fileSet, []*ast.File{astFile}, info)
 	if err != nil {
 		t.Fatalf("Type-check failed: %v", err)
@@ -1253,9 +1317,11 @@ func TestFindMemberReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected an error when TypesInfo is nil, got nil (refs=%d)", len(refs))
 	}
+
 	if refs != nil {
 		t.Errorf("expected nil refs on error, got %d references", len(refs))
 	}
+
 	if _, ok := errors.AsType[*types.RefactorError](err); !ok {
 		t.Errorf("expected *types.RefactorError, got %T", err)
 	}
@@ -1277,6 +1343,7 @@ func TestFindMemberReferences_EmptyIsNotError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for an unreferenced field, got: %v", err)
 	}
+
 	if len(refs) != 0 {
 		t.Errorf("expected 0 references for unreferenced field Ghost, got %d", len(refs))
 	}
@@ -1290,6 +1357,7 @@ func TestFindMemberReferences_DoesNotConflateSameNamedFields(t *testing.T) {
 	idx := resolver.BuildReferenceIndex()
 
 	userName := pkg.Symbols.FindSymbol("User.Name")
+
 	productName := pkg.Symbols.FindSymbol("Product.Name")
 	if userName == nil || productName == nil {
 		t.Fatalf("expected to resolve both User.Name and Product.Name (user=%v product=%v)", userName, productName)
@@ -1299,6 +1367,7 @@ func TestFindMemberReferences_DoesNotConflateSameNamedFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindMemberReferences(User.Name) failed: %v", err)
 	}
+
 	productRefs, err := resolver.FindMemberReferences(productName, idx)
 	if err != nil {
 		t.Fatalf("FindMemberReferences(Product.Name) failed: %v", err)
@@ -1307,6 +1376,7 @@ func TestFindMemberReferences_DoesNotConflateSameNamedFields(t *testing.T) {
 	if len(userRefs) == 0 {
 		t.Fatal("expected at least one reference to User.Name")
 	}
+
 	if len(productRefs) == 0 {
 		t.Fatal("expected at least one reference to Product.Name")
 	}
@@ -1317,6 +1387,7 @@ func TestFindMemberReferences_DoesNotConflateSameNamedFields(t *testing.T) {
 	for _, r := range productRefs {
 		productPositions[r.Position] = true
 	}
+
 	for _, r := range userRefs {
 		if productPositions[r.Position] {
 			t.Errorf("User.Name reference at %s collides with a Product.Name reference",
@@ -1341,9 +1412,11 @@ func TestResolveSymbol_DottedFieldAndBareNameGuard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected User.Name to resolve, got error: %v", err)
 	}
+
 	if sym == nil || sym.Kind != types.StructFieldSymbol {
 		t.Fatalf("expected a StructFieldSymbol for User.Name, got %+v", sym)
 	}
+
 	if sym.Name != "Name" || sym.Parent == nil || sym.Parent.Name != "User" {
 		t.Errorf("resolved symbol is not the User.Name field: %+v", sym)
 	}
@@ -1354,6 +1427,7 @@ func TestResolveSymbol_DottedFieldAndBareNameGuard(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected bare %q not to resolve to a field, got %+v", "Name", bare)
 	}
+
 	if bare != nil {
 		t.Errorf("expected nil symbol for bare field name, got %+v", bare)
 	}
@@ -1363,6 +1437,7 @@ func TestResolveSymbol_DottedFieldAndBareNameGuard(t *testing.T) {
 // *_test.go go to TestFiles) and builds its symbol table.
 func symbolTableOf(t *testing.T, files map[string]string) *types.SymbolTable {
 	t.Helper()
+
 	fset := token.NewFileSet()
 	pkg := &types.Package{
 		Name:      "x",
@@ -1370,11 +1445,13 @@ func symbolTableOf(t *testing.T, files map[string]string) *types.SymbolTable {
 		Files:     map[string]*types.File{},
 		TestFiles: map[string]*types.File{},
 	}
+
 	for name, src := range files {
 		astFile, err := parser.ParseFile(fset, name, src, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
+
 		f := &types.File{Path: name, AST: astFile, Package: pkg}
 		if strings.HasSuffix(name, "_test.go") {
 			pkg.TestFiles[name] = f
@@ -1382,21 +1459,26 @@ func symbolTableOf(t *testing.T, files map[string]string) *types.SymbolTable {
 			pkg.Files[name] = f
 		}
 	}
+
 	ws := &types.Workspace{Packages: map[string]*types.Package{"x": pkg}, FileSet: fset}
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
 	st, err := resolver.BuildSymbolTable(pkg)
 	if err != nil {
 		t.Fatalf("BuildSymbolTable: %v", err)
 	}
+
 	return st
 }
 
 func requireSymbolAt(t *testing.T, kind string, table map[string]*types.Symbol, name, file string, line int) {
 	t.Helper()
+
 	sym := table[name]
 	if sym == nil {
 		t.Fatalf("%s %s missing", kind, name)
 	}
+
 	if sym.File != file || sym.Line != line {
 		t.Errorf("%s %s at %s:%d, want %s:%d", kind, name, sym.File, sym.Line, file, line)
 	}
@@ -1418,14 +1500,17 @@ func TestBuildSymbolTable_FunctionLocalDeclarationsDoNotShadowPackageLevel(t *te
 
 func TestBuildSymbolTable_FunctionLocalNamesAreAbsent(t *testing.T) {
 	st := symbolTableOf(t, map[string]string{"a.go": pkgLevelSrc, "b.go": localsSrc})
+
 	_, ok := st.Constants["OnlyLocal"]
 	if ok {
 		t.Error("local const OnlyLocal in Constants")
 	}
+
 	_, ok = st.Variables["localVar"]
 	if ok {
 		t.Error("local var localVar in Variables")
 	}
+
 	_, ok = st.Types["localType"]
 	if ok {
 		t.Error("local type localType in Types")
@@ -1435,6 +1520,7 @@ func TestBuildSymbolTable_FunctionLocalNamesAreAbsent(t *testing.T) {
 func TestBuildSymbolTable_TestFilesDoNotReplaceProductionSymbols(t *testing.T) {
 	prod := "package x\n\nfunc Helper() {}\n\nconst Name = 1\n\nvar Shared int\n"
 	inPkgTest := "package x\n\nfunc Helper() {}\n\nconst Name = 2\n\nvar Shared string\n"
+
 	extTest := "package x_test\n\nfunc Helper() {}\n\nconst Name = 3\n\nvar Shared bool\n"
 	for range 20 {
 		st := symbolTableOf(t, map[string]string{"x.go": prod, "x_test.go": inPkgTest, "ext_test.go": extTest})
@@ -1447,17 +1533,21 @@ func TestBuildSymbolTable_TestFilesDoNotReplaceProductionSymbols(t *testing.T) {
 func TestBuildSymbolTable_EachInterfaceIsRecordedOnce(t *testing.T) {
 	src := "package x\n\ntype I interface {\n\tM()\n}\n\ntype S struct {\n\tA int\n}\n"
 	st := symbolTableOf(t, map[string]string{"a.go": src})
+
 	n := len(st.Methods["I"])
 	if n != 1 {
 		t.Errorf("interface I has %d method symbols, want 1", n)
 	}
+
 	n = len(st.Fields["S"])
 	if n != 1 {
 		t.Errorf("struct S has %d field symbols, want 1", n)
 	}
+
 	if st.Methods["I"][0].Parent != st.Types["I"] {
 		t.Error("interface method Parent is not the retained type symbol")
 	}
+
 	if st.Fields["S"][0].Parent != st.Types["S"] {
 		t.Error("field Parent is not the retained type symbol")
 	}

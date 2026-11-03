@@ -56,13 +56,16 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 		state.RLock()
 		plan, err := planRenameSymbol(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlan(state, plan, "rename "+in.Symbol+" → "+in.NewName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -78,6 +81,7 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().RenamePackage(ws, types.RenamePackageRequest{
 			NewPackageName: in.NewPackageName,
 			PackagePath:    in.PackagePath,
@@ -87,10 +91,12 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "rename package → "+in.NewPackageName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -109,13 +115,16 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 		state.RLock()
 		plan, err := planRenameMethod(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlan(state, plan, "rename method "+in.TypeName+"."+in.MethodName+" → "+in.NewMethodName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -134,13 +143,16 @@ func registerRenameTools(s *mcpsdk.Server, state *MCPServer) {
 		state.RLock()
 		plan, err := planRenameField(state, in)
 		state.RUnlock()
+
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlan(state, plan, "rename field "+in.TypeName+"."+in.FieldName+" → "+in.NewFieldName, in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }
@@ -152,10 +164,12 @@ func planRenameField(state *MCPServer, in RenameFieldInput) (*types.RefactoringP
 	if err != nil {
 		return nil, fmt.Errorf("plan rename field: %w", err)
 	}
+
 	pkgPath := in.PackagePath
 	if pkgPath != "" {
 		pkgPath = types.ResolvePackagePath(ws, pkgPath)
 	}
+
 	return state.GetEngine().RenameFieldAcrossConfigs(types.RenameFieldRequest{
 		TypeName:     in.TypeName,
 		FieldName:    in.FieldName,
@@ -171,12 +185,15 @@ func planRenameSymbol(state *MCPServer, in RenameSymbolInput) (*types.Refactorin
 	if err != nil {
 		return nil, fmt.Errorf("plan rename symbol: %w", err)
 	}
+
 	scope := types.WorkspaceScope
+
 	pkg := in.Package
 	if pkg != "" {
 		pkg = types.ResolvePackagePath(ws, pkg)
 		scope = types.PackageScope
 	}
+
 	return state.GetEngine().RenameSymbolAcrossConfigs(types.RenameSymbolRequest{
 		SymbolName: in.Symbol,
 		NewName:    in.NewName,
@@ -192,10 +209,12 @@ func planRenameMethod(state *MCPServer, in RenameMethodInput) (*types.Refactorin
 	if err != nil {
 		return nil, fmt.Errorf("plan rename method: %w", err)
 	}
+
 	pkgPath := in.PackagePath
 	if pkgPath != "" {
 		pkgPath = types.ResolvePackagePath(ws, pkgPath)
 	}
+
 	return state.GetEngine().RenameMethodAcrossConfigs(types.RenameMethodRequest{
 		TypeName:      in.TypeName,
 		MethodName:    in.MethodName,

@@ -51,6 +51,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		exports := make([]types.ExportSpec, len(in.Exports))
 		for i, e := range in.Exports {
 			exports[i] = types.ExportSpec{
@@ -59,6 +60,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 				Alias:         e.Alias,
 			}
 		}
+
 		plan, err := state.GetEngine().CreateFacade(ws, types.CreateFacadeRequest{
 			// Raw: a facade package is new, so it cannot resolve against the
 			// existing package set. CreateFacadeOperation resolves it as a path.
@@ -69,10 +71,12 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "create facade", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -87,6 +91,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().GenerateFacades(ws, types.GenerateFacadesRequest{
 			ModulesDir:  in.ModulesDir,
 			TargetDir:   in.TargetDir,
@@ -96,10 +101,12 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "generate facades", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 
@@ -114,6 +121,7 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		plan, err := state.GetEngine().UpdateFacades(ws, types.UpdateFacadesRequest{
 			FacadePackages: in.FacadePackages,
 			AutoDetect:     in.AutoDetect,
@@ -122,10 +130,12 @@ func registerFacadeTools(s *mcpsdk.Server, state *MCPServer) {
 			state.RUnlock()
 			return errResult(err), nil, nil
 		}
+
 		result, err := executePlanWithUnlock(state, plan, "update facades", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
+
 		return textResult(result), nil, nil
 	})
 }

@@ -20,10 +20,12 @@ func TestCompleteSymbolResolution(t *testing.T) {
 	// Test 1: Basic symbol resolution
 	t.Run("BasicSymbolResolution", func(t *testing.T) {
 		pkg := workspace.Packages["test/main"]
+
 		symbol, err := resolver.ResolveSymbol(pkg, "MainFunction")
 		if err != nil {
 			t.Fatalf("Failed to resolve MainFunction: %v", err)
 		}
+
 		if symbol.Name != "MainFunction" || symbol.Kind != types.FunctionSymbol {
 			t.Errorf("Expected MainFunction (Function), got %s (%s)", symbol.Name, symbol.Kind.String())
 		}
@@ -32,6 +34,7 @@ func TestCompleteSymbolResolution(t *testing.T) {
 	// Test 2: Method set resolution
 	t.Run("MethodSetResolution", func(t *testing.T) {
 		pkg := workspace.Packages["test/main"]
+
 		typeSymbol, err := resolver.ResolveSymbol(pkg, "TestStruct")
 		if err != nil {
 			t.Fatalf("Failed to resolve TestStruct: %v", err)
@@ -48,12 +51,14 @@ func TestCompleteSymbolResolution(t *testing.T) {
 
 		// Should find the TestMethod
 		found := false
+
 		for _, method := range methods {
 			if method.Name == "TestMethod" {
 				found = true
 				break
 			}
 		}
+
 		if !found {
 			t.Error("Expected to find TestMethod in method set")
 		}
@@ -83,6 +88,7 @@ func TestEmbeddedFieldResolution(t *testing.T) {
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	pkg := workspace.Packages["test/embedded"]
+
 	compositeType, err := resolver.ResolveSymbol(pkg, "CompositeStruct")
 	if err != nil {
 		t.Fatalf("Failed to resolve CompositeStruct: %v", err)
@@ -106,12 +112,14 @@ func TestEmbeddedFieldResolution(t *testing.T) {
 
 	// Should include methods from embedded fields
 	found := false
+
 	for _, method := range promotedMethods {
 		if method.Name == "EmbeddedMethod" {
 			found = true
 			break
 		}
 	}
+
 	if !found {
 		t.Error("Expected to find promoted EmbeddedMethod")
 	}
@@ -153,6 +161,7 @@ func TestCacheInvalidation(t *testing.T) {
 
 func createTestWorkspace(t *testing.T) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	// Create main package
@@ -249,6 +258,7 @@ func privateFunction() string {
 
 func createEmbeddedFieldWorkspace(t *testing.T) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	src := `package embedded

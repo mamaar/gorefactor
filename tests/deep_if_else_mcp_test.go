@@ -21,14 +21,17 @@ func TestFixDeepIfElse_CountsOnlyWhatItRewrote(t *testing.T) {
 	if len(fixed) != 2 {
 		t.Fatalf("expected exactly 2 rewritten functions, got %d: %v", len(fixed), fixed)
 	}
+
 	fixedSet := make(map[string]bool, len(fixed))
 	for _, f := range fixed {
 		fn, _ := f.(string)
 		fixedSet[fn] = true
 	}
+
 	if !fixedSet["process"] || !fixedSet["categorize"] {
 		t.Errorf("functions_fixed = %v, want [process categorize]", fixed)
 	}
+
 	if fixedSet["describe"] {
 		t.Error("describe is below the depth threshold and must not be reported as fixed")
 	}
@@ -48,6 +51,7 @@ func TestFixDeepIfElse_CountsOnlyWhatItRewrote(t *testing.T) {
 	if len(unfixable) != 0 {
 		t.Errorf("expected no unfixable findings on this fixture, got %v", unfixable)
 	}
+
 	partial, _ := result["partial"].([]any)
 	if len(partial) != 0 {
 		t.Errorf("expected no partial findings on this fixture (both chains flatten fully), got %v", partial)
@@ -68,6 +72,7 @@ func TestDetectDeepIfElse_MarksUnfixableChains(t *testing.T) {
 	}
 
 	fixable := make(map[string]bool)
+
 	for _, v := range violations {
 		item := v.(map[string]any)
 		fn, _ := item["function_name"].(string)
@@ -78,6 +83,7 @@ func TestDetectDeepIfElse_MarksUnfixableChains(t *testing.T) {
 	if !fixable["process"] {
 		t.Error("process is a flattenable chain and should be marked fixable")
 	}
+
 	if !fixable["categorize"] {
 		t.Error("categorize's else-if chain flattens fully too and should be marked fixable")
 	}
@@ -101,10 +107,12 @@ func TestFixDeepIfElse_DryRunLeavesFilesAlone(t *testing.T) {
 	if after != before {
 		t.Errorf("dry run modified the file on disk:\n%s", after)
 	}
+
 	dryRun, _ := result["dry_run"].(bool)
 	if !dryRun {
 		t.Error("result should report dry_run=true so the caller knows nothing was written")
 	}
+
 	diffs, _ := result["diffs"].([]any)
 	if len(diffs) == 0 {
 		t.Error("a dry run should return the diffs it would apply")

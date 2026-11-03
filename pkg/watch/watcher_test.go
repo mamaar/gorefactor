@@ -136,11 +136,13 @@ func TestWatcher_DebounceCoalescesEvents(t *testing.T) {
 
 	// Only one entry for rapid.go
 	count := 0
+
 	for _, ev := range batch {
 		if filepath.Base(ev.Path) == "rapid.go" {
 			count++
 		}
 	}
+
 	if count != 1 {
 		t.Fatalf("expected 1 coalesced event for rapid.go, got %d", count)
 	}
@@ -180,6 +182,7 @@ func TestWatcher_ContextCancellationStops(t *testing.T) {
 
 func writeGoFile(t *testing.T, dir, name, content string) {
 	t.Helper()
+
 	err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644)
 	if err != nil {
 		t.Fatal(err)
@@ -188,6 +191,7 @@ func writeGoFile(t *testing.T, dir, name, content string) {
 
 func waitForBatch(t *testing.T, ch <-chan []ChangeEvent, timeout time.Duration) []ChangeEvent {
 	t.Helper()
+
 	select {
 	case batch := <-ch:
 		return batch
@@ -199,11 +203,13 @@ func waitForBatch(t *testing.T, ch <-chan []ChangeEvent, timeout time.Duration) 
 
 func assertContainsPath(t *testing.T, batch []ChangeEvent, path string) {
 	t.Helper()
+
 	for _, ev := range batch {
 		if ev.Path == path {
 			return
 		}
 	}
+
 	t.Fatalf("batch does not contain %s; got %v", path, batch)
 }
 
@@ -224,10 +230,12 @@ func TestWatcher_CreatedTestdataDirNotWatched(t *testing.T) {
 	go func() { _ = w.Run(ctx, out) }()
 
 	td := filepath.Join(dir, "testdata")
+
 	err = os.Mkdir(td, 0o755)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	time.Sleep(200 * time.Millisecond)
 	writeGoFile(t, td, "x.go", "package x\n")
 

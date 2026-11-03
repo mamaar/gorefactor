@@ -22,32 +22,39 @@ import (
 func writeInlineWorkspace(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
+
 	_, ok := files["go.mod"]
 	if !ok {
 		files["go.mod"] = "module example.com/threadmcp\n\ngo 1.21\n"
 	}
+
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
+
 		err := os.MkdirAll(filepath.Dir(full), 0o755)
 		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
+
 		err = os.WriteFile(full, []byte(content), 0o644)
 		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
 		}
 	}
+
 	return dir
 }
 
 func errText(result *mcpsdk.CallToolResult) string {
 	var b strings.Builder
+
 	for _, c := range result.Content {
 		tc, ok := c.(*mcpsdk.TextContent)
 		if ok {
 			b.WriteString(tc.Text)
 		}
 	}
+
 	return b.String()
 }
 
@@ -66,6 +73,7 @@ func main() { Process("task") }
 	})
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -81,9 +89,11 @@ func main() { Process("task") }
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if !result.IsError {
 		t.Fatalf("expected an error result when thread and default_value are both set, got success: %s", errText(result))
 	}
+
 	msg := errText(result)
 	if !strings.Contains(msg, "default_value") {
 		t.Errorf("expected error message to mention default_value, got: %s", msg)
@@ -94,6 +104,7 @@ func main() { Process("task") }
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
+
 	if strings.Contains(string(content), "context.Context") {
 		t.Errorf("expected no changes to main.go after a rejected request, got:\n%s", content)
 	}
@@ -122,6 +133,7 @@ func main() { Run() }
 	})
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -140,6 +152,7 @@ func main() { Run() }
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
@@ -148,17 +161,21 @@ func main() { Run() }
 	if err != nil {
 		t.Fatalf("reading main.go: %v", err)
 	}
+
 	got := string(content)
 
 	if !strings.Contains(got, "func Process(ctx context.Context, name string) string") {
 		t.Errorf("expected Process to gain a ctx context.Context parameter, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "func Run(ctx context.Context) string") {
 		t.Errorf("expected Run to gain a ctx context.Context parameter (it calls Process), got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "Process(ctx, \"task\")") {
 		t.Errorf("expected Run to pass its own ctx to Process, got:\n%s", got)
 	}
+
 	if !strings.Contains(got, "Run(context.TODO())") {
 		t.Errorf("expected main (a root) to pass context.TODO() to Run, got:\n%s", got)
 	}
@@ -168,6 +185,7 @@ func TestAddContextParameter_Thread_RewritesCallInCgoFile(t *testing.T) {
 	if !build.Default.CgoEnabled {
 		t.Skip("cgo disabled on host: cgo files are not part of the package")
 	}
+
 	dir := writeInlineWorkspace(t, map[string]string{
 		"leaf.go": `package main
 
@@ -190,6 +208,7 @@ func main() { caller() }
 	})
 
 	ctx := context.Background()
+
 	sess := mcptest.Dial(ctx, t, mcpTransport(), dir)
 	defer sess.Close()
 
@@ -204,6 +223,7 @@ func main() { caller() }
 	if err != nil {
 		t.Fatalf("CallTool: %v", err)
 	}
+
 	if result.IsError {
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
@@ -212,9 +232,11 @@ func main() { caller() }
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !strings.Contains(string(content), "leaf(ctx)") {
 		t.Errorf("expected leaf call in cgo file to be rewritten, got:\n%s", content)
 	}
+
 	if !strings.Contains(string(content), "C.puts(C.CString(\"x\"))") {
 		t.Errorf("C expressions must be untouched, got:\n%s", content)
 	}

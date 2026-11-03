@@ -28,17 +28,21 @@ type RunResult struct {
 // package is analysed; otherwise all packages are analysed.
 func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunResult, error) {
 	var packages []*wstypes.Package
+
 	if pkgFilter != "" {
 		resolved := wstypes.ResolvePackagePath(ws, pkgFilter)
+
 		pkg, ok := ws.Packages[resolved]
 		if !ok {
 			return &RunResult{}, nil
 		}
+
 		packages = []*wstypes.Package{pkg}
 	} else {
 		for _, pkg := range ws.Packages {
 			packages = append(packages, pkg)
 		}
+
 		sort.Slice(packages, func(i, j int) bool {
 			return packages[i].ImportPath < packages[j].ImportPath
 		})
@@ -51,6 +55,7 @@ func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunRes
 		if err != nil {
 			return nil, fmt.Errorf("run: %w", err)
 		}
+
 		combined.Diagnostics = append(combined.Diagnostics, rr.Diagnostics...)
 		combined.Result = mergeResults(combined.Result, rr.Result)
 	}
@@ -71,11 +76,13 @@ func mergeResults(acc, next any) any {
 	if acc == nil {
 		return next
 	}
+
 	if next == nil {
 		return acc
 	}
 
 	accVal := reflect.ValueOf(acc)
+
 	nextVal := reflect.ValueOf(next)
 	if accVal.Kind() == reflect.Slice && nextVal.Kind() == reflect.Slice &&
 		reflect.TypeOf(acc) == reflect.TypeOf(next) {
@@ -108,6 +115,7 @@ func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer
 	// Test files of both the package and its x_test package go in one pass:
 	// TypesInfo covers both, and no analyzer reads pass.Pkg.
 	srcFiles := slices.Concat(slices.Collect(maps.Values(pkg.Files)), slices.Collect(maps.Values(pkg.TestFiles)))
+
 	files := make([]*ast.File, 0, len(srcFiles))
 	for _, f := range srcFiles {
 		files = append(files, f.AST)
@@ -152,10 +160,12 @@ func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer
 			if err != nil {
 				return nil, err
 			}
+
 			res, err := req.Run(reqPass)
 			if err != nil {
 				return nil, err
 			}
+
 			pass.ResultOf[req] = res
 		}
 	}
@@ -167,10 +177,12 @@ func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer
 // It picks the first SuggestedFix from each diagnostic (if any).
 func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []wstypes.Change {
 	var changes []wstypes.Change
+
 	for _, d := range diags {
 		if len(d.SuggestedFixes) == 0 {
 			continue
 		}
+
 		fix := d.SuggestedFixes[0]
 		for _, edit := range fix.TextEdits {
 			startPos := fset.Position(edit.Pos)
@@ -184,6 +196,7 @@ func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []ws
 			})
 		}
 	}
+
 	return changes
 }
 
@@ -199,10 +212,12 @@ func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []ws
 // Changes whose file or offsets are not found in the workspace are left as-is.
 func FillOldText(ws *wstypes.Workspace, changes []wstypes.Change) []wstypes.Change {
 	contents := make(map[string][]byte)
+
 	for _, pkg := range ws.Packages {
 		for _, file := range pkg.Files {
 			contents[file.Path] = file.OriginalContent
 		}
+
 		for _, file := range pkg.TestFiles {
 			contents[file.Path] = file.OriginalContent
 		}
@@ -213,13 +228,16 @@ func FillOldText(ws *wstypes.Workspace, changes []wstypes.Change) []wstypes.Chan
 		if c.Delete || c.OldText != "" {
 			continue
 		}
+
 		content, ok := contents[c.File]
 		if !ok {
 			continue
 		}
+
 		if c.Start < 0 || c.End > len(content) || c.Start >= c.End {
 			continue
 		}
+
 		c.OldText = string(content[c.Start:c.End])
 	}
 
@@ -232,10 +250,12 @@ func ChangesToPlan(changes []wstypes.Change) *wstypes.RefactoringPlan {
 	for _, c := range changes {
 		affectedSet[c.File] = true
 	}
+
 	var affected []string
 	for f := range affectedSet {
 		affected = append(affected, f)
 	}
+
 	return &wstypes.RefactoringPlan{
 		Changes:       changes,
 		AffectedFiles: affected,

@@ -31,6 +31,7 @@ func siblingWorkspace() map[string]string {
 func TestPlanAcrossConfigs_ReleasesSecondaryViewsTypeInfo(t *testing.T) {
 	eng, _ := loadConfigsEngine(t, siblingWorkspace())
 	req := types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/leaf.go"}
+
 	first, err := eng.ThreadContextAcrossConfigs(req)
 	if err != nil {
 		t.Fatal(err)
@@ -40,9 +41,11 @@ func TestPlanAcrossConfigs_ReleasesSecondaryViewsTypeInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(views) != 3 {
 		t.Fatalf("views = %d, want 3", len(views))
 	}
+
 	for i, v := range views {
 		for _, pkg := range v.Workspace.Packages {
 			held := pkg.TypesChecked || pkg.TypesInfo != nil || pkg.TypesPkg != nil
@@ -56,6 +59,7 @@ func TestPlanAcrossConfigs_ReleasesSecondaryViewsTypeInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if !reflect.DeepEqual(sortedChanges(first), sortedChanges(second)) || !reflect.DeepEqual(first.Coverage, second.Coverage) {
 		t.Errorf("a run after the release planned differently:\nfirst  %+v\nsecond %+v", sortedChanges(first), sortedChanges(second))
 	}
@@ -64,6 +68,7 @@ func TestPlanAcrossConfigs_ReleasesSecondaryViewsTypeInfo(t *testing.T) {
 func TestPlanAcrossConfigs_ConcurrentRunsPlanTheSame(t *testing.T) {
 	eng, dir := loadConfigsEngine(t, siblingWorkspace())
 	req := types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/leaf.go"}
+
 	want, err := eng.ThreadContextAcrossConfigs(req)
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +76,7 @@ func TestPlanAcrossConfigs_ConcurrentRunsPlanTheSame(t *testing.T) {
 
 	plans := make([]*types.RefactoringPlan, 6)
 	errs := make([]error, len(plans))
+
 	var wg sync.WaitGroup
 	for i := range plans {
 		wg.Go(func() {
@@ -78,14 +84,18 @@ func TestPlanAcrossConfigs_ConcurrentRunsPlanTheSame(t *testing.T) {
 				plans[i], errs[i] = eng.ThreadContextAcrossConfigs(req)
 				return
 			}
+
 			plans[i], errs[i] = eng.AddContextParameterAcrossConfigs(types.AddContextParameterRequest{FunctionName: "leaf", SourceFile: dir + "/p/leaf.go"})
 		})
 	}
+
 	wg.Wait()
+
 	for i, plan := range plans {
 		if errs[i] != nil {
 			t.Fatalf("run %d: %v", i, errs[i])
 		}
+
 		if i%2 == 0 && !reflect.DeepEqual(sortedChanges(plan), sortedChanges(want)) {
 			t.Errorf("run %d planned differently:\n got %+v\nwant %+v", i, sortedChanges(plan), sortedChanges(want))
 		}
@@ -99,29 +109,36 @@ func TestPlanAcrossConfigs_ConcurrentWithViewsAndUpdater(t *testing.T) {
 	set := eng.WorkspaceSet()
 	updater := watch.NewUpdater(set, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	req := types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/leaf.go"}
+
 	want, err := eng.ThreadContextAcrossConfigs(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var state sync.RWMutex
+
 	var wg sync.WaitGroup
 	for range 3 {
 		wg.Go(func() {
 			for range 4 {
 				state.RLock()
+
 				plan, err := eng.ThreadContextAcrossConfigs(req)
+
 				state.RUnlock()
+
 				if err != nil {
 					t.Error(err)
 					return
 				}
+
 				if !reflect.DeepEqual(sortedChanges(plan), sortedChanges(want)) {
 					t.Errorf("planned differently:\n got %+v\nwant %+v", sortedChanges(plan), sortedChanges(want))
 				}
 			}
 		})
 	}
+
 	wg.Go(func() {
 		for range 8 {
 			views, err := set.Views()
@@ -133,12 +150,15 @@ func TestPlanAcrossConfigs_ConcurrentWithViewsAndUpdater(t *testing.T) {
 	wg.Go(func() {
 		// q/q.go holds no change of the plan, so rewriting it moves no offset.
 		file := filepath.Join(dir, "q", "q.go")
+
 		for i := range 6 {
 			state.Lock()
+
 			err := os.WriteFile(file, fmt.Appendf(nil, "package q\n\nconst rev = %d\n", i), 0o644)
 			if err != nil {
 				t.Error(err)
 			}
+
 			updater.HandleChanges([]watch.ChangeEvent{{Path: file, Op: fsnotify.Write}})
 			state.Unlock()
 		}
@@ -168,13 +188,16 @@ func TestPlanAcrossConfigs_BoundsTheSecondaryViewsHoldingTypeInfo(t *testing.T) 
 	})
 	planner := &observingPlanner{threadContextPlanner: &threadContextPlanner{
 		engine: eng, req: types.ThreadContextRequest{FunctionName: "leaf", SourceFile: "p/leaf.go"}}}
+
 	plan, err := eng.planAcrossConfigs(planner)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if len(plan.Coverage.Configs) != 5 || len(plan.Changes) == 0 {
 		t.Fatalf("planned %d changes under %v, want some under 5 configurations", len(plan.Changes), plan.Coverage.Configs)
 	}
+
 	if !reflect.DeepEqual(planner.held, []int{2, 2, 2, 2, 1}) {
 		t.Errorf("secondary views holding type info at each plan = %v, want [2 2 2 2 1]", planner.held)
 	}

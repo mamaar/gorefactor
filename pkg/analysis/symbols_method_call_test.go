@@ -53,6 +53,7 @@ func main() {
 		t.Run(tt.name, func(t *testing.T) {
 			// Parse the code
 			fset := token.NewFileSet()
+
 			astFile, err := parser.ParseFile(fset, "test.go", tt.code, parser.ParseComments)
 			if err != nil {
 				t.Fatalf("Failed to parse: %v", err)
@@ -77,6 +78,7 @@ func main() {
 
 			// Check if method calls were detected correctly
 			foundMethodCall := false
+
 			for _, entries := range index {
 				for _, entry := range entries {
 					if entry.IsMethodCall {
@@ -152,6 +154,7 @@ func TestMethodCallMatching(t *testing.T) {
 			if tt.methodKind == types.MethodSymbol && tt.isCall {
 				return
 			}
+
 			if result {
 				t.Errorf("Expected no match for invalid condition, got true")
 			}
@@ -172,6 +175,7 @@ func main() {
 }`
 
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", code, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse: %v", err)
@@ -205,11 +209,14 @@ func main() {
 
 	// Check for method call entry
 	hasMethodCall := false
+
 	for _, entry := range saveEntries {
 		if !entry.IsMethodCall {
 			continue
 		}
+
 		hasMethodCall = true
+
 		if entry.ReceiverName != "repo" {
 			t.Errorf("Expected receiver name 'repo', got %q", entry.ReceiverName)
 		}
@@ -233,6 +240,7 @@ func main() {
 }`
 
 	fset := token.NewFileSet()
+
 	astFile, err := parser.ParseFile(fset, "test.go", code, parser.ParseComments)
 	if err != nil {
 		t.Fatalf("Failed to parse: %v", err)
@@ -278,6 +286,7 @@ func main() {
 	}
 
 	var methodCallEntry *indexEntry
+
 	for i := range getEntries {
 		if getEntries[i].IsMethodCall {
 			methodCallEntry = &getEntries[i]

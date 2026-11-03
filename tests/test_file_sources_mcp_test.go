@@ -44,12 +44,15 @@ func TestAll(t *testing.T) {
 
 func tfsLine(t *testing.T, needle string) int {
 	t.Helper()
+
 	for i, l := range strings.Split(tfsTest, "\n") {
 		if strings.Contains(l, needle) {
 			return i + 1
 		}
 	}
+
 	t.Fatalf("%q not in fixture", needle)
+
 	return 0
 }
 
@@ -105,6 +108,7 @@ func TestOperationsAcceptTestFileSources(t *testing.T) {
 				"p/p.go":      "package p\n",
 				"p/p_test.go": tfsTest,
 			})
+
 			sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 			defer sess.Close()
 
@@ -112,18 +116,22 @@ func TestOperationsAcceptTestFileSources(t *testing.T) {
 			dry := map[string]any{"dry_run": true}
 			maps.Copy(dry, args)
 			callJSON(t, sess, tc.tool, dry)
+
 			path := filepath.Join(dir, "p", "p_test.go")
 			if readFile(t, path) != tfsTest {
 				t.Fatal("dry run modified the file")
 			}
 
 			callJSON(t, sess, tc.tool, args)
+
 			got := readFile(t, path)
 			if !strings.Contains(got, tc.want) {
 				t.Errorf("want %q in:\n%s", tc.want, got)
 			}
+
 			vet := exec.Command("go", "vet", "./...")
 			vet.Dir = dir
+
 			out, err := vet.CombinedOutput()
 			if err != nil {
 				t.Errorf("go vet: %v\n%s\n%s", err, out, got)
@@ -137,6 +145,7 @@ func TestSourceFileNotFoundNamesTheFile(t *testing.T) {
 		"go.mod":      "module example.com/tfs\n\ngo 1.21\n",
 		"p/p_test.go": tfsTest,
 	})
+
 	sess := mcptest.Dial(t.Context(), t, mcpTransport(), dir)
 	defer sess.Close()
 

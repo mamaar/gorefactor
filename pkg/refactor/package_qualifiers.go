@@ -26,10 +26,12 @@ func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysi
 	if err != nil {
 		return "", nil, fmt.Errorf("qualifier rewrite: %w", err)
 	}
+
 	edits := extra
 	for _, c := range changes {
 		edits = append(edits, textEdit{start: c.Start, end: c.End, text: c.NewText})
 	}
+
 	return copyWithEdits(file.Content, 0, len(file.Content), edits), skipped, nil
 }
 
@@ -41,14 +43,17 @@ func qualifierRewrite(views []*analysis.View, fset *token.FileSet, file *analysi
 // not parse.
 func packageQualifierEdits(views []*analysis.View, fset *token.FileSet, file *analysis.SourceFile, renames []pkgRename) ([]types.Change, []types.SkippedSite, error) {
 	var imported []pkgRename
+
 	for _, r := range renames {
 		if strings.Contains(string(file.Content), `"`+r.oldPath+`"`) || strings.Contains(string(file.Content), "`"+r.oldPath+"`") {
 			imported = append(imported, r)
 		}
 	}
+
 	if len(imported) == 0 {
 		return nil, nil, nil
 	}
+
 	if file.AST == nil || file.Err != nil {
 		return nil, nil, fmt.Errorf("cannot rename package qualifiers in %s: file does not parse: %w", file.Path, file.Err)
 	}
@@ -56,21 +61,25 @@ func packageQualifierEdits(views []*analysis.View, fset *token.FileSet, file *an
 	var changes []types.Change
 	var skipped []types.SkippedSite
 	claimed := make(map[string]bool)
+
 	for _, spec := range file.AST.Imports {
 		path, err := strconv.Unquote(spec.Path.Value)
 		if spec.Name != nil || err != nil {
 			continue
 		}
+
 		i := slices.IndexFunc(imported, func(r pkgRename) bool { return r.oldPath == path })
 		if i < 0 {
 			continue
 		}
+
 		r := imported[i]
 
 		uses, reason := renamableUses(views, fset, file.Path, r)
 		if reason == "" && claimed[r.newName] {
 			reason = fmt.Sprintf("name %q is already taken by another renamed package", r.newName)
 		}
+
 		if reason != "" {
 			at := fset.Position(spec.Path.Pos())
 			changes = append(changes, types.Change{
@@ -86,8 +95,10 @@ func packageQualifierEdits(views []*analysis.View, fset *token.FileSet, file *an
 				Reason:  fmt.Sprintf("kept import name %q: %s", r.oldName, reason),
 				Snippet: spec.Path.Value,
 			})
+
 			continue
 		}
+
 		claimed[r.newName] = true
 		for _, id := range uses {
 			changes = append(changes, types.Change{
@@ -100,6 +111,7 @@ func packageQualifierEdits(views []*analysis.View, fset *token.FileSet, file *an
 			})
 		}
 	}
+
 	return changes, skipped, nil
 }
 
@@ -110,26 +122,32 @@ func renamableUses(views []*analysis.View, fset *token.FileSet, path string, r p
 	var uses []*ast.Ident
 	seen := make(map[token.Pos]bool)
 	included := false
+
 	for _, v := range views {
 		file := findParsedFile(v.Workspace, path)
 		if file == nil {
 			continue
 		}
+
 		included = true
 		pkg := file.Package
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
+
 		reason := uncheckedReason(pkg, file)
 		if reason != "" {
 			return nil, reason
 		}
+
 		viewUses, pkgName := importUses(pkg, file, r)
 		if pkgName == nil {
 			continue
 		}
+
 		taken := nameTakenAt(typesPkgOf(pkg, file), pkgName, r.newName, viewUses)
 		if taken != nil {
 			return nil, fmt.Sprintf("name %q is already declared at %s", r.newName, fset.Position(taken.Pos()))
 		}
+
 		for _, id := range viewUses {
 			if !seen[id.Pos()] {
 				seen[id.Pos()] = true
@@ -137,9 +155,11 @@ func renamableUses(views []*analysis.View, fset *token.FileSet, path string, r p
 			}
 		}
 	}
+
 	if !included {
 		return nil, "file is not part of any type-checked build configuration"
 	}
+
 	return uses, ""
 }
 
@@ -148,17 +168,22 @@ func renamableUses(views []*analysis.View, fset *token.FileSet, path string, r p
 func importUses(pkg *types.Package, file *types.File, r pkgRename) ([]*ast.Ident, *gotypes.PkgName) {
 	var uses []*ast.Ident
 	var pkgName *gotypes.PkgName
+
 	ast.Inspect(file.AST, func(n ast.Node) bool {
 		id, ok := n.(*ast.Ident)
 		if !ok || id.Name != r.oldName {
 			return true
 		}
+
 		if pn, ok := pkg.TypesInfo.Uses[id].(*gotypes.PkgName); ok && pn.Imported().Path() == r.oldPath {
 			pkgName = pn
+
 			uses = append(uses, id)
 		}
+
 		return true
 	})
+
 	return uses, pkgName
 }
 
@@ -168,5 +193,6 @@ func typesPkgOf(pkg *types.Package, file *types.File) *gotypes.Package {
 	if strings.HasSuffix(file.AST.Name.Name, "_test") && pkg.ExternalTestTypesPkg != nil {
 		return pkg.ExternalTestTypesPkg
 	}
+
 	return pkg.TypesPkg
 }

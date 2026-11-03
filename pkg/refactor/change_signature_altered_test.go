@@ -12,6 +12,7 @@ import (
 
 func alteredFixture(t *testing.T) (*DefaultEngine, string) {
 	t.Helper()
+
 	return loadConfigsEngine(t, map[string]string{
 		"p/iface.go": "package p\n\ntype Runner interface{ Run(n int) int }\n",
 		"p/a.go":     "package p\n\ntype A struct{}\n\nfunc (A) Run(n int) int { return n }\n",
@@ -22,6 +23,7 @@ func alteredFixture(t *testing.T) (*DefaultEngine, string) {
 
 func executeAltered(t *testing.T, eng *DefaultEngine, dir, fn, file string, propagate bool) (*ChangeSignatureOperation, *types.RefactoringPlan) {
 	t.Helper()
+
 	ws := eng.WorkspaceSet().Primary().Workspace
 	op := &ChangeSignatureOperation{
 		FunctionName:         fn,
@@ -34,15 +36,19 @@ func executeAltered(t *testing.T, eng *DefaultEngine, dir, fn, file string, prop
 		RemovedReturnIndex:   -1,
 		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+
 	ensureTypeChecked(eng.WorkspaceSet().Primary().Parser, ws)
+
 	err := op.Validate(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	return op, plan
 }
 
@@ -51,6 +57,7 @@ func TestChangeSignatureOperation_AlteredDeclsListsFunction(t *testing.T) {
 	op, _ := executeAltered(t, eng, dir, "fn", "p/fn.go", false)
 
 	want := []AlteredDecl{{Key: types.SymbolKey{PkgPath: "example.com/threadtest/p", Name: "fn"}, File: filepath.Join(dir, "p/fn.go")}}
+
 	got := op.AlteredDecls()
 	if !slices.Equal(got, want) {
 		t.Errorf("AlteredDecls = %+v, want %+v", got, want)
@@ -68,10 +75,12 @@ func TestChangeSignatureOperation_AlteredDeclsListsInterfaceAndImplementationsWi
 		{Key: types.SymbolKey{PkgPath: pkg, Recv: "Runner", Name: "Run"}, File: filepath.Join(dir, "p/iface.go")},
 		{Key: types.SymbolKey{PkgPath: pkg, Recv: "B", Name: "Run"}, File: filepath.Join(dir, "p/b.go")},
 	}
+
 	got := op.AlteredDecls()
 	if len(got) != len(want) {
 		t.Errorf("AlteredDecls = %+v, want %d entries", got, len(want))
 	}
+
 	for _, w := range want {
 		if !slices.Contains(got, w) {
 			t.Errorf("AlteredDecls = %+v, missing %+v", got, w)
@@ -81,7 +90,9 @@ func TestChangeSignatureOperation_AlteredDeclsListsInterfaceAndImplementationsWi
 
 func assertNoDuplicateChanges(t *testing.T, plan *types.RefactoringPlan) {
 	t.Helper()
+
 	seen := make(map[changeIdentity]bool)
+
 	for _, c := range plan.Changes {
 		id := identityOf(c)
 		if seen[id] {

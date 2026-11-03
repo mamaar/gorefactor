@@ -12,6 +12,7 @@ import (
 
 func createTestWorkspace(t *testing.T, src string) *types.Workspace {
 	t.Helper()
+
 	fileSet := token.NewFileSet()
 
 	astFile, err := parser.ParseFile(fileSet, "testpkg.go", src, parser.ParseComments)
@@ -46,6 +47,7 @@ func simple() int {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, complexity.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +57,7 @@ func simple() int {
 	if !ok {
 		t.Fatalf("Expected []*complexity.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 0 {
 		t.Errorf("Expected 0 violations for a simple function, got %d", len(results))
 	}
@@ -100,6 +103,7 @@ func complex(a, b, c, d, e int) int {
 }
 `
 	ws := createTestWorkspace(t, src)
+
 	rr, err := analyzers.Run(ws, complexity.Analyzer, "")
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +113,7 @@ func complex(a, b, c, d, e int) int {
 	if !ok {
 		t.Fatalf("Expected []*complexity.Result, got %T", rr.Result)
 	}
+
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 violation for complex function, got %d", len(results))
 	}
@@ -117,9 +122,11 @@ func complex(a, b, c, d, e int) int {
 	if v.Function != "complex" {
 		t.Errorf("Expected function 'complex', got %q", v.Function)
 	}
+
 	if v.CyclomaticComplexity < 10 {
 		t.Errorf("Expected CyclomaticComplexity >= 10, got %d", v.CyclomaticComplexity)
 	}
+
 	if v.Level == "" {
 		t.Error("Expected a non-empty Level string")
 	}
@@ -151,27 +158,33 @@ func medium(a, b, c int) int {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	defaultResults, ok := rr.Result.([]*complexity.Result)
 	if !ok {
 		t.Fatalf("Expected []*complexity.Result, got %T", rr.Result)
 	}
+
 	if len(defaultResults) != 0 {
 		t.Errorf("Expected 0 results at default threshold, got %d", len(defaultResults))
 	}
 
 	// Low-threshold analyzer — should detect the function.
 	lowAnalyzer := complexity.NewAnalyzer(complexity.WithMinComplexity(3))
+
 	rr2, err := analyzers.Run(ws, lowAnalyzer, "")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	lowResults, ok := rr2.Result.([]*complexity.Result)
 	if !ok {
 		t.Fatalf("Expected []*complexity.Result, got %T", rr2.Result)
 	}
+
 	if len(lowResults) != 1 {
 		t.Fatalf("Expected 1 result at threshold=3, got %d", len(lowResults))
 	}
+
 	if lowResults[0].Function != "medium" {
 		t.Errorf("Expected function 'medium', got %q", lowResults[0].Function)
 	}

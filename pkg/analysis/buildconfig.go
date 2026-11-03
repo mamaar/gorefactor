@@ -32,6 +32,7 @@ func DefaultBuildConfig() BuildConfig {
 func normalizeTags(tags []string) []string {
 	out := slices.Clone(tags)
 	slices.Sort(out)
+
 	return slices.Compact(out)
 }
 
@@ -43,29 +44,36 @@ func (c BuildConfig) Key() string {
 	if c.Cgo {
 		cgo = "cgo"
 	}
+
 	return strings.Join([]string{c.GOOS, c.GOARCH, cgo, strings.Join(normalizeTags(c.Tags), ",")}, "/")
 }
 
 // String describes the config as the delta from DefaultBuildConfig, or "default".
 func (c BuildConfig) String() string {
 	def := DefaultBuildConfig()
+
 	var parts []string
 	if c.GOOS != def.GOOS {
 		parts = append(parts, "GOOS="+c.GOOS)
 	}
+
 	if c.GOARCH != def.GOARCH {
 		parts = append(parts, "GOARCH="+c.GOARCH)
 	}
+
 	if c.Cgo != def.Cgo {
 		parts = append(parts, "cgo="+onOff(c.Cgo))
 	}
+
 	tags := normalizeTags(c.Tags)
 	if !slices.Equal(tags, def.Tags) {
 		parts = append(parts, "tags="+strings.Join(tags, ","))
 	}
+
 	if len(parts) == 0 {
 		return "default"
 	}
+
 	return strings.Join(parts, " ")
 }
 
@@ -73,6 +81,7 @@ func onOff(b bool) string {
 	if b {
 		return "on"
 	}
+
 	return "off"
 }
 
@@ -82,10 +91,12 @@ func onOff(b bool) string {
 func (c BuildConfig) MatchesFile(f *SourceFile) bool {
 	ctx := c.context()
 	ctx.OpenFile = contentOpener{content: f.Content}.open
+
 	ok, err := ctx.MatchFile(f.Dir, f.Name)
 	if err != nil || !ok {
 		return false
 	}
+
 	return c.Cgo || !importsC(f)
 }
 
@@ -96,16 +107,19 @@ func IncludedInEveryConfig(dir, name string, f *ast.File) bool {
 	if fileConstraint(&SourceFile{AST: f}) != nil || importsC(&SourceFile{AST: f}) {
 		return false
 	}
+
 	for _, port := range candidatePorts {
 		if !NewBuildConfig(port[0], port[1], true).MatchesFile(&SourceFile{Dir: dir, Name: name}) {
 			return false
 		}
 	}
+
 	return true
 }
 
 func (c BuildConfig) context() build.Context {
 	d := build.Default
+
 	return build.Context{
 		GOOS:        c.GOOS,
 		GOARCH:      c.GOARCH,
@@ -121,12 +135,14 @@ func importsC(f *SourceFile) bool {
 	if f.AST == nil {
 		return false
 	}
+
 	for _, imp := range f.AST.Imports {
 		path, err := strconv.Unquote(imp.Path.Value)
 		if err == nil && path == "C" {
 			return true
 		}
 	}
+
 	return false
 }
 

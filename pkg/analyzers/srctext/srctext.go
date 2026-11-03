@@ -48,6 +48,7 @@ func BlockText(fset *token.FileSet, content []byte, block *ast.BlockStmt) string
 	}
 
 	start := fset.Position(block.Lbrace).Offset + 1
+
 	end := fset.Position(block.Rbrace).Offset
 	if start < 0 || end > len(content) || start >= end {
 		return ""
@@ -61,11 +62,14 @@ func NodeText(fset *token.FileSet, content []byte, node ast.Node) string {
 	if len(content) == 0 || node == nil {
 		return ""
 	}
+
 	start := fset.Position(node.Pos()).Offset
+
 	end := fset.Position(node.End()).Offset
 	if start < 0 || end < 0 || start >= len(content) || end > len(content) || start >= end {
 		return ""
 	}
+
 	return string(content[start:end])
 }
 
@@ -86,6 +90,7 @@ func InvertCondition(fset *token.FileSet, content []byte, info *types.Info, expr
 	if !ok {
 		return ""
 	}
+
 	return text
 }
 
@@ -173,6 +178,7 @@ func negBinary(fset *token.FileSet, content []byte, info *types.Info, e *ast.Bin
 	if !ok {
 		return "", 0, 0, false
 	}
+
 	rhs, rhsNeg, rhsPrec, ok := PushNeg(fset, content, info, e.Y)
 	if !ok {
 		return "", 0, 0, false
@@ -188,6 +194,7 @@ func negBinary(fset *token.FileSet, content []byte, info *types.Info, e *ast.Bin
 	if lhsPrec < prec {
 		lhs = "(" + lhs + ")"
 	}
+
 	if rhsPrec < prec {
 		rhs = "(" + rhs + ")"
 	}
@@ -201,10 +208,12 @@ func negBinary(fset *token.FileSet, content []byte, info *types.Info, e *ast.Bin
 // e's old place.
 func negFlip(fset *token.FileSet, content []byte, e *ast.BinaryExpr, op string) (string, int, int, bool) {
 	lhs := ExprText(fset, content, e.X)
+
 	rhs := ExprText(fset, content, e.Y)
 	if lhs == "" || rhs == "" {
 		return "", 0, 0, false
 	}
+
 	return lhs + " " + op + " " + rhs, CountNegations(e), e.Op.Precedence(), true
 }
 
@@ -214,11 +223,13 @@ func negWrapNot(fset *token.FileSet, content []byte, e ast.Expr) (string, int, i
 	if !ok {
 		return "", 0, 0, false
 	}
+
 	_, isBinary := e.(*ast.BinaryExpr)
 	if isBinary {
 		// `!` binds tighter than every binary operator.
 		text = "(" + text + ")"
 	}
+
 	return "!" + text, negations + 1, token.UnaryPrec, true
 }
 
@@ -229,6 +240,7 @@ func negVerbatim(fset *token.FileSet, content []byte, e ast.Expr) (string, int, 
 	if text == "" {
 		return "", 0, 0, false
 	}
+
 	return text, CountNegations(e), exprPrec(e), true
 }
 
@@ -240,6 +252,7 @@ func exprPrec(e ast.Expr) int {
 	if ok {
 		return binary.Op.Precedence()
 	}
+
 	return token.UnaryPrec
 }
 
@@ -248,13 +261,16 @@ func exprPrec(e ast.Expr) int {
 // whole subtree on both sides is what makes a before/after comparison honest.
 func CountNegations(e ast.Expr) int {
 	count := 0
+
 	ast.Inspect(e, func(n ast.Node) bool {
 		unary, ok := n.(*ast.UnaryExpr)
 		if ok && unary.Op == token.NOT {
 			count++
 		}
+
 		return true
 	})
+
 	return count
 }
 
@@ -266,6 +282,7 @@ func IsFloatComparison(info *types.Info, e *ast.BinaryExpr) bool {
 	if info == nil || e == nil {
 		return false
 	}
+
 	return isFloatType(info.TypeOf(e.X)) || isFloatType(info.TypeOf(e.Y))
 }
 
@@ -275,10 +292,12 @@ func isFloatType(t types.Type) bool {
 	if t == nil {
 		return false
 	}
+
 	basic, ok := t.Underlying().(*types.Basic)
 	if !ok {
 		return false
 	}
+
 	return basic.Info()&types.IsFloat != 0
 }
 
@@ -294,6 +313,7 @@ func Indentation(content []byte, offset int) string {
 	}
 
 	var buf bytes.Buffer
+
 	for i := lineStart; i < len(content); i++ {
 		if content[i] == ' ' || content[i] == '\t' {
 			buf.WriteByte(content[i])
@@ -301,6 +321,7 @@ func Indentation(content []byte, offset int) string {
 			break
 		}
 	}
+
 	return buf.String()
 }
 
@@ -322,6 +343,7 @@ func trimBlankEdgeLines(text string) string {
 	if start >= end {
 		return ""
 	}
+
 	return strings.Join(lines[start:end], "\n")
 }
 
@@ -336,20 +358,25 @@ func trimBlankEdgeLines(text string) string {
 // chain, so it is left exactly as written.
 func SpansRawString(n ast.Node) bool {
 	found := false
+
 	ast.Inspect(n, func(node ast.Node) bool {
 		if found {
 			return false
 		}
+
 		lit, ok := node.(*ast.BasicLit)
 		if !ok || lit.Kind != token.STRING {
 			return true
 		}
+
 		if strings.HasPrefix(lit.Value, "`") && strings.Contains(lit.Value, "\n") {
 			found = true
 			return false
 		}
+
 		return true
 	})
+
 	return found
 }
 
@@ -364,27 +391,34 @@ func Normalize(text string) string {
 	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
 		start++
 	}
+
 	end := len(lines)
 	for end > start && strings.TrimSpace(lines[end-1]) == "" {
 		end--
 	}
+
 	if start >= end {
 		return ""
 	}
+
 	lines = lines[start:end]
 
 	prefix := ""
 	first := true
+
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
+
 		indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 		if first {
 			prefix = indent
 			first = false
+
 			continue
 		}
+
 		prefix = commonPrefix(prefix, indent)
 	}
 
@@ -393,6 +427,7 @@ func Normalize(text string) string {
 			lines[i] = ""
 			continue
 		}
+
 		lines[i] = strings.TrimPrefix(line, prefix)
 	}
 
@@ -406,6 +441,7 @@ func commonPrefix(a, b string) string {
 			return a[:i]
 		}
 	}
+
 	return a[:n]
 }
 
@@ -418,8 +454,10 @@ func IndentLines(text, prefix string) string {
 			lines[i] = ""
 			continue
 		}
+
 		lines[i] = prefix + line
 	}
+
 	return strings.Join(lines, "\n")
 }
 
@@ -432,11 +470,14 @@ func ApplyIndent(text, indent string) string {
 		if i == 0 {
 			continue
 		}
+
 		if strings.TrimSpace(line) == "" {
 			lines[i] = ""
 			continue
 		}
+
 		lines[i] = indent + line
 	}
+
 	return strings.Join(lines, "\n")
 }

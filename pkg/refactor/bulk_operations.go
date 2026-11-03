@@ -20,9 +20,11 @@ func packageAllFiles(pkg *types.Package) []*types.File {
 	for _, f := range pkg.Files {
 		all = append(all, f)
 	}
+
 	for _, f := range pkg.TestFiles {
 		all = append(all, f)
 	}
+
 	return all
 }
 
@@ -35,6 +37,7 @@ func sourceFilesOf(tree *analysis.SourceTree, dir string) ([]*analysis.SourceFil
 			return nil, fmt.Errorf("cannot read %s: %w", f.Path, f.Err)
 		}
 	}
+
 	return files, nil
 }
 
@@ -44,23 +47,28 @@ func sourceFilesOf(tree *analysis.SourceTree, dir string) ([]*analysis.SourceFil
 // suffix matches are an error listing them; ok is false when nothing matches.
 func findSourceDir(ws *types.Workspace, tree *analysis.SourceTree, source string) (dir string, ok bool, err error) {
 	var suffixed []string
+
 	for _, d := range tree.Dirs() {
 		if len(tree.Dir(d)) == 0 {
 			continue
 		}
+
 		if d == source || d == filepath.Join(ws.RootPath, source) || packagePathToImportPath(ws, d) == source {
 			return d, true, nil
 		}
+
 		if strings.HasSuffix(d, string(filepath.Separator)+source) {
 			suffixed = append(suffixed, d)
 		}
 	}
+
 	switch len(suffixed) {
 	case 0:
 		return "", false, nil
 	case 1:
 		return suffixed[0], true, nil
 	}
+
 	return "", false, fmt.Errorf("package %q is ambiguous: it matches %s; use a path relative to the workspace root or an import path",
 		source, strings.Join(suffixed, ", "))
 }
@@ -74,14 +82,18 @@ func appendContentRewrites(plan *types.RefactoringPlan, tree *analysis.SourceTre
 			if skip(file) || len(file.Content) == 0 {
 				continue
 			}
+
 			content := string(file.Content)
+
 			newContent, err := rewrite(file)
 			if err != nil {
 				return fmt.Errorf("append content rewrites: %w", err)
 			}
+
 			if newContent == content {
 				continue
 			}
+
 			plan.Changes = append(plan.Changes, types.Change{
 				File:        file.Path,
 				Start:       0,
@@ -95,6 +107,7 @@ func appendContentRewrites(plan *types.RefactoringPlan, tree *analysis.SourceTre
 			}
 		}
 	}
+
 	return nil
 }
 
@@ -131,13 +144,16 @@ func resolvePackageMove(ws *types.Workspace, sources *analysis.SourceTree, sourc
 	if source == "" {
 		return dirMove{}, fmt.Errorf("source package cannot be empty")
 	}
+
 	if target == "" {
 		return dirMove{}, fmt.Errorf("target package cannot be empty")
 	}
+
 	sourceDir, ok, err := findSourceDir(ws, sources, source)
 	if err != nil {
 		return dirMove{}, fmt.Errorf("resolve package move: %w", err)
 	}
+
 	if !ok {
 		return dirMove{}, fmt.Errorf("source package %s not found in workspace", source)
 	}
@@ -147,6 +163,7 @@ func resolvePackageMove(ws *types.Workspace, sources *analysis.SourceTree, sourc
 	if err != nil {
 		return dirMove{}, fmt.Errorf("resolving target package %q: %w", target, err)
 	}
+
 	if packagePathToImportPath(ws, targetDir) == "" {
 		return dirMove{}, fmt.Errorf("cannot determine the import path for target package %s", targetDir)
 	}
@@ -160,6 +177,7 @@ func resolvePackageMove(ws *types.Workspace, sources *analysis.SourceTree, sourc
 			"move_package will not merge into an existing package — choose a target that does not exist yet",
 			target, targetDir, sourcePackageName(ws, targetDir, existing))
 	}
+
 	return dirMove{source: sourceDir, target: targetDir}, nil
 }
 
@@ -168,6 +186,7 @@ func markRelocation(plan *types.RefactoringPlan) *types.RefactoringPlan {
 	for i := range plan.Changes {
 		plan.Changes[i].Relocation = true
 	}
+
 	return plan
 }
 
@@ -176,10 +195,12 @@ func (op *MovePackageOperation) Execute(ws *types.Workspace) (*types.Refactoring
 	if err != nil {
 		return nil, err
 	}
+
 	carried, err := carriedByPackages([]dirMove{move})
 	if err != nil {
 		return nil, err
 	}
+
 	return planDirMoves(op, ws, op.Sources, op.Views, []dirMove{move}, carried,
 		fmt.Sprintf("Update references after moving %s to %s", op.Request.SourcePackage, op.Request.TargetPackage))
 }
@@ -203,12 +224,14 @@ func (op *MoveDirOperation) Validate(ws *types.Workspace) error {
 	if op.Request.SourceDir == "" {
 		return fmt.Errorf("source directory cannot be empty")
 	}
+
 	if op.Request.TargetDir == "" {
 		return fmt.Errorf("target directory cannot be empty")
 	}
 
 	// Check if source directory exists in workspace
 	sourcePath := filepath.Join(ws.RootPath, op.Request.SourceDir)
+
 	_, err := os.Stat(sourcePath)
 	if os.IsNotExist(err) {
 		return fmt.Errorf("source directory %s does not exist", sourcePath)
@@ -236,23 +259,29 @@ func (op *MoveDirOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan
 	// their build constraints. The boundary-aware prefix check keeps
 	// "internal/foo" from also matching a sibling "internal/foobar".
 	var moves []dirMove
+
 	for _, dir := range op.Sources.Dirs() {
 		if dir != sourceDirPath && !strings.HasPrefix(dir, sourceDirPath+string(filepath.Separator)) || len(op.Sources.Dir(dir)) == 0 {
 			continue
 		}
+
 		rel, err := filepath.Rel(sourceDirPath, dir)
 		if err != nil {
 			return nil, fmt.Errorf("computing target path for package %s: %w", dir, err)
 		}
+
 		moves = append(moves, dirMove{source: dir, target: filepath.Join(targetDirPath, rel)})
 	}
+
 	if len(moves) == 0 {
 		return nil, fmt.Errorf("no packages found in source directory %s", op.Request.SourceDir)
 	}
+
 	carried, err := carriedByDir(dirMove{source: sourceDirPath, target: targetDirPath}, moves)
 	if err != nil {
 		return nil, err
 	}
+
 	return planDirMoves(op, ws, op.Sources, op.Views, moves, carried,
 		fmt.Sprintf("Update references after moving %s to %s", op.Request.SourceDir, op.Request.TargetDir))
 }
@@ -281,6 +310,7 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 		if err != nil {
 			return nil, err
 		}
+
 		filesByDir[m.source] = files
 		newName := filepath.Base(m.target)
 		oldName := sourcePackageName(ws, m.source, files)
@@ -297,6 +327,7 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 		rewrites = append(rewrites, rw)
 		rewriteByDir[m.source] = rw
 	}
+
 	renames := packageRenames(rewrites)
 
 	rewriteImportPaths := func(content string) string {
@@ -305,6 +336,7 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 				content = strings.ReplaceAll(content, `"`+rw.oldImportPath+`"`, `"`+rw.newImportPath+`"`)
 			}
 		}
+
 		return content
 	}
 	// rewriteContent applies every renamed package's qualifier rewrite, then
@@ -316,10 +348,12 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 		if err != nil {
 			return "", err
 		}
+
 		for _, site := range skipped {
 			site.File = at
 			plan.SkippedSites = append(plan.SkippedSites, site)
 		}
+
 		return rewriteImportPaths(content), nil
 	}
 
@@ -332,16 +366,20 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 				continue
 			}
 			var clause []textEdit
+
 			if self.renamed {
 				start, end, replacement, ok, err := packageClauseEdit(ws.FileSet, file, self.oldName, self.newName)
 				if err != nil {
 					return nil, err
 				}
+
 				if ok {
 					clause = append(clause, textEdit{start: start, end: end, text: replacement})
 				}
 			}
+
 			targetFilePath := filepath.Join(m.target, file.Name)
+
 			content, err := rewriteContent(file, targetFilePath, clause...)
 			if err != nil {
 				return nil, err
@@ -356,14 +394,17 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 	carriedSources := make(map[string]bool, len(carried))
 	for _, c := range carried {
 		carriedSources[c.source] = true
+
 		content, err := os.ReadFile(c.source)
 		if err != nil {
 			return nil, fmt.Errorf("cannot read %s: %w", c.source, err)
 		}
+
 		text := string(content)
 		if filepath.Ext(c.source) == ".go" {
 			text = rewriteImportPaths(text)
 		}
+
 		appendFileMove(plan, c.source, c.target, text, c.mode)
 	}
 
@@ -385,11 +426,13 @@ func planDirMoves(op types.Operation, ws *types.Workspace, sources *analysis.Sou
 
 func packageRenames(rewrites []dirPkgRewrite) []pkgRename {
 	var renames []pkgRename
+
 	for _, rw := range rewrites {
 		if rw.renamed && rw.oldImportPath != "" {
 			renames = append(renames, pkgRename{oldPath: rw.oldImportPath, oldName: rw.oldName, newName: rw.newName})
 		}
 	}
+
 	return renames
 }
 
@@ -418,19 +461,24 @@ func sourcePackageName(ws *types.Workspace, dir string, files []*analysis.Source
 	if pkg != nil {
 		return pkg.Name
 	}
+
 	name := ""
+
 	for _, f := range files {
 		if f.AST == nil || f.AST.Name == nil || f.AST.Name.Name == "" {
 			continue
 		}
+
 		clause := strings.TrimSuffix(f.AST.Name.Name, "_test")
 		if clause != "main" {
 			return clause
 		}
+
 		if name == "" {
 			name = clause
 		}
 	}
+
 	return name
 }
 
@@ -444,9 +492,11 @@ func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, 
 	if oldName == newName || oldName == "main" {
 		return 0, 0, "", false, nil
 	}
+
 	if file.AST == nil || file.AST.Name == nil || file.AST.Name.Name == "" {
 		return 0, 0, "", false, fmt.Errorf("cannot rewrite the package clause of %s: file does not parse: %w", file.Path, file.Err)
 	}
+
 	switch file.AST.Name.Name {
 	case oldName:
 		replacement = newName
@@ -455,8 +505,10 @@ func packageClauseEdit(fset *token.FileSet, file *analysis.SourceFile, oldName, 
 	default:
 		return 0, 0, "", false, nil
 	}
+
 	start = fset.Position(file.AST.Name.Pos()).Offset
 	end = fset.Position(file.AST.Name.End()).Offset
+
 	return start, end, replacement, true, nil
 }
 
@@ -486,34 +538,42 @@ func (op *MovePackagesOperation) moves(ws *types.Workspace) ([]dirMove, error) {
 	if len(op.Request.Packages) == 0 {
 		return nil, fmt.Errorf("no packages specified for move operation")
 	}
+
 	moves := make([]dirMove, 0, len(op.Request.Packages))
 	bySource := make(map[string]types.PackageMapping)
 	byTarget := make(map[string]types.PackageMapping)
+
 	for i, mapping := range op.Request.Packages {
 		if mapping.SourcePackage == "" {
 			return nil, fmt.Errorf("source package at index %d cannot be empty", i)
 		}
+
 		if mapping.TargetPackage == "" {
 			return nil, fmt.Errorf("target package at index %d cannot be empty", i)
 		}
+
 		move, err := resolvePackageMove(ws, op.Sources, mapping.SourcePackage, mapping.TargetPackage)
 		if err != nil {
 			return nil, fmt.Errorf("moving %s to %s: %w", mapping.SourcePackage, mapping.TargetPackage, err)
 		}
+
 		prev, dup := bySource[move.source]
 		if dup {
 			return nil, fmt.Errorf("mappings %s -> %s and %s -> %s share the source directory %s",
 				prev.SourcePackage, prev.TargetPackage, mapping.SourcePackage, mapping.TargetPackage, move.source)
 		}
+
 		prev, dup = byTarget[move.target]
 		if dup {
 			return nil, fmt.Errorf("mappings %s -> %s and %s -> %s share the target directory %s",
 				prev.SourcePackage, prev.TargetPackage, mapping.SourcePackage, mapping.TargetPackage, move.target)
 		}
+
 		bySource[move.source] = mapping
 		byTarget[move.target] = mapping
 		moves = append(moves, move)
 	}
+
 	return moves, nil
 }
 
@@ -522,10 +582,12 @@ func (op *MovePackagesOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	if err != nil {
 		return nil, err
 	}
+
 	carried, err := carriedByPackages(moves)
 	if err != nil {
 		return nil, err
 	}
+
 	return planDirMoves(op, ws, op.Sources, op.Views, moves, carried,
 		fmt.Sprintf("Update references after moving %d packages", len(moves)))
 }
@@ -547,6 +609,7 @@ func (op *CreateFacadeOperation) Validate(ws *types.Workspace) error {
 	if op.Request.TargetPackage == "" {
 		return fmt.Errorf("target package cannot be empty")
 	}
+
 	if len(op.Request.Exports) == 0 {
 		return fmt.Errorf("no exports specified for facade")
 	}
@@ -556,6 +619,7 @@ func (op *CreateFacadeOperation) Validate(ws *types.Workspace) error {
 		if export.SourcePackage == "" {
 			return fmt.Errorf("source package at export index %d cannot be empty", i)
 		}
+
 		if export.SymbolName == "" {
 			return fmt.Errorf("symbol name at export index %d cannot be empty", i)
 		}
@@ -571,6 +635,7 @@ func (op *CreateFacadeOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	if err != nil {
 		return nil, fmt.Errorf("resolving facade target package %q: %w", op.Request.TargetPackage, err)
 	}
+
 	facadePkgName := filepath.Base(facadeDir)
 
 	plan := &types.RefactoringPlan{
@@ -591,11 +656,14 @@ func (op *CreateFacadeOperation) Execute(ws *types.Workspace) (*types.Refactorin
 	for _, export := range op.Request.Exports {
 		imports[export.SourcePackage] = true
 	}
+
 	if len(imports) > 0 {
 		facadeContent.WriteString("import (\n")
+
 		for imp := range imports {
 			fmt.Fprintf(&facadeContent, "\t\"%s\"\n", imp)
 		}
+
 		facadeContent.WriteString(")\n\n")
 	}
 
@@ -605,10 +673,12 @@ func (op *CreateFacadeOperation) Execute(ws *types.Workspace) (*types.Refactorin
 		if outputName == "" {
 			outputName = export.SymbolName
 		}
+
 		pkgAlias := filepath.Base(export.SourcePackage)
 		kind := lookupSymbolKind(ws, export.SourcePackage, export.SymbolName)
 
 		fmt.Fprintf(&facadeContent, "// %s is re-exported from %s\n", outputName, export.SourcePackage)
+
 		switch kind {
 		case types.FunctionSymbol, types.VariableSymbol:
 			fmt.Fprintf(&facadeContent, "var %s = %s.%s\n\n", outputName, pkgAlias, export.SymbolName)
@@ -641,13 +711,16 @@ func lookupSymbolKind(ws *types.Workspace, sourcePackageImportPath, symbolName s
 	if !ok {
 		return types.TypeSymbol
 	}
+
 	pkg, ok := ws.Packages[fsPath]
 	if !ok || pkg.Symbols == nil {
 		return types.TypeSymbol
 	}
+
 	sym := pkg.Symbols.FindSymbol(symbolName)
 	if sym == nil {
 		return types.TypeSymbol
 	}
+
 	return sym.Kind
 }

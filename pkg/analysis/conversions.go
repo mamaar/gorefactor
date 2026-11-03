@@ -42,12 +42,15 @@ func CollectInterfaceConversions(ws *types.Workspace) *InterfaceConversions {
 			b.inWorkspace[pkg.TypesPkg.Path()] = true
 		}
 	}
+
 	for _, pkg := range ws.Packages {
 		if pkg.TypesInfo != nil {
 			b.collectPackage(pkg)
 		}
 	}
+
 	b.resolve()
+
 	return &InterfaceConversions{used: b.used}
 }
 
@@ -69,12 +72,14 @@ func (b *conversionCollector) collectPackage(pkg *types.Package) {
 		if file.AST == nil {
 			continue
 		}
+
 		for _, decl := range file.AST.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				b.walk(decl, nil)
 				continue
 			}
+
 			b.walk(fn.Body, resultsOf(b.info.TypeOf(fn.Name)))
 		}
 	}
@@ -85,6 +90,7 @@ func resultsOf(t gotypes.Type) *gotypes.Tuple {
 	if !ok {
 		return nil
 	}
+
 	return sig.Results()
 }
 
@@ -134,6 +140,7 @@ func (b *conversionCollector) walk(root ast.Node, results *gotypes.Tuple) {
 				b.add(b.info.TypeOf(n.Index), m.Key())
 			}
 		}
+
 		return true
 	})
 }
@@ -150,6 +157,7 @@ func underlying(t gotypes.Type) gotypes.Type {
 	if t == nil {
 		return nil
 	}
+
 	return t.Underlying()
 }
 
@@ -159,8 +167,10 @@ func (b *conversionCollector) call(call *ast.CallExpr) {
 		if len(call.Args) == 1 {
 			b.add(b.info.TypeOf(call.Args[0]), tv.Type)
 		}
+
 		return
 	}
+
 	sig, ok := underlying(tv.Type).(*gotypes.Signature)
 	if !ok {
 		return
@@ -171,9 +181,12 @@ func (b *conversionCollector) call(call *ast.CallExpr) {
 	if generic != nil {
 		sig = generic
 	}
+
 	params := sig.Params()
+
 	for i, arg := range call.Args {
 		var dst gotypes.Type
+
 		switch {
 		case sig.Variadic() && i >= params.Len()-1:
 			slice, ok := params.At(params.Len() - 1).Type().(*gotypes.Slice)
@@ -183,6 +196,7 @@ func (b *conversionCollector) call(call *ast.CallExpr) {
 		case i < params.Len():
 			dst = params.At(i).Type()
 		}
+
 		b.add(b.info.TypeOf(arg), dst)
 	}
 }
@@ -191,6 +205,7 @@ func (b *conversionCollector) call(call *ast.CallExpr) {
 // calls, and records explicit type arguments against its constraints.
 func (b *conversionCollector) genericCallee(fun ast.Expr) *gotypes.Signature {
 	var typeArgs []ast.Expr
+
 	switch f := fun.(type) {
 	case *ast.IndexExpr:
 		fun, typeArgs = f.X, []ast.Expr{f.Index}
@@ -198,6 +213,7 @@ func (b *conversionCollector) genericCallee(fun ast.Expr) *gotypes.Signature {
 		fun, typeArgs = f.X, f.Indices
 	}
 	var id *ast.Ident
+
 	switch f := fun.(type) {
 	case *ast.Ident:
 		id = f
@@ -206,28 +222,34 @@ func (b *conversionCollector) genericCallee(fun ast.Expr) *gotypes.Signature {
 	default:
 		return nil
 	}
+
 	callee, ok := b.info.Uses[id].(*gotypes.Func)
 	if !ok {
 		return nil
 	}
+
 	sig, ok := callee.Type().(*gotypes.Signature)
 	if !ok || sig.TypeParams().Len() == 0 {
 		return nil
 	}
+
 	for i, arg := range typeArgs {
 		if i < sig.TypeParams().Len() {
 			b.add(b.info.TypeOf(arg), sig.TypeParams().At(i).Constraint())
 		}
 	}
+
 	return sig
 }
 
 func (b *conversionCollector) compositeLit(lit *ast.CompositeLit) {
 	t := b.info.TypeOf(lit)
+
 	ptr, ok := underlying(t).(*gotypes.Pointer)
 	if ok {
 		t = ptr.Elem()
 	}
+
 	switch u := underlying(t).(type) {
 	case *gotypes.Struct:
 		for i, elt := range lit.Elts {
@@ -257,6 +279,7 @@ func (b *conversionCollector) addElements(lit *ast.CompositeLit, elem gotypes.Ty
 		if ok {
 			elt = kv.Value
 		}
+
 		b.add(b.info.TypeOf(elt), elem)
 	}
 }
@@ -268,17 +291,21 @@ func structElement(s *gotypes.Struct, i int, elt ast.Expr) (*gotypes.Var, ast.Ex
 		if i < s.NumFields() {
 			return s.Field(i), elt
 		}
+
 		return nil, nil
 	}
+
 	key, ok := kv.Key.(*ast.Ident)
 	if !ok {
 		return nil, nil
 	}
+
 	for f := range s.Fields() {
 		if f.Name() == key.Name {
 			return f, kv.Value
 		}
 	}
+
 	return nil, nil
 }
 
@@ -286,10 +313,12 @@ func (b *conversionCollector) add(src, dst gotypes.Type) {
 	if src == nil || dst == nil {
 		return
 	}
+
 	_, ok := src.(*gotypes.Tuple)
 	if ok {
 		return
 	}
+
 	_, ok = dst.Underlying().(*gotypes.Interface)
 	if ok {
 		b.convs = append(b.convs, conversion{src, dst})
@@ -301,28 +330,35 @@ func (b *conversionCollector) broad(dst gotypes.Type) bool {
 	if dst.Underlying().(*gotypes.Interface).NumMethods() == 0 {
 		return true
 	}
+
 	named, ok := gotypes.Unalias(dst).(*gotypes.Named)
+
 	return ok && (named.Obj().Pkg() == nil || !b.inWorkspace[named.Obj().Pkg().Path()])
 }
 
 // resolve turns the collected conversions into used methods.
 func (b *conversionCollector) resolve() {
 	var escaped []gotypes.Type
+
 	for _, c := range b.convs {
 		if gotypes.IsInterface(c.src) && b.broad(c.dst) {
 			escaped = append(escaped, c.src)
 		}
 	}
+
 	for _, c := range b.convs {
 		if gotypes.IsInterface(c.src) {
 			continue
 		}
+
 		b.keepDeclared(c.src, c.dst.Underlying().(*gotypes.Interface))
+
 		for _, iface := range b.asserted {
 			if gotypes.Implements(c.src, iface) {
 				b.keepDeclared(c.src, iface)
 			}
 		}
+
 		if b.broad(c.dst) || b.escapes(escaped, c.dst) {
 			b.keepKnown(c.src, make(map[gotypes.Type]bool))
 		}
@@ -335,6 +371,7 @@ func (b *conversionCollector) escapes(escaped []gotypes.Type, dst gotypes.Type) 
 			return true
 		}
 	}
+
 	return false
 }
 
@@ -355,13 +392,16 @@ func (b *conversionCollector) keepKnown(t gotypes.Type, seen map[gotypes.Type]bo
 	if seen[t] {
 		return
 	}
+
 	seen[t] = true
+
 	ms := gotypes.NewMethodSet(t)
 	for method := range ms.Methods() {
 		if b.names[method.Obj().Name()] {
 			b.keep(method.Obj())
 		}
 	}
+
 	switch u := t.Underlying().(type) {
 	case *gotypes.Pointer:
 		b.keepKnown(u.Elem(), seen)
