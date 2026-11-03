@@ -1775,3 +1775,297 @@ func c() int { return 3 }
 		})
 	}
 }
+
+// An original variable may be reused with '=' only when nothing can observe
+// the value the split assignment overwrites.
+func TestIfInit_ReuseOriginalVariable(t *testing.T) {
+	cases := []struct{ name, fn, want string }{
+		{"overwritten before its next read", `func foo() error {
+	x, err := a()
+	use(x)
+	if err := b(); err != nil {
+		return err
+	}
+	_, err = a()
+	return err
+}`, "err = b()"},
+		{"never used again", `func foo() error {
+	x, err := a()
+	use(x, err)
+	if err := b(); err != nil {
+		return err
+	}
+	return nil
+}`, "err = b()"},
+		{"parameter not read again", `func foo(err error) error {
+	use(err)
+	if err := b(); err != nil {
+		return err
+	}
+	return nil
+}`, "err = b()"},
+		{"read only in its own else", `func foo() error {
+	x, err := a()
+	use(x, err)
+	if err := b(); err != nil {
+		return err
+	} else {
+		use(err)
+	}
+	return nil
+}`, "err = b()"},
+		{"still declares another new name", `func foo() error {
+	x, err := a()
+	use(x, err)
+	if y, err := a(); err != nil {
+		return err
+	} else {
+		use(y)
+	}
+	return nil
+}`, "y, err := a()"},
+		{"loop after the if writes before reading", `func foo() error {
+	x, err := a()
+	use(x, err)
+	if err := b(); err != nil {
+		return err
+	}
+	for range 2 {
+		_, err = a()
+		use(err)
+	}
+	return nil
+}`, "err = b()"},
+		{"switch init", `func foo() error {
+	x, err := a()
+	use(x, err)
+	switch err := b(); {
+	case err != nil:
+		return err
+	}
+	return nil
+}`, "err = b()"},
+		{"inside a loop that reads an outer variable first", `func foo() error {
+	_, err := a()
+	for range 2 {
+		use(err)
+		if err := b(); err != nil {
+			return err
+		}
+	}
+	return err
+}`, "err := b()"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := reuseSrc(tc.fn)
+			ws := createTypeCheckedWorkspace(t, src)
+
+			rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			results, _ := rr.Result.([]*ifinit.Result)
+			if len(results) != 1 || results[0].Skipped {
+				t.Fatalf("expected one split site, got %+v", *results[0])
+			}
+
+			formatted := mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+			if !strings.Contains(formatted, tc.want) {
+				t.Errorf("expected %q, got:\n%s", tc.want, formatted)
+			}
+		})
+	}
+}
+
+func TestIfInit_ReuseObservableOriginalVariable_Skipped(t *testing.T) {
+	cases := []struct{ name, fn, reason string }{
+		{"read after the if", `func foo() error {
+	x, err := a()
+	use(x)
+	if err := b(); err != nil {
+		return err
+	}
+	return err
+}`, "a value read later"},
+		{"read after the if on one branch", `func foo(c bool) error {
+	x, err := a()
+	use(x)
+	if err := b(); err != nil {
+		return err
+	}
+	if c {
+		_, err = a()
+	}
+	return err
+}`, "a value read later"},
+		{"named result returned bare", `func foo() (err error) {
+	use(err)
+	if err := b(); err != nil {
+		return err
+	}
+	return
+}`, "a named result"},
+		{"named result read by a defer", `func foo() (err error) {
+	defer func() { use(err) }()
+	if err := b(); err != nil {
+		return err
+	}
+	return nil
+}`, "a named result"},
+		{"captured by an earlier closure", `func foo() error {
+	x, err := a()
+	use(x)
+	report := func() { use(err) }
+	if err := b(); err != nil {
+		return err
+	}
+	report()
+	return nil
+}`, "a variable a closure or pointer can observe"},
+		{"address taken earlier", `func foo() error {
+	x, err := a()
+	use(x)
+	p := &err
+	if err := b(); err != nil {
+		return err
+	}
+	use(*p)
+	return nil
+}`, "a variable a closure or pointer can observe"},
+		{"inner variable captured by a closure", `func foo() error {
+	var later func()
+	x, err := a()
+	use(x, err)
+	if err := b(); err != nil {
+		later = func() { use(err) }
+	}
+	_, err = a()
+	later()
+	return err
+}`, "a variable a closure or pointer can observe"},
+		{"loop after the if reads before writing", `func foo() error {
+	x, err := a()
+	use(x)
+	if err := b(); err != nil {
+		return err
+	}
+	for range 2 {
+		use(err)
+		_, err = a()
+	}
+	return nil
+}`, "a value read later"},
+		{"pointer method keeps its address", `func foo() int {
+	v := mk()
+	v.keep()
+	if v := mk(); v.n > 0 {
+		return v.n
+	}
+	return 0
+}`, "a variable a closure or pointer can observe"},
+		{"goto back over the if", `func foo() error {
+	x, err := a()
+	use(x)
+	n := 0
+again:
+	n++
+	use(err)
+	if err := b(); err != nil {
+		return err
+	}
+	if n < 2 {
+		goto again
+	}
+	return nil
+}`, "a variable a goto can revisit"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertSkipped(t, reuseSrc(tc.fn), "already declared in this scope; reusing it would overwrite "+tc.reason)
+		})
+	}
+}
+
+func reuseSrc(fn string) string {
+	return `package testpkg
+
+` + fn + `
+
+type box struct{ n int }
+
+var kept *box
+
+func (b *box) keep() { kept = b }
+
+func mk() box                 { return box{} }
+func a() (int, error) { return 0, nil }
+func b() error        { return nil }
+func use(...any)      {}
+`
+}
+
+// wsl allows one statement cuddled above an if or switch, so a split whose
+// if was cuddled starts a new paragraph.
+func TestIfInit_CuddledSplitStartsParagraph(t *testing.T) {
+	src := `package testpkg
+
+func foo() error {
+	n := 1
+	if err := g(n); err != nil {
+		return err
+	}
+	m := 2
+	switch v := n + m; v {
+	case 3:
+		return nil
+	}
+
+	if err := g(m); err != nil {
+		return err
+	}
+	return nil
+}
+
+func g(int) error { return nil }
+`
+	ws := createTypeCheckedWorkspace(t, src)
+
+	rr, err := analyzers.Run(ws, ifinit.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := mustCompile(t, src, analyzers.DiagnosticsToChanges(ws.FileSet, rr.Diagnostics))
+
+	want := `package testpkg
+
+func foo() error {
+	n := 1
+
+	err := g(n)
+	if err != nil {
+		return err
+	}
+	m := 2
+
+	v := n + m
+	switch v {
+	case 3:
+		return nil
+	}
+
+	err = g(m)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func g(int) error { return nil }
+`
+	if got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
