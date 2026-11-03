@@ -441,7 +441,7 @@ func extractConstantFixture(t *testing.T, files map[string]string) (*DefaultEngi
 			t.Fatal(err)
 		}
 	}
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 	ws, err := engine.LoadWorkspace(dir)
 	if err != nil {
 		t.Fatalf("LoadWorkspace: %v", err)

@@ -353,7 +353,7 @@ func (s *Serializer) PreviewChanges(ws *refactorTypes.Workspace, changes []refac
 // touching disk. It sorts changes into descending Start order and validates
 // they don't overlap before applying each one via applyChange — the same
 // offset-application semantics ApplyChanges uses, factored out here so
-// callers that never had a real file to read from disk (VerifyPlanTypes'
+// callers that never had a real file to read from disk (VerifyPlanTypesWithImporter'
 // in-memory type-check verification, in particular) can reuse them exactly
 // rather than re-implementing the sort/validate/apply sequence.
 func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTypes.Change) ([]byte, error) {

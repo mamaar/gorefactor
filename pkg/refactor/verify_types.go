@@ -39,51 +39,18 @@ type TypeCheckResult struct {
 // a true result as "verified clean".
 func (r *TypeCheckResult) OK() bool { return len(r.NewErrors) == 0 }
 
-// VerifyPlanTypes applies plan's changes to in-memory copies of the affected
-// files and type-checks the result, comparing against a baseline of each
-// touched package's pre-existing errors. Nothing is written to disk: changes
-// are applied to byte slices via (*Serializer).ApplyChangesToContent and the
-// result is re-parsed into a throwaway *token.FileSet, so a caller can run
-// this before ever touching the real files (or the real ws.Packages type
-// info) to decide whether a plan is safe to execute.
+// VerifyPlanTypesWithImporter applies plan's changes to in-memory copies of
+// the affected files and type-checks the result, writing nothing to disk. It
+// type-checks each touched package before and after the plan and reports only
+// the errors that are new, so pre-existing type errors don't block a plan
+// (see normalizeTypeError for how "new" is decided).
 //
-// Baseline-diff semantics: real monorepo packages often already have type
-// errors that predate the plan entirely (a package mid-migration, a
-// generated file nobody's fixed, ...). Reporting those as "errors caused by
-// this plan" would make the verifier useless on exactly the codebases where
-// it matters most, so VerifyPlanTypes type-checks each touched package twice
-// — once as it stands on disk (the baseline) and once with the plan's
-// changes applied — and reports only the errors that are new in the second
-// pass. See normalizeTypeError for how "new" is decided.
-//
-// This delegates to VerifyPlanTypesWithImporter with a nil importer, which
-// makes it build its own throwaway parser/importer — see that function's doc
-// comment for why callers that already have a type-checked workspace should
-// call it directly instead, passing the importer that did the checking.
-func VerifyPlanTypes(ws *types.Workspace, plan *types.RefactoringPlan) *TypeCheckResult {
-	return VerifyPlanTypesWithImporter(ws, plan, nil)
-}
-
-// VerifyPlanTypesWithImporter is VerifyPlanTypes using a caller-supplied
-// importer. Callers that already have a type-checked workspace must pass the
-// importer that checked it: go/types compares packages by identity (a
-// *go/types.Package is not equal-by-value to another *go/types.Package for
-// the same import path, even one with an identical API), so if the workspace
-// was type-checked with importer A and this function is left to build its
-// own importer B, then a package under verification that (1) imports a
-// workspace-local package memoized via A — whose exported signatures
-// reference, say, stdlib "time" as resolved by A — and (2) also imports
-// "time" directly, resolved by B, ends up with two distinct *types.Package
-// values both claiming to be "time". Every cross-use between them (passing
-// a value of B's time.Duration where A's time.Duration is expected) then
-// looks like a type mismatch to go/types even though the source is correct.
-// This is exactly the failure that motivated this function: see the
-// regression test in verify_types_test.go.
-//
-// imp may be nil, in which case this behaves exactly like VerifyPlanTypes:
-// a fresh parser/importer is built for this call only, which is correct as
-// long as nothing has type-checked ws yet (or nothing touched by the plan
-// depends on anything already memoized).
+// Callers that already have a type-checked workspace must pass the importer
+// that checked it: go/types compares packages by identity, so a second
+// importer yields two distinct *types.Package values for the same import path
+// and every cross-use between them looks like a type mismatch (regression
+// test in verify_types_test.go). imp may be nil when nothing has type-checked
+// ws yet; a fresh parser/importer is then built for this call only.
 func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPlan, imp gotypes.Importer) *TypeCheckResult {
 	if ws == nil {
 		return &TypeCheckResult{Skipped: "no workspace provided"}
@@ -406,7 +373,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 	modFiles, err := parseAll(modFset, modContents)
 	if err != nil {
 		// The plan's own changes produce invalid Go source. This is exactly
-		// the class of bug VerifyPlanTypes exists to catch — even more
+		// the class of bug VerifyPlanTypesWithImporter exists to catch — even more
 		// clearly wrong than a type error — so it is reported as a new
 		// error rather than as Skipped. Type-checking cannot proceed
 		// without a complete, valid file set for the package, so this is
@@ -488,7 +455,7 @@ func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, err
 }
 
 // checkPackageErrors type-checks files as importPath and returns every error
-// go/types produces, not just the first. This is the reason VerifyPlanTypes
+// go/types produces, not just the first. This is the reason VerifyPlanTypesWithImporter
 // cannot reuse (*analysis.GoParser).TypeCheckPackage directly: that method's
 // underlying checkFiles sets Config.Error to a no-op (deliberately silently
 // ignoring type errors — see its doc comment) and only surfaces the single

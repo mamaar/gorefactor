@@ -103,10 +103,6 @@ func DefaultConfig() *EngineConfig {
 	}
 }
 
-func CreateEngine(logger *slog.Logger) RefactorEngine {
-	return CreateEngineWithConfig(DefaultConfig(), logger)
-}
-
 func CreateEngineWithConfig(config *EngineConfig, logger *slog.Logger) RefactorEngine {
 	return &DefaultEngine{
 		validator:  NewValidator(logger),
@@ -949,7 +945,7 @@ func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath st
 // that function's doc comment for why a second, independently-built importer
 // produces spurious type errors on cross-package references. Returns nil if
 // e has no parser (e.g. a test double), which VerifyPlanTypesWithImporter
-// treats the same as VerifyPlanTypes: it builds its own throwaway importer.
+// treats like VerifyPlanTypesWithImporter with a nil importer: it builds its own throwaway importer.
 func (e *DefaultEngine) Importer(ws *types.Workspace) gotypes.Importer {
 	parser := e.parserFor(ws)
 	if parser == nil {

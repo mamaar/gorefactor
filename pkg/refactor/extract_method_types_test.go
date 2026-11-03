@@ -13,7 +13,7 @@ import (
 
 // The extract operations are type-aware: they resolve captured variables and
 // their types through go/types (see pkg/refactor/extractsig) and gate the
-// resulting plan on VerifyPlanTypes. Both require a workspace that was
+// resulting plan on VerifyPlanTypesWithImporter. Both require a workspace that was
 // actually loaded from disk — a hand-built *types.Workspace has no FileSet,
 // no ASTs and no type information, and the operations correctly refuse on
 // one. Every test here therefore writes a real module to a temp dir and goes
@@ -254,7 +254,7 @@ func g(path string) error {
 	}
 }
 
-// TestExtractFunctionVerificationBlocksBadPlan proves the VerifyPlanTypes
+// TestExtractFunctionVerificationBlocksBadPlan proves the VerifyPlanTypesWithImporter
 // gate does real work. The signature here is derived correctly — v really
 // does have type *b.impl — but that type is unexported, so the declaration
 // this produces cannot compile in package main. The operation must report

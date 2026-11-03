@@ -277,7 +277,7 @@ func lastPathSegment(path string) string {
 }
 
 // buildVerifiedExtractPlan assembles the plan for one extraction and gates it
-// on VerifyPlanTypes.
+// on VerifyPlanTypesWithImporter.
 //
 // The gate is the whole point of the rewrite: these operations used to report
 // success while emitting code that could not compile. A plan that introduces
@@ -294,7 +294,7 @@ func lastPathSegment(path string) string {
 // workspace was already checked with, instead of a second importer producing
 // distinct-but-identical-looking packages for the same import path — see
 // VerifyPlanTypesWithImporter's doc comment for why that produces spurious
-// type errors. importer may be nil (falls back to VerifyPlanTypes's own
+// type errors. importer may be nil (falls back to VerifyPlanTypesWithImporter's own
 // fresh-parser construction), which callers without a pre-checked workspace
 // parser should pass.
 func buildVerifiedExtractPlan(

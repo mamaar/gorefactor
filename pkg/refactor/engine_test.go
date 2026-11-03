@@ -12,7 +12,7 @@ import (
 )
 
 func TestCreateEngine(t *testing.T) {
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if engine == nil {
 		t.Fatal("Expected CreateEngine to return a non-nil engine")
 	}
@@ -25,7 +25,7 @@ func TestCreateEngine(t *testing.T) {
 }
 
 func TestDefaultEngine_ValidateRefactoring(t *testing.T) {
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 
 	// Test with nil plan
 	err := engine.ValidateRefactoring(nil)
@@ -49,7 +49,7 @@ func TestDefaultEngine_ValidateRefactoring(t *testing.T) {
 }
 
 func TestDefaultEngine_PreviewPlan(t *testing.T) {
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 
 	plan := &types.RefactoringPlan{
 		Changes: []types.Change{
@@ -84,7 +84,7 @@ func TestDefaultEngine_PreviewPlan(t *testing.T) {
 }
 
 func TestDefaultEngine_ExecutePlan_WithErrors(t *testing.T) {
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 
 	// Create a plan with critical errors
 	plan := &types.RefactoringPlan{
@@ -116,7 +116,7 @@ func TestDefaultEngine_ExecutePlan_WithErrors(t *testing.T) {
 }
 
 func TestDefaultEngine_ExecutePlan_Success(t *testing.T) {
-	engine := CreateEngine(slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
+	engine := CreateEngineWithConfig(DefaultConfig(), slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
 
 	// Create a plan with only warnings
 	plan := &types.RefactoringPlan{
