@@ -53,7 +53,9 @@ func callUnusedParams(t *testing.T, args map[string]any, files map[string]string
 	}
 
 	var out unusedParamsJSON
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
 

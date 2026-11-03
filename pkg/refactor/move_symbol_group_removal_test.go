@@ -45,7 +45,8 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 	src = string(applyChangesInMemory([]byte(srcText), srcChanges))
 	writeAndVet(t, dir, src, dst)
 
-	if formatted, err := format.Source([]byte(src)); err == nil {
+	formatted, err := format.Source([]byte(src))
+	if err == nil {
 		src = string(formatted)
 	}
 
@@ -86,7 +87,9 @@ func writeAndVet(t *testing.T, dir, src, dst string) {
 	cmd.Dir = dir
 
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
-	if out, err := cmd.CombinedOutput(); err != nil {
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Errorf("go vet failed: %v\n%s\nsrc:\n%s\ndst:\n%s", err, out, src, dst)
 	}
 }

@@ -148,7 +148,9 @@ func NewLoggedAsyncServer(handler http.Handler, label string) *AsyncServer {
 	cmd := exec.Command("go", "build", "./...")
 
 	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("fixture module does not compile after the two moves (this is the actual bug):\n%s", out)
 	}
 }

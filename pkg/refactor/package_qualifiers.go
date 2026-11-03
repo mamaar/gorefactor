@@ -175,7 +175,8 @@ func importUses(pkg *types.Package, file *types.File, r pkgRename) ([]*ast.Ident
 			return true
 		}
 
-		if pn, ok := pkg.TypesInfo.Uses[id].(*gotypes.PkgName); ok && pn.Imported().Path() == r.oldPath {
+		pn, ok := pkg.TypesInfo.Uses[id].(*gotypes.PkgName)
+		if ok && pn.Imported().Path() == r.oldPath {
 			pkgName = pn
 
 			uses = append(uses, id)

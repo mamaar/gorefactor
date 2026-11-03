@@ -128,7 +128,8 @@ func compositeLitRequiresSamePackage(lit *ast.CompositeLit, unexportedFields map
 			continue
 		}
 
-		if keyIdent, ok := kv.Key.(*ast.Ident); ok && unexportedFields[keyIdent.Name] {
+		keyIdent, ok := kv.Key.(*ast.Ident)
+		if ok && unexportedFields[keyIdent.Name] {
 			return true
 		}
 	}

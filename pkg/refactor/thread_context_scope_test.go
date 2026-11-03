@@ -82,7 +82,8 @@ func findCallTo(root ast.Node, name string) *ast.CallExpr {
 			return true
 		}
 
-		if ident, ok := call.Fun.(*ast.Ident); ok && ident.Name == name {
+		ident, ok := call.Fun.(*ast.Ident)
+		if ok && ident.Name == name {
 			found = call
 			return false
 		}

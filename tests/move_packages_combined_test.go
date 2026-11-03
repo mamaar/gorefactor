@@ -29,7 +29,8 @@ func movePackages(t *testing.T, dir string, mappings ...types.PackageMapping) (*
 		return nil, fmt.Errorf("move packages: %w", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -133,7 +134,8 @@ func TestMovePackageToNonIdentifierDirKeepsPackageClause(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -183,7 +185,8 @@ func TestMovePackageOfMainKeepsQualifierInExternalTest(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -204,7 +207,8 @@ func TestMovePackageRepathsImporterThatAlreadyDidNotParse(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 

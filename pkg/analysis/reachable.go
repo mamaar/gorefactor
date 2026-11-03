@@ -125,7 +125,9 @@ func resolveSpec(pkgs map[string]*gotypes.Package, spec string) ([]gotypes.Objec
 		}
 
 		obj, _, _ := gotypes.LookupFieldOrMethod(tn.Type(), true, pkg, parts[1])
-		if fn, ok := obj.(*gotypes.Func); ok {
+
+		fn, ok := obj.(*gotypes.Func)
+		if ok {
 			return []gotypes.Object{fn}, true
 		}
 	}
@@ -157,7 +159,8 @@ func exportedCallables(pkg *gotypes.Package) []gotypes.Object {
 				}
 			}
 
-			if iface, ok := named.Underlying().(*gotypes.Interface); ok {
+			iface, ok := named.Underlying().(*gotypes.Interface)
+			if ok {
 				for m := range iface.ExplicitMethods() {
 					if m.Exported() {
 						objs = append(objs, m)

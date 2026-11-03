@@ -211,7 +211,8 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 		newText := strings.TrimSpace("return " + strings.Join(values, ", "))
 
 		if len(values) == 0 {
-			if from, ok := finalReturnSpan(ws.FileSet, content, d.Decl.Body, ret); ok {
+			from, ok := finalReturnSpan(ws.FileSet, content, d.Decl.Body, ret)
+			if ok {
 				start, newText = from, ""
 			}
 		}

@@ -149,7 +149,9 @@ func callDetectCycles(t *testing.T, files map[string]string) cyclesJSON {
 	}
 
 	var out cyclesJSON
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
 

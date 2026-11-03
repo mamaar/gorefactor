@@ -198,7 +198,8 @@ func TestMoveSymbol_MovesVariablesDeclaredTogetherOnlyTogether(t *testing.T) {
 	assertRefused(t, res, "cannot move a: it is declared together with b (var a, b = Pair()); move them together")
 	assertFileUnchanged(t, dir, "src/src.go", src)
 
-	if res := moveSymbolsCall(t, sess, "src", "dst", "a", "b"); res.IsError {
+	res = moveSymbolsCall(t, sess, "src", "dst", "a", "b")
+	if res.IsError {
 		t.Fatalf("move a, b: %s", errText(res))
 	}
 

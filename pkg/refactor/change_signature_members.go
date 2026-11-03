@@ -21,7 +21,8 @@ func (op *ChangeSignatureOperation) signatureMembers(
 		return nil, err
 	}
 
-	if err := stdMethodError("change", seed); err != nil {
+	err = stdMethodError("change", seed)
+	if err != nil {
 		return nil, err
 	}
 

@@ -154,7 +154,8 @@ func scopeTypes(checked *gotypes.Package) []*gotypes.Named {
 			continue
 		}
 
-		if named, ok := tn.Type().(*gotypes.Named); ok {
+		named, ok := tn.Type().(*gotypes.Named)
+		if ok {
 			out = append(out, named)
 		}
 	}

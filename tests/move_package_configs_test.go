@@ -72,7 +72,8 @@ func TestMovePackageMovesAndRewritesFilesOfEveryConfiguration(t *testing.T) {
 		t.Errorf("Coverage.Configs = %v, want every configuration", plan.Coverage.Configs)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -112,7 +113,8 @@ func TestMovePackagesMovesFilesOfEveryConfiguration(t *testing.T) {
 		t.Fatalf("MovePackages: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -143,7 +145,8 @@ func TestMoveDirMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -202,7 +205,8 @@ func TestMovePackagesMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("MovePackages: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -232,7 +236,8 @@ func TestMovePackageMovesPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -259,7 +264,8 @@ func TestMoveDirRenamesBaseDirClauseOfExcludedFileAndLeavesIgnoredMain(t *testin
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -280,7 +286,8 @@ func TestMovePackageKeepsMainClause(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -300,7 +307,8 @@ func TestMovePackagePrefersExactDirOverSuffixMatch(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -340,7 +348,8 @@ func TestMovePackageAndRenamePackageAcceptImportPathOfExcludedOnlyPackage(t *tes
 			t.Fatalf("MovePackage: %v", err)
 		}
 
-		if err := eng.ExecutePlan(plan); err != nil {
+		err = eng.ExecutePlan(plan)
+		if err != nil {
 			t.Fatalf("ExecutePlan: %v", err)
 		}
 
@@ -356,7 +365,8 @@ func TestMovePackageAndRenamePackageAcceptImportPathOfExcludedOnlyPackage(t *tes
 			t.Fatalf("RenamePackage: %v", err)
 		}
 
-		if err := eng.ExecutePlan(plan); err != nil {
+		err = eng.ExecutePlan(plan)
+		if err != nil {
 			t.Fatalf("ExecutePlan: %v", err)
 		}
 

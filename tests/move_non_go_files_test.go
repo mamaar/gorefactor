@@ -19,7 +19,8 @@ func movePackageFixture(t *testing.T, files map[string]string, source, target st
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -130,7 +131,8 @@ func TestMoveDirCarriesWholeTree(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -153,7 +155,8 @@ func TestMoveDirWithoutGoFilesAtRootCarriesNonGoFiles(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -230,7 +233,8 @@ func TestMoveDirCarriesVendorUnderTestdata(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -272,7 +276,8 @@ func TestMoveDirCarriesInvalidTestdataGoByteForByte(t *testing.T) {
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 

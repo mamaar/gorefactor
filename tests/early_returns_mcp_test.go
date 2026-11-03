@@ -34,7 +34,9 @@ func callToolOnFixture(t *testing.T, fixture, tool string, args map[string]any) 
 	}
 
 	var decoded map[string]any
-	if err := json.Unmarshal([]byte(errText(result)), &decoded); err != nil {
+
+	err = json.Unmarshal([]byte(errText(result)), &decoded)
+	if err != nil {
 		t.Fatalf("decoding %s result: %v\n%s", tool, err, errText(result))
 	}
 

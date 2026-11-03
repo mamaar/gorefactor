@@ -238,7 +238,8 @@ func externalMethodNames(external []*gotypes.Package) map[string]bool {
 				continue
 			}
 
-			if iface, ok := tn.Type().Underlying().(*gotypes.Interface); ok {
+			iface, ok := tn.Type().Underlying().(*gotypes.Interface)
+			if ok {
 				for m := range iface.Methods() {
 					names[m.Name()] = true
 				}

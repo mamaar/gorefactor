@@ -88,7 +88,8 @@ func TestChangeSignaturePlanner_LinkedSupersetKeepsPlanAndDoesNotDoubleTheParame
 		t.Errorf("replanned changes differ:\n got %+v\nwant %+v", got, want)
 	}
 
-	if err := eng.ExecutePlan(second.plan); err != nil {
+	err = eng.ExecutePlan(second.plan)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -113,7 +114,8 @@ func TestChangeSignatureAcrossConfigs_AddReturnReachesSiblingAndTaggedCaller(t *
 		t.Fatal(err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatal(err)
 	}
 

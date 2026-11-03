@@ -67,7 +67,9 @@ func callVariadics(t *testing.T, args map[string]any, files map[string]string) v
 	}
 
 	var out variadicsJSON
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
 

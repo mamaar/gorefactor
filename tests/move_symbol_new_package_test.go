@@ -152,7 +152,8 @@ type MemCache struct {
 	}
 
 	// The failure mode this guards against: a directory named after the module.
-	if _, err := os.Stat(filepath.Join(tmpDir, "reprotest")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(tmpDir, "reprotest"))
+	if !os.IsNotExist(err) {
 		t.Errorf("a directory named after the module was created inside the module, stat err=%v", err)
 	}
 }

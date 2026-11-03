@@ -25,7 +25,8 @@ func editOnDisk(t *testing.T, dir, rel, old, replacement string) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(path, []byte(strings.Replace(string(b), old, replacement, 1)), 0o644); err != nil {
+	err = os.WriteFile(path, []byte(strings.Replace(string(b), old, replacement, 1)), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 }

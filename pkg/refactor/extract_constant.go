@@ -98,7 +98,8 @@ func (op *ExtractConstantOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		return nil, invalidExtractConstant("the literal %s has no type information", selected.Value)
 	}
 
-	if err := op.checkPackageLevelName(pkg); err != nil {
+	err = op.checkPackageLevelName(pkg)
+	if err != nil {
 		return nil, err
 	}
 

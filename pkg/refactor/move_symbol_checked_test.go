@@ -44,7 +44,8 @@ func TestMoveSymbolAcrossConfigs_PlanningCreatesNothingAndLeavesTheWorkspaceAsIt
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "dst")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(dir, "dst"))
+	if !os.IsNotExist(err) {
 		t.Errorf("planning created the target directory, stat err = %v", err)
 	}
 

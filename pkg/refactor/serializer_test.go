@@ -860,7 +860,8 @@ func TestApplyChanges_NewFileGetsRequestedMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o755 {
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o755 {
 		t.Errorf("mode = %v, err %v, want 0755", info, err)
 	}
 }

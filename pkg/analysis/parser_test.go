@@ -828,7 +828,8 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 		t.Fatalf("failed to resolve repo root: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(repoRoot, "go.mod")); err != nil {
+	_, err = os.Stat(filepath.Join(repoRoot, "go.mod"))
+	if err != nil {
 		t.Skipf("repo root %s has no go.mod; skipping", repoRoot)
 	}
 
@@ -1667,11 +1668,14 @@ func TestTypeCheck_FixedTestFileIsNoLongerExcludedAfterInvalidation(t *testing.T
 	}
 
 	bad := filepath.Join(root, "p", "bad_test.go")
-	if err := os.WriteFile(bad, []byte("package p\n\nfunc alsoUseF() { F() }\n"), 0o644); err != nil {
+
+	err = os.WriteFile(bad, []byte("package p\n\nfunc alsoUseF() { F() }\n"), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := set.SyncSource(bad); err != nil {
+	_, err = set.SyncSource(bad)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -1812,11 +1816,14 @@ func TestParser_InvalidateTypeCheck_CycleIntroducedAfterLoadIsReported(t *testin
 	p.EnsureTypeChecked(ws, pkgB)
 
 	file := filepath.Join(root, "a", "a.go")
-	if err := os.WriteFile(file, []byte("package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n"), 0o644); err != nil {
+
+	err = os.WriteFile(file, []byte("package a\n\nimport \"example.com/w/b\"\n\nfunc FA() { b.FB() }\n"), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := set.SyncSource(file); err != nil {
+	_, err = set.SyncSource(file)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -1885,7 +1892,8 @@ func TestSyncSource_UntrackedAndRemovedPathsYieldSentinels(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.Remove(filepath.Join(root, "p", "gone.go")); err != nil {
+	err = os.Remove(filepath.Join(root, "p", "gone.go"))
+	if err != nil {
 		t.Fatal(err)
 	}
 

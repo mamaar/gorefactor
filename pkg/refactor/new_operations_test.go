@@ -499,7 +499,8 @@ func applyExtractConstant(t *testing.T, e *DefaultEngine, ws *types.Workspace, d
 		t.Fatalf("ExtractConstant: %v", err)
 	}
 
-	if err := e.ExecutePlan(plan); err != nil {
+	err = e.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 

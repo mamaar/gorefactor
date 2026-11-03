@@ -417,7 +417,8 @@ func (op *SafeDeleteOperation) removalPlan(ws *pkgtypes.Workspace, targets []del
 
 		delete(removals, t.file)
 
-		if deletion, ok := emptiedFileDeletion(t.file, changes); ok {
+		deletion, ok := emptiedFileDeletion(t.file, changes)
+		if ok {
 			plan.Changes = append(slices.DeleteFunc(plan.Changes, func(c pkgtypes.Change) bool { return c.File == t.file.Path }), deletion)
 			continue
 		}

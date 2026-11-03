@@ -85,7 +85,9 @@ func (e *DefaultEngine) AnalyzeDependenciesAcrossConfigs(req types.AnalyzeDepend
 	e.EnsureTypeChecked(primary)
 
 	op := &AnalyzeDependenciesOperation{Request: req}
-	if err := op.Validate(primary); err != nil {
+
+	err = op.Validate(primary)
+	if err != nil {
 		return nil, fmt.Errorf("analyze dependencies operation validation failed: %w", err)
 	}
 

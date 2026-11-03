@@ -60,19 +60,23 @@ func main() { _ = a.Foo() }
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "a")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(dir, "a"))
+	if !os.IsNotExist(err) {
 		t.Errorf("source dir a/ should be pruned, stat err=%v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "b", "foo_test.go")); err != nil {
+	_, err = os.Stat(filepath.Join(dir, "b", "foo_test.go"))
+	if err != nil {
 		t.Errorf("b/foo_test.go should exist: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "b", "sub", "sub.go")); err != nil {
+	_, err = os.Stat(filepath.Join(dir, "b", "sub", "sub.go"))
+	if err != nil {
 		t.Errorf("b/sub/sub.go should exist: %v", err)
 	}
 
@@ -133,11 +137,13 @@ func main() { _ = widget.Ping() }
 		t.Fatalf("MoveDir: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "pkg", "widget", "widget.go")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(dir, "pkg", "widget", "widget.go"))
+	if !os.IsNotExist(err) {
 		t.Errorf("original should be deleted, stat err=%v", err)
 	}
 
@@ -200,11 +206,13 @@ func main() { _ = a.Foo() }
 		t.Fatalf("move_dir returned an error result: %+v", result.Content)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "a", "foo.go")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(dir, "a", "foo.go"))
+	if !os.IsNotExist(err) {
 		t.Errorf("a/foo.go should be deleted, stat err=%v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "b", "foo_test.go")); err != nil {
+	_, err = os.Stat(filepath.Join(dir, "b", "foo_test.go"))
+	if err != nil {
 		t.Errorf("b/foo_test.go should exist: %v", err)
 	}
 
@@ -261,11 +269,13 @@ func TestThing(t *testing.T) {
 		t.Fatalf("MovePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "old", "thing.go")); !os.IsNotExist(err) {
+	_, err = os.Stat(filepath.Join(dir, "old", "thing.go"))
+	if !os.IsNotExist(err) {
 		t.Errorf("old/thing.go should be deleted, stat err=%v", err)
 	}
 

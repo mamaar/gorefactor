@@ -43,7 +43,9 @@ func TestReachableReferences_ReportsInterfaceReachedSiteAndOmitsUnreachableOne(t
 			ByTarget  map[string]int `json:"by_target"`
 		} `json:"summary"`
 	}
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v\n%s", err, errText(res))
 	}
 

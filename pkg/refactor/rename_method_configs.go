@@ -62,7 +62,8 @@ func (op *RenameMethodOperation) validateIn(ws *types.Workspace) (types.SymbolKe
 		return nil, err
 	}
 
-	if err := op.validateNames(ws, typeSymbol); err != nil {
+	err = op.validateNames(ws, typeSymbol)
+	if err != nil {
 		return nil, err
 	}
 

@@ -29,7 +29,9 @@ func analyzeSymbolIn(t *testing.T, files map[string]string, args map[string]any)
 	}
 
 	var out map[string]any
-	if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+
+	err = json.Unmarshal([]byte(errText(res)), &out)
+	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 

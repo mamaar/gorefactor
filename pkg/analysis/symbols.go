@@ -889,7 +889,8 @@ func (sr *SymbolResolver) ResolveSymbol(pkg *types.Package, name string) (*types
 	// fields are far more collision-prone than methods, and a bare match could
 	// silently target the wrong symbol. Suggest the Type.Field form instead
 	// (mirrors the ambiguous-method block above).
-	if err := bareFieldNameError(pkg, name); err != nil {
+	err = bareFieldNameError(pkg, name)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1373,7 +1374,8 @@ func (sr *SymbolResolver) FindEmbeddedFieldReferences(symbol *types.Symbol) []*t
 						return true
 					}
 
-					if field, ok := info.Uses[ident].(*gotypes.Var); ok && field.IsField() && field.Embedded() && sameObject(embeddedTypeName(field), target) {
+					field, ok := info.Uses[ident].(*gotypes.Var)
+					if ok && field.IsField() && field.Embedded() && sameObject(embeddedTypeName(field), target) {
 						references = append(references, sr.referenceAt(file, ident, symbol))
 					}
 

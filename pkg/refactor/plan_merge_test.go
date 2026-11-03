@@ -299,7 +299,8 @@ func TestMergeConfigPlans_ContextThreadingAppliesEachEditOnce(t *testing.T) {
 		t.Fatalf("got %d changes, want 3", len(got.Changes))
 	}
 
-	if err := assertNoOverlappingChanges(got.Changes); err != nil {
+	err = assertNoOverlappingChanges(got.Changes)
+	if err != nil {
 		t.Fatalf("overlap assertion: %v", err)
 	}
 

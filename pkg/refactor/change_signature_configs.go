@@ -212,7 +212,8 @@ func (p *changeSignaturePlanner) run(r *signatureRun, t funcTarget, requested bo
 			return err
 		}
 
-		if err := op.Validate(ws); err != nil {
+		err = op.Validate(ws)
+		if err != nil {
 			return fmt.Errorf("change signature operation validation failed: %w", err)
 		}
 	}

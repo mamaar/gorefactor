@@ -121,7 +121,9 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 	logger.Info("parsing workspace", "path", absRoot)
 
 	tree := NewSourceTree(token.NewFileSet())
-	if err := loadSources(tree, absRoot); err != nil {
+
+	err = loadSources(tree, absRoot)
+	if err != nil {
 		logger.Error("workspace discovery failed", "path", root, "err", err)
 		return nil, err
 	}

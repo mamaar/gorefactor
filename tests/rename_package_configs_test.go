@@ -66,7 +66,8 @@ func TestRenamePackageRewritesFilesOfEveryConfiguration(t *testing.T) {
 		t.Errorf("Coverage.Configs = %v, want every configuration", plan.Coverage.Configs)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 
@@ -142,7 +143,8 @@ func TestRenamePackageFindsPackageHoldingOnlyExcludedFiles(t *testing.T) {
 		t.Fatalf("RenamePackage: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 

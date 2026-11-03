@@ -49,7 +49,8 @@ func TestAddContextParameterPlanner_LinkedSupersetKeepsPlanAndDoesNotDoubleThePa
 		t.Errorf("reference indexes built = %d, want 1 reused across both plans", len(planner.indexes))
 	}
 
-	if err := eng.ExecutePlan(second.plan); err != nil {
+	err = eng.ExecutePlan(second.plan)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +71,8 @@ func TestAddContextParameterAcrossConfigs_SiblingThatAlreadyTakesCtxIsSkipped(t 
 		t.Fatalf("AddContextParameterAcrossConfigs: %v", err)
 	}
 
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatal(err)
 	}
 

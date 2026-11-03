@@ -464,7 +464,9 @@ func (op *ChangeSignatureOperation) planDerefParam(isIface bool, sourceFile *pkg
 		}
 
 		op.derefIdx = idx
-		if err := op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan); err != nil {
+
+		err = op.planDerefBody(ws, sourcePackage, sourceFile, decl, plan)
+		if err != nil {
 			return err
 		}
 	}
@@ -515,7 +517,9 @@ func (op *ChangeSignatureOperation) collectInterfaceChanges(
 	}
 
 	var allRefSymbols []*pkgtypes.Symbol
-	if ifaceMethodSym, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName); err == nil {
+
+	ifaceMethodSym, err := resolver.ResolveSymbol(sourcePackage, op.FunctionName)
+	if err == nil {
 		allRefSymbols = append(allRefSymbols, ifaceMethodSym)
 	}
 

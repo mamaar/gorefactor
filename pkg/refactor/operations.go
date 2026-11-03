@@ -386,7 +386,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	if err := op.checkGeneratedDeclarations(ws, moving); err != nil {
+	err = op.checkGeneratedDeclarations(ws, moving)
+	if err != nil {
 		return nil, err
 	}
 	// Find all references to every symbol being moved together. A method is
@@ -408,7 +409,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		return nil, err
 	}
 
-	if err := op.checkForStrandedReferences(ws, moving); err != nil {
+	err = op.checkForStrandedReferences(ws, moving)
+	if err != nil {
 		return nil, err
 	}
 
@@ -469,7 +471,9 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	}
 
 	op.target = targetPackage.Path
-	if err := op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path); err != nil {
+
+	err = op.checkImportCycles(ws, moving, uses, survivingReferences, targetPackage.Path)
+	if err != nil {
 		return nil, err
 	}
 
@@ -489,7 +493,8 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 		plan.Changes = append(plan.Changes, removeImportSpecs(ws, f, unusedImports[f.Path])...)
 	}
 
-	if err := op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes); err != nil {
+	err = op.checkGeneratedEdits(ws, moving, allReferences, plan.Changes)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1129,7 +1134,8 @@ func (op *RenameSymbolOperation) planSymbols(ws *types.Workspace, resolver *anal
 		// Find all references to this symbol
 		references := resolver.FindReferences(symbol)
 
-		if err := checkShadowedAtReferences(ws, symbol, references, op.Request.NewName); err != nil {
+		err := checkShadowedAtReferences(ws, symbol, references, op.Request.NewName)
+		if err != nil {
 			return nil, err
 		}
 
