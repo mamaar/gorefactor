@@ -60,7 +60,8 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil {
-			if structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
+			structSymbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+			if err == nil {
 				if structSymbol.Kind == types.TypeSymbol {
 					sourcePackage = pkg
 					break
@@ -77,7 +78,8 @@ func (op *InlineMethodOperation) Validate(ws *types.Workspace) error {
 	}
 
 	// Check if method exists in the package's symbol table
-	if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
+	methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
+	if exists {
 		for _, method := range methods {
 			if method.Name == op.MethodName {
 				methodSymbol = method
@@ -227,7 +229,8 @@ func (op *InlineMethodOperation) findMethodImplementation(ws *types.Workspace) (
 	}
 
 	// Get the method body from the source file (pkg.Files is keyed by basename)
-	if file, exists := sourcePackage.Files[filepath.Base(methodSymbol.File)]; exists {
+	file, exists := sourcePackage.Files[filepath.Base(methodSymbol.File)]
+	if exists {
 		return op.extractMethodBody(string(file.OriginalContent), methodSymbol)
 	}
 
@@ -272,7 +275,8 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 
 	// Find the method declaration
 	for _, decl := range astFile.Decls {
-		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+		funcDecl, ok := decl.(*ast.FuncDecl)
+		if ok {
 			if funcDecl.Name.Name == op.MethodName && funcDecl.Recv != nil {
 				// Extract parameter names
 				var paramNames []string
@@ -294,7 +298,8 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 							ParamNames:   paramNames,
 							ReceiverType: sourceText(fset, content, funcDecl.Recv.List[0].Type),
 						}
-						if names := funcDecl.Recv.List[0].Names; len(names) == 1 && names[0].Name != "_" {
+						names := funcDecl.Recv.List[0].Names
+						if len(names) == 1 && names[0].Name != "_" {
 							impl.Receiver = names[0].Name
 						}
 						if funcDecl.Type.Results != nil {
@@ -315,7 +320,8 @@ func (op *InlineMethodOperation) extractMethodBody(content string, methodSymbol 
 
 func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodCall, error) {
 	var targetFile *types.File
-	if pkg := findPackageForFile(ws, op.TargetFile); pkg != nil {
+	pkg := findPackageForFile(ws, op.TargetFile)
+	if pkg != nil {
 		targetFile = findFileByPath(pkg, op.TargetFile)
 	}
 	if targetFile == nil {
@@ -337,8 +343,10 @@ func (op *InlineMethodOperation) findMethodCalls(ws *types.Workspace) ([]MethodC
 
 	var calls []MethodCall
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if callExpr, ok := n.(*ast.CallExpr); ok {
-			if selExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+		callExpr, ok := n.(*ast.CallExpr)
+		if ok {
+			selExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+			if ok {
 				if selExpr.Sel.Name == op.MethodName {
 					start := fset.Position(callExpr.Pos()).Offset
 					end := fset.Position(callExpr.End()).Offset
@@ -431,11 +439,13 @@ func (op *InlineMethodOperation) adaptMethodBodyForInlining(impl MethodImpl, rec
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
 	if err == nil {
-		if funcDecl, ok := f.Decls[0].(*ast.FuncDecl); ok && funcDecl.Body != nil {
+		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
+		if ok && funcDecl.Body != nil {
 			stmts := funcDecl.Body.List
 			// Single return statement with one result → extract expression
 			if len(stmts) == 1 {
-				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
+				retStmt, ok := stmts[0].(*ast.ReturnStmt)
+				if ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
 					if impl.Receiver != "" && countIdents(expr, impl.Receiver) > 1 && evaluatesCode(receiver) {
 						delete(paramToArg, impl.Receiver)
@@ -491,7 +501,8 @@ func replaceIdentsInExpr(expr ast.Expr, paramToArg map[string]string, fset *toke
 	}
 	var replacements []replacement
 	inspectIdents(expr, func(ident *ast.Ident) {
-		if arg, exists := paramToArg[ident.Name]; exists {
+		arg, exists := paramToArg[ident.Name]
+		if exists {
 			start := fset.Position(ident.Pos()).Offset
 			end := fset.Position(ident.End()).Offset
 			replacements = append(replacements, replacement{start, end, arg})
@@ -617,7 +628,8 @@ func (op *InlineVariableOperation) Execute(ws *types.Workspace) (*types.Refactor
 
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
-		if _, exists := pkg.Files[op.SourceFile]; exists {
+		_, exists := pkg.Files[op.SourceFile]
+		if exists {
 			sourcePackage = pkg
 			break
 		}
@@ -659,7 +671,8 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 	// Find the file and parse it
 	var sourceFile *types.File
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			sourceFile = file
 			break
 		}
@@ -694,9 +707,11 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 	// Find the variable declaration and its value
 	var value string
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if genDecl, ok := n.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+		genDecl, ok := n.(*ast.GenDecl)
+		if ok && genDecl.Tok == token.VAR {
 			for _, spec := range genDecl.Specs {
-				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if ok {
 					for i, name := range valueSpec.Names {
 						if name.Name == op.VariableName && i < len(valueSpec.Values) {
 							// Extract the value expression
@@ -714,9 +729,11 @@ func (op *InlineVariableOperation) findVariableValue(ws *types.Workspace) (strin
 		}
 
 		// Also check for short variable declarations (var := value)
-		if assignStmt, ok := n.(*ast.AssignStmt); ok && assignStmt.Tok == token.DEFINE {
+		assignStmt, ok := n.(*ast.AssignStmt)
+		if ok && assignStmt.Tok == token.DEFINE {
 			for i, lhs := range assignStmt.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
+				ident, ok := lhs.(*ast.Ident)
+				if ok && ident.Name == op.VariableName {
 					if i < len(assignStmt.Rhs) {
 						valueExpr := assignStmt.Rhs[i]
 						start := fset.Position(valueExpr.Pos()).Offset
@@ -747,7 +764,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 	// Find the file and parse it
 	var sourceFile *types.File
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			sourceFile = file
 			break
 		}
@@ -790,7 +808,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 				return true
 			}
 			for _, spec := range node.Specs {
-				if vs, ok := spec.(*ast.ValueSpec); ok {
+				vs, ok := spec.(*ast.ValueSpec)
+				if ok {
 					for _, name := range vs.Names {
 						if name.Name == op.VariableName {
 							declPos = name.Pos()
@@ -804,7 +823,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 				return true
 			}
 			for _, lhs := range node.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
+				ident, ok := lhs.(*ast.Ident)
+				if ok && ident.Name == op.VariableName {
 					declPos = ident.Pos()
 					return false
 				}
@@ -816,7 +836,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 	// Second pass: collect all references, skipping the declaration ident.
 	var references []VariableReference
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if ident, ok := n.(*ast.Ident); ok && ident.Name == op.VariableName {
+		ident, ok := n.(*ast.Ident)
+		if ok && ident.Name == op.VariableName {
 			if declPos.IsValid() && ident.Pos() == declPos {
 				return true // skip declaration
 			}
@@ -836,7 +857,8 @@ func (op *InlineVariableOperation) findVariableReferences(ws *types.Workspace) (
 func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) (int, int, error) {
 	var sourceFile *types.File
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			sourceFile = file
 			break
 		}
@@ -911,7 +933,8 @@ func (op *InlineVariableOperation) findVariableDeclaration(ws *types.Workspace) 
 				return true
 			}
 			for _, lhs := range node.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == op.VariableName {
+				ident, ok := lhs.(*ast.Ident)
+				if ok && ident.Name == op.VariableName {
 					declStart = fset.Position(node.Pos()).Offset
 					declEnd = fset.Position(node.End()).Offset
 					if declEnd < len(content) && content[declEnd] == '\n' {
@@ -1026,7 +1049,8 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 
 	var affectedPackages []string
 	for _, file := range affectedFiles {
-		if pkg := findPackageForFile(ws, file); pkg != nil {
+		pkg := findPackageForFile(ws, file)
+		if pkg != nil {
 			affectedPackages = append(affectedPackages, pkg.Path)
 		}
 	}
@@ -1124,7 +1148,8 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 
 func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, targetFile string) ([]MethodCall, error) {
 	var file *types.File
-	if pkg := findPackageForFile(ws, targetFile); pkg != nil {
+	pkg := findPackageForFile(ws, targetFile)
+	if pkg != nil {
 		file = findFileByPath(pkg, targetFile)
 	}
 	if file == nil {
@@ -1200,10 +1225,12 @@ func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl,
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
 	if err == nil {
-		if funcDecl, ok := f.Decls[0].(*ast.FuncDecl); ok && funcDecl.Body != nil {
+		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
+		if ok && funcDecl.Body != nil {
 			stmts := funcDecl.Body.List
 			if len(stmts) == 1 {
-				if retStmt, ok := stmts[0].(*ast.ReturnStmt); ok && len(retStmt.Results) == 1 {
+				retStmt, ok := stmts[0].(*ast.ReturnStmt)
+				if ok && len(retStmt.Results) == 1 {
 					expr := retStmt.Results[0]
 					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
 					return result

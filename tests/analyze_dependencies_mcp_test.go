@@ -59,7 +59,8 @@ func TestAnalyzeDependencies_FlagsGateTheirSections(t *testing.T) {
 	out := callJSON(t, sess, "analyze_dependencies", map[string]any{})
 
 	for _, key := range []string{"suggested_moves", "backwards_dependencies"} {
-		if _, ok := out[key]; ok {
+		_, ok := out[key]
+		if ok {
 			t.Errorf("%s present without its flag: %v", key, out[key])
 		}
 	}
@@ -112,7 +113,8 @@ func TestAnalyzeDependencies_CountsImportsAndSymbolsOfEveryConfig(t *testing.T) 
 		} `json:"dependency_graph"`
 		Configs []string `json:"build_configs"`
 	}
-	if err := json.Unmarshal(raw, &got); err != nil {
+	err := json.Unmarshal(raw, &got)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var aDir, bDir string
@@ -132,10 +134,12 @@ func TestAnalyzeDependencies_CountsImportsAndSymbolsOfEveryConfig(t *testing.T) 
 	if !slices.Contains(got.Graph.PackageDeps[aDir], bDir) {
 		t.Errorf("PackageDeps[a] = %v, want %s", got.Graph.PackageDeps[aDir], bDir)
 	}
-	if c := got.Coupling[bDir]; c.Incoming != 1 {
+	c := got.Coupling[bDir]
+	if c.Incoming != 1 {
 		t.Errorf("b incoming_deps = %d, want 1", c.Incoming)
 	}
-	if c := got.Coupling[aDir]; c.Symbols != 3 || c.Outgoing != 1 {
+	c = got.Coupling[aDir]
+	if c.Symbols != 3 || c.Outgoing != 1 {
 		t.Errorf("a coupling = %+v, want 3 symbols and 1 outgoing", c)
 	}
 	if len(got.Configs) < 2 {
@@ -160,13 +164,16 @@ func TestAnalyzeDependencies_CyclesAreObjectsNamingTheirConfigs(t *testing.T) {
 		t.Fatalf("ImportCycles = %v, want one", graph["ImportCycles"])
 	}
 	cycle, _ := cycles[0].(map[string]any)
-	if p, _ := cycle["packages"].([]any); len(p) != 3 {
+	p, _ := cycle["packages"].([]any)
+	if len(p) != 3 {
 		t.Errorf("packages = %v, want a closed path of 3", cycle["packages"])
 	}
-	if c, _ := cycle["configs"].([]any); len(c) == 0 {
+	c, _ := cycle["configs"].([]any)
+	if len(c) == 0 {
 		t.Errorf("configs = %v, want the windows configuration", cycle["configs"])
 	}
-	if tc, ok := graph["TestImportCycles"].([]any); !ok || len(tc) != 0 {
+	tc, ok := graph["TestImportCycles"].([]any)
+	if !ok || len(tc) != 0 {
 		t.Errorf("TestImportCycles = %#v, want an empty list", graph["TestImportCycles"])
 	}
 }
@@ -188,7 +195,8 @@ func TestAnalyzeDependencies_ImportOnlyInTagFileIsInPackageImports(t *testing.T)
 		if !strings.HasSuffix(d, "/a") {
 			continue
 		}
-		if l, _ := v.([]any); len(l) != 1 || l[0] != "example.com/threadmcp/b" {
+		l, _ := v.([]any)
+		if len(l) != 1 || l[0] != "example.com/threadmcp/b" {
 			t.Errorf("PackageImports[a] = %v, want the tagx-only import", v)
 		}
 		return

@@ -51,10 +51,12 @@ func TestPlanAcrossViews_RerunsViewsUntilNoNewKeysAppear(t *testing.T) {
 	if rounds != 2 {
 		t.Errorf("rounds = %d, want 2", rounds)
 	}
-	if got := len(planner.calls[primary]); got != 2 {
+	got := len(planner.calls[primary])
+	if got != 2 {
 		t.Errorf("primary planned %d times, want 2", got)
 	}
-	if got := len(planner.calls[tagged]); got != 2 {
+	got = len(planner.calls[tagged])
+	if got != 2 {
 		t.Errorf("tagged view planned %d times, want 2 (it has not seen key b)", got)
 	}
 	want := []types.Change{ins("/ws/b.go", 2, "b", "b"), ins("/ws/a.go", 1, "a", "a")}
@@ -113,7 +115,8 @@ func TestPlanAcrossViews_PlannerErrorNamesItsConfig(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap the planner error", err)
 	}
-	if want := "build configuration " + tagged.Config.String() + ": boom"; err.Error() != want {
+	want := "build configuration " + tagged.Config.String() + ": boom"
+	if err.Error() != want {
 		t.Errorf("err = %q, want %q", err, want)
 	}
 }
@@ -125,7 +128,8 @@ func TestPlanAcrossViews_SingleViewErrorIsReturnedUnchanged(t *testing.T) {
 		return configResult{}, boom
 	}}
 
-	if _, _, err := planAcrossViews([]*analysis.View{primary}, planner, 10); err != boom {
+	_, _, err := planAcrossViews([]*analysis.View{primary}, planner, 10)
+	if err != boom {
 		t.Errorf("err = %v, want the planner error itself", err)
 	}
 }
@@ -140,7 +144,8 @@ func TestPlanAcrossViews_TargetAbsentEverywhereReturnsThePrimaryError(t *testing
 		return configResult{absent: errors.New("not in tagged")}, nil
 	}}
 
-	if _, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10); err != primaryErr {
+	_, _, err := planAcrossViews([]*analysis.View{primary, tagged}, planner, 10)
+	if err != primaryErr {
 		t.Errorf("err = %v, want the primary view's error unchanged", err)
 	}
 }
@@ -230,7 +235,8 @@ func TestPlanAcrossViews_ReplansAViewOnlyForKeysItDeclares(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
-		if got := len(planner.calls[primary]); got != tc.want {
+		got := len(planner.calls[primary])
+		if got != tc.want {
 			t.Errorf("%s: primary planned %d times, want %d", tc.name, got, tc.want)
 		}
 		if len(plan.Changes) != 2 {
@@ -260,7 +266,8 @@ func TestThreadContextPlanner_ReportsTheKeysTheViewDeclares(t *testing.T) {
 			{PkgPath: pkgPath, Recv: "S", Name: "M"}: true,
 			{PkgPath: pkgPath, Name: "tagged"}:       i == 1,
 		} {
-			if got := res.declared.Has(key); got != want {
+			got := res.declared.Has(key)
+			if got != want {
 				t.Errorf("view %s: declares %s = %v, want %v", v.Config, key, got, want)
 			}
 		}

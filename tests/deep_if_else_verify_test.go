@@ -26,7 +26,8 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	if len(fixed) != 1 {
 		t.Fatalf("expected exactly 1 applied rewrite, got %d: %v", len(fixed), fixed)
 	}
-	if fn, _ := fixed[0].(string); fn != "goodChain" {
+	fn, _ := fixed[0].(string)
+	if fn != "goodChain" {
 		t.Errorf("functions_fixed = %v, want [goodChain]", fixed)
 	}
 
@@ -34,7 +35,8 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	var typeErrorItem map[string]any
 	for _, u := range unfixable {
 		item := u.(map[string]any)
-		if fn, _ := item["function_name"].(string); fn == "typeErrorChain" {
+		fn, _ := item["function_name"].(string)
+		if fn == "typeErrorChain" {
 			typeErrorItem = item
 		}
 	}
@@ -47,7 +49,8 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	}
 
 	for _, f := range fixed {
-		if fn, _ := f.(string); fn == "typeErrorChain" {
+		fn, _ := f.(string)
+		if fn == "typeErrorChain" {
 			t.Error("typeErrorChain was reported as fixed despite its rewrite failing verification")
 		}
 	}
@@ -66,7 +69,8 @@ func TestFixDeepIfElse_RejectsRewriteThatWouldNotTypeCheck(t *testing.T) {
 	// too, and it does not drop a compiled binary next to the sources.
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("fixture module does not compile after fix_deep_if_else_chains ran:\n%s", out)
 	}
 }
@@ -82,10 +86,12 @@ func TestFixDeepIfElse_DryRunOnlyDiffsSurvivingChanges(t *testing.T) {
 		"dry_run": true,
 	})
 
-	if after := readFile(t, filepath.Join(dir, "main.go")); after != before {
+	after := readFile(t, filepath.Join(dir, "main.go"))
+	if after != before {
 		t.Errorf("dry run modified the file on disk:\n%s", after)
 	}
-	if dryRun, _ := result["dry_run"].(bool); !dryRun {
+	dryRun, _ := result["dry_run"].(bool)
+	if !dryRun {
 		t.Error("result should report dry_run=true")
 	}
 
@@ -109,7 +115,8 @@ func TestFixDeepIfElse_DryRunOnlyDiffsSurvivingChanges(t *testing.T) {
 	found := false
 	for _, u := range unfixable {
 		item := u.(map[string]any)
-		if fn, _ := item["function_name"].(string); fn == "typeErrorChain" {
+		fn, _ := item["function_name"].(string)
+		if fn == "typeErrorChain" {
 			found = true
 		}
 	}

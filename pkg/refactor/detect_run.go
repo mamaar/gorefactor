@@ -79,7 +79,8 @@ func (r *detectRun) wanted(pkg *types.Package) bool {
 // collectTypeErrors records the first type error of each non-test file of v.
 func (r *detectRun) collectTypeErrors(v *analysis.View) {
 	for _, e := range v.ProductionErrors() {
-		if _, seen := r.typeErrors[e.File.Path]; !seen {
+		_, seen := r.typeErrors[e.File.Path]
+		if !seen {
 			r.typeErrors[e.File.Path] = e
 		}
 	}

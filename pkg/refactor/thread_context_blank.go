@@ -43,7 +43,8 @@ func ctxNameConflict(pkg *pkgtypes.Package, fd *ast.FuncDecl) *ast.Ident {
 			return found == nil
 		}
 		obj := pkg.TypesInfo.ObjectOf(id)
-		if v, isVar := obj.(*gotypes.Var); !isVar || !v.IsField() {
+		v, isVar := obj.(*gotypes.Var)
+		if !isVar || !v.IsField() {
 			found = id
 		}
 		return found == nil
@@ -58,10 +59,12 @@ func (op *ThreadContextOperation) renameBlankCtx(plan *threadPlan, caller *gotyp
 	if fd == nil || fd.Decl == nil {
 		return false, nil
 	}
-	if field, _ := blankCtxField(fd.Pkg, fd.Decl); field == nil {
+	field, _ := blankCtxField(fd.Pkg, fd.Decl)
+	if field == nil {
 		return false, nil
 	}
-	if id := ctxNameConflict(fd.Pkg, fd.Decl); id != nil {
+	id := ctxNameConflict(fd.Pkg, fd.Decl)
+	if id != nil {
 		return false, &pkgtypes.RefactorError{
 			Type: pkgtypes.InvalidOperation,
 			Message: fmt.Sprintf("cannot thread context through %s: its context.Context parameter is blank or unnamed "+

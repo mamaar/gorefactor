@@ -12,8 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/packages"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 var setPrimary = NewBuildConfig("linux", "amd64", true)
@@ -92,10 +93,12 @@ func TestWorkspaceSet_ViewsShareSourceButNotPackages(t *testing.T) {
 	primary, tagged := set.Primary(), viewWithTag(t, set, "fts5x")
 
 	pp, tp := checkedPackage(t, primary, dir), checkedPackage(t, tagged, dir)
-	if got := fileNames(pp.TestFiles); !slices.Equal(got, []string{"x_notag_test.go"}) {
+	got := fileNames(pp.TestFiles)
+	if !slices.Equal(got, []string{"x_notag_test.go"}) {
 		t.Errorf("primary TestFiles = %v", got)
 	}
-	if got := fileNames(tp.TestFiles); !slices.Equal(got, []string{"x_tag_test.go"}) {
+	got = fileNames(tp.TestFiles)
+	if !slices.Equal(got, []string{"x_tag_test.go"}) {
 		t.Errorf("tagged TestFiles = %v", got)
 	}
 	if pp == tp {
@@ -120,7 +123,8 @@ func TestWorkspaceSet_ViewsShareSourceButNotPackages(t *testing.T) {
 
 func TestWorkspaceSet_SecondaryViewsAreBuiltOnRequest(t *testing.T) {
 	set, _ := loadSet(t, taggedRegistryWorkspace())
-	if built := set.BuiltViews(); len(built) != 1 || built[0] != set.Primary() {
+	built := set.BuiltViews()
+	if len(built) != 1 || built[0] != set.Primary() {
 		t.Fatalf("after load BuiltViews = %d views, want only the primary", len(built))
 	}
 
@@ -138,7 +142,8 @@ func TestWorkspaceSet_SecondaryViewsAreBuiltOnRequest(t *testing.T) {
 	if views[0] != set.Primary() {
 		t.Error("first view is not the primary")
 	}
-	if again := allViews(t, set); !slices.Equal(again, views) {
+	again := allViews(t, set)
+	if !slices.Equal(again, views) {
 		t.Error("second Views call returned different instances")
 	}
 }
@@ -158,7 +163,8 @@ func TestWorkspaceSet_TypeInfoIsPerView(t *testing.T) {
 		{viewWithGOOS(t, set, "windows"), "open_windows.go"},
 	} {
 		pkg := checkedPackage(t, tc.view, dir)
-		if got := useDefinitionFile(t, tc.view, pkg, "use.go", "Open"); got != tc.want {
+		got := useDefinitionFile(t, tc.view, pkg, "use.go", "Open")
+		if got != tc.want {
 			t.Errorf("view %s: Open defined in %s, want %s", tc.view.Config.Key(), got, tc.want)
 		}
 	}
@@ -168,8 +174,10 @@ func useDefinitionFile(t *testing.T, v *View, pkg *types.Package, file, name str
 	t.Helper()
 	var def string
 	ast.Inspect(pkg.Files[file].AST, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Name == name {
-			if obj := pkg.TypesInfo.Uses[id]; obj != nil {
+		id, ok := n.(*ast.Ident)
+		if ok && id.Name == name {
+			obj := pkg.TypesInfo.Uses[id]
+			if obj != nil {
 				def = filepath.Base(v.Workspace.FileSet.Position(obj.Pos()).Filename)
 			}
 		}
@@ -191,7 +199,8 @@ func TestWorkspaceSet_ImportResolvesToTheViewsOwnDependency(t *testing.T) {
 	aDir, bDir := filepath.Join(root, "a"), filepath.Join(root, "b")
 
 	tagged := viewWithTag(t, set, "fts5x")
-	if got := fileNames(checkedPackage(t, tagged, bDir).Files); !slices.Equal(got, []string{"b.go", "b_extra.go"}) {
+	got := fileNames(checkedPackage(t, tagged, bDir).Files)
+	if !slices.Equal(got, []string{"b.go", "b_extra.go"}) {
 		t.Errorf("tagged b Files = %v", got)
 	}
 	if checkedPackage(t, tagged, aDir).TypesPkg.Scope().Lookup("Extra") == nil {
@@ -199,10 +208,12 @@ func TestWorkspaceSet_ImportResolvesToTheViewsOwnDependency(t *testing.T) {
 	}
 
 	primary := set.Primary()
-	if got := fileNames(checkedPackage(t, primary, bDir).Files); !slices.Equal(got, []string{"b.go"}) {
+	got = fileNames(checkedPackage(t, primary, bDir).Files)
+	if !slices.Equal(got, []string{"b.go"}) {
 		t.Errorf("primary b Files = %v", got)
 	}
-	if got := fileNames(checkedPackage(t, primary, aDir).Files); !slices.Equal(got, []string{"a.go"}) {
+	got = fileNames(checkedPackage(t, primary, aDir).Files)
+	if !slices.Equal(got, []string{"a.go"}) {
 		t.Errorf("primary a Files = %v", got)
 	}
 }
@@ -277,7 +288,8 @@ func TestView_ExternalLoadUsesTheViewsConfig(t *testing.T) {
 	if !slices.Equal(cfg.BuildFlags, []string{"-tags=fts5x"}) {
 		t.Errorf("BuildFlags = %v", cfg.BuildFlags)
 	}
-	if approx, err := tagged.Approximate(); approx || err != nil {
+	approx, err := tagged.Approximate()
+	if approx || err != nil {
 		t.Errorf("Approximate = %v, %v", approx, err)
 	}
 }
@@ -290,10 +302,12 @@ func TestView_FailedExternalLoadFallsBackToPrimary(t *testing.T) {
 	tagged.Parser.loadPackages = (&recordingLoader{err: loadErr}).load
 
 	checkedPackage(t, tagged, filepath.Join(root, "p"))
-	if approx, err := tagged.Approximate(); !approx || !errors.Is(err, loadErr) {
+	approx, err := tagged.Approximate()
+	if !approx || !errors.Is(err, loadErr) {
 		t.Errorf("tagged Approximate = %v, %v", approx, err)
 	}
-	if approx, err := set.Primary().Approximate(); approx || err != nil {
+	approx, err = set.Primary().Approximate()
+	if approx || err != nil {
 		t.Errorf("primary Approximate = %v, %v", approx, err)
 	}
 }
@@ -307,7 +321,8 @@ func TestView_StdlibResolvesForTheViewsPort(t *testing.T) {
 	dir := filepath.Join(root, "p")
 	for _, v := range []*View{set.Primary(), viewWithGOOS(t, set, "windows")} {
 		checkedPackage(t, v, dir)
-		if approx, err := v.Approximate(); approx {
+		approx, err := v.Approximate()
+		if approx {
 			t.Errorf("view %s is approximate: %v", v.Config.Key(), err)
 		}
 	}
@@ -327,7 +342,8 @@ func TestWorkspaceSet_ConcurrentViewRequestsBuildEachViewOnce(t *testing.T) {
 			}
 			for _, v := range views {
 				v.Parser.EnsureTypeChecked(v.Workspace, v.Workspace.Packages[dir])
-				if _, err := v.ReferenceIndex(); err != nil {
+				_, err := v.ReferenceIndex()
+				if err != nil {
 					t.Error(err)
 				}
 			}
@@ -349,11 +365,12 @@ func TestWorkspaceSet_ApproximateViewsListsOnlyFailedLoads(t *testing.T) {
 	set.Primary().Parser.loadPackages = (&recordingLoader{pkgs: fakeExternal()}).load
 	tagged.Parser.loadPackages = (&recordingLoader{err: loadErr}).load
 
-	if got := set.ApproximateViews(); len(got) != 0 {
+	got := set.ApproximateViews()
+	if len(got) != 0 {
 		t.Fatalf("before any type-check: %v", got)
 	}
 	checkedPackage(t, tagged, filepath.Join(root, "p"))
-	got := set.ApproximateViews()
+	got = set.ApproximateViews()
 	if len(got) != 1 || got[0].Config.String() != tagged.Config.String() || !errors.Is(got[0].Err, loadErr) {
 		t.Errorf("ApproximateViews = %v, want only the tagged view with %v", got, loadErr)
 	}

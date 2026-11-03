@@ -54,7 +54,8 @@ func TestMoveSymbol_MovesTypeImplementingOnlyExportedMethodInterface(t *testing.
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Sq", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Sq", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Sq: %s", errText(res))
 	}
 
@@ -68,7 +69,8 @@ func TestMoveSymbol_MovesTypeThatDoesNotImplementTheUnexportedMethodInterface(t 
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Circle", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Circle", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Circle: %s", errText(res))
 	}
 

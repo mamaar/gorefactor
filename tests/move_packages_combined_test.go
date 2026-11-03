@@ -7,9 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/mamaar/gorefactor/pkg/types"
 	"github.com/mamaar/gorefactor/tests/mcptest"
-	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 const (
@@ -90,15 +91,18 @@ func TestMovePackagesRefusesConflictingMappingsAndWritesNothing(t *testing.T) {
 				"b/b.go":                 pkgBSource,
 				"lib/win/win_windows.go": "package win\n",
 			})
-			if _, err := movePackages(t, dir, tc.mappings...); err == nil || !strings.Contains(err.Error(), tc.reason) {
+			_, err := movePackages(t, dir, tc.mappings...)
+			if err == nil || !strings.Contains(err.Error(), tc.reason) {
 				t.Fatalf("expected a refusal containing %q, got: %v", tc.reason, err)
 			}
 			for _, rel := range []string{"a/a.go", "b/b.go", "lib/win/win_windows.go"} {
-				if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+				_, err := os.Stat(filepath.Join(dir, rel))
+				if err != nil {
 					t.Errorf("%s should be untouched: %v", rel, err)
 				}
 			}
-			if _, err := os.Stat(filepath.Join(dir, "lib", "one")); !os.IsNotExist(err) {
+			_, err = os.Stat(filepath.Join(dir, "lib", "one"))
+			if !os.IsNotExist(err) {
 				t.Errorf("lib/one should not exist, stat err=%v", err)
 			}
 		})

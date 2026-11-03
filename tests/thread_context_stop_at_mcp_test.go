@@ -31,7 +31,8 @@ func callExpectingError(t *testing.T, sess *mcptest.Session, args map[string]any
 func assertUntouched(t *testing.T, dir string, files ...string) {
 	t.Helper()
 	for _, f := range files {
-		if got := fileText(t, dir, f); strings.Contains(got, "context") {
+		got := fileText(t, dir, f)
+		if strings.Contains(got, "context") {
 			t.Errorf("%s was modified:\n%s", f, got)
 		}
 	}
@@ -44,7 +45,8 @@ func TestAddContextParameter_StopAtWithoutThreadRejected(t *testing.T) {
 
 	args := stopAtArgs("open")
 	delete(args, "thread")
-	if msg := callExpectingError(t, sess, args); !strings.Contains(msg, "stop_at") {
+	msg := callExpectingError(t, sess, args)
+	if !strings.Contains(msg, "stop_at") {
 		t.Errorf("error should mention stop_at, got: %s", msg)
 	}
 	assertUntouched(t, dir, "p/leaf.go", "p/use.go")
@@ -55,7 +57,8 @@ func TestAddContextParameter_StopAtUnknownErrorsWithoutWriting(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if msg := callExpectingError(t, sess, stopAtArgs("nope")); !strings.Contains(msg, "nope") {
+	msg := callExpectingError(t, sess, stopAtArgs("nope"))
+	if !strings.Contains(msg, "nope") {
 		t.Errorf("error should name the entry, got: %s", msg)
 	}
 	assertUntouched(t, dir, "p/leaf.go", "p/use.go", "p/open_default.go", "p/open_tagx.go")
@@ -71,7 +74,8 @@ func TestAddContextParameter_StopAtUnknownErrorsWhenSeedIsInOneConfigOnly(t *tes
 
 	args := stopAtArgs("nope")
 	args["source_file"] = "p/leaf_tagx.go"
-	if msg := callExpectingError(t, sess, args); !strings.Contains(msg, "nope") {
+	msg := callExpectingError(t, sess, args)
+	if !strings.Contains(msg, "nope") {
 		t.Errorf("error should name the entry, got: %s", msg)
 	}
 	assertUntouched(t, dir, "p/leaf_tagx.go")
@@ -97,7 +101,8 @@ func TestAddContextParameter_StopAtHonoursStopDeclaredInOneConfigOnly(t *testing
 	sites, _ := out["skipped_sites"].([]any)
 	var stops int
 	for _, s := range sites {
-		if r, _ := s.(map[string]any)["reason"].(string); strings.HasPrefix(r, "stop_at:") {
+		r, _ := s.(map[string]any)["reason"].(string)
+		if strings.HasPrefix(r, "stop_at:") {
 			stops++
 		}
 	}

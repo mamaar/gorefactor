@@ -60,7 +60,8 @@ func TestSafeDelete_FieldUnreferenced_GofmtClean(t *testing.T) {
 	args := map[string]any{"symbol": "Widget.LongestFieldName", "source_file": "model/model.go"}
 
 	dry := callJSON(t, sess, "safe_delete", map[string]any{"symbol": args["symbol"], "source_file": args["source_file"], "dry_run": true})
-	if b, ok := dry["blocking_issue"]; ok {
+	b, ok := dry["blocking_issue"]
+	if ok {
 		t.Fatalf("unexpected blocking_issue: %v", b)
 	}
 	if readFile(t, path) != sdfModel {
@@ -80,7 +81,8 @@ func TestSafeDelete_FieldUnreferenced_GofmtClean(t *testing.T) {
 	Lit  string
 	A, B int
 `, 1)
-	if got := readFile(t, path); got != want {
+	got := readFile(t, path)
+	if got != want {
 		t.Errorf("after delete:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -137,7 +139,8 @@ func TestSafeDelete_FieldSameNameOnOtherTypeNotCounted(t *testing.T) {
 	sess, _ := sdfSession(t)
 	defer sess.Close()
 	// Gadget.LongestFieldName is used; Widget's is not.
-	if _, text := sdCall(t, sess, "safe_delete", map[string]any{"symbol": "Widget.LongestFieldName", "source_file": "model/model.go", "dry_run": true}); strings.Contains(text, "references") {
+	_, text := sdCall(t, sess, "safe_delete", map[string]any{"symbol": "Widget.LongestFieldName", "source_file": "model/model.go", "dry_run": true})
+	if strings.Contains(text, "references") {
 		t.Errorf("Widget.LongestFieldName wrongly blocked: %s", text)
 	}
 	res, text := sdCall(t, sess, "safe_delete", map[string]any{"symbol": "Gadget.LongestFieldName", "source_file": "model/model.go", "dry_run": true})

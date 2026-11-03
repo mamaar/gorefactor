@@ -368,10 +368,12 @@ func TestReachableSites_TestFileInitDoesNotRootCodeWithoutIncludeTests(t *testin
 		"cmd/main.go": "package main\n\nimport _ \"example.com/w/p\"\n\nfunc main() {}\n",
 	}
 
-	if got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, false); len(got["dep.T"]) != 0 {
+	got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, false)
+	if len(got["dep.T"]) != 0 {
 		t.Errorf("without tests: unexpected sites %v", got["dep.T"])
 	}
-	if got := reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, true); len(got["dep.T"]) != 1 {
+	got = reachableSitesOf(t, files, []string{"example.com/w/dep.T"}, true)
+	if len(got["dep.T"]) != 1 {
 		t.Errorf("with tests: got %v, want 1 site", got["dep.T"])
 	}
 }
@@ -379,7 +381,8 @@ func TestReachableSites_TestFileInitDoesNotRootCodeWithoutIncludeTests(t *testin
 func TestReachableSites_GenericInstanceKeepsItsDeclarationInThePath(t *testing.T) {
 	got := reachableSitesOf(t, mainWith("func G[T any](T) { dep.T() }\n\nfunc main() { G(1) }\n"), []string{"example.com/w/dep.T"}, false)
 
-	if sites := got["dep.T"]; len(sites) != 1 || !slices.Equal(sites[0].Path, []string{"main.main", "main.G"}) {
+	sites := got["dep.T"]
+	if len(sites) != 1 || !slices.Equal(sites[0].Path, []string{"main.main", "main.G"}) {
 		t.Errorf("dep.T: got %v, want one site on path main.main main.G", sites)
 	}
 }
@@ -461,11 +464,13 @@ func TestSourceChecker_TestPackageThatDoesNotCheckIsReported(t *testing.T) {
 	sc := newSourceChecker(ws)
 	delete(sc.outside, "container/ring")
 	pkg := ws.Packages[types.ResolvePackagePath(ws, "example.com/w/p")]
-	if _, err := sc.production(pkg); err != nil {
+	_, err := sc.production(pkg)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if x, _ := sc.externalTests(pkg); x != nil {
+	x, _ := sc.externalTests(pkg)
+	if x != nil {
 		t.Errorf("external tests = %v, want none", x)
 	}
 

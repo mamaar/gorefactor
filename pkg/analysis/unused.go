@@ -93,7 +93,8 @@ func (ua *UnusedAnalyzer) FindUnusedSymbols() ([]*UnusedSymbol, error) {
 	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live), callers: deadCallers(g, m.live)}
 	var unused []*UnusedSymbol
 	for _, n := range g.nodes {
-		if u := r.symbolOf(n); u != nil {
+		u := r.symbolOf(n)
+		if u != nil {
 			unused = append(unused, u)
 		}
 	}
@@ -109,7 +110,8 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker, erro
 		if pkg.Symbols != nil {
 			continue
 		}
-		if _, err := ua.resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := ua.resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to build symbol table for package %s: %v", pkg.Path, err)
 		}
 	}
@@ -400,8 +402,10 @@ func (r *unusedReport) causeOf(n *usageNode) UnusedCause {
 // the symbol.
 func (r *unusedReport) declarationCause(n *usageNode) UnusedCause {
 	s := n.symbol
-	if targetObj := r.ua.resolver.resolveTypesObject(s); targetObj != nil {
-		if objEntries := r.idx.ObjectEntries(targetObj); len(objEntries) > 0 {
+	targetObj := r.ua.resolver.resolveTypesObject(s)
+	if targetObj != nil {
+		objEntries := r.idx.ObjectEntries(targetObj)
+		if len(objEntries) > 0 {
 			for i := range objEntries {
 				if objEntries[i].Pos != s.Position {
 					return CauseOnlyDeclarations

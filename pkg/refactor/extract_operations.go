@@ -60,7 +60,8 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 	var sourceFile *types.File
 	for _, pkg := range ws.Packages {
 		// Try exact match first
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			sourceFile = file
 			break
 		}
@@ -95,7 +96,8 @@ func (op *ExtractMethodOperation) Validate(ws *types.Workspace) error {
 
 func (op *ExtractMethodOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			return file, pkg, nil
 		}
 		for filename, file := range pkg.Files {
@@ -132,7 +134,8 @@ func (op *ExtractMethodOperation) resolveReceiver(an *extractsig.Analysis) (*ext
 	if fn == nil || fn.Recv == nil || len(fn.Recv.List) == 0 || len(fn.Recv.List[0].Names) == 0 || fn.Recv.List[0].Names[0].Name == "_" {
 		return nil, fmt.Errorf("no value of type %s is available at the call site: the block captures none and the enclosing function has no named receiver", op.TargetStruct)
 	}
-	if base := receiverBaseTypeName(fn.Recv.List[0].Type); base != op.TargetStruct {
+	base := receiverBaseTypeName(fn.Recv.List[0].Type)
+	if base != op.TargetStruct {
 		return nil, fmt.Errorf("the enclosing function's receiver has type %s, not %s, so the new method could not be called there", base, op.TargetStruct)
 	}
 	recvName := fn.Recv.List[0].Names[0].Name
@@ -162,7 +165,8 @@ func receiverBaseTypeName(expr ast.Expr) string {
 
 func (op *ExtractMethodOperation) Execute(ws *types.Workspace) (*types.RefactoringPlan, error) {
 	defer func() {
-		if r := recover(); r != nil {
+		r := recover()
+		if r != nil {
 			logFile, _ := os.Create("/tmp/gorefactor-panic.log")
 			if logFile != nil {
 				_, _ = fmt.Fprintf(logFile, "PANIC in ExtractMethodOperation.Execute: %v\n", r)
@@ -274,7 +278,8 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 		}
 	}
 
-	if _, _, err := op.resolveSourceFile(ws); err != nil {
+	_, _, err := op.resolveSourceFile(ws)
+	if err != nil {
 		return err
 	}
 
@@ -293,7 +298,8 @@ func (op *ExtractFunctionOperation) Validate(ws *types.Workspace) error {
 // path or an absolute path.
 func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*types.File, *types.Package, error) {
 	match := func(pkg *types.Package) (*types.File, bool) {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			return file, true
 		}
 		for filename, file := range pkg.Files {
@@ -303,7 +309,8 @@ func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*typ
 			if file.Path == filepath.Clean(op.SourceFile) {
 				return file, true
 			}
-			if rel, err := filepath.Rel(ws.RootPath, file.Path); err == nil {
+			rel, err := filepath.Rel(ws.RootPath, file.Path)
+			if err == nil {
 				if rel == op.SourceFile || rel == filepath.Clean(op.SourceFile) {
 					return file, true
 				}
@@ -312,13 +319,16 @@ func (op *ExtractFunctionOperation) resolveSourceFile(ws *types.Workspace) (*typ
 		return nil, false
 	}
 
-	if rootPkg, exists := ws.Packages[ws.RootPath]; exists {
-		if file, ok := match(rootPkg); ok {
+	rootPkg, exists := ws.Packages[ws.RootPath]
+	if exists {
+		file, ok := match(rootPkg)
+		if ok {
 			return file, rootPkg, nil
 		}
 	}
 	for _, pkg := range ws.Packages {
-		if file, ok := match(pkg); ok {
+		file, ok := match(pkg)
+		if ok {
 			return file, pkg, nil
 		}
 	}
@@ -422,7 +432,8 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil {
-			if symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
+			symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+			if err == nil {
 				if symbol.Kind == types.TypeSymbol {
 					structSymbol = symbol
 					break
@@ -443,7 +454,8 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil {
-			if symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
+			symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+			if err == nil {
 				if symbol.Kind == types.TypeSymbol {
 					sourcePackage = pkg
 					break
@@ -462,7 +474,8 @@ func (op *ExtractInterfaceOperation) Validate(ws *types.Workspace) error {
 	// Check methods in the package's symbol table
 	for _, methodName := range op.Methods {
 		found := false
-		if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
+		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
+		if exists {
 			for _, method := range methods {
 				if method.Name == methodName {
 					found = true
@@ -489,7 +502,8 @@ func (op *ExtractInterfaceOperation) Execute(ws *types.Workspace) (*types.Refact
 
 	for _, pkg := range ws.Packages {
 		if pkg.Symbols != nil {
-			if symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct); err == nil {
+			symbol, err := resolver.ResolveSymbol(pkg, op.SourceStruct)
+			if err == nil {
 				if symbol.Kind == types.TypeSymbol {
 					structSymbol = symbol
 					sourcePackage = pkg
@@ -556,7 +570,8 @@ func (op *ExtractInterfaceOperation) generateInterface(sourcePackage *types.Pack
 	fmt.Fprintf(&interfaceCode, "type %s interface {\n", op.InterfaceName)
 
 	for _, methodName := range op.Methods {
-		if methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]; exists {
+		methods, exists := sourcePackage.Symbols.Methods[op.SourceStruct]
+		if exists {
 			for _, method := range methods {
 				if method.Name == methodName {
 					// Extract method signature without receiver
@@ -714,7 +729,8 @@ func (op *ExtractVariableOperation) Execute(ws *types.Workspace) (*types.Refacto
 	var sourceFile *types.File
 	var sourcePackage *types.Package
 	for _, pkg := range ws.Packages {
-		if file, exists := pkg.Files[op.SourceFile]; exists {
+		file, exists := pkg.Files[op.SourceFile]
+		if exists {
 			sourceFile = file
 			sourcePackage = pkg
 			break

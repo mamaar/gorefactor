@@ -169,7 +169,8 @@ func UseCache() {
 	// is the exact condition that triggered bug 1 (ResolvePackagePath falls
 	// through to the raw, unresolved "pkg/memcache" when nothing in
 	// ws.Packages matches yet).
-	if _, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache")); !os.IsNotExist(err) {
+	_, err := os.Stat(filepath.Join(tmpDir, "pkg", "memcache"))
+	if !os.IsNotExist(err) {
 		t.Fatalf("test setup invariant violated: pkg/memcache must not exist yet, stat err=%v", err)
 	}
 
@@ -273,7 +274,8 @@ func UseCache() {
 	// above; only actually building the result does.
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = tmpDir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("fixture module does not compile after move_symbol (this is the actual bug):\n%s", out)
 	}
 }

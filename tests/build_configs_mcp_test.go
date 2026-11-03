@@ -33,7 +33,8 @@ func assertBuildConfigReport(t *testing.T, tool string, out map[string]any) {
 	if len(uncovered) != 1 {
 		t.Fatalf("%s uncovered_files = %v, want 1 entry", tool, uncovered)
 	}
-	if file := uncovered[0].(map[string]any)["file"]; file != "gen.go" {
+	file := uncovered[0].(map[string]any)["file"]
+	if file != "gen.go" {
 		t.Errorf("%s uncovered file = %v, want gen.go", tool, file)
 	}
 }
@@ -52,7 +53,8 @@ func TestBuildConfigsReportedAndRecomputedAfterRefresh(t *testing.T) {
 	assertBuildConfigReport(t, "workspace_status", callJSON(t, sess, "workspace_status", map[string]any{}))
 
 	extra := "//go:build neverset_b\n\npackage app\n"
-	if err := os.WriteFile(filepath.Join(dir, "tagged_b.go"), []byte(extra), 0o644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "tagged_b.go"), []byte(extra), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 	status := callJSON(t, sess, "workspace_status", map[string]any{})

@@ -102,7 +102,8 @@ func (t *SourceTree) AddDir(dir string) error {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.byDir[dir]; ok {
+	_, ok := t.byDir[dir]
+	if ok {
 		return nil
 	}
 	t.byDir[dir] = files
@@ -165,7 +166,8 @@ func (t *SourceTree) Remove(path string) {
 	}
 	delete(t.byPath, path)
 	files := slices.Clone(t.byDir[f.Dir])
-	if i, ok := slices.BinarySearchFunc(files, f.Name, compareFileName); ok {
+	i, ok := slices.BinarySearchFunc(files, f.Name, compareFileName)
+	if ok {
 		files = slices.Delete(files, i, i+1)
 	}
 	t.byDir[f.Dir] = files
@@ -188,7 +190,8 @@ func (t *SourceTree) readFile(dir, name string) *SourceFile {
 // directory it finds in parallel.
 func (t *SourceTree) Load(root string) error {
 	w := &treeWalker{root: root}
-	if err := filepath.WalkDir(root, w.visit); err != nil {
+	err := filepath.WalkDir(root, w.visit)
+	if err != nil {
 		return err
 	}
 
@@ -254,7 +257,8 @@ type treeLoader struct {
 
 func (l *treeLoader) work() {
 	for dir := range l.dirs {
-		if err := l.tree.AddDir(dir); err != nil {
+		err := l.tree.AddDir(dir)
+		if err != nil {
 			l.mu.Lock()
 			if l.err == nil {
 				l.err = fmt.Errorf("load %s: %w", dir, err)
@@ -265,14 +269,16 @@ func (l *treeLoader) work() {
 }
 
 func absDir(path string) string {
-	if abs, err := filepath.Abs(path); err == nil {
+	abs, err := filepath.Abs(path)
+	if err == nil {
 		return abs
 	}
 	return filepath.Clean(path)
 }
 
 func workerCount(jobs int) int {
-	if n := runtime.NumCPU(); n < jobs {
+	n := runtime.NumCPU()
+	if n < jobs {
 		return n
 	}
 	return jobs

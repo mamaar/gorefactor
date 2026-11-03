@@ -105,7 +105,8 @@ var TestVar = "test"
 		t.Errorf("Expected 1 function, got %d", len(symbolTable.Functions))
 	}
 
-	if testFunc, exists := symbolTable.Functions["TestFunction"]; exists {
+	testFunc, exists := symbolTable.Functions["TestFunction"]
+	if exists {
 		if testFunc.Name != "TestFunction" {
 			t.Errorf("Expected function name 'TestFunction', got '%s'", testFunc.Name)
 		}
@@ -124,7 +125,8 @@ var TestVar = "test"
 		t.Errorf("Expected at least 2 types, got %d", len(symbolTable.Types))
 	}
 
-	if testType, exists := symbolTable.Types["TestType"]; exists {
+	testType, exists := symbolTable.Types["TestType"]
+	if exists {
 		if testType.Kind != types.TypeSymbol {
 			t.Errorf("Expected TypeSymbol, got %v", testType.Kind)
 		}
@@ -135,7 +137,8 @@ var TestVar = "test"
 		t.Error("Expected to find TestType in symbol table")
 	}
 
-	if testInterface, exists := symbolTable.Types["TestInterface"]; exists {
+	testInterface, exists := symbolTable.Types["TestInterface"]
+	if exists {
 		if testInterface.Kind != types.InterfaceSymbol {
 			t.Errorf("Expected InterfaceSymbol, got %v", testInterface.Kind)
 		}
@@ -148,7 +151,8 @@ var TestVar = "test"
 		t.Errorf("Expected 1 variable, got %d", len(symbolTable.Variables))
 	}
 
-	if testVar, exists := symbolTable.Variables["TestVar"]; exists {
+	testVar, exists := symbolTable.Variables["TestVar"]
+	if exists {
 		if testVar.Kind != types.VariableSymbol {
 			t.Errorf("Expected VariableSymbol, got %v", testVar.Kind)
 		}
@@ -164,7 +168,8 @@ var TestVar = "test"
 		t.Errorf("Expected 1 constant, got %d", len(symbolTable.Constants))
 	}
 
-	if testConst, exists := symbolTable.Constants["TestConst"]; exists {
+	testConst, exists := symbolTable.Constants["TestConst"]
+	if exists {
 		if testConst.Kind != types.ConstantSymbol {
 			t.Errorf("Expected ConstantSymbol, got %v", testConst.Kind)
 		}
@@ -180,7 +185,8 @@ var TestVar = "test"
 		t.Errorf("Expected 2 method groups (TestType + TestInterface), got %d", len(symbolTable.Methods))
 	}
 
-	if methods, exists := symbolTable.Methods["TestType"]; exists {
+	methods, exists := symbolTable.Methods["TestType"]
+	if exists {
 		if len(methods) != 1 {
 			t.Errorf("Expected 1 method for TestType, got %d", len(methods))
 		}
@@ -195,7 +201,8 @@ var TestVar = "test"
 	}
 
 	// Validate interface methods are also discovered
-	if methods, exists := symbolTable.Methods["TestInterface"]; exists {
+	methods, exists = symbolTable.Methods["TestInterface"]
+	if exists {
 		if len(methods) != 1 {
 			t.Errorf("Expected 1 method for TestInterface, got %d", len(methods))
 		}
@@ -272,7 +279,8 @@ func TestSymbolResolver_ResolveSymbol(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	if refErr, ok := err.(*types.RefactorError); ok {
+	refErr, ok := err.(*types.RefactorError)
+	if ok {
 		if refErr.Type != types.SymbolNotFound {
 			t.Errorf("Expected SymbolNotFound error, got %v", refErr.Type)
 		}
@@ -430,7 +438,8 @@ func TestSymbolResolver_extractFunctionSignature(t *testing.T) {
 			// Find the function declaration
 			var funcDecl *ast.FuncDecl
 			ast.Inspect(astFile, func(n ast.Node) bool {
-				if fd, ok := n.(*ast.FuncDecl); ok {
+				fd, ok := n.(*ast.FuncDecl)
+				if ok {
 					funcDecl = fd
 					return false
 				}
@@ -737,7 +746,8 @@ func Caller() string { return pkga.SharedFunc() }
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range ws.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			t.Fatalf("Failed to build symbol table for %s: %v", pkg.Name, err)
 		}
 	}
@@ -1111,7 +1121,8 @@ func Caller() string { return pkga.SharedFunc() }
 
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range ws.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			t.Fatalf("Failed to build symbol table for %s: %v", pkg.Name, err)
 		}
 	}
@@ -1248,7 +1259,8 @@ func TestFindMemberReferences_ErrorWhenTypesInfoNil(t *testing.T) {
 	if refs != nil {
 		t.Errorf("expected nil refs on error, got %d references", len(refs))
 	}
-	if _, ok := err.(*types.RefactorError); !ok {
+	_, ok := err.(*types.RefactorError)
+	if !ok {
 		t.Errorf("expected *types.RefactorError, got %T", err)
 	}
 }
@@ -1410,13 +1422,16 @@ func TestBuildSymbolTable_FunctionLocalDeclarationsDoNotShadowPackageLevel(t *te
 
 func TestBuildSymbolTable_FunctionLocalNamesAreAbsent(t *testing.T) {
 	st := symbolTableOf(t, map[string]string{"a.go": pkgLevelSrc, "b.go": localsSrc})
-	if _, ok := st.Constants["OnlyLocal"]; ok {
+	_, ok := st.Constants["OnlyLocal"]
+	if ok {
 		t.Error("local const OnlyLocal in Constants")
 	}
-	if _, ok := st.Variables["localVar"]; ok {
+	_, ok = st.Variables["localVar"]
+	if ok {
 		t.Error("local var localVar in Variables")
 	}
-	if _, ok := st.Types["localType"]; ok {
+	_, ok = st.Types["localType"]
+	if ok {
 		t.Error("local type localType in Types")
 	}
 }
@@ -1436,10 +1451,12 @@ func TestBuildSymbolTable_TestFilesDoNotReplaceProductionSymbols(t *testing.T) {
 func TestBuildSymbolTable_EachInterfaceIsRecordedOnce(t *testing.T) {
 	src := "package x\n\ntype I interface {\n\tM()\n}\n\ntype S struct {\n\tA int\n}\n"
 	st := symbolTableOf(t, map[string]string{"a.go": src})
-	if n := len(st.Methods["I"]); n != 1 {
+	n := len(st.Methods["I"])
+	if n != 1 {
 		t.Errorf("interface I has %d method symbols, want 1", n)
 	}
-	if n := len(st.Fields["S"]); n != 1 {
+	n = len(st.Fields["S"])
+	if n != 1 {
 		t.Errorf("struct S has %d field symbols, want 1", n)
 	}
 	if st.Methods["I"][0].Parent != st.Types["I"] {

@@ -14,7 +14,8 @@ func TestGenerateNewSignature_KeptGroupHasNoSpaceBeforeComma(t *testing.T) {
 	}
 	op := &ChangeSignatureOperation{NewParams: []Parameter{{Name: "userID", Type: "string"}, {Name: "pass", Type: "string"}, {Name: "n", Type: "int"}}}
 	got := op.generateNewSignature(f.Decls[0].(*ast.FuncDecl))
-	if want := "func g(userID, pass string, n int)"; got != want {
+	want := "func g(userID, pass string, n int)"
+	if got != want {
 		t.Errorf("signature = %q, want %q", got, want)
 	}
 }

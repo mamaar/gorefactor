@@ -54,7 +54,8 @@ func (p *moveSymbolPlanner) planIn(v *analysis.View, _ types.SymbolKeySet) (conf
 
 func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) {
 	op := &MoveSymbolOperation{Request: p.req}
-	if err := op.Validate(v.Workspace); err != nil {
+	err := op.Validate(v.Workspace)
+	if err != nil {
 		err = fmt.Errorf("move operation validation failed: %w", err)
 		if isSymbolNotFound(err) {
 			return configResult{absent: err}, nil
@@ -69,7 +70,8 @@ func (p *moveSymbolPlanner) planPrimary(v *analysis.View) (configResult, error) 
 
 	p.moved = make(map[types.SymbolKey]string, len(op.moved))
 	for _, sym := range op.moved {
-		if key, ok := symbolKeyOf(sym); ok {
+		key, ok := symbolKeyOf(sym)
+		if ok {
 			p.moved[key] = sym.File
 		}
 	}
@@ -89,8 +91,10 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 	resolver := quietResolver(ws)
 	if len(p.moved) == 0 {
 		for _, ref := range p.req.Refs() {
-			if pkg := ws.Packages[ref.Package]; pkg != nil && pkg.Symbols != nil {
-				if sym, err := resolver.ResolveSymbol(pkg, ref.Name); err == nil {
+			pkg := ws.Packages[ref.Package]
+			if pkg != nil && pkg.Symbols != nil {
+				sym, err := resolver.ResolveSymbol(pkg, ref.Name)
+				if err == nil {
 					p.object(v, "%s is declared only outside the default build configuration, in %s", sym.Name, sym.File)
 				}
 			}
@@ -111,7 +115,8 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			continue
 		}
 		if target != nil && target.Symbols != nil && findPackageForFile(ws, sym.File) != target {
-			if _, err := resolver.ResolveSymbol(target, key.Name); err == nil {
+			_, err := resolver.ResolveSymbol(target, key.Name)
+			if err == nil {
 				p.object(v, "symbol %s already exists in target package %s", key.Name, p.req.ToPackage)
 			}
 		}
@@ -130,7 +135,8 @@ func (p *moveSymbolPlanner) check(v *analysis.View) configResult {
 			}
 		}
 	}
-	if cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers); cycle != nil {
+	cycle := importCycle(analysis.ImportGraph(ws).Union(), p.target, p.targetImports, p.importers)
+	if cycle != nil {
 		p.object(v, "the move would create an import cycle: %s", strings.Join(cycle, " -> "))
 	}
 	return res

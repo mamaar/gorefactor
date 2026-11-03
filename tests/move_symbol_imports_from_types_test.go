@@ -19,7 +19,8 @@ func moveImportsFixture(t *testing.T, files map[string]string, symbol string) st
 	dir := writeInlineWorkspace(t, files)
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
-	if res := moveSymbolCall(t, sess, symbol, "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, symbol, "src", "dst")
+	if res.IsError {
 		t.Fatalf("move %s: %s", symbol, errText(res))
 	}
 	return dir
@@ -35,7 +36,8 @@ func TestMoveSymbol_UsesTargetsPlainImportWhenSourceAliasedThePath(t *testing.T)
 	if !strings.Contains(got, "func Use() int { return o.X() }") || strings.Contains(got, "osrc") {
 		t.Errorf("moved code does not use the target's name:\n%s", got)
 	}
-	if n := strings.Count(got, importsOPath); n != 1 {
+	n := strings.Count(got, importsOPath)
+	if n != 1 {
 		t.Errorf("dst imports the path %d times, want 1:\n%s", n, got)
 	}
 	goVets(t, dir, "")
@@ -51,7 +53,8 @@ func TestMoveSymbol_UsesTargetsAliasWhenSourceImportedThePathPlainly(t *testing.
 	if !strings.Contains(got, "func Use() int { return oo.X() }") {
 		t.Errorf("moved code does not use the target's alias:\n%s", got)
 	}
-	if n := strings.Count(got, importsOPath); n != 1 {
+	n := strings.Count(got, importsOPath)
+	if n != 1 {
 		t.Errorf("dst imports the path %d times, want 1:\n%s", n, got)
 	}
 	goVets(t, dir, "")
@@ -81,7 +84,8 @@ func TestMoveSymbol_ImportsPathOnceWhenMovedFilesAliasItDifferently(t *testing.T
 	}, "Thing")
 
 	got := fileText(t, dir, "dst/dst.go")
-	if n := strings.Count(got, importsOPath); n != 1 {
+	n := strings.Count(got, importsOPath)
+	if n != 1 {
 		t.Errorf("dst imports the path %d times, want 1:\n%s", n, got)
 	}
 	if strings.Contains(got, "a2.") == strings.Contains(got, "a1.") {
@@ -106,7 +110,8 @@ func TestMoveSymbol_DoesNotImportForLocalVariableNamedLikeAnImport(t *testing.T)
 		"src/src.go": "package src\n\nimport \"strings\"\n\nfunc Other() string { return strings.ToUpper(\"x\") }\n\nfunc Pick() int {\n\tstrings := struct{ N int }{3}\n\treturn strings.N\n}\n",
 	}, "Pick")
 
-	if got := fileText(t, dir, "dst/dst.go"); strings.Contains(got, `"strings"`) {
+	got := fileText(t, dir, "dst/dst.go")
+	if strings.Contains(got, `"strings"`) {
 		t.Errorf("dst imports strings for a local variable:\n%s", got)
 	}
 	goVets(t, dir, "")
@@ -137,7 +142,8 @@ func TestMoveSymbol_RefusesCodeUsingNamesFromADotImport(t *testing.T) {
 		t.Fatalf("move Use succeeded, want a refusal")
 	}
 	for _, want := range []string{"Use", "dot import", "example.com/threadmcp/o", "src.go"} {
-		if got := errText(res); !strings.Contains(got, want) {
+		got := errText(res)
+		if !strings.Contains(got, want) {
 			t.Errorf("error %q does not mention %q", got, want)
 		}
 	}

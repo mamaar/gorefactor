@@ -46,7 +46,8 @@ func importLocalName(imp *ast.ImportSpec) (string, bool) {
 	// (packagePathToImportPath, lastPathComponent), and is right for the
 	// overwhelming majority of stdlib and third-party packages.
 	path := strings.Trim(imp.Path.Value, `"`)
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+	idx := strings.LastIndex(path, "/")
+	if idx >= 0 {
 		return path[idx+1:], false
 	}
 	return path, false
@@ -68,10 +69,11 @@ func chooseImportNames(ws *types.Workspace, targetFile *types.File, moving []*mo
 	var wants []*want
 	byPath := make(map[string]*want)
 	get := func(path, realName string) *want {
-		if w, ok := byPath[path]; ok {
+		w, ok := byPath[path]
+		if ok {
 			return w
 		}
-		w := &want{path: path, realName: realName}
+		w = &want{path: path, realName: realName}
 		byPath[path] = w
 		wants = append(wants, w)
 		return w
@@ -187,7 +189,8 @@ func packageClauseEndOffset(ws *types.Workspace, targetFile *types.File) int {
 
 	if targetFile.AST == nil || targetFile.AST.Name == nil || ws.FileSet == nil {
 		// Fallback: assume the file starts with "package <name>\n".
-		if idx := strings.IndexByte(string(content), '\n'); idx >= 0 {
+		idx := strings.IndexByte(string(content), '\n')
+		if idx >= 0 {
 			return idx + 1
 		}
 		return len(content)
@@ -325,7 +328,8 @@ func emptiedFileDeletion(file *types.File, removals []types.Change) (types.Chang
 		return types.Change{}, false
 	}
 	for _, decl := range parsed.Decls {
-		if gen, ok := decl.(*ast.GenDecl); !ok || gen.Tok != token.IMPORT {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok || gen.Tok != token.IMPORT {
 			return types.Change{}, false
 		}
 	}
@@ -365,7 +369,8 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 		})
 	}
 	var stillUsed func(imp *ast.ImportSpec) bool
-	if info := typeInfoOf(ws, sourceFile); info != nil {
+	info := typeInfoOf(ws, sourceFile)
+	if info != nil {
 		stillUsed = func(imp *ast.ImportSpec) bool {
 			path := strings.Trim(imp.Path.Value, `"`)
 			for ident, obj := range info.Uses {
@@ -386,8 +391,10 @@ func unusedImportsAfterRemoval(ws *types.Workspace, sourceFile *types.File, remo
 			}
 			used := false
 			ast.Inspect(sourceFile.AST, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok {
-					if id, ok := sel.X.(*ast.Ident); ok && id.Name == imp.Name.Name && remaining(id.Pos()) {
+				sel, ok := n.(*ast.SelectorExpr)
+				if ok {
+					id, ok := sel.X.(*ast.Ident)
+					if ok && id.Name == imp.Name.Name && remaining(id.Pos()) {
 						used = true
 					}
 				}
@@ -414,7 +421,8 @@ func typeInfoOf(ws *types.Workspace, file *types.File) *gotypes.Info {
 	if pkg == nil || pkg.TypesInfo == nil {
 		return nil
 	}
-	if _, ok := pkg.TypesInfo.Defs[file.AST.Name]; !ok {
+	_, ok := pkg.TypesInfo.Defs[file.AST.Name]
+	if !ok {
 		return nil
 	}
 	return pkg.TypesInfo

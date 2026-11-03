@@ -37,7 +37,8 @@ func TestThreadContextGenerated_RefusesThenAcceptsSuggestedStop(t *testing.T) {
 		if !strings.Contains(msg, generatedBridge) || !strings.Contains(msg, suggestedStop) {
 			t.Errorf("error should name %s and suggest %s, got: %s", generatedBridge, suggestedStop, msg)
 		}
-		if after := readTree(t, dir); !equalTrees(before, after) {
+		after := readTree(t, dir)
+		if !equalTrees(before, after) {
 			t.Errorf("refused climb modified the workspace")
 		}
 	})
@@ -66,7 +67,8 @@ func TestThreadContextGenerated_RefusesThenAcceptsSuggestedStop(t *testing.T) {
 		if stops != 1 {
 			t.Errorf("skipped_sites lists %d stop_at entries, want 1: %+v", stops, out.SkippedSites)
 		}
-		if after := readTree(t, dir); !equalTrees(before, after) {
+		after := readTree(t, dir)
+		if !equalTrees(before, after) {
 			t.Errorf("dry run modified the workspace")
 		}
 	})
@@ -85,7 +87,8 @@ func TestThreadContextGenerated_RefusesThenAcceptsSuggestedStop(t *testing.T) {
 		if after[generatedBridge] != before[generatedBridge] {
 			t.Errorf("%s was modified:\n%s", generatedBridge, after[generatedBridge])
 		}
-		if got := fileText(t, dir, "planner/planner.go"); !strings.Contains(got, "func Plan(ctx context.Context, query string)") {
+		got := fileText(t, dir, "planner/planner.go")
+		if !strings.Contains(got, "func Plan(ctx context.Context, query string)") {
 			t.Errorf("planner.go:\n%s", got)
 		}
 		goBuilds(t, dir, "")

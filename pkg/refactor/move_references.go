@@ -69,7 +69,8 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 
 	dropped := slices.Clone(unused)
 	for _, src := range sources {
-		if spec := unusedSourceImport(file, src.refs, src.importPath, src.name); spec != nil && !slices.Contains(dropped, spec) {
+		spec := unusedSourceImport(file, src.refs, src.importPath, src.name)
+		if spec != nil && !slices.Contains(dropped, spec) {
 			dropped = append(dropped, spec)
 		}
 	}
@@ -101,8 +102,11 @@ func planReferenceFile(ws *types.Workspace, filePath string, sources []reference
 	edit := referenceFileEdit{qualifier: alias}
 	if len(dropped) > 0 {
 		edit.importChanges = append([]types.Change{replaceImportSpec(ws, file, dropped[0], explicit, targetImportPath)}, removeDropped(dropped[1:])...)
-	} else if change := generateAddImportChange(ws, filePath, explicit, targetImportPath); change != nil {
-		edit.importChanges = []types.Change{*change}
+	} else {
+		change := generateAddImportChange(ws, filePath, explicit, targetImportPath)
+		if change != nil {
+			edit.importChanges = []types.Change{*change}
+		}
 	}
 	return edit
 }
@@ -153,8 +157,10 @@ func qualifierBefore(content []byte, offset int) string {
 func countQualifierUses(f *ast.File, name string) int {
 	n := 0
 	ast.Inspect(f, func(node ast.Node) bool {
-		if sel, ok := node.(*ast.SelectorExpr); ok {
-			if id, ok := sel.X.(*ast.Ident); ok && id.Name == name {
+		sel, ok := node.(*ast.SelectorExpr)
+		if ok {
+			id, ok := sel.X.(*ast.Ident)
+			if ok && id.Name == name {
 				n++
 			}
 		}
@@ -184,7 +190,8 @@ func chooseImportName(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 		}
 	}
 	for n := 2; ; n++ {
-		if c := fmt.Sprintf("%s%d", targetName, n); !taken[c] {
+		c := fmt.Sprintf("%s%d", targetName, n)
+		if !taken[c] {
 			return c
 		}
 	}
@@ -208,7 +215,8 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 	taken := make(map[string]bool)
 	dropNames := make(map[string]bool)
 	for _, spec := range dropped {
-		if name, _ := importLocalName(spec); name != "" {
+		name, _ := importLocalName(spec)
+		if name != "" {
 			dropNames[name] = true
 		}
 	}
@@ -219,11 +227,13 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 		if slices.Contains(dropped, imp) {
 			continue
 		}
-		if name, _ := importLocalName(imp); name != "" {
+		name, _ := importLocalName(imp)
+		if name != "" {
 			taken[name] = true
 		}
 	}
-	if pkg := findPackageForFile(ws, file.Path); pkg != nil && pkg.Symbols != nil {
+	pkg := findPackageForFile(ws, file.Path)
+	if pkg != nil && pkg.Symbols != nil {
 		for _, group := range []map[string]*types.Symbol{pkg.Symbols.Types, pkg.Symbols.Functions, pkg.Symbols.Variables, pkg.Symbols.Constants} {
 			for name := range group {
 				taken[name] = true
@@ -236,13 +246,15 @@ func namesInFileScope(ws *types.Workspace, file *types.File, dropped []*ast.Impo
 			return false
 		case *ast.SelectorExpr:
 			// Sel is a member name, not a scope identifier; only X can collide.
-			if id, ok := node.X.(*ast.Ident); ok {
+			id, ok := node.X.(*ast.Ident)
+			if ok {
 				if !dropNames[id.Name] {
 					taken[id.Name] = true
 				}
 			} else {
 				ast.Inspect(node.X, func(n ast.Node) bool {
-					if id, ok := n.(*ast.Ident); ok {
+					id, ok := n.(*ast.Ident)
+					if ok {
 						taken[id.Name] = true
 					}
 					return true
@@ -304,7 +316,8 @@ func removeImportSpecs(ws *types.Workspace, file *types.File, specs []*ast.Impor
 		}
 		var mine []*ast.ImportSpec
 		for _, s := range gen.Specs {
-			if spec := s.(*ast.ImportSpec); slices.Contains(specs, spec) {
+			spec := s.(*ast.ImportSpec)
+			if slices.Contains(specs, spec) {
 				mine = append(mine, spec)
 			}
 		}

@@ -23,7 +23,8 @@ func TestRenameSymbol_ReportsProductionImportCycleAndSessionSurvives(t *testing.
 			t.Fatalf("call %d: rename_symbol failed: %s", i, errText(res))
 		}
 		var out typeErrorsJSON
-		if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+		err := json.Unmarshal([]byte(errText(res)), &out)
+		if err != nil {
 			t.Fatal(err)
 		}
 		found := false
@@ -49,7 +50,8 @@ func TestRenameSymbol_ProductionSelfImportIsReportedAndSessionSurvives(t *testin
 			t.Fatalf("call %d: rename_symbol failed: %s", i, errText(res))
 		}
 		var out typeErrorsJSON
-		if err := json.Unmarshal([]byte(errText(res)), &out); err != nil {
+		err := json.Unmarshal([]byte(errText(res)), &out)
+		if err != nil {
 			t.Fatal(err)
 		}
 		found := false

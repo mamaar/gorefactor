@@ -34,7 +34,8 @@ func TestRenameMethod_SecondAppliedRenameReportsNoTypeErrors(t *testing.T) {
 	second := callJSON(t, sess, "rename_method", args)
 
 	for name, out := range map[string]map[string]any{"first": first, "second": second} {
-		if errs, ok := out["type_errors"]; ok {
+		errs, ok := out["type_errors"]
+		if ok {
 			t.Errorf("%s rename reports type_errors of a workspace that compiles: %v", name, errs)
 		}
 	}

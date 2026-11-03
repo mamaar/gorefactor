@@ -217,7 +217,8 @@ func classifyImport(importPath, modulePath string, workspaceModules []string) Im
 
 	// Stdlib: first path segment has no dot.
 	firstSeg := importPath
-	if before, _, ok := strings.Cut(importPath, "/"); ok {
+	before, _, ok := strings.Cut(importPath, "/")
+	if ok {
 		firstSeg = before
 	}
 	if !strings.Contains(firstSeg, ".") {

@@ -23,7 +23,8 @@ func threadPlanStopping(t *testing.T, files map[string]string, sourceFile, funcN
 	t.Helper()
 	ws := buildScopeWorkspace(t, files)
 	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile, StopAt: stops}
-	if _, err := op.Execute(ws); err != nil {
+	_, err := op.Execute(ws)
+	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if op.plan == nil {
@@ -119,13 +120,16 @@ func c() {}
 	// main is a root: it cannot gain a parameter, so the climb stops there.
 	assertNames(t, gainingNames(plan), []string{"a", "b", "c"}, "Funcs")
 
-	if got := argIn(t, plan, "main"); got != "context.TODO()" {
+	got := argIn(t, plan, "main")
+	if got != "context.TODO()" {
 		t.Errorf("main must fabricate a root context, got %q", got)
 	}
-	if got := argIn(t, plan, "a"); got != "ctx" {
+	got = argIn(t, plan, "a")
+	if got != "ctx" {
 		t.Errorf("a must pass its injected ctx, got %q", got)
 	}
-	if got := argIn(t, plan, "b"); got != "ctx" {
+	got = argIn(t, plan, "b")
+	if got != "ctx" {
 		t.Errorf("b must pass its injected ctx, got %q", got)
 	}
 }
@@ -143,7 +147,8 @@ func target() {}
 	}, "p/foo.go", "target")
 
 	assertNames(t, gainingNames(plan), []string{"target"}, "Funcs")
-	if got := argIn(t, plan, "caller"); got != "ctx" {
+	got := argIn(t, plan, "caller")
+	if got != "ctx" {
 		t.Errorf("caller already has a ctx and must pass it, got %q", got)
 	}
 }
@@ -161,7 +166,8 @@ func target() {}
 	}, "p/foo.go", "target")
 
 	assertNames(t, gainingNames(plan), []string{"target"}, "Funcs")
-	if got := argIn(t, plan, "caller"); got != "c" {
+	got := argIn(t, plan, "caller")
+	if got != "c" {
 		t.Errorf("the ctx expression must be the real parameter name, not a hardcoded ctx; got %q", got)
 	}
 }
@@ -202,10 +208,12 @@ func target() {}
 			t.Errorf("top must pass its injected ctx to both arms, got %q", a)
 		}
 	}
-	if got := argIn(t, plan, "left"); got != "ctx" {
+	got := argIn(t, plan, "left")
+	if got != "ctx" {
 		t.Errorf("left must thread ctx, got %q", got)
 	}
-	if got := argIn(t, plan, "right"); got != "ctx" {
+	got = argIn(t, plan, "right")
+	if got != "ctx" {
 		t.Errorf("right must thread ctx, got %q", got)
 	}
 }
@@ -219,7 +227,8 @@ func f() { f() }
 	}, "p/foo.go", "f")
 
 	assertNames(t, gainingNames(plan), []string{"f"}, "Funcs")
-	if got := argIn(t, plan, "f"); got != "ctx" {
+	got := argIn(t, plan, "f")
+	if got != "ctx" {
 		t.Errorf("the recursive call must pass f's own injected ctx, got %q", got)
 	}
 }
@@ -235,10 +244,12 @@ func g() { f() }
 	}, "p/foo.go", "f")
 
 	assertNames(t, gainingNames(plan), []string{"f", "g"}, "Funcs")
-	if got := argIn(t, plan, "f"); got != "ctx" {
+	got := argIn(t, plan, "f")
+	if got != "ctx" {
 		t.Errorf("f must pass its injected ctx, got %q", got)
 	}
-	if got := argIn(t, plan, "g"); got != "ctx" {
+	got = argIn(t, plan, "g")
+	if got != "ctx" {
 		t.Errorf("g must pass its injected ctx, got %q", got)
 	}
 }
@@ -265,7 +276,8 @@ func target() {}
 
 	assertNames(t, gainingNames(plan), []string{"caller", "target"}, "Funcs")
 	assertNames(t, fakeNames(plan), []string{"caller"}, "Fake")
-	if got := argIn(t, plan, "caller"); got != "ctx" {
+	got := argIn(t, plan, "caller")
+	if got != "ctx" {
 		t.Errorf("caller must pass its injected ctx, got %q", got)
 	}
 }
@@ -289,7 +301,8 @@ func target() {}
 	// main cannot gain a parameter, so its local ctx is passed and kept.
 	assertNames(t, gainingNames(plan), []string{"target"}, "Funcs")
 	assertNames(t, fakeNames(plan), nil, "Fake")
-	if got := argIn(t, plan, "main"); got != "ctx" {
+	got := argIn(t, plan, "main")
+	if got != "ctx" {
 		t.Errorf("a root with a local ctx must pass it rather than fabricate a new one, got %q", got)
 	}
 }
@@ -312,7 +325,8 @@ func caller() { seed(1, context.Background()) }
 	}, "p/foo.go", "seed")
 
 	assertNames(t, gainingNames(plan), []string{"caller"}, "Funcs")
-	if got := argIn(t, plan, "caller"); got != "ctx" {
+	got := argIn(t, plan, "caller")
+	if got != "ctx" {
 		t.Errorf("the caller must still be threaded and pass its injected ctx, got %q", got)
 	}
 }
@@ -365,7 +379,8 @@ func target() {}
 	// F is not climbed: the goroutine may outlive it, so F's (hypothetical) ctx
 	// is not a sound source for the closure.
 	assertNames(t, gainingNames(plan), []string{"target"}, "Funcs")
-	if got := argIn(t, plan, "F"); got != "context.TODO()" {
+	got := argIn(t, plan, "F")
+	if got != "context.TODO()" {
 		t.Errorf("a closure with no ctx in scope is a root, got %q", got)
 	}
 }
@@ -385,7 +400,8 @@ func target() {}
 	}, "p/foo.go", "target")
 
 	assertNames(t, gainingNames(plan), []string{"target"}, "Funcs")
-	if got := argIn(t, plan, "F"); got != "ctx" {
+	got := argIn(t, plan, "F")
+	if got != "ctx" {
 		t.Errorf("a closure capturing a real outer ctx must use it, not TODO(); got %q", got)
 	}
 }

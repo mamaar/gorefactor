@@ -53,7 +53,8 @@ func (p *renameFieldPlanner) operation(req types.RenameFieldRequest, idx *analys
 
 // validateIn validates the rename and returns the key of the field it renames.
 func (op *RenameFieldOperation) validateIn(ws *types.Workspace) (types.SymbolKeySet, error) {
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		return nil, err
 	}
 	pkg, err := op.findOwningPackage(ws)

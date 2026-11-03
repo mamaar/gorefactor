@@ -37,7 +37,8 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() *types.DependencyGraph {
 		TestImportCycles: testImportCycles(edges),
 	}
 
-	if n := len(graph.ImportCycles); n > 0 {
+	n := len(graph.ImportCycles)
+	if n > 0 {
 		da.logger.Warn("detected import cycles", "cycle_count", n)
 	}
 
@@ -186,7 +187,8 @@ func testImportCycles(g Imports) [][]string {
 	for _, p := range pkgs {
 		var best []string
 		for _, t := range g.Test[p] {
-			if path := shortestPath(g.Production, []string{t}, p); path != nil && (best == nil || len(path) < len(best)) {
+			path := shortestPath(g.Production, []string{t}, p)
+			if path != nil && (best == nil || len(path) < len(best)) {
 				best = path
 			}
 		}

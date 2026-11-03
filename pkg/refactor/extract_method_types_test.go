@@ -24,15 +24,18 @@ func writeExtractWorkspace(t *testing.T, files map[string]string) (RefactorEngin
 	t.Helper()
 	dir := t.TempDir()
 
-	if _, ok := files["go.mod"]; !ok {
+	_, ok := files["go.mod"]
+	if !ok {
 		files["go.mod"] = "module example.com/extracttest\n\ngo 1.21\n"
 	}
 	for rel, content := range files {
 		full := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatalf("mkdir %s: %v", full, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatalf("write %s: %v", full, err)
 		}
 	}
@@ -143,7 +146,8 @@ func analyze(auth sourceInfo, feed feedInfo) (res scanReport) {
 		t.Errorf("expected the body to end in `return res`:\n%s", decl)
 	}
 
-	if call := callOf(t, plan); call != "res = appendBaseChecks(res, auth, feed)" {
+	call := callOf(t, plan)
+	if call != "res = appendBaseChecks(res, auth, feed)" {
 		t.Errorf("call site = %q, want %q", call, "res = appendBaseChecks(res, auth, feed)")
 	}
 }
@@ -181,7 +185,8 @@ func check(n int) error {
 	if !strings.Contains(decl, "func validate(n int) error {") {
 		t.Errorf("expected the enclosing function's result signature, got:\n%s", decl)
 	}
-	if call := callOf(t, plan); call != "return validate(n)" {
+	call := callOf(t, plan)
+	if call != "return validate(n)" {
 		t.Errorf("call site = %q, want %q", call, "return validate(n)")
 	}
 }
@@ -332,7 +337,8 @@ func run(n int) {
 	}
 
 	want := "var label string\nsum, label = shift(sum, n)"
-	if call := callOf(t, plan); call != want {
+	call := callOf(t, plan)
+	if call != want {
 		t.Errorf("call site = %q, want %q", call, want)
 	}
 }
@@ -445,7 +451,8 @@ func (m *MyStruct) ProcessData(items []string, count int) error {
 	if strings.Contains(sigLine, "m *MyStruct,") || strings.Count(sigLine, "MyStruct") != 1 {
 		t.Errorf("receiver leaked into the parameter list:\n%s", sigLine)
 	}
-	if call := callOf(t, plan); call != "total = m.processItems(items, seen, total, count)" {
+	call := callOf(t, plan)
+	if call != "total = m.processItems(items, seen, total, count)" {
 		t.Errorf("call site = %q", call)
 	}
 }
@@ -504,7 +511,8 @@ func (p *Processor) Run(result *Result, data []string) {
 	if !strings.HasSuffix(sigLine, ") int {") {
 		t.Errorf("expected a single int result for counter, got:\n%s", sigLine)
 	}
-	if call := callOf(t, plan); call != "counter = p.processData(data, result, counter)" {
+	call := callOf(t, plan)
+	if call != "counter = p.processData(data, result, counter)" {
 		t.Errorf("call site = %q", call)
 	}
 }

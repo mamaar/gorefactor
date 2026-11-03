@@ -50,12 +50,14 @@ func (s *externalSet) add(byID map[string]*externalPackage, meta *packages.Packa
 	if meta == nil {
 		return nil
 	}
-	if n := byID[meta.ID]; n != nil {
+	n := byID[meta.ID]
+	if n != nil {
 		return n
 	}
-	n := &externalPackage{meta: meta, imports: make(map[string]*externalPackage, len(meta.Imports))}
+	n = &externalPackage{meta: meta, imports: make(map[string]*externalPackage, len(meta.Imports))}
 	byID[meta.ID] = n
-	if prev := s.byPath[meta.PkgPath]; prev == nil || meta.ID == meta.PkgPath {
+	prev := s.byPath[meta.PkgPath]
+	if prev == nil || meta.ID == meta.PkgPath {
 		s.byPath[meta.PkgPath] = n
 	}
 	for path, dep := range meta.Imports {
@@ -74,7 +76,8 @@ func (s *externalSet) lookup(path string) (*gotypes.Package, error) {
 	if n == nil {
 		return nil, nil
 	}
-	if err := n.listingError(); err != nil {
+	err := n.listingError()
+	if err != nil {
 		return nil, err
 	}
 	s.mu.Lock()
@@ -215,7 +218,8 @@ func (i *externalImporter) Import(path string) (*gotypes.Package, error) {
 	if dep == nil {
 		return nil, fmt.Errorf("no metadata for %s", path)
 	}
-	if err := dep.listingError(); err != nil {
+	err := dep.listingError()
+	if err != nil {
 		return nil, err
 	}
 	i.set.check(dep)

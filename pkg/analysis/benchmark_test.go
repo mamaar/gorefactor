@@ -294,7 +294,8 @@ func ComplexFunction%d() {
 	// Build symbol tables for all packages
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range workspace.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			b.Fatalf("Failed to build symbol table: %v", err)
 		}
 	}
@@ -373,7 +374,8 @@ var Var%d = "var"
 
 	resolver := NewSymbolResolver(workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range workspace.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			tb.Fatalf("Failed to build symbol table: %v", err)
 		}
 	}
@@ -552,7 +554,8 @@ func BenchmarkFindUnusedSymbols(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := analyzer.FindUnusedSymbols(); err != nil {
+		_, err := analyzer.FindUnusedSymbols()
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -181,7 +181,8 @@ func (v *Validator) validateCompilation(plan *refactorTypes.RefactoringPlan) []r
 				strings.Contains(desc, "Replace") ||
 				strings.Contains(desc, "Wrap")
 			if !isFragment {
-				if err := v.validateGoSyntax(change.NewText); err != nil {
+				err := v.validateGoSyntax(change.NewText)
+				if err != nil {
 					issues = append(issues, refactorTypes.Issue{
 						Type:        refactorTypes.IssueCompilationError,
 						Description: fmt.Sprintf("syntax error in new text: %v", err),

@@ -45,11 +45,13 @@ func TestThreadContext_LinkedKeySeedsItsFunctionAndClimbsItsCallers(t *testing.T
 		SourceFile:   "p/p.go",
 		Linked:       linkedKeys(pkgtypes.SymbolKey{PkgPath: linkedPkg, Name: "open"}),
 	}
-	if _, err := op.Execute(ws); err != nil {
+	_, err := op.Execute(ws)
+	if err != nil {
 		t.Fatal(err)
 	}
 	assertNames(t, gainingNames(op.plan), []string{"leaf", "open", "use"}, "Funcs")
-	if got := argIn(t, op.plan, "use"); got != "ctx" {
+	got := argIn(t, op.plan, "use")
+	if got != "ctx" {
 		t.Errorf("use passes %q", got)
 	}
 	want := []string{"example.com/m/p.leaf", "example.com/m/p.open", "example.com/m/p.use"}
@@ -65,7 +67,8 @@ func TestThreadContext_AbsentSeedRunsOnLinkedKeysAlone(t *testing.T) {
 		SourceFile:   "p/elsewhere.go",
 		Linked:       linkedKeys(pkgtypes.SymbolKey{PkgPath: linkedPkg, Name: "open"}),
 	}
-	if _, err := op.Execute(ws); err != nil {
+	_, err := op.Execute(ws)
+	if err != nil {
 		t.Fatal(err)
 	}
 	assertNames(t, gainingNames(op.plan), []string{"open", "use"}, "Funcs")
@@ -107,14 +110,16 @@ func TestThreadContext_LinkedInterfaceMethodPullsInImplementations(t *testing.T)
 		SourceFile:   "store/leaf.go",
 		Linked:       linkedKeys(pkgtypes.SymbolKey{PkgPath: "example.com/m/store", Recv: "Store", Name: "Save"}),
 	}
-	if _, err := op.Execute(ws); err != nil {
+	_, err := op.Execute(ws)
+	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
 		"example.com/m/store.FileStore.Save", "example.com/m/store.MemStore.Save", "example.com/m/store.Store.Save",
 		"example.com/m/store.leaf", "example.com/m/store.useIface", "example.com/m/store.useMem",
 	}
-	if got := sortedKeys(op.GainedKeys()); !slices.Equal(got, want) {
+	got := sortedKeys(op.GainedKeys())
+	if !slices.Equal(got, want) {
 		t.Errorf("GainedKeys = %v, want %v", got, want)
 	}
 }

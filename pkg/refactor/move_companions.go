@@ -171,10 +171,12 @@ func returnsType(fn *ast.FuncDecl, typeName string) bool {
 	}
 	for _, field := range fn.Type.Results.List {
 		expr := field.Type
-		if star, ok := expr.(*ast.StarExpr); ok {
+		star, ok := expr.(*ast.StarExpr)
+		if ok {
 			expr = star.X
 		}
-		if ident, ok := expr.(*ast.Ident); ok && ident.Name == typeName {
+		ident, ok := expr.(*ast.Ident)
+		if ok && ident.Name == typeName {
 			return true
 		}
 	}
@@ -285,7 +287,8 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 			continue
 		}
 		unexportedFields := unexportedStructFields(file.AST, m.sym.Name)
-		if stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving); len(stranded) > 0 {
+		stranded := findStrandedCompositeLiterals(ws, m.pkg, m.sym.Name, unexportedFields, moving)
+		if len(stranded) > 0 {
 			return &groupMemberError{index: m.owner, err: &types.RefactorError{
 				Type: types.VisibilityViolation,
 				Message: fmt.Sprintf(
@@ -318,7 +321,8 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		if len(found) > 0 {
 			return found[firstStrandedUse(found)].error(m.pkg.Path)
 		}
-		if err := checkSplitInterfaceImplementers(ws, m.pkg, moving); err != nil {
+		err := checkSplitInterfaceImplementers(ws, m.pkg, moving)
+		if err != nil {
 			return err
 		}
 	}
@@ -341,7 +345,8 @@ func checkSplitInterfaceImplementers(ws *types.Workspace, pkg *types.Package, mo
 			continue
 		}
 		iface, ok := ifaceObj.Type().Underlying().(*gotypes.Interface)
-		if named, isNamed := ifaceObj.Type().(*gotypes.Named); !ok || !isNamed || named.TypeParams().Len() > 0 {
+		named, isNamed := ifaceObj.Type().(*gotypes.Named)
+		if !ok || !isNamed || named.TypeParams().Len() > 0 {
 			continue
 		}
 		method := firstUnexportedMethod(iface, pkg.TypesPkg)

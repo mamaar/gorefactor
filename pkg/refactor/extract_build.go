@@ -270,7 +270,8 @@ func extractImportsChange(ws *types.Workspace, sourceFile *types.File, imports m
 }
 
 func lastPathSegment(path string) string {
-	if idx := strings.LastIndex(path, "/"); idx >= 0 {
+	idx := strings.LastIndex(path, "/")
+	if idx >= 0 {
 		return path[idx+1:]
 	}
 	return path

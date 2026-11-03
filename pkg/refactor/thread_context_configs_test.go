@@ -26,7 +26,8 @@ func loadConfigsEngine(t *testing.T, files map[string]string) (*DefaultEngine, s
 	cfg := analysis.NewBuildConfig("linux", "amd64", true)
 	eng := CreateEngineWithConfig(&EngineConfig{SkipCompilation: true, AllowBreaking: true, BuildConfig: &cfg},
 		slog.New(slog.NewTextHandler(io.Discard, nil))).(*DefaultEngine)
-	if _, err := eng.LoadWorkspace(dir); err != nil {
+	_, err := eng.LoadWorkspace(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return eng, dir
@@ -49,7 +50,8 @@ func vetBuilds(t *testing.T, dir string, builds ...[]string) {
 		cmd := exec.Command("go", append(args, "./...")...)
 		cmd.Dir = dir
 		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Errorf("go vet %v failed: %v\n%s", build, err, out)
 		}
 	}
@@ -72,7 +74,8 @@ func readFile(t *testing.T, dir, rel string) string {
 
 func assertOnce(t *testing.T, dir, rel, want string) {
 	t.Helper()
-	if got := readFile(t, dir, rel); strings.Count(got, want) != 1 {
+	got := readFile(t, dir, rel)
+	if strings.Count(got, want) != 1 {
 		t.Errorf("%s: want exactly one %q, got:\n%s", rel, want, got)
 	}
 }
@@ -191,7 +194,8 @@ func TestThreadContextAcrossConfigs_SeedOnlyInSecondaryView(t *testing.T) {
 
 	plan := threadAcrossAndApply(t, eng, "p/extra_tagx.go", "extra")
 
-	if got := changedFiles(plan); !slices.Equal(got, []string{"extra_tagx.go", "extra_tagx_test.go"}) {
+	got := changedFiles(plan)
+	if !slices.Equal(got, []string{"extra_tagx.go", "extra_tagx_test.go"}) {
 		t.Errorf("changed files = %v", got)
 	}
 	assertOnce(t, dir, "p/extra_tagx_test.go", "extra(t.Context())")
@@ -239,7 +243,8 @@ func TestThreadContextAcrossConfigs_AbortInSecondaryViewNamesItsConfig(t *testin
 	if !strings.Contains(err.Error(), "used as a value") {
 		t.Errorf("err = %v", err)
 	}
-	if got := readFile(t, dir, "p/leaf.go"); strings.Contains(got, "context") {
+	got := readFile(t, dir, "p/leaf.go")
+	if strings.Contains(got, "context") {
 		t.Errorf("leaf.go was modified:\n%s", got)
 	}
 }

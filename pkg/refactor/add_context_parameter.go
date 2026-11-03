@@ -49,7 +49,8 @@ func (p *addContextParameterPlanner) run(r *signatureRun, t funcTarget, requeste
 	}
 	ws := r.view.Workspace
 	op := p.operation(t, params, bodyNeedsCtxName(ws, t))
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		return err
 	}
 	altered, err := r.execute(op)

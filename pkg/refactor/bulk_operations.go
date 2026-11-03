@@ -154,7 +154,8 @@ func resolvePackageMove(ws *types.Workspace, sources *analysis.SourceTree, sourc
 	// landing alongside each other, same-named ones silently overwritten, and
 	// duplicate declarations undetected until the build. Refuse and let the
 	// caller pick a target or do the merge deliberately.
-	if existing := sources.Dir(targetDir); len(existing) > 0 {
+	existing := sources.Dir(targetDir)
+	if len(existing) > 0 {
 		return dirMove{}, fmt.Errorf("target package %s already exists at %s (package %q); "+
 			"move_package will not merge into an existing package — choose a target that does not exist yet",
 			target, targetDir, sourcePackageName(ws, targetDir, existing))
@@ -208,7 +209,8 @@ func (op *MoveDirOperation) Validate(ws *types.Workspace) error {
 
 	// Check if source directory exists in workspace
 	sourcePath := filepath.Join(ws.RootPath, op.Request.SourceDir)
-	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+	_, err := os.Stat(sourcePath)
+	if os.IsNotExist(err) {
 		return fmt.Errorf("source directory %s does not exist", sourcePath)
 	}
 
@@ -406,7 +408,8 @@ func appendFileMove(plan *types.RefactoringPlan, from, to, content string, mode 
 // for a directory no loaded configuration includes, the first non-main clause
 // among its files (falling back to the first clause of any kind).
 func sourcePackageName(ws *types.Workspace, dir string, files []*analysis.SourceFile) string {
-	if pkg := ws.Packages[dir]; pkg != nil {
+	pkg := ws.Packages[dir]
+	if pkg != nil {
 		return pkg.Name
 	}
 	name := ""
@@ -491,11 +494,13 @@ func (op *MovePackagesOperation) moves(ws *types.Workspace) ([]dirMove, error) {
 		if err != nil {
 			return nil, fmt.Errorf("moving %s to %s: %w", mapping.SourcePackage, mapping.TargetPackage, err)
 		}
-		if prev, dup := bySource[move.source]; dup {
+		prev, dup := bySource[move.source]
+		if dup {
 			return nil, fmt.Errorf("mappings %s -> %s and %s -> %s share the source directory %s",
 				prev.SourcePackage, prev.TargetPackage, mapping.SourcePackage, mapping.TargetPackage, move.source)
 		}
-		if prev, dup := byTarget[move.target]; dup {
+		prev, dup = byTarget[move.target]
+		if dup {
 			return nil, fmt.Errorf("mappings %s -> %s and %s -> %s share the target directory %s",
 				prev.SourcePackage, prev.TargetPackage, mapping.SourcePackage, mapping.TargetPackage, move.target)
 		}

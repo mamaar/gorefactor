@@ -14,7 +14,8 @@ import (
 func changedFiles(plan *types.RefactoringPlan) []string {
 	var names []string
 	for _, c := range plan.Changes {
-		if name := filepath.Base(c.File); !slices.Contains(names, name) {
+		name := filepath.Base(c.File)
+		if !slices.Contains(names, name) {
 			names = append(names, name)
 		}
 	}
@@ -48,7 +49,8 @@ func TestEngine_ThreadContextRunsAgainstASecondaryView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := changedFiles(plan); !slices.Equal(got, []string{"seed.go", "x_tag_test.go"}) {
+	got := changedFiles(plan)
+	if !slices.Equal(got, []string{"seed.go", "x_tag_test.go"}) {
 		t.Errorf("tagged view changed %v", got)
 	}
 
@@ -56,7 +58,8 @@ func TestEngine_ThreadContextRunsAgainstASecondaryView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := changedFiles(plan); !slices.Equal(got, []string{"seed.go"}) {
+	got = changedFiles(plan)
+	if !slices.Equal(got, []string{"seed.go"}) {
 		t.Errorf("primary view changed %v", got)
 	}
 }

@@ -23,7 +23,8 @@ func buildThreadPlanWithWorkspace(t *testing.T, files map[string]string, sourceF
 	t.Helper()
 	ws := buildScopeWorkspace(t, files)
 	op := &ThreadContextOperation{FunctionName: funcName, SourceFile: sourceFile}
-	if _, err := op.Execute(ws); err != nil {
+	_, err := op.Execute(ws)
+	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
 	if op.plan == nil {
@@ -52,10 +53,12 @@ func findFunc(t *testing.T, ws *pkgtypes.Workspace, name string) (*gotypes.Func,
 func originalContent(t *testing.T, ws *pkgtypes.Workspace, path string) []byte {
 	t.Helper()
 	for _, pkg := range ws.Packages {
-		if f, ok := pkg.Files[filepath.Base(path)]; ok && f.Path == path {
+		f, ok := pkg.Files[filepath.Base(path)]
+		if ok && f.Path == path {
 			return f.OriginalContent
 		}
-		if f, ok := pkg.TestFiles[filepath.Base(path)]; ok && f.Path == path {
+		f, ok = pkg.TestFiles[filepath.Base(path)]
+		if ok && f.Path == path {
 			return f.OriginalContent
 		}
 		for _, f := range pkg.Files {
@@ -106,7 +109,8 @@ func assertNoOverlaps(t *testing.T, changes []pkgtypes.Change) {
 	}
 	s := NewSerializer()
 	for file, cs := range byFile {
-		if err := s.validateChangePositions(cs); err != nil {
+		err := s.validateChangePositions(cs)
+		if err != nil {
 			t.Errorf("overlapping changes in %s: %v", file, err)
 		}
 	}
@@ -116,7 +120,8 @@ func assertNoOverlaps(t *testing.T, changes []pkgtypes.Change) {
 // proxy for "the applied changes did not corrupt the file".
 func assertParses(t *testing.T, name, src string) {
 	t.Helper()
-	if _, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ParseComments); err != nil {
+	_, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ParseComments)
+	if err != nil {
 		t.Fatalf("rendered content does not parse: %v\n--- content ---\n%s", err, src)
 	}
 }
@@ -375,7 +380,8 @@ func caller() { seed(1, context.Background()) }
 	}
 	// The file already imports "context" (for seed's own pre-existing
 	// signature) — no duplicate import may be added.
-	if n := strings.Count(got, `import "context"`); n != 1 {
+	n := strings.Count(got, `import "context"`)
+	if n != 1 {
 		t.Fatalf("expected exactly 1 \"context\" import, got %d:\n%s", n, got)
 	}
 }

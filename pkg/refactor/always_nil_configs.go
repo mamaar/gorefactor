@@ -65,7 +65,8 @@ func (e *DefaultEngine) AlwaysNilErrorsAcrossConfigs(req AlwaysNilErrorsRequest)
 	}
 	defer e.endRun(run)
 	for _, v := range views {
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
@@ -153,7 +154,8 @@ func (r *alwaysNilRun) judge(v *analysis.View, idx *analysis.ReferenceIndex, dec
 			return nilJudgement{reason: err.Error()}
 		}
 		for _, m := range members {
-			if why := propagatedRefusal(decls, m); why != "" {
+			why := propagatedRefusal(decls, m)
+			if why != "" {
 				return nilJudgement{reason: why}
 			}
 		}
@@ -166,7 +168,8 @@ func (r *alwaysNilRun) judge(v *analysis.View, idx *analysis.ReferenceIndex, dec
 		NewReturns: returns[:len(returns)-1], PropagateToInterface: len(members) > 0, CachedIndex: idx,
 	}.operation(r.logger)
 	ws := v.Workspace
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		return nilJudgement{reason: err.Error()}
 	}
 	plan, err := op.Execute(ws)
@@ -176,7 +179,8 @@ func (r *alwaysNilRun) judge(v *analysis.View, idx *analysis.ReferenceIndex, dec
 		}
 		return nilJudgement{reason: err.Error()}
 	}
-	if err := GeneratedFileEdits(plan.Changes); err != nil {
+	err = GeneratedFileEdits(plan.Changes)
+	if err != nil {
 		return nilJudgement{reason: err.Error()}
 	}
 	check := VerifyPlanTypesWithImporter(ws, plan, v.Parser.Importer())
@@ -226,7 +230,8 @@ func (r *alwaysNilRun) report(views []*analysis.View) *AlwaysNilErrorsReport {
 			continue // some configuration returns a non-nil error
 		}
 		f := d.AlwaysNilErrorFinding
-		if declaring := r.declaredIn[site]; len(declaring) != len(views) {
+		declaring := r.declaredIn[site]
+		if len(declaring) != len(views) {
 			f.Configs = declaring
 		}
 		f.CallSites = len(r.calls[d.key])
@@ -280,7 +285,8 @@ func mentionsNamedError(info *gotypes.Info, decl *ast.FuncDecl) bool {
 	obj := info.Defs[name]
 	mentioned := false
 	ast.Inspect(decl.Body, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && info.Uses[id] == obj {
+		id, ok := n.(*ast.Ident)
+		if ok && info.Uses[id] == obj {
 			mentioned = true
 		}
 		return !mentioned

@@ -18,7 +18,8 @@ func TestMoveSymbol_PutsTheSymbolInATargetFileEveryBuildConfigurationIncludes(t 
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Foo", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Foo", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 
@@ -36,13 +37,15 @@ func TestMoveSymbol_CreatesATargetFileWhenEveryExistingOneIsConstrained(t *testi
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Foo", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Foo", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 
 	assertFileContains(t, dir, "dst/dst.go", "func Foo()")
 	for _, rel := range []string{"dst/a.go", "dst/b_linux.go", "dst/b_windows.go"} {
-		if got := fileText(t, dir, rel); strings.Contains(got, "Foo") {
+		got := fileText(t, dir, rel)
+		if strings.Contains(got, "Foo") {
 			t.Errorf("%s received Foo", rel)
 		}
 	}

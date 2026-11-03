@@ -105,13 +105,15 @@ func newPackageIndex(inspect *inspector.Inspector, pkg *gotypes.Package, info *g
 		ident := cur.Node().(*ast.Ident)
 
 		// Check if this ident is a definition
-		if obj, ok := info.Defs[ident]; ok && obj != nil {
+		obj, ok := info.Defs[ident]
+		if ok && obj != nil {
 			ix.def[ObjectIDOf(obj)] = cur
 			continue
 		}
 
 		// Check if this ident is a use
-		if obj, ok := info.Uses[ident]; ok && obj != nil {
+		obj, ok = info.Uses[ident]
+		if ok && obj != nil {
 			id := ObjectIDOf(obj)
 			u := ix.uses[id]
 			if u == nil {
@@ -155,7 +157,8 @@ func (ix *packageIndex) Calls(callee gotypes.Object) iter.Seq[inspector.Cursor] 
 			return
 		}
 		for idx := range u.decode() {
-			if call, ok := callSiteFor(ix.inspect.At(idx)); ok {
+			call, ok := callSiteFor(ix.inspect.At(idx))
+			if ok {
 				if !yield(call) {
 					return
 				}
@@ -227,15 +230,18 @@ func (wi *workspaceIndex) findReferences(obj gotypes.Object) []objectEntry {
 
 	for _, pix := range wi.packages {
 		// Check definition
-		if cur, ok := pix.Def(obj); ok {
-			if entry, ok := wi.cursorToEntry(cur, true); ok {
+		cur, ok := pix.Def(obj)
+		if ok {
+			entry, ok := wi.cursorToEntry(cur, true)
+			if ok {
 				entries = append(entries, entry)
 			}
 		}
 
 		// Check uses
 		for cur := range pix.Uses(obj) {
-			if entry, ok := wi.cursorToEntry(cur, false); ok {
+			entry, ok := wi.cursorToEntry(cur, false)
+			if ok {
 				entries = append(entries, entry)
 			}
 		}
@@ -274,12 +280,14 @@ func (wi *workspaceIndex) cursorToEntry(cur inspector.Cursor, isDecl bool) (obje
 func canonicalObject(obj gotypes.Object) gotypes.Object {
 	switch o := obj.(type) {
 	case *gotypes.Func:
-		if orig := o.Origin(); orig != o {
+		orig := o.Origin()
+		if orig != o {
 			return orig
 		}
 	case *gotypes.Var:
 		if o.IsField() {
-			if orig := o.Origin(); orig != o {
+			orig := o.Origin()
+			if orig != o {
 				return orig
 			}
 		}

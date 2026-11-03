@@ -10,7 +10,8 @@ import (
 // assertCallersPass fails unless the call site inside caller passes want.
 func assertCallersPass(t *testing.T, plan *threadPlan, caller, want string) {
 	t.Helper()
-	if got := argIn(t, plan, caller); got != want {
+	got := argIn(t, plan, caller)
+	if got != want {
 		t.Errorf("%s must pass %q, got %q", caller, want, got)
 	}
 }
@@ -33,7 +34,8 @@ func TestThreadContext_TestingParamHelperIsRoot(t *testing.T) {
 			assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
 			assertCallersPass(t, plan, "h", tc.want)
 			for _, e := range plan.ArgFor {
-				if fn := e.Site.Fn; fn != nil && fn.Name.Name != "h" {
+				fn := e.Site.Fn
+				if fn != nil && fn.Name.Name != "h" {
 					t.Errorf("only the helper's call may be edited, got edit in %s", fn.Name.Name)
 				}
 			}
@@ -150,7 +152,8 @@ func TestThreadContext_ShadowedTestingParamInTestDeclUsesTODO(t *testing.T) {
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
 	assertCallersPass(t, plan, "TestX", "context.TODO()")
-	if got := renderedFile(t, ws, plan, "p/x_test.go"); strings.Contains(got, "t.Context()") {
+	got := renderedFile(t, ws, plan, "p/x_test.go")
+	if strings.Contains(got, "t.Context()") {
 		t.Errorf("shadowed t must not be used:\n%s", got)
 	}
 }
@@ -185,7 +188,8 @@ func TestThreadContext_UnshadowedTestingParamPassesTContext(t *testing.T) {
 		"p/x_test.go": "package p\n\nimport \"testing\"\n\nfunc helper(t *testing.T, items []int) {\n\tfor _, i := range items {\n\t\t_ = i\n\t\tSeed()\n\t}\n}\n",
 	}, "p/lib.go", "Seed")
 	assertNames(t, gainingNames(plan), []string{"Seed"}, "Funcs")
-	if got := renderedFile(t, ws, plan, "p/x_test.go"); !strings.Contains(got, "Seed(t.Context())") {
+	got := renderedFile(t, ws, plan, "p/x_test.go")
+	if !strings.Contains(got, "Seed(t.Context())") {
 		t.Errorf("expected t.Context():\n%s", got)
 	}
 }

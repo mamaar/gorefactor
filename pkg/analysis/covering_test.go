@@ -16,15 +16,18 @@ func coveringTree(t *testing.T, files map[string]string) *SourceTree {
 	root := t.TempDir()
 	for rel, content := range files {
 		full := filepath.Join(root, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	tree := NewSourceTree(token.NewFileSet())
-	if err := tree.Load(root); err != nil {
+	err := tree.Load(root)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return tree

@@ -26,7 +26,8 @@ func renamedByFile(t *testing.T, dir string, plan *types.RefactoringPlan) map[st
 
 func assertRenamed(t *testing.T, dir string, plan *types.RefactoringPlan, want map[string]int) {
 	t.Helper()
-	if got := renamedByFile(t, dir, plan); !maps.Equal(got, want) {
+	got := renamedByFile(t, dir, plan)
+	if !maps.Equal(got, want) {
 		t.Errorf("changes per file = %v, want %v", got, want)
 	}
 }

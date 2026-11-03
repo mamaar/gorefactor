@@ -71,7 +71,8 @@ func TestGeneratedFile_RenameDryRunReportsBlockingIssue(t *testing.T) {
 	if len(out.Diffs) == 0 {
 		t.Errorf("diffs are empty, want the planned changes")
 	}
-	if after := readTree(t, dir); !equalTrees(before, after) {
+	after := readTree(t, dir)
+	if !equalTrees(before, after) {
 		t.Errorf("dry run modified the workspace")
 	}
 }
@@ -91,7 +92,8 @@ func TestGeneratedFile_RenameApplyRefusedAndWritesNothing(t *testing.T) {
 	if !strings.Contains(errText(res), "lib_gen.go") {
 		t.Errorf("error = %q, want it to name lib_gen.go", errText(res))
 	}
-	if after := readTree(t, dir); !equalTrees(before, after) {
+	after := readTree(t, dir)
+	if !equalTrees(before, after) {
 		t.Errorf("workspace changed after a refused rename")
 	}
 }
@@ -101,7 +103,8 @@ func equalTrees(a, b map[string]string) bool {
 		return false
 	}
 	for k, v := range a {
-		if w, ok := b[k]; !ok || w != v {
+		w, ok := b[k]
+		if !ok || w != v {
 			return false
 		}
 	}
@@ -127,10 +130,12 @@ func TestGeneratedFile_TouchSkipsGeneratedFormatsHandWritten(t *testing.T) {
 	if !strings.Contains(text, `"status": "skipped"`) || !strings.Contains(text, "generated-code header") {
 		t.Errorf("touch result = %s, want lib_gen.go skipped with a generated-code reason", text)
 	}
-	if got := readTree(t, dir)["lib/lib_gen.go"]; got != genSrc {
+	got := readTree(t, dir)["lib/lib_gen.go"]
+	if got != genSrc {
 		t.Errorf("generated file changed:\n%s", got)
 	}
-	if got := readTree(t, dir)["lib/hand.go"]; got == handSrc {
+	got = readTree(t, dir)["lib/hand.go"]
+	if got == handSrc {
 		t.Errorf("hand-written file was not formatted")
 	}
 }
@@ -178,10 +183,12 @@ func assertMovedMock(t *testing.T, dir, target, wantPkg string) {
 	if f.Name.Name != wantPkg {
 		t.Errorf("package clause = %q, want %q", f.Name.Name, wantPkg)
 	}
-	if want := mockHeader + "package " + wantPkg + "\n\ntype Thing struct{}\n"; moved != want {
+	want := mockHeader + "package " + wantPkg + "\n\ntype Thing struct{}\n"
+	if moved != want {
 		t.Errorf("moved content =\n%s\nwant\n%s", moved, want)
 	}
-	if dep := tree["gen/dep.go"]; !strings.Contains(dep, `"example.com/genmcp/`+filepath.ToSlash(target)+`"`) {
+	dep := tree["gen/dep.go"]
+	if !strings.Contains(dep, `"example.com/genmcp/`+filepath.ToSlash(target)+`"`) {
 		t.Errorf("dependent import not rewritten:\n%s", dep)
 	}
 }

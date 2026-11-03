@@ -206,7 +206,8 @@ func TestMergeConfigPlans_OtherFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"/ws/a.go", "/ws/b.go", "/ws/c.go"}; !reflect.DeepEqual(got.AffectedFiles, want) {
+	want := []string{"/ws/a.go", "/ws/b.go", "/ws/c.go"}
+	if !reflect.DeepEqual(got.AffectedFiles, want) {
 		t.Errorf("AffectedFiles = %v, want %v", got.AffectedFiles, want)
 	}
 	if want := []types.SkippedSite{s1, s2}; !reflect.DeepEqual(got.SkippedSites, want) {
@@ -222,10 +223,12 @@ func TestMergeConfigPlans_OtherFields(t *testing.T) {
 
 func TestMergeConfigPlans_Inputs(t *testing.T) {
 	const f = "/ws/a.go"
-	if _, err := MergeConfigPlans(nil); err == nil {
+	_, err := MergeConfigPlans(nil)
+	if err == nil {
 		t.Error("zero plans: expected error")
 	}
-	if _, err := MergeConfigPlans([]ConfigPlan{{"a", nil}, {"b", nil}}); err == nil {
+	_, err = MergeConfigPlans([]ConfigPlan{{"a", nil}, {"b", nil}})
+	if err == nil {
 		t.Error("all-nil plans: expected error")
 	}
 
@@ -233,7 +236,8 @@ func TestMergeConfigPlans_Inputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []types.Change{ins(f, 1, "x", "d")}; !reflect.DeepEqual(got.Changes, want) {
+	want := []types.Change{ins(f, 1, "x", "d")}
+	if !reflect.DeepEqual(got.Changes, want) {
 		t.Errorf("changes = %+v, want %+v", got.Changes, want)
 	}
 

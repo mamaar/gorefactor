@@ -51,7 +51,8 @@ func TestMoveSymbol_KeepsTheFieldNameOfAnEmbeddedType(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Base", "a", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Base", "a", "dst")
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 

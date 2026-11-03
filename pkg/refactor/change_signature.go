@@ -169,7 +169,8 @@ func (op *ChangeSignatureOperation) Validate(ws *pkgtypes.Workspace) error {
 		}
 	}
 	if op.SourceFile == "" {
-		if err := op.resolveSourceFile(ws); err != nil {
+		err := op.resolveSourceFile(ws)
+		if err != nil {
 			return err
 		}
 	}
@@ -230,7 +231,8 @@ validateParams:
 // the package, such as an external test package's, can answer for it; the
 // symbol is then built from decl itself.
 func (op *ChangeSignatureOperation) targetSymbol(resolver *analysis.SymbolResolver, pkg *pkgtypes.Package, file *pkgtypes.File, decl *ast.FuncDecl) *pkgtypes.Symbol {
-	if sym, err := resolver.ResolveSymbol(pkg, op.FunctionName); err == nil && sym.Position == decl.Name.Pos() {
+	sym, err := resolver.ResolveSymbol(pkg, op.FunctionName)
+	if err == nil && sym.Position == decl.Name.Pos() {
 		return sym
 	}
 	kind := pkgtypes.FunctionSymbol
@@ -281,7 +283,8 @@ func isTestEntryPoint(path string, decl *ast.FuncDecl) bool {
 		return false
 	}
 	for _, prefix := range []string{"Test", "Benchmark", "Fuzz", "Example"} {
-		if rest, ok := strings.CutPrefix(decl.Name.Name, prefix); ok {
+		rest, ok := strings.CutPrefix(decl.Name.Name, prefix)
+		if ok {
 			r, _ := utf8.DecodeRuneInString(rest)
 			return rest == "" || !unicode.IsLower(r)
 		}
@@ -312,7 +315,8 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	// Preserve existing return types if not explicitly provided (fixes add_param/remove_param dropping returns)
 	// A return change gives the full list, which is empty when the only result is removed.
 	if !op.changesReturns() {
-		if err := op.preserveExistingReturnsIfNeeded(sourceFile); err != nil {
+		err := op.preserveExistingReturnsIfNeeded(sourceFile)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -338,7 +342,8 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		op.Logger.Info("processing signature change", "function", op.FunctionName, "is_interface", isIface)
 	}
 
-	if decl := op.findFunction(sourceFile, op.FunctionName); !isIface && decl != nil && hasTypeParams(decl) {
+	decl := op.findFunction(sourceFile, op.FunctionName)
+	if !isIface && decl != nil && hasTypeParams(decl) {
 		return nil, fmt.Errorf("change_signature: %s %s", op.FunctionName, genericUnsupported)
 	}
 
@@ -346,7 +351,8 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 	op.refusals = nil
 	op.removedSpans = nil
 	if op.RemoveParam {
-		if err := op.planRemoveParam(ws, sourcePackage, sourceFile, typeName, methodName, isIface); err != nil {
+		err := op.planRemoveParam(ws, sourcePackage, sourceFile, typeName, methodName, isIface)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -401,7 +407,8 @@ func (op *ChangeSignatureOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.R
 		if err != nil {
 			return nil, err
 		}
-		if callSiteCount, err = op.planReturns(ws, idx, targets, plan); err != nil {
+		callSiteCount, err = op.planReturns(ws, idx, targets, plan)
+		if err != nil {
 			return nil, err
 		}
 	} else {
@@ -796,7 +803,8 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 	var refFile *pkgtypes.File
 	for _, pkg := range ws.Packages {
 		// Check regular files first
-		if file, exists := pkg.Files[refFileName]; exists {
+		file, exists := pkg.Files[refFileName]
+		if exists {
 			// Verify this is the right file by checking the full path
 			if file.Path == ref.File {
 				refFile = file
@@ -807,7 +815,8 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 			}
 		}
 		// Also check test files
-		if file, exists := pkg.TestFiles[refFileName]; exists {
+		file, exists = pkg.TestFiles[refFileName]
+		if exists {
 			// Verify this is the right file by checking the full path
 			if file.Path == ref.File {
 				refFile = file
@@ -849,7 +858,8 @@ func (op *ChangeSignatureOperation) updateCallSite(ref *pkgtypes.Reference, ws *
 	// Find the call expression containing this reference
 	foundCallExpr := false
 	ast.Inspect(refFile.AST, func(n ast.Node) bool {
-		if callExpr, ok := n.(*ast.CallExpr); ok {
+		callExpr, ok := n.(*ast.CallExpr)
+		if ok {
 			// Check if this call expression contains our reference
 			if op.containsReference(callExpr, ref.Position) {
 				foundCallExpr = true
@@ -937,7 +947,8 @@ func (op *ChangeSignatureOperation) generateNewCall(callExpr *ast.CallExpr, ref 
 	}
 
 	if op.DerefParam {
-		if reason := op.derefArgs(existingArgs, callExpr, ws, fileContent, info); reason != "" {
+		reason := op.derefArgs(existingArgs, callExpr, ws, fileContent, info)
+		if reason != "" {
 			op.skipSite(ref, reason, string(fileContent[op.tokenPosToOffset(ws, callExpr.Pos()):op.tokenPosToOffset(ws, callExpr.End())]))
 			return ""
 		}
@@ -1031,7 +1042,8 @@ func (op *ChangeSignatureOperation) callText(callExpr *ast.CallExpr, ws *pkgtype
 		funcName = parts[1]
 	}
 
-	if selectorExpr, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+	selectorExpr, ok := callExpr.Fun.(*ast.SelectorExpr)
+	if ok {
 		// Method call - preserve receiver from source text
 		recvStart := op.tokenPosToOffset(ws, selectorExpr.X.Pos())
 		recvEnd := op.tokenPosToOffset(ws, selectorExpr.X.End())
@@ -1072,7 +1084,8 @@ func (op *ChangeSignatureOperation) getAffectedPackages(ws *pkgtypes.Workspace, 
 	packageMap := make(map[string]bool)
 	for _, filePath := range affectedFiles {
 		for _, pkg := range ws.Packages {
-			if _, exists := pkg.Files[filePath]; exists {
+			_, exists := pkg.Files[filePath]
+			if exists {
 				packageMap[pkg.Path] = true
 				break
 			}
@@ -1269,7 +1282,8 @@ func (op *ChangeSignatureOperation) extractInterfaceMethodParams(file *pkgtypes.
 		}
 		for _, field := range ifaceType.Methods.List {
 			if len(field.Names) > 0 && field.Names[0].Name == methodName {
-				if funcType, ok := field.Type.(*ast.FuncType); ok {
+				funcType, ok := field.Type.(*ast.FuncType)
+				if ok {
 					result = op.extractParamList(funcType.Params)
 				}
 				return false
@@ -1294,7 +1308,8 @@ func (op *ChangeSignatureOperation) extractInterfaceMethodReturns(file *pkgtypes
 		}
 		for _, field := range ifaceType.Methods.List {
 			if len(field.Names) > 0 && field.Names[0].Name == methodName {
-				if funcType, ok := field.Type.(*ast.FuncType); ok {
+				funcType, ok := field.Type.(*ast.FuncType)
+				if ok {
 					returns = op.extractReturnTypes(funcType)
 				}
 				return false
@@ -1324,7 +1339,8 @@ func hasTypeParams(decl *ast.FuncDecl) bool {
 		return false
 	}
 	recv := decl.Recv.List[0].Type
-	if star, ok := recv.(*ast.StarExpr); ok {
+	star, ok := recv.(*ast.StarExpr)
+	if ok {
 		recv = star.X
 	}
 	switch recv.(type) {
@@ -1416,7 +1432,8 @@ func (op *ChangeSignatureOperation) generateInterfaceMethodSignatureChange(ws *p
 			start, end := op.tokenPosToOffset(ws, field.Names[0].Pos()), op.tokenPosToOffset(ws, field.End())
 			newText := generateInterfaceMethodSignature(op, methodName)
 			description := fmt.Sprintf("Update interface method signature %s.%s", typeName, methodName)
-			if funcType, ok := field.Type.(*ast.FuncType); ok && op.RemoveParam {
+			funcType, ok := field.Type.(*ast.FuncType)
+			if ok && op.RemoveParam {
 				change = op.removedParamChange(ws, file, funcType.Params, description)
 			} else {
 				change = pkgtypes.Change{
@@ -1571,10 +1588,12 @@ func (op *ChangeSignatureOperation) resolveSourceFile(ws *pkgtypes.Workspace) er
 // walkBodyForReturnStmts walks a function body for ReturnStmt nodes, skipping FuncLit bodies.
 func walkBodyForReturnStmts(body *ast.BlockStmt, fn func(*ast.ReturnStmt)) {
 	ast.Inspect(body, func(n ast.Node) bool {
-		if _, ok := n.(*ast.FuncLit); ok {
+		_, ok := n.(*ast.FuncLit)
+		if ok {
 			return false // skip closures
 		}
-		if retStmt, ok := n.(*ast.ReturnStmt); ok {
+		retStmt, ok := n.(*ast.ReturnStmt)
+		if ok {
 			fn(retStmt)
 		}
 		return true

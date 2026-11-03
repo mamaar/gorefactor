@@ -59,7 +59,8 @@ func localImports(ws *types.Workspace, path string, files map[string]*types.File
 			continue
 		}
 		for _, imp := range file.AST.Imports {
-			if to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok && to != path && !seen[to] {
+			to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
+			if ok && to != path && !seen[to] {
 				seen[to] = true
 				out = append(out, to)
 			}
@@ -109,7 +110,8 @@ func fileImports(ws *types.Workspace, file *types.File) []string {
 	}
 	var out []string
 	for _, imp := range file.AST.Imports {
-		if to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]; ok {
+		to, ok := ws.ImportToPath[strings.Trim(imp.Path.Value, `"`)]
+		if ok {
 			out = append(out, to)
 		}
 	}

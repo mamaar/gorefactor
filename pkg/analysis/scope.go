@@ -44,7 +44,8 @@ func (sa *ScopeAnalyzer) resolveBuiltinSymbol(name string) *types.Symbol {
 		"nil": types.ConstantSymbol,
 	}
 
-	if kind, exists := builtins[name]; exists {
+	kind, exists := builtins[name]
+	if exists {
 		return &types.Symbol{
 			Name:     name,
 			Kind:     kind,
@@ -66,7 +67,8 @@ func (sa *ScopeAnalyzer) resolveBuiltinSymbol(name string) *types.Symbol {
 func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, pos token.Pos) *types.Symbol {
 	// Check cache first
 	cacheKey := fmt.Sprintf("%s:%s:%d", file.Path, identName, pos)
-	if cached := sa.resolver.cache.GetIdentifierType(cacheKey); cached != nil {
+	cached := sa.resolver.cache.GetIdentifierType(cacheKey)
+	if cached != nil {
 		return cached
 	}
 
@@ -77,7 +79,8 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 	// Find the enclosing function for this position
 	var enclosingFunc *ast.FuncDecl
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if funcDecl, ok := n.(*ast.FuncDecl); ok {
+		funcDecl, ok := n.(*ast.FuncDecl)
+		if ok {
 			if funcDecl.Pos() <= pos && pos <= funcDecl.End() {
 				enclosingFunc = funcDecl
 				return false // Stop once we find it
@@ -102,7 +105,8 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 		case *ast.AssignStmt:
 			// Handle := and = assignments
 			for i, lhs := range node.Lhs {
-				if ident, ok := lhs.(*ast.Ident); ok && ident.Name == identName {
+				ident, ok := lhs.(*ast.Ident)
+				if ok && ident.Name == identName {
 					// Found declaration! Extract type from RHS
 					if i < len(node.Rhs) {
 						typeExpr = sa.extractTypeFromExpression(node.Rhs[i])
@@ -167,9 +171,11 @@ func (sa *ScopeAnalyzer) GetIdentifierType(identName string, file *types.File, p
 func (sa *ScopeAnalyzer) findPackageLevelVarType(identName string, file *types.File) *types.Symbol {
 	var typeExpr ast.Expr
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if genDecl, ok := n.(*ast.GenDecl); ok && genDecl.Tok == token.VAR {
+		genDecl, ok := n.(*ast.GenDecl)
+		if ok && genDecl.Tok == token.VAR {
 			for _, spec := range genDecl.Specs {
-				if valueSpec, ok := spec.(*ast.ValueSpec); ok {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if ok {
 					for _, name := range valueSpec.Names {
 						if name.Name == identName {
 							if valueSpec.Type != nil {
@@ -205,10 +211,12 @@ func (sa *ScopeAnalyzer) extractTypeFromExpression(expr ast.Expr) ast.Expr {
 		return e.Type
 	case *ast.CallExpr:
 		// Type conversion: Type(value) or pkg.Type(value)
-		if ident, ok := e.Fun.(*ast.Ident); ok {
+		ident, ok := e.Fun.(*ast.Ident)
+		if ok {
 			return ident
 		}
-		if sel, ok := e.Fun.(*ast.SelectorExpr); ok {
+		sel, ok := e.Fun.(*ast.SelectorExpr)
+		if ok {
 			return sel
 		}
 	case *ast.TypeAssertExpr: // x.(*Type)
@@ -228,7 +236,8 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 	case *ast.Ident:
 		// Simple type like "User" or built-in like "string"
 		// Check built-in first
-		if builtin := sa.resolveBuiltinSymbol(expr.Name); builtin != nil {
+		builtin := sa.resolveBuiltinSymbol(expr.Name)
+		if builtin != nil {
 			return builtin
 		}
 
@@ -243,7 +252,8 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 
 	case *ast.SelectorExpr:
 		// Qualified type like "pkg.Type"
-		if pkgIdent, ok := expr.X.(*ast.Ident); ok {
+		pkgIdent, ok := expr.X.(*ast.Ident)
+		if ok {
 			// Resolve package from imports
 			for _, imp := range file.AST.Imports {
 				var importAlias string
@@ -258,8 +268,10 @@ func (sa *ScopeAnalyzer) resolveTypeExpression(typeExpr ast.Expr, file *types.Fi
 					importPath := strings.Trim(imp.Path.Value, `"`)
 					// Try to find package by import path
 					if sa.resolver.workspace != nil {
-						if fsPath, ok := sa.resolver.workspace.ImportToPath[importPath]; ok {
-							if pkg := sa.resolver.workspace.Packages[fsPath]; pkg != nil {
+						fsPath, ok := sa.resolver.workspace.ImportToPath[importPath]
+						if ok {
+							pkg := sa.resolver.workspace.Packages[fsPath]
+							if pkg != nil {
 								sym, _ := sa.resolver.ResolveSymbol(pkg, expr.Sel.Name)
 								return sym
 							}

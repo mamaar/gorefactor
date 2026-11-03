@@ -54,11 +54,13 @@ func scanMovedUses(ws *types.Workspace, moving []*movingSymbol) map[*movingSymbo
 		done[pkg] = true
 		qualified := qualifiedSelectors(moving, pkg)
 		for ident, obj := range pkg.TypesInfo.Defs {
-			if _, isPkg := obj.(*gotypes.PkgName); obj == nil || isPkg {
+			_, isPkg := obj.(*gotypes.PkgName)
+			if obj == nil || isPkg {
 				continue
 			}
 			at := ws.FileSet.Position(ident.Pos())
-			if user := movingAt(moving, at.Filename, at.Offset); user != nil {
+			user := movingAt(moving, at.Filename, at.Offset)
+			if user != nil {
 				uses[user].idents[ident.Name] = true
 			}
 		}
@@ -108,9 +110,12 @@ func qualifiedSelectors(moving []*movingSymbol, pkg *types.Package) map[*ast.Ide
 		}
 		seen[m.file] = true
 		ast.Inspect(m.file.AST, func(n ast.Node) bool {
-			if sel, ok := n.(*ast.SelectorExpr); ok {
-				if x, ok := sel.X.(*ast.Ident); ok {
-					if _, isPkg := pkg.TypesInfo.Uses[x].(*gotypes.PkgName); isPkg {
+			sel, ok := n.(*ast.SelectorExpr)
+			if ok {
+				x, ok := sel.X.(*ast.Ident)
+				if ok {
+					_, isPkg := pkg.TypesInfo.Uses[x].(*gotypes.PkgName)
+					if isPkg {
 						qualified[sel.Sel] = true
 					}
 				}
@@ -150,7 +155,8 @@ func importCycle(graph map[string][]string, target string, imports []string, imp
 			if to == target {
 				return closing(from)
 			}
-			if _, seen := parent[to]; seen {
+			_, seen := parent[to]
+			if seen {
 				continue
 			}
 			parent[to] = from
@@ -161,13 +167,15 @@ func importCycle(graph map[string][]string, target string, imports []string, imp
 		}
 		return nil
 	}
-	if path := visit(target, mergeSorted(graph[target], imports)); path != nil {
+	path := visit(target, mergeSorted(graph[target], imports))
+	if path != nil {
 		return path
 	}
 	for len(queue) > 0 {
 		next := queue[0]
 		queue = queue[1:]
-		if path := visit(next, graph[next]); path != nil {
+		path := visit(next, graph[next])
+		if path != nil {
 			return path
 		}
 	}
@@ -187,7 +195,8 @@ func importsAndImporters(ws *types.Workspace, moving []*movingSymbol, uses map[*
 	imports = make(map[string]*movingSymbol)
 	for _, m := range moving {
 		for importPath := range uses[m].imports {
-			if to := ws.ImportToPath[importPath]; to != "" && to != target && imports[to] == nil {
+			to := ws.ImportToPath[importPath]
+			if to != "" && to != target && imports[to] == nil {
 				imports[to] = m
 			}
 		}
@@ -202,7 +211,8 @@ func importsAndImporters(ws *types.Workspace, moving []*movingSymbol, uses map[*
 		if pkg == nil || file == nil || file.AST == nil || pkg.Path == target || strings.HasSuffix(file.AST.Name.Name, "_test") {
 			continue
 		}
-		if i := slices.IndexFunc(moving, func(m *movingSymbol) bool { return m.sym == ref.Symbol }); i >= 0 && importers[pkg.Path] == nil {
+		i := slices.IndexFunc(moving, func(m *movingSymbol) bool { return m.sym == ref.Symbol })
+		if i >= 0 && importers[pkg.Path] == nil {
 			importers[pkg.Path] = moving[i]
 		}
 	}
@@ -220,7 +230,8 @@ func (op *MoveSymbolOperation) checkImportCycles(ws *types.Workspace, moving []*
 		return nil
 	}
 	blamed := importers[cycle[len(cycle)-2]]
-	if m := imports[cycle[1]]; m != nil {
+	m := imports[cycle[1]]
+	if m != nil {
 		blamed = m
 	}
 	names := make([]string, len(cycle))

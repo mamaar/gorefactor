@@ -132,7 +132,8 @@ func use() {
 	for _, name := range []string{"Plain", "Branch", "Pair"} {
 		wantNilFixable(t, findAlwaysNil(t, out, name))
 	}
-	if f := findAlwaysNil(t, out, "Plain"); f.CallSites != 1 || f.File != "a/a.go" || f.Line != 3 {
+	f := findAlwaysNil(t, out, "Plain")
+	if f.CallSites != 1 || f.File != "a/a.go" || f.Line != 3 {
 		t.Errorf("Plain = %+v", f)
 	}
 }
@@ -466,7 +467,8 @@ func TestAlwaysNilErrors_MergesDeclarationsAcrossBuildConfigurations(t *testing.
 	})
 
 	wantNilFixable(t, findAlwaysNil(t, out, "Shared"))
-	if f := findAlwaysNil(t, out, "Shared"); len(f.Configs) != 0 {
+	f := findAlwaysNil(t, out, "Shared")
+	if len(f.Configs) != 0 {
 		t.Errorf("Shared: configs = %v, want none when every configuration declares it", f.Configs)
 	}
 	wantNoAlwaysNil(t, out, "Split")

@@ -125,7 +125,8 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 		tree:   tree,
 		views:  make(map[string]*View),
 	}
-	if s.primary, err = s.buildView(primary); err != nil {
+	s.primary, err = s.buildView(primary)
+	if err != nil {
 		return nil, err
 	}
 	s.views[primary.Key()] = s.primary
@@ -144,7 +145,8 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	resolver := NewSymbolResolver(ws, s.logger)
 	resolver.inspectors = s.tree.inspectors
 	for _, pkg := range ws.Packages {
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			s.logger.Error("symbol table build failed", "package", pkg.Path, "err", err)
 			return nil, fmt.Errorf("failed to build symbol table for package %s: %w", pkg.Path, err)
 		}
@@ -197,7 +199,8 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 
 func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
 	key := cfg.Key()
-	if v := s.views[key]; v != nil {
+	v := s.views[key]
+	if v != nil {
 		return v, nil
 	}
 	v, err := s.buildView(cfg)
@@ -226,7 +229,8 @@ func (s *WorkspaceSet) pruneLocked(configs []BuildConfig) {
 func (s *WorkspaceSet) ApproximateViews() []ApproximateView {
 	var out []ApproximateView
 	for _, v := range s.BuiltViews() {
-		if approx, err := v.Approximate(); approx {
+		approx, err := v.Approximate()
+		if approx {
 			out = append(out, ApproximateView{Config: v.Config, Err: err})
 		}
 	}
@@ -245,7 +249,8 @@ func (s *WorkspaceSet) BuiltViews() []*View {
 	configs := s.coveringLocked().Configs
 	s.pruneLocked(configs)
 	for _, cfg := range configs[1:] {
-		if v := s.views[cfg.Key()]; v != nil {
+		v := s.views[cfg.Key()]
+		if v != nil {
 			views = append(views, v)
 		}
 	}
@@ -276,7 +281,8 @@ func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 	if InSkippedDir(s.root, filepath.Dir(path)) {
 		return nil, nil
 	}
-	if _, err := os.Stat(path); err != nil {
+	_, err := os.Stat(path)
+	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
 		}
@@ -286,7 +292,8 @@ func (s *WorkspaceSet) SyncSource(path string) (*SourceFile, error) {
 
 	dir := filepath.Dir(path)
 	if !s.tree.loaded(dir) {
-		if err := s.tree.AddDir(dir); err != nil {
+		err := s.tree.AddDir(dir)
+		if err != nil {
 			return nil, err
 		}
 		return s.tree.File(path), nil

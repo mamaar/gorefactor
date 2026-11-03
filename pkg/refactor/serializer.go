@@ -49,13 +49,15 @@ func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 	//
 	// This runs before anything is touched: rollback restores what a failed
 	// plan wrote, but a stray write outside the workspace is not undone.
-	if err := validateChangePathsAbsolute(changes); err != nil {
+	err := validateChangePathsAbsolute(changes)
+	if err != nil {
 		return err
 	}
 
 	// Generated files are read from disk, not the workspace: ExecutePlan passes
 	// none, and a file regenerated since load would carry a stale flag.
-	if err := GeneratedFileEdits(changes); err != nil {
+	err = GeneratedFileEdits(changes)
+	if err != nil {
 		return err
 	}
 
@@ -86,7 +88,8 @@ func (s *Serializer) ApplyChanges(changes []refactorTypes.Change) error {
 	}
 
 	for i := range steps {
-		if err := steps[i].commit(); err != nil {
+		err := steps[i].commit()
+		if err != nil {
 			return errors.Join(&refactorTypes.RefactorError{
 				Type:    refactorTypes.FileSystemError,
 				Message: err.Error(),
@@ -136,7 +139,8 @@ func (s *Serializer) prepareFile(filePath string, changes []refactorTypes.Change
 // commit writes or deletes the step's file.
 func (f *fileStep) commit() error {
 	if f.delete {
-		if err := deleteFile(f.path); err != nil {
+		err := deleteFile(f.path)
+		if err != nil {
 			return fmt.Errorf("failed to delete file %s: %v", f.path, err)
 		}
 		return nil
@@ -144,10 +148,12 @@ func (f *fileStep) commit() error {
 	if !f.existed {
 		f.createdDir = outermostMissingDir(filepath.Dir(f.path))
 	}
-	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
+	err := os.MkdirAll(filepath.Dir(f.path), 0755)
+	if err != nil {
 		return fmt.Errorf("failed to apply changes to file %s: failed to create directory: %v", f.path, err)
 	}
-	if err := os.WriteFile(f.path, f.content, f.mode); err != nil {
+	err = os.WriteFile(f.path, f.content, f.mode)
+	if err != nil {
 		return fmt.Errorf("failed to apply changes to file %s: failed to write file: %v", f.path, err)
 	}
 	return nil
@@ -156,13 +162,15 @@ func (f *fileStep) commit() error {
 // undo puts the step's file back as it was before commit.
 func (f *fileStep) undo() error {
 	if !f.existed {
-		if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) {
+		err := os.Remove(f.path)
+		if err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		removeCreatedDirs(filepath.Dir(f.path), f.createdDir)
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(f.path), 0755); err != nil {
+	err := os.MkdirAll(filepath.Dir(f.path), 0755)
+	if err != nil {
 		return err
 	}
 	return os.WriteFile(f.path, f.old, f.mode)
@@ -177,7 +185,8 @@ func rollback(committed []fileStep, failed *fileStep) error {
 	}
 	var errs []error
 	for i := len(committed) - 1; i >= 0; i-- {
-		if err := committed[i].undo(); err != nil {
+		err := committed[i].undo()
+		if err != nil {
 			errs = append(errs, fmt.Errorf("failed to restore %s: %v", committed[i].path, err))
 		}
 	}
@@ -189,7 +198,8 @@ func rollback(committed []fileStep, failed *fileStep) error {
 func outermostMissingDir(dir string) string {
 	missing := ""
 	for {
-		if _, err := os.Stat(dir); err == nil {
+		_, err := os.Stat(dir)
+		if err == nil {
 			return missing
 		}
 		missing = dir
@@ -208,7 +218,8 @@ func removeCreatedDirs(dir, top string) {
 		return
 	}
 	for {
-		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) || dir == top {
+		err := os.Remove(dir)
+		if err != nil && !os.IsNotExist(err) || dir == top {
 			return
 		}
 		dir = filepath.Dir(dir)
@@ -267,7 +278,8 @@ func fileHasDeletion(changes []refactorTypes.Change) bool {
 // package leaves no empty husk behind. Pruning stops at the first non-empty
 // directory.
 func deleteFile(filePath string) error {
-	if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
+	err := os.Remove(filePath)
+	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	pruneEmptyDirs(filepath.Dir(filePath))
@@ -400,7 +412,8 @@ func (s *Serializer) computeContent(filePath string, content []byte, changes []r
 	}
 	// A file that already failed to parse can't be made worse by the plan.
 	if len(content) > 0 {
-		if _, parseErr := parser.ParseFile(token.NewFileSet(), "", content, parser.SkipObjectResolution); parseErr != nil {
+		_, parseErr := parser.ParseFile(token.NewFileSet(), "", content, parser.SkipObjectResolution)
+		if parseErr != nil {
 			return []byte(modifiedContent), nil
 		}
 	}

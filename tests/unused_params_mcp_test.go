@@ -112,7 +112,8 @@ func use() {
 	}
 	wantFixable(t, findParam(t, out, "F", "alsoUnused"))
 	wantFixable(t, findParam(t, out, "Closure", "x"))
-	if p := findParam(t, out, "Closure", "x"); p.Index != 0 {
+	p := findParam(t, out, "Closure", "x")
+	if p.Index != 0 {
 		t.Errorf("Closure(x) index = %d", p.Index)
 	}
 }
@@ -415,7 +416,8 @@ func next() int { return 1 }
 	})
 
 	wantRefused(t, findParam(t, out, "F", "unused"), "side effects")
-	if f := findParam(t, out, "F", "unused"); f.CallSites != 1 {
+	f := findParam(t, out, "F", "unused")
+	if f.CallSites != 1 {
 		t.Errorf("F: call_sites = %d", f.CallSites)
 	}
 	h := findParam(t, out, "helper", "unused")

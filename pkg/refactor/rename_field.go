@@ -245,8 +245,10 @@ func (op *RenameFieldOperation) Validate(ws *types.Workspace) error {
 	// Promoted field/method collision from an embedded type. Use go/types rather
 	// than walking the AST: LookupFieldOrMethod resolves promotion for us.
 	if pkg.TypesPkg != nil {
-		if obj := pkg.TypesPkg.Scope().Lookup(req.TypeName); obj != nil {
-			if named, ok := obj.Type().(*gotypes.Named); ok {
+		obj := pkg.TypesPkg.Scope().Lookup(req.TypeName)
+		if obj != nil {
+			named, ok := obj.Type().(*gotypes.Named)
+			if ok {
 				found, _, _ := gotypes.LookupFieldOrMethod(named, true, pkg.TypesPkg, req.NewFieldName)
 				if found != nil {
 					return &types.RefactorError{

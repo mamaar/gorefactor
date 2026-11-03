@@ -68,7 +68,8 @@ func TestAddContextParameterAcrossConfigs_SiblingThatAlreadyTakesCtxIsSkipped(t 
 
 	assertOnce(t, dir, "p/f_default.go", "func f(ctx context.Context, n int) int")
 	assertOnce(t, dir, "p/use_default.go", "f(context.TODO(), 1)")
-	if got := readFile(t, dir, "p/f_tagx.go"); got != tagxBefore {
+	got := readFile(t, dir, "p/f_tagx.go")
+	if got != tagxBefore {
 		t.Errorf("f_tagx.go changed:\n%s", got)
 	}
 	vetBuilds(t, dir, linuxBuild, linuxTagx)

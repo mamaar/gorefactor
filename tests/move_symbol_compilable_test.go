@@ -31,7 +31,8 @@ func TestMoveSymbol_RemovesOnlyTheNamedDeclarationWhenAnotherNameExtendsIt(t *te
 	defer sess.Close()
 
 	for _, name := range []string{"Foo", "Fo"} {
-		if res := moveSymbolCall(t, sess, name, "src", "dst"); res.IsError {
+		res := moveSymbolCall(t, sess, name, "src", "dst")
+		if res.IsError {
 			t.Fatalf("move %s: %s", name, errText(res))
 		}
 	}
@@ -40,7 +41,8 @@ func TestMoveSymbol_RemovesOnlyTheNamedDeclarationWhenAnotherNameExtendsIt(t *te
 	assertFileContains(t, dir, "src/src.go", "func FooMaker()")
 	assertFileContains(t, dir, "dst/dst.go", "type Foo struct")
 	assertFileContains(t, dir, "dst/dst.go", "func Fo()")
-	if got := fileText(t, dir, "src/src.go"); strings.Contains(got, "type Foo struct") || strings.Contains(got, "func Fo()") {
+	got := fileText(t, dir, "src/src.go")
+	if strings.Contains(got, "type Foo struct") || strings.Contains(got, "func Fo()") {
 		t.Errorf("moved declarations remain in src:\n%s", got)
 	}
 	goVets(t, dir, "")
@@ -85,7 +87,8 @@ func TestMoveSymbol_LeavesFieldsKeysMethodsLabelsAndLocalsNamedLikeTheSymbol(t *
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Package", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Package", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Package: %s", errText(res))
 	}
 
@@ -139,7 +142,8 @@ func UsesType() hidden { return hidden{} }
 				t.Fatalf("move %s succeeded, want a refusal", symbol)
 			}
 			for _, want := range []string{symbol, unexported, "unexported"} {
-				if got := errText(res); !strings.Contains(got, want) {
+				got := errText(res)
+				if !strings.Contains(got, want) {
 					t.Errorf("error %q does not mention %q", got, want)
 				}
 			}
@@ -195,7 +199,8 @@ func TestMoveSymbol_RefusesWhenTargetWouldImportASourceThatStillUsesTheSymbol(t 
 		t.Fatalf("move Shared succeeded, want an import cycle refusal")
 	}
 	for _, want := range []string{"import cycle", "dst", "src"} {
-		if got := errText(res); !strings.Contains(got, want) {
+		got := errText(res)
+		if !strings.Contains(got, want) {
 			t.Errorf("error %q does not mention %q", got, want)
 		}
 	}
@@ -232,7 +237,8 @@ func TestMoveSymbol_QualifiesLeftBehindExportedSymbolsAndImportsTheSource(t *tes
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Shared", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Shared", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Shared: %s", errText(res))
 	}
 
@@ -340,7 +346,8 @@ func TestMoveSymbol_RefusesWhenAnImportOfTheMovedCodeReachesTheTargetAgain(t *te
 	if !res.IsError || !strings.Contains(errText(res), "import cycle") {
 		t.Fatalf("move Moved = error %v: %s, want an import cycle refusal", res.IsError, errText(res))
 	}
-	if want := "threadmcp/base -> example.com/threadmcp/x -> example.com/threadmcp/y -> example.com/threadmcp/base"; !strings.Contains(errText(res), want) {
+	want := "threadmcp/base -> example.com/threadmcp/x -> example.com/threadmcp/y -> example.com/threadmcp/base"
+	if !strings.Contains(errText(res), want) {
 		t.Errorf("error %q does not name the path %q", errText(res), want)
 	}
 	assertFileUnchanged(t, dir, "src/src.go", srcFile)

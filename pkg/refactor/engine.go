@@ -126,14 +126,16 @@ func (e *DefaultEngine) viewOf(ws *types.Workspace) *analysis.View {
 	if e.set == nil {
 		return nil
 	}
-	if v := e.set.ViewOf(ws); v != nil {
+	v := e.set.ViewOf(ws)
+	if v != nil {
 		return v
 	}
 	return e.set.Primary()
 }
 
 func (e *DefaultEngine) parserFor(ws *types.Workspace) *analysis.GoParser {
-	if v := e.viewOf(ws); v != nil {
+	v := e.viewOf(ws)
+	if v != nil {
 		return v.Parser
 	}
 	return nil
@@ -203,7 +205,8 @@ func (e *DefaultEngine) MoveSymbol(ws *types.Workspace, req types.MoveSymbolRequ
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("move operation validation failed: %w", err)
 	}
 
@@ -234,7 +237,8 @@ func (e *DefaultEngine) RenameSymbol(ws *types.Workspace, req types.RenameSymbol
 	operation := &RenameSymbolOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("rename operation validation failed: %w", err)
 	}
 
@@ -293,7 +297,8 @@ func (e *DefaultEngine) RenameMethod(ws *types.Workspace, req types.RenameMethod
 	operation := &RenameMethodOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("rename method operation validation failed: %w", err)
 	}
 
@@ -332,7 +337,8 @@ func (e *DefaultEngine) RenameField(ws *types.Workspace, req types.RenameFieldRe
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("rename field operation validation failed: %w", err)
 	}
 
@@ -390,7 +396,8 @@ func (e *DefaultEngine) ThreadContextAcrossConfigs(req types.ThreadContextReques
 	}
 	var reach *EntryReach
 	if req.EntryPackage != "" {
-		if reach, err = e.entryReach(views, req.EntryPackage, req.WithinFunction); err != nil {
+		reach, err = e.entryReach(views, req.EntryPackage, req.WithinFunction)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -562,7 +569,8 @@ func (e *DefaultEngine) threadContext(
 	operation.Logger = e.logger
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, nil, fmt.Errorf("thread context operation validation failed: %w", err)
 	}
 
@@ -596,7 +604,8 @@ func (e *DefaultEngine) ExtractMethod(ws *types.Workspace, req types.ExtractMeth
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("extract method operation validation failed: %w", err)
 	}
 
@@ -631,7 +640,8 @@ func (e *DefaultEngine) ExtractFunction(ws *types.Workspace, req types.ExtractFu
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("extract function operation validation failed: %w", err)
 	}
 
@@ -656,7 +666,8 @@ func (e *DefaultEngine) ExtractInterface(ws *types.Workspace, req types.ExtractI
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("extract interface operation validation failed: %w", err)
 	}
 
@@ -682,7 +693,8 @@ func (e *DefaultEngine) ExtractVariable(ws *types.Workspace, req types.ExtractVa
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("extract variable operation validation failed: %w", err)
 	}
 
@@ -702,11 +714,13 @@ func (e *DefaultEngine) ExtractVariable(ws *types.Workspace, req types.ExtractVa
 func (e *DefaultEngine) ExtractConstant(ws *types.Workspace, req types.ExtractConstantRequest) (*types.RefactoringPlan, error) {
 	operation := &ExtractConstantOperation{Request: req, Sources: e.set.Sources()}
 
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("extract constant operation validation failed: %w", err)
 	}
 
-	if pkg, _ := findWorkspaceFile(ws, req.SourceFile); pkg != nil {
+	pkg, _ := findWorkspaceFile(ws, req.SourceFile)
+	if pkg != nil {
 		e.EnsureTypeCheckedPackage(ws, pkg.ImportPath)
 	}
 
@@ -729,7 +743,8 @@ func (e *DefaultEngine) InlineMethod(ws *types.Workspace, req types.InlineMethod
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("inline method operation validation failed: %w", err)
 	}
 
@@ -764,7 +779,8 @@ func (e *DefaultEngine) InlineVariable(ws *types.Workspace, req types.InlineVari
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("inline variable operation validation failed: %w", err)
 	}
 
@@ -788,7 +804,8 @@ func (e *DefaultEngine) InlineFunction(ws *types.Workspace, req types.InlineFunc
 	}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("inline function operation validation failed: %w", err)
 	}
 
@@ -827,7 +844,8 @@ func (e *DefaultEngine) SafeDeleteBlockingReferences(req types.SafeDeleteRequest
 // configuration type-checks, refuses the delete unless req.Force is set.
 func (e *DefaultEngine) SafeDeleteAcrossConfigs(req types.SafeDeleteRequest) (*types.RefactoringPlan, error) {
 	p := &safeDeletePlanner{req: req, errPrefix: "safe delete operation validation failed"}
-	if err := p.operation(nil).validateRequest(); err != nil {
+	err := p.operation(nil).validateRequest()
+	if err != nil {
 		return nil, p.wrap(err)
 	}
 	return e.planAcrossConfigs(p)
@@ -843,7 +861,8 @@ func (e *DefaultEngine) SafeDelete(ws *types.Workspace, req types.SafeDeleteRequ
 	}
 
 	e.EnsureTypeChecked(ws)
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("safe delete operation validation failed: %w", err)
 	}
 
@@ -862,7 +881,8 @@ func (e *DefaultEngine) ChangeSignature(ws *types.Workspace, req ChangeSignature
 	operation := req.operation(e.logger)
 	e.EnsureTypeChecked(ws)
 
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("change signature operation validation failed: %w", err)
 	}
 
@@ -934,7 +954,8 @@ func (e *DefaultEngine) EnsureTypeCheckedPackage(ws *types.Workspace, pkgPath st
 		return
 	}
 	resolved := types.ResolvePackagePath(ws, pkgPath)
-	if pkg, ok := ws.Packages[resolved]; ok {
+	pkg, ok := ws.Packages[resolved]
+	if ok {
 		parser.EnsureTypeChecked(ws, pkg)
 	}
 }
@@ -957,7 +978,8 @@ func (e *DefaultEngine) Importer(ws *types.Workspace) gotypes.Importer {
 // ExecutePlan applies a refactoring plan to the workspace
 func (e *DefaultEngine) ExecutePlan(plan *types.RefactoringPlan) error {
 	// Final validation before execution
-	if err := e.ValidateRefactoring(plan); err != nil {
+	err := e.ValidateRefactoring(plan)
+	if err != nil {
 		return err // Return the validation error directly to preserve its type
 	}
 
@@ -982,7 +1004,8 @@ func (e *DefaultEngine) ExecutePlan(plan *types.RefactoringPlan) error {
 
 		// Validate that the refactored code compiles (if not skipped)
 		if !e.shouldSkipCompilation() {
-			if err := e.validateCompilation(plan.AffectedFiles); err != nil {
+			err := e.validateCompilation(plan.AffectedFiles)
+			if err != nil {
 				return fmt.Errorf("refactored code does not compile: %w", err)
 			}
 		}
@@ -1011,7 +1034,8 @@ func (e *DefaultEngine) validateCompilation(affectedFiles []string) error {
 
 	// Check compilation for each affected directory
 	for dir := range dirsToCheck {
-		if err := e.checkDirectoryCompilation(dir); err != nil {
+		err := e.checkDirectoryCompilation(dir)
+		if err != nil {
 			return fmt.Errorf("compilation failed in %s: %w", dir, err)
 		}
 	}
@@ -1175,7 +1199,8 @@ func (e *DefaultEngine) CreateFacade(ws *types.Workspace, req types.CreateFacade
 	operation := &CreateFacadeOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("create facade operation validation failed: %w", err)
 	}
 
@@ -1195,7 +1220,8 @@ func (e *DefaultEngine) GenerateFacades(ws *types.Workspace, req types.GenerateF
 	operation := &GenerateFacadesOperation{Request: req, Sources: e.set.Sources(), Covering: e.set.Covering()}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("generate facades operation validation failed: %w", err)
 	}
 
@@ -1215,7 +1241,8 @@ func (e *DefaultEngine) UpdateFacades(ws *types.Workspace, req types.UpdateFacad
 	operation := &UpdateFacadesOperation{Request: req, Sources: e.set.Sources(), Covering: e.set.Covering()}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("update facades operation validation failed: %w", err)
 	}
 
@@ -1235,7 +1262,8 @@ func (e *DefaultEngine) CleanAliases(ws *types.Workspace, req types.CleanAliases
 	operation := &CleanAliasesOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("clean aliases operation validation failed: %w", err)
 	}
 
@@ -1256,7 +1284,8 @@ func (e *DefaultEngine) StandardizeImports(ws *types.Workspace, req types.Standa
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("standardize imports operation validation failed: %w", err)
 	}
 
@@ -1276,7 +1305,8 @@ func (e *DefaultEngine) ResolveAliasConflicts(ws *types.Workspace, req types.Res
 	operation := &ResolveAliasConflictsOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("resolve alias conflicts operation validation failed: %w", err)
 	}
 
@@ -1296,7 +1326,8 @@ func (e *DefaultEngine) ConvertAliases(ws *types.Workspace, req types.ConvertAli
 	operation := &ConvertAliasesOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("convert aliases operation validation failed: %w", err)
 	}
 
@@ -1346,7 +1377,8 @@ func (e *DefaultEngine) OrganizeByLayers(ws *types.Workspace, req types.Organize
 	operation := &OrganizeByLayersOperation{Request: req}
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("organize by layers operation validation failed: %w", err)
 	}
 
@@ -1369,7 +1401,8 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 	e.EnsureTypeChecked(ws)
 
 	// Validate the operation
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("analyze dependencies operation validation failed: %w", err)
 	}
 
@@ -1390,7 +1423,8 @@ func (e *DefaultEngine) AnalyzeDependencies(ws *types.Workspace, req types.Analy
 func (e *DefaultEngine) BatchOperations(ws *types.Workspace, req types.BatchOperationRequest) (*types.RefactoringPlan, error) {
 	operation := &BatchOperationOperation{Request: req, engine: e}
 
-	if err := operation.Validate(ws); err != nil {
+	err := operation.Validate(ws)
+	if err != nil {
 		return nil, fmt.Errorf("batch operations validation failed: %w", err)
 	}
 

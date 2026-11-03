@@ -21,7 +21,8 @@ func funcBody(src, decl string) string {
 		return ""
 	}
 	rest := src[start:]
-	if before, _, ok := strings.Cut(rest, "\n}\n"); ok {
+	before, _, ok := strings.Cut(rest, "\n}\n")
+	if ok {
 		return before
 	}
 	return rest
@@ -89,7 +90,8 @@ func TestComposeFlattenThenSimplify(t *testing.T) {
 	}
 	// Scoped to the rewritten function: the fixture's package doc quotes `!!`
 	// in prose, so a whole-file scan would match that instead.
-	if body := funcBody(afterSimplify, "func detectCycles"); strings.Contains(body, "!!") {
+	body := funcBody(afterSimplify, "func detectCycles")
+	if strings.Contains(body, "!!") {
 		t.Errorf("the double negation survived the cleanup pass:\n%s", body)
 	}
 	if !strings.Contains(afterSimplify, "continue") {

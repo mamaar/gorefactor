@@ -125,7 +125,8 @@ func TestBlockersAcrossViews_TargetAbsentEverywhereReturnsThePrimaryError(t *tes
 		return configResult{absent: errors.New("not in tagged")}, nil
 	}
 
-	if _, err := blockersAcrossViews([]*analysis.View{primary, tagged}, gate, 10); err != primaryErr {
+	_, err := blockersAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
+	if err != primaryErr {
 		t.Errorf("err = %v, want the primary view's error unchanged", err)
 	}
 }
@@ -142,7 +143,8 @@ func TestBlockersAcrossViews_PlannerErrorNamesItsConfig(t *testing.T) {
 
 	_, err := blockersAcrossViews([]*analysis.View{primary, tagged}, gate, 10)
 
-	if want := "build configuration " + tagged.Config.String() + ": boom"; err == nil || err.Error() != want {
+	want := "build configuration " + tagged.Config.String() + ": boom"
+	if err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}
 }

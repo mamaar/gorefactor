@@ -55,7 +55,8 @@ func TestIsStdMethodRecognisesEveryTableEntry(t *testing.T) {
 	pkg := checkStdSource(t, src.String())
 
 	for i, e := range entries {
-		if f := methodOf(t, pkg, fmt.Sprintf("s%d", i), e.name); stdMethodOf(f.Name(), f) == nil {
+		f := methodOf(t, pkg, fmt.Sprintf("s%d", i), e.name)
+		if stdMethodOf(f.Name(), f) == nil {
 			t.Errorf("%s%s: not recognised as a standard method", e.name, e.sig)
 		}
 	}
@@ -99,11 +100,13 @@ func Error() string { return "" }
 	for _, c := range []struct{ typ, method string }{
 		{"plain", "Is"}, {"wrongParam", "Format"}, {"otherResult", "Error"}, {"wrongText", "MarshalText"}, {"variadicDecode", "GobDecode"},
 	} {
-		if f := methodOf(t, pkg, c.typ, c.method); stdMethodOf(f.Name(), f) != nil {
+		f := methodOf(t, pkg, c.typ, c.method)
+		if stdMethodOf(f.Name(), f) != nil {
 			t.Errorf("%s.%s: recognised as a standard method, want not", c.typ, c.method)
 		}
 	}
-	if f := pkg.Scope().Lookup("Error").(*gotypes.Func); stdMethodOf(f.Name(), f) != nil {
+	f := pkg.Scope().Lookup("Error").(*gotypes.Func)
+	if stdMethodOf(f.Name(), f) != nil {
 		t.Error("the package-level function Error: recognised as a method")
 	}
 }

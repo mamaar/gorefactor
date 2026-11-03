@@ -96,7 +96,8 @@ func newViewParser(logger *slog.Logger, tree *SourceTree, cfg BuildConfig) *GoPa
 // build config. It returns (nil, nil) when dir has .go files but none usable
 // under that config.
 func (p *GoParser) ParsePackage(dir string) (*types.Package, error) {
-	if err := p.sources.AddDir(dir); err != nil {
+	err := p.sources.AddDir(dir)
+	if err != nil {
 		return nil, &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse package: %v", err),
@@ -229,7 +230,8 @@ func absWorkspaceRoot(rootPath string) (string, error) {
 }
 
 func loadSources(tree *SourceTree, absRoot string) error {
-	if err := tree.Load(absRoot); err != nil {
+	err := tree.Load(absRoot)
+	if err != nil {
 		return &types.RefactorError{
 			Type:    types.FileSystemError,
 			Message: fmt.Sprintf("failed to parse workspace: %v", err),
@@ -586,7 +588,8 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 func productionASTs(pkg *types.Package) []*ast.File {
 	var files []*ast.File
 	for _, name := range slices.Sorted(maps.Keys(pkg.Files)) {
-		if f := pkg.Files[name]; f.AST != nil {
+		f := pkg.Files[name]
+		if f.AST != nil {
 			files = append(files, f.AST)
 		}
 	}
@@ -696,7 +699,8 @@ func (c *testCheck) drop(tests []testAST, bad map[string]error) []testAST {
 // firstTestError returns the error of the first test, in order, that has one.
 func firstTestError(tests []testAST, bad map[string]error) error {
 	for _, t := range tests {
-		if err, ok := bad[t.name]; ok {
+		err, ok := bad[t.name]
+		if ok {
 			return err
 		}
 	}
@@ -709,7 +713,8 @@ type typeErrors struct {
 }
 
 func (c *typeErrors) add(err error) {
-	if terr, ok := err.(gotypes.Error); ok {
+	terr, ok := err.(gotypes.Error)
+	if ok {
 		c.errs = append(c.errs, terr)
 	}
 }
@@ -731,7 +736,8 @@ func (c *typeErrors) firstPerFile(fset *token.FileSet, tests []testAST) map[stri
 		if !ok {
 			continue
 		}
-		if prev, seen := first[name]; !seen || e.Pos < prev.Pos {
+		prev, seen := first[name]
+		if !seen || e.Pos < prev.Pos {
 			first[name] = e
 		}
 	}
@@ -1007,7 +1013,8 @@ func (imp *workspaceImporter) warmImports(file *types.File) {
 	}
 	for _, spec := range file.AST.Imports {
 		path := strings.Trim(spec.Path.Value, `"`)
-		if _, local := imp.ws.ImportToPath[path]; !local {
+		_, local := imp.ws.ImportToPath[path]
+		if !local {
 			_, _ = imp.ext.lookup(path)
 		}
 	}
@@ -1022,7 +1029,8 @@ func externalLoadSettings(cfg BuildConfig, hostOS, hostArch string) (env, flags 
 		cgo = "1"
 	}
 	env = []string{"GOPROXY=off", "GOOS=" + cfg.GOOS, "GOARCH=" + cfg.GOARCH, "CGO_ENABLED=" + cgo}
-	if tags := normalizeTags(cfg.Tags); len(tags) > 0 {
+	tags := normalizeTags(cfg.Tags)
+	if len(tags) > 0 {
 		flags = []string{"-tags=" + strings.Join(tags, ",")}
 	}
 	return env, flags
@@ -1069,7 +1077,8 @@ func (imp *workspaceImporter) hasExternalImports() bool {
 		}
 		for _, spec := range file.AST.Imports {
 			path := strings.Trim(spec.Path.Value, `"`)
-			if _, local := imp.ws.ImportToPath[path]; local {
+			_, local := imp.ws.ImportToPath[path]
+			if local {
 				continue
 			}
 			if isStdlibImportPath(path) {
@@ -1106,9 +1115,12 @@ func isStdlibImportPath(path string) bool {
 
 func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// Check if this is a workspace-local package
-	if fsPath, ok := imp.ws.ImportToPath[path]; ok {
-		if pkg, ok := imp.ws.Packages[fsPath]; ok {
-			if err := imp.productionCycleError(pkg); err != nil {
+	fsPath, ok := imp.ws.ImportToPath[path]
+	if ok {
+		pkg, ok := imp.ws.Packages[fsPath]
+		if ok {
+			err := imp.productionCycleError(pkg)
+			if err != nil {
 				return nil, err
 			}
 			// Import is only ever reached from inside go/types.Config.Check,
@@ -1180,7 +1192,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 			// reference index — finding call sites inside pkg's own test
 			// files) is unaffected: this only changes what OTHER packages
 			// see when THEY import pkg.
-			if rescued, ok := imp.productionOnly[pkg]; ok {
+			rescued, ok := imp.productionOnly[pkg]
+			if ok {
 				return rescued, nil
 			}
 
@@ -1208,7 +1221,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 	// which is GOPATH-based and cannot see anything in the module cache — on
 	// a real workspace that fails on essentially every third-party import.
 	imp.extOnce.Do(imp.loadExternal)
-	if pkg, err := imp.ext.lookup(path); pkg != nil || err != nil {
+	pkg, err := imp.ext.lookup(path)
+	if pkg != nil || err != nil {
 		return pkg, err
 	}
 
@@ -1233,7 +1247,8 @@ func (imp *workspaceImporter) Import(path string) (*gotypes.Package, error) {
 // importing itself included (see productionCycleError), before recursing, so
 // the walk never re-enters a package still being resolved on the stack.
 func (imp *workspaceImporter) productionOnlyPackage(pkg *types.Package) (*gotypes.Package, error) {
-	if cached, ok := imp.productionOnly[pkg]; ok {
+	cached, ok := imp.productionOnly[pkg]
+	if ok {
 		return cached, nil
 	}
 
@@ -1282,7 +1297,8 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 		stack = append(stack, v)
 		onStack[v] = true
 		for _, w := range g[v] {
-			if _, seen := index[w]; !seen {
+			_, seen := index[w]
+			if !seen {
 				connect(w)
 				if low[w] < low[v] {
 					low[v] = low[w]
@@ -1308,7 +1324,8 @@ func newProdCycles(ws *types.Workspace) *prodCycles {
 		comp++
 	}
 	for _, v := range slices.Sorted(maps.Keys(g)) {
-		if _, seen := index[v]; !seen {
+		_, seen := index[v]
+		if !seen {
 			connect(v)
 		}
 	}
@@ -1333,7 +1350,8 @@ func (c *prodCycles) path(from, to string) []string {
 		v := queue[0]
 		queue = queue[1:]
 		for _, w := range c.graph[v] {
-			if _, seen := prev[w]; seen {
+			_, seen := prev[w]
+			if seen {
 				continue
 			}
 			prev[w] = v
@@ -1391,7 +1409,8 @@ func importsItself(pkg *types.Package) bool {
 }
 
 func (imp *workspaceImporter) importPathOf(fsPath string) string {
-	if p, ok := imp.ws.Packages[fsPath]; ok {
+	p, ok := imp.ws.Packages[fsPath]
+	if ok {
 		return p.ImportPath
 	}
 	return fsPath

@@ -46,12 +46,14 @@ func (op *SafeDeleteOperation) Type() pkgtypes.OperationType {
 }
 
 func (op *SafeDeleteOperation) Validate(ws *pkgtypes.Workspace) error {
-	if err := op.validateRequest(); err != nil {
+	err := op.validateRequest()
+	if err != nil {
 		return err
 	}
 
 	// Confirm the source file and symbol can be resolved before checking references
-	if _, _, _, _, err := op.resolveSourceAndSymbol(ws); err != nil {
+	_, _, _, _, err = op.resolveSourceAndSymbol(ws)
+	if err != nil {
 		return err
 	}
 
@@ -231,7 +233,8 @@ func (op *SafeDeleteOperation) deletionTargets(pkg *pkgtypes.Package, symbol *pk
 		var doc *ast.CommentGroup
 		var field *ast.Field
 		if sym.Kind == pkgtypes.StructFieldSymbol {
-			if field = findFieldDeclaration(file, sym); field != nil {
+			field = findFieldDeclaration(file, sym)
+			if field != nil {
 				node, doc = field, field.Doc
 			}
 		} else {
@@ -275,7 +278,8 @@ func (op *SafeDeleteOperation) resolveSourceAndSymbol(ws *pkgtypes.Workspace) (*
 	}
 
 	declared := declaredInFile(sourcePackage, sourceFile, op.SymbolName)
-	if sym, ok := declared[op.SymbolName]; ok {
+	sym, ok := declared[op.SymbolName]
+	if ok {
 		return sourceFile, sourcePackage, resolver, sym, nil
 	}
 	if len(declared) == 1 {
@@ -310,7 +314,8 @@ func declaredInFile(pkg *pkgtypes.Package, file *pkgtypes.File, name string) map
 		return found
 	}
 	for _, byName := range []map[string]*pkgtypes.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
-		if sym := byName[name]; sym != nil && sym.File == file.Path {
+		sym := byName[name]
+		if sym != nil && sym.File == file.Path {
 			found[name] = sym
 		}
 	}
@@ -331,7 +336,8 @@ func (op *SafeDeleteOperation) Execute(ws *pkgtypes.Workspace) (*pkgtypes.Refact
 	}
 	var blocking []pkgtypes.Reference
 	if op.Force {
-		if blocking, err = op.BlockingReferences(ws); err != nil {
+		blocking, err = op.BlockingReferences(ws)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -475,7 +481,8 @@ func findFieldDeclaration(file *pkgtypes.File, symbol *pkgtypes.Symbol) *ast.Fie
 	}
 	var found *ast.Field
 	ast.Inspect(file.AST, func(n ast.Node) bool {
-		if f, ok := n.(*ast.Field); ok {
+		f, ok := n.(*ast.Field)
+		if ok {
 			for _, name := range f.Names {
 				if name.Pos() == symbol.Position {
 					found = f
@@ -621,7 +628,8 @@ func calculateRemovalRange(ws *pkgtypes.Workspace, t deletionTarget) (int, int) 
 func (op *SafeDeleteOperation) getAffectedPackages(ws *pkgtypes.Workspace, affectedFiles []string) []string {
 	packageMap := make(map[string]bool)
 	for _, filePath := range affectedFiles {
-		if pkg := findPackageForFile(ws, filePath); pkg != nil {
+		pkg := findPackageForFile(ws, filePath)
+		if pkg != nil {
 			packageMap[pkg.Path] = true
 		}
 	}

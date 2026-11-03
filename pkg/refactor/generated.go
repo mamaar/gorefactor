@@ -69,7 +69,8 @@ func generatedFile(ws *refactorTypes.Workspace, path string) *refactorTypes.File
 
 // rootRelative returns path relative to the workspace root, slash-separated.
 func rootRelative(ws *refactorTypes.Workspace, path string) string {
-	if rel, err := filepath.Rel(ws.RootPath, path); err == nil {
+	rel, err := filepath.Rel(ws.RootPath, path)
+	if err == nil {
 		path = rel
 	}
 	return filepath.ToSlash(path)

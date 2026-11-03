@@ -67,7 +67,8 @@ func TestReachableAcrossConfigs_RejectsBadInput(t *testing.T) {
 		"no targets":     {Entry: "example.com/threadtest"},
 		"missing entry":  {Entry: "example.com/threadtest/zzz", Targets: []string{"example.com/threadtest/p.Log"}},
 	} {
-		if _, err := eng.ReachableAcrossConfigs(req); err == nil {
+		_, err := eng.ReachableAcrossConfigs(req)
+		if err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}

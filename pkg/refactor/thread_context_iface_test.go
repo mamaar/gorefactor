@@ -72,12 +72,14 @@ func TestThreadContext_ExpandsWorkspaceInterface(t *testing.T) {
 		"FileStore.Save", "MemStore.Save", "Store.Save", "useIface", "useMem",
 	}, "Funcs")
 
-	if got := argIn(t, plan, "useMem"); got != "ctx" {
+	got := argIn(t, plan, "useMem")
+	if got != "ctx" {
 		t.Errorf("useMem must pass its injected ctx, got %q", got)
 	}
 	// The call through the interface is only reachable via the interface method
 	// object; it is the whole reason expandInterfaces returns it.
-	if got := argIn(t, plan, "useIface"); got != "ctx" {
+	got = argIn(t, plan, "useIface")
+	if got != "ctx" {
 		t.Errorf("useIface must pass its injected ctx, got %q", got)
 	}
 }
@@ -407,7 +409,8 @@ func run(ctx context.Context, s Store) { s.Save(1) }
 	}, "store/store.go", "MemStore.Save")
 
 	assertNames(t, gainingLabels(plan), []string{"MemStore.Save", "Store.Save"}, "Funcs")
-	if got := argIn(t, plan, "run"); got != "ctx" {
+	got := argIn(t, plan, "run")
+	if got != "ctx" {
 		t.Errorf("run already has a ctx and must pass it, got %q", got)
 	}
 }

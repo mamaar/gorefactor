@@ -245,7 +245,8 @@ func computeIncomingDeps(ws *types.Workspace) map[string]int {
 	}
 	for _, importPaths := range ws.Dependencies.PackageImports {
 		for _, importPath := range importPaths {
-			if toFSPath, ok := ws.ImportToPath[importPath]; ok {
+			toFSPath, ok := ws.ImportToPath[importPath]
+			if ok {
 				result[toFSPath]++
 			}
 		}
@@ -475,10 +476,12 @@ func (op *OrganizeByLayersOperation) classifyPackage(packagePath string) string 
 }
 
 func importPathOf(ws *types.Workspace, fsPath string) string {
-	if pkg := ws.Packages[fsPath]; pkg != nil && pkg.ImportPath != "" {
+	pkg := ws.Packages[fsPath]
+	if pkg != nil && pkg.ImportPath != "" {
 		return pkg.ImportPath
 	}
-	if rel, err := filepath.Rel(ws.RootPath, fsPath); err == nil {
+	rel, err := filepath.Rel(ws.RootPath, fsPath)
+	if err == nil {
 		return filepath.ToSlash(rel)
 	}
 	return fsPath

@@ -83,7 +83,8 @@ func selfContained(d *ast.GenDecl) bool {
 func usesIota(n ast.Node) bool {
 	found := false
 	ast.Inspect(n, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Name == "iota" {
+		id, ok := n.(*ast.Ident)
+		if ok && id.Name == "iota" {
 			found = true
 		}
 		return !found

@@ -41,10 +41,12 @@ func TestDetectCycles_ReportsProductionCycleAsImportPaths(t *testing.T) {
 	if !reflect.DeepEqual(path, []string{a, b, a}) && !reflect.DeepEqual(path, []string{b, a, b}) {
 		t.Errorf("cycle = %v, want a closed path through %s and %s", path, a, b)
 	}
-	if tc, ok := out["test_cycles"].([]any); !ok || len(tc) != 0 {
+	tc, ok := out["test_cycles"].([]any)
+	if !ok || len(tc) != 0 {
 		t.Errorf("test_cycles = %#v, want an empty list", out["test_cycles"])
 	}
-	if _, err := os.Stat(filepath.Join(dir, "cycles_report.md")); !os.IsNotExist(err) {
+	_, err := os.Stat(filepath.Join(dir, "cycles_report.md"))
+	if !os.IsNotExist(err) {
 		t.Errorf("cycles_report.md exists after detect_cycles (stat err = %v)", err)
 	}
 }
@@ -63,10 +65,12 @@ func TestDetectCycles_TestFileCycleIsReportedSeparately(t *testing.T) {
 	if out["cycles_found"] != float64(0) {
 		t.Errorf("cycles_found = %v, want 0", out["cycles_found"])
 	}
-	if c, ok := out["cycles"].([]any); !ok || len(c) != 0 {
+	c, ok := out["cycles"].([]any)
+	if !ok || len(c) != 0 {
 		t.Errorf("cycles = %#v, want an empty list", out["cycles"])
 	}
-	if tc, _ := out["test_cycles"].([]any); len(tc) != 1 {
+	tc, _ := out["test_cycles"].([]any)
+	if len(tc) != 1 {
 		t.Errorf("test_cycles = %v, want one entry", out["test_cycles"])
 	}
 }
@@ -85,7 +89,8 @@ func TestDetectCycles_AcyclicWorkspaceGivesEmptyLists(t *testing.T) {
 		t.Errorf("cycles_found = %v, want 0", out["cycles_found"])
 	}
 	for _, key := range []string{"cycles", "test_cycles"} {
-		if l, ok := out[key].([]any); !ok || len(l) != 0 {
+		l, ok := out[key].([]any)
+		if !ok || len(l) != 0 {
 			t.Errorf("%s = %#v, want an empty list", key, out[key])
 		}
 	}

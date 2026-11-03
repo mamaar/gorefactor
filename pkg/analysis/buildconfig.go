@@ -59,7 +59,8 @@ func (c BuildConfig) String() string {
 	if c.Cgo != def.Cgo {
 		parts = append(parts, "cgo="+onOff(c.Cgo))
 	}
-	if tags := normalizeTags(c.Tags); !slices.Equal(tags, def.Tags) {
+	tags := normalizeTags(c.Tags)
+	if !slices.Equal(tags, def.Tags) {
 		parts = append(parts, "tags="+strings.Join(tags, ","))
 	}
 	if len(parts) == 0 {
@@ -121,7 +122,8 @@ func importsC(f *SourceFile) bool {
 		return false
 	}
 	for _, imp := range f.AST.Imports {
-		if path, err := strconv.Unquote(imp.Path.Value); err == nil && path == "C" {
+		path, err := strconv.Unquote(imp.Path.Value)
+		if err == nil && path == "C" {
 			return true
 		}
 	}

@@ -133,7 +133,8 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 
 	var specs []string
 	for _, spec := range r.req.Targets {
-		if _, err := analysis.ResolveTargets(v.Workspace, []string{spec}); err == nil {
+		_, err := analysis.ResolveTargets(v.Workspace, []string{spec})
+		if err == nil {
 			r.resolved[spec] = true
 			specs = append(specs, spec)
 		}
@@ -156,7 +157,8 @@ func (r *reachableRun) visit(e *DefaultEngine, v *analysis.View) (bool, error) {
 		a.SetWithin(key)
 	}
 	sites, bodiless, err := a.ReachableSites(entry, targets, r.req.IncludeTests)
-	if _, ok := errors.AsType[*analysis.WithinUnreachedError](err); ok {
+	_, ok := errors.AsType[*analysis.WithinUnreachedError](err)
+	if ok {
 		r.withinErr = err
 		return true, nil
 	}

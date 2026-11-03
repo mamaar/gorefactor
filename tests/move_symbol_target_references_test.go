@@ -18,13 +18,15 @@ func TestMoveSymbol_UnqualifiesReferencesTheEarlierMoveWroteInTheTarget(t *testi
 	defer sess.Close()
 
 	for _, name := range []string{"Moved", "Helper"} {
-		if res := moveSymbolCall(t, sess, name, "src", "dst"); res.IsError {
+		res := moveSymbolCall(t, sess, name, "src", "dst")
+		if res.IsError {
 			t.Fatalf("move %s: %s", name, errText(res))
 		}
 	}
 
 	assertFileContains(t, dir, "dst/dst.go", "return Helper()")
-	if got := fileText(t, dir, "dst/dst.go"); strings.Contains(got, "src") {
+	got := fileText(t, dir, "dst/dst.go")
+	if strings.Contains(got, "src") {
 		t.Errorf("dst still mentions src:\n%s", got)
 	}
 	goVets(t, dir, "")
@@ -38,17 +40,20 @@ func TestMoveSymbol_UnqualifiesAliasedSourceReferencesInTheTargetAndKeepsTheImpo
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Moved", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Moved", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Moved: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst.go", "return Moved()")
 	assertFileContains(t, dir, "dst/dst.go", "return s.Helper()")
 	goVets(t, dir, "")
 
-	if res := moveSymbolCall(t, sess, "Helper", "src", "dst"); res.IsError {
+	res = moveSymbolCall(t, sess, "Helper", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Helper: %s", errText(res))
 	}
-	if got := fileText(t, dir, "dst/dst.go"); strings.Contains(got, "src") || strings.Contains(got, "s.") {
+	got := fileText(t, dir, "dst/dst.go")
+	if strings.Contains(got, "src") || strings.Contains(got, "s.") {
 		t.Errorf("dst still refers to src:\n%s", got)
 	}
 	goVets(t, dir, "")
@@ -69,7 +74,8 @@ func TestMoveByDependencies_SecondRunUnqualifiesTheSourceReferencesTheFirstWrote
 	callJSON(t, sess, "move_by_dependencies", map[string]any{"move_shared_to": "shared"})
 
 	assertFileContains(t, dir, "shared/shared.go", "func Helper()")
-	if got := fileText(t, dir, "shared/shared.go"); strings.Contains(got, "src") {
+	got := fileText(t, dir, "shared/shared.go")
+	if strings.Contains(got, "src") {
 		t.Errorf("shared still mentions src:\n%s", got)
 	}
 	goVets(t, dir, "")
@@ -83,7 +89,8 @@ func TestMoveSymbol_KeepsTheTargetImportASourceFileStillNeedsForItsRewrittenRefe
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveSymbolCall(t, sess, "Wrapper", "src", "dst"); res.IsError {
+	res := moveSymbolCall(t, sess, "Wrapper", "src", "dst")
+	if res.IsError {
 		t.Fatalf("move Wrapper: %s", errText(res))
 	}
 

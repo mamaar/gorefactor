@@ -23,7 +23,8 @@ type batchStep struct {
 // default configuration only.
 func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep, error) {
 	var raw map[string]string
-	if err := json.Unmarshal([]byte(opStr), &raw); err != nil {
+	err := json.Unmarshal([]byte(opStr), &raw)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse operation JSON: %w", err)
 	}
 
@@ -40,7 +41,8 @@ func (e *DefaultEngine) parseStep(ws *types.Workspace, opStr string) (*batchStep
 			NewName:    raw["new_name"],
 			Scope:      types.WorkspaceScope,
 		}
-		if pkg := raw["package"]; pkg != "" {
+		pkg := raw["package"]
+		if pkg != "" {
 			req.Package = types.ResolvePackagePath(ws, pkg)
 			req.Scope = types.PackageScope
 		}
@@ -181,7 +183,8 @@ func (e *DefaultEngine) planSteps(ws *types.Workspace, steps []string) (*types.R
 		}
 		parsed = append(parsed, step)
 	}
-	if err := findPackageStepConflict(parsed); err != nil {
+	err := findPackageStepConflict(parsed)
+	if err != nil {
 		return nil, err
 	}
 	plans := make([]*types.RefactoringPlan, 0, len(parsed))

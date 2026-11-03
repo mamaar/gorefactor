@@ -62,7 +62,8 @@ func assertReported(t *testing.T, facts map[string]unusedFact, key, reason strin
 func assertNotReported(t *testing.T, facts map[string]unusedFact, keys ...string) {
 	t.Helper()
 	for _, key := range keys {
-		if f, ok := facts[key]; ok {
+		f, ok := facts[key]
+		if ok {
 			t.Errorf("%s reported (%q), want it live", key, f.Reason)
 		}
 	}

@@ -149,23 +149,28 @@ use (
 	./moduleB
 )
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.work"), []byte(goWork), 0644); err != nil {
+	err := os.WriteFile(filepath.Join(tmpDir, "go.work"), []byte(goWork), 0644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create moduleA/go.mod
-	if err := os.MkdirAll(filepath.Join(tmpDir, "moduleA"), 0755); err != nil {
+	err = os.MkdirAll(filepath.Join(tmpDir, "moduleA"), 0755)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "moduleA", "go.mod"), []byte("module github.com/test/moduleA\n\ngo 1.21\n"), 0644); err != nil {
+	err = os.WriteFile(filepath.Join(tmpDir, "moduleA", "go.mod"), []byte("module github.com/test/moduleA\n\ngo 1.21\n"), 0644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create moduleB/go.mod
-	if err := os.MkdirAll(filepath.Join(tmpDir, "moduleB"), 0755); err != nil {
+	err = os.MkdirAll(filepath.Join(tmpDir, "moduleB"), 0755)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(tmpDir, "moduleB", "go.mod"), []byte("module github.com/test/moduleB\n\ngo 1.21\n"), 0644); err != nil {
+	err = os.WriteFile(filepath.Join(tmpDir, "moduleB", "go.mod"), []byte("module github.com/test/moduleB\n\ngo 1.21\n"), 0644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -207,12 +212,14 @@ func TestDiscoverWorkspaceModules_MissingGoMod(t *testing.T) {
 
 use ./nomod
 `
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.work"), []byte(goWork), 0644); err != nil {
+	err := os.WriteFile(filepath.Join(tmpDir, "go.work"), []byte(goWork), 0644)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Create directory without go.mod
-	if err := os.MkdirAll(filepath.Join(tmpDir, "nomod"), 0755); err != nil {
+	err = os.MkdirAll(filepath.Join(tmpDir, "nomod"), 0755)
+	if err != nil {
 		t.Fatal(err)
 	}
 

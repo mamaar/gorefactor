@@ -59,15 +59,18 @@ func TestRenameField_SiblingStructDeclarationsBothRenamedAndSharedUseOnce(t *tes
 
 	out := callJSON(t, sess, "rename_field", renameTAToB(nil))
 
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	for _, f := range []string{"p/t_default.go", "p/t_tagx.go"} {
-		if got := fileText(t, dir, f); strings.Count(got, "type T struct{ B int }") != 1 {
+		got := fileText(t, dir, f)
+		if strings.Count(got, "type T struct{ B int }") != 1 {
 			t.Errorf("%s:\n%s", f, got)
 		}
 	}
-	if got := fileText(t, dir, "p/use.go"); strings.Count(got, "t.B") != 1 {
+	got := fileText(t, dir, "p/use.go")
+	if strings.Count(got, "t.B") != 1 {
 		t.Errorf("use.go:\n%s", got)
 	}
 	goVets(t, dir, "", "tagx")
@@ -144,7 +147,8 @@ func TestRenameField_SingleConfigOmitsBuildConfigs(t *testing.T) {
 
 	for _, dryRun := range []bool{true, false} {
 		out := callJSON(t, sess, "rename_field", renameTAToB(map[string]any{"dry_run": dryRun}))
-		if _, ok := out["build_configs"]; ok {
+		_, ok := out["build_configs"]
+		if ok {
 			t.Errorf("dry_run=%v: build_configs = %v, want the field omitted", dryRun, out["build_configs"])
 		}
 	}

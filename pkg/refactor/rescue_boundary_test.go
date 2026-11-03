@@ -90,7 +90,8 @@ func TestSafeDelete_ReferencesInImportersOfProductionOnlyCopyBlock(t *testing.T)
 	}
 	slices.Sort(files)
 	want := []string{"app/app.go", "common/common.go", "common/common_test.go", "helper/helper_test.go"}
-	if got := slices.Compact(files); !slices.Equal(got, want) {
+	got := slices.Compact(files)
+	if !slices.Equal(got, want) {
 		t.Errorf("blocking files = %v, want %v", got, want)
 	}
 }

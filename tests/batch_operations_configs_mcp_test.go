@@ -44,7 +44,8 @@ func TestBatchOperations_RenameSymbolRewritesFileOnlyATagCompiles(t *testing.T) 
 	assertFileContains(t, dir, "p/f.go", "func g(n int) int")
 	assertFileContains(t, dir, "p/use.go", "g(1)")
 	assertFileContains(t, dir, "p/use_tagx.go", "g(2)")
-	if configs, _ := out["build_configs"].([]any); len(configs) != 2 {
+	configs, _ := out["build_configs"].([]any)
+	if len(configs) != 2 {
 		t.Errorf("build_configs = %v, want 2 entries", out["build_configs"])
 	}
 	goVets(t, dir, "", "tagx")
@@ -111,7 +112,8 @@ func TestBatchOperations_DryRunReturnsDiffsAndWritesNothing(t *testing.T) {
 	out := callJSON(t, sess, "batch_operations", batchArgs(true,
 		`{"type":"rename_symbol","symbol":"f","new_name":"g"}`))
 
-	if diffs, _ := out["diffs"].([]any); len(diffs) != 2 {
+	diffs, _ := out["diffs"].([]any)
+	if len(diffs) != 2 {
 		t.Errorf("diffs = %v, want one per changed file", out["diffs"])
 	}
 	assertFileUnchanged(t, dir, "p/f.go", batchF)

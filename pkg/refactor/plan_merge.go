@@ -55,7 +55,8 @@ func MergeConfigPlans(plans []ConfigPlan) (*types.RefactoringPlan, error) {
 	}
 
 	merged := mergeConfigChanges(live)
-	if err := findConfigConflict(merged, live); err != nil {
+	err := findConfigConflict(merged, live)
+	if err != nil {
 		return nil, err
 	}
 
@@ -109,7 +110,8 @@ func mergeConfigChanges(plans []ConfigPlan) []*mergedChange {
 		}
 		for id := range local {
 			for _, m := range firstOfID[id] {
-				if n := len(m.owners); n == 0 || m.owners[n-1] != pi {
+				n := len(m.owners)
+				if n == 0 || m.owners[n-1] != pi {
 					m.owners = append(m.owners, pi)
 				}
 			}
@@ -182,7 +184,8 @@ func MergeStepPlans(steps []*types.RefactoringPlan) (*types.RefactoringPlan, err
 		AffectedFiles: []string{},
 		Reversible:    true,
 	}
-	if err := findStepConflict(steps); err != nil {
+	err := findStepConflict(steps)
+	if err != nil {
 		return nil, err
 	}
 	seenFiles := make(map[string]bool)

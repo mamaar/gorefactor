@@ -42,7 +42,8 @@ func TestAnalyzeSymbol_FindsSymbolDeclaredOnlyUnderAnotherConfig(t *testing.T) {
 	if filepath.Base(out["file"].(string)) != "win_windows.go" {
 		t.Errorf("file = %v, want win_windows.go", out["file"])
 	}
-	if _, ok := out["declarations"]; ok {
+	_, ok := out["declarations"]
+	if ok {
 		t.Errorf("declarations present for a single declaration: %v", out["declarations"])
 	}
 }
@@ -61,14 +62,17 @@ func TestAnalyzeSymbol_PerOSDeclarationsAreListedWithConfigs(t *testing.T) {
 		t.Fatalf("declarations = %v, want 2", out["declarations"])
 	}
 	for _, d := range decls {
-		if cfgs, _ := d.(map[string]any)["configs"].([]any); len(cfgs) == 0 {
+		cfgs, _ := d.(map[string]any)["configs"].([]any)
+		if len(cfgs) == 0 {
 			t.Errorf("declaration %v has no configs", d)
 		}
 	}
-	if n, _ := out["reference_count"].(float64); n != 1 {
+	n, _ := out["reference_count"].(float64)
+	if n != 1 {
 		t.Errorf("reference_count = %v, want 1 (the caller seen by both configs counts once)", out["reference_count"])
 	}
-	if cfgs, _ := out["build_configs"].([]any); len(cfgs) < 2 {
+	cfgs, _ := out["build_configs"].([]any)
+	if len(cfgs) < 2 {
 		t.Errorf("build_configs = %v, want several", out["build_configs"])
 	}
 }
@@ -81,7 +85,8 @@ func TestAnalyzeSymbol_CountsCallerInTaggedFile(t *testing.T) {
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
-	if n, _ := out["reference_count"].(float64); n != 2 {
+	n, _ := out["reference_count"].(float64)
+	if n != 2 {
 		t.Errorf("reference_count = %v, want 2", out["reference_count"])
 	}
 }
@@ -94,11 +99,13 @@ func TestAnalyzeSymbol_SingleConfigOmitsMultiConfigFields(t *testing.T) {
 		t.Fatal(errMsg)
 	}
 	for _, k := range []string{"declarations", "build_configs", "uncovered_files"} {
-		if _, ok := out[k]; ok {
+		_, ok := out[k]
+		if ok {
 			t.Errorf("%s present in a single-config result", k)
 		}
 	}
-	if n, _ := out["reference_count"].(float64); n != 1 {
+	n, _ := out["reference_count"].(float64)
+	if n != 1 {
 		t.Errorf("reference_count = %v, want 1", out["reference_count"])
 	}
 }

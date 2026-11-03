@@ -174,7 +174,8 @@ func TestFindUnusedSymbols_UnexportedOnly(t *testing.T) {
 
 	facts := unusedFacts(unused)
 	for _, name := range []string{"anotherUnused", "unusedType", "unusedVar", "unusedConst"} {
-		if _, ok := facts["testpkg.go:"+name]; !ok {
+		_, ok := facts["testpkg.go:"+name]
+		if !ok {
 			t.Errorf("Expected to find unused symbol %q", name)
 		}
 	}

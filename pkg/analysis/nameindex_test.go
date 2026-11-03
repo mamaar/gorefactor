@@ -54,7 +54,8 @@ func TestBuildReferenceIndex_TypedNameEntries(t *testing.T) {
 		"alias": {"b.go:10:14 use", "b.go:10:31 use", "b.go:3:8 decl", "b.go:6:7 use"},
 		"v":     {"b.go:6:2 decl", "b.go:7:19 use", "b.go:7:9 use"},
 	} {
-		if got := typedNameEntries(t, v, name); !slices.Equal(got, want) {
+		got := typedNameEntries(t, v, name)
+		if !slices.Equal(got, want) {
 			t.Errorf("%s entries = %q, want %q", name, got, want)
 		}
 	}

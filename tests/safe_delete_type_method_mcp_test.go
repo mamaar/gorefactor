@@ -67,15 +67,18 @@ func writeSafeDeleteFixture(t *testing.T) string {
 		"cmd/main/main.go": "package main\n\nimport \"example.com/del/model\"\n\nfunc main() { _ = model.Use(model.Holder{}, model.Used{}) }\n",
 	} {
 		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(p), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(p, []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	// a_pad.go and b_pad.go both declare pad1/pad2; make them compile.
-	if err := os.WriteFile(filepath.Join(dir, "model/b_pad.go"), []byte("package model\n\nvar pad3 = \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"\n"), 0o644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "model/b_pad.go"), []byte("package model\n\nvar pad3 = \"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\"\n"), 0o644)
+	if err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -97,13 +100,15 @@ func TestAnalyzeSymbol_CountsTypeCheckedReferencesOnly(t *testing.T) {
 
 	// Used: one parameter use in other.go, one in main.go.
 	used := callJSON(t, sess, "analyze_symbol", map[string]any{"symbol": "Used", "package": "model"})
-	if n, _ := used["reference_count"].(float64); n != 2 {
+	n, _ := used["reference_count"].(float64)
+	if n != 2 {
 		t.Errorf("Used reference_count = %v, want 2", used["reference_count"])
 	}
 	// Folder: only the receiver of its own method; the same-named field,
 	// selector and string literal must not count.
 	folder := callJSON(t, sess, "analyze_symbol", map[string]any{"symbol": "Folder", "package": "model"})
-	if n, _ := folder["reference_count"].(float64); n != 1 {
+	n, _ = folder["reference_count"].(float64)
+	if n != 1 {
 		t.Errorf("Folder reference_count = %v, want 1 (own receiver)", folder["reference_count"])
 	}
 }
@@ -115,7 +120,8 @@ func TestSafeDelete_TypeDeletesItsMethods(t *testing.T) {
 	path := filepath.Join(dir, "model", "model.go")
 
 	dry := callJSON(t, sess, "safe_delete", map[string]any{"symbol": "Folder", "source_file": "model/model.go", "dry_run": true})
-	if b, ok := dry["blocking_issue"]; ok {
+	b, ok := dry["blocking_issue"]
+	if ok {
 		t.Fatalf("unexpected blocking_issue: %v", b)
 	}
 	joined := ""
@@ -149,7 +155,8 @@ type Folder struct {
 func (f Folder) AgsError() error { return nil }
 
 `, "", 1)
-	if got := readFile(t, path); got != want {
+	got := readFile(t, path)
+	if got != want {
 		t.Errorf("after delete:\n%s\nwant:\n%s", got, want)
 	}
 }
@@ -177,7 +184,8 @@ func TestSafeDelete_MethodBySelector(t *testing.T) {
 			path := filepath.Join(dir, "model", "model.go")
 
 			dry := callJSON(t, sess, "safe_delete", map[string]any{"symbol": tc.symbol, "source_file": "model/model.go", "dry_run": true})
-			if b, ok := dry["blocking_issue"]; ok {
+			b, ok := dry["blocking_issue"]
+			if ok {
 				t.Fatalf("unexpected blocking_issue: %v", b)
 			}
 			if readFile(t, path) != sdModel {

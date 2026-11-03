@@ -112,7 +112,8 @@ func TestMoveSymbol_ReferenceQualifiersRespectExistingImports(t *testing.T) {
 
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Fatalf("module does not vet clean after the move:\n%s", out)
 	}
 }

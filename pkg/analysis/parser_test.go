@@ -144,7 +144,8 @@ func TestParser_ParsePackage_Empty(t *testing.T) {
 	}
 
 	// Check that it's a RefactorError
-	if refErr, ok := err.(*types.RefactorError); ok {
+	refErr, ok := err.(*types.RefactorError)
+	if ok {
 		if refErr.Type != types.ParseError {
 			t.Errorf("Expected ParseError, got %v", refErr.Type)
 		}
@@ -258,10 +259,12 @@ func TestParser_TypeCheckPackage_DiamondMemoization(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0755)
+		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0644)
+		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
 		}
 	}
@@ -338,7 +341,8 @@ func UseBoth() {
 	parser.EnsureTypeChecked(ws, pkgD)
 
 	for _, name := range []string{"test/diamond/a", "test/diamond/b", "test/diamond/c", "test/diamond/d"} {
-		if got := counts[name]; got != 1 {
+		got := counts[name]
+		if got != 1 {
 			t.Errorf("expected package %s to be type-checked exactly once, got %d", name, got)
 		}
 	}
@@ -355,10 +359,12 @@ func TestParser_TypeCheckPackage_CycleThroughTestFiles(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0755)
+		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0644)
+		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
 		}
 	}
@@ -468,10 +474,12 @@ func TestParser_TypeCheckPackage_DiamondRescueIsConsistentAcrossImporters(t *tes
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0755)
+		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0644)
+		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
 		}
 	}
@@ -697,10 +705,12 @@ func TestParser_TypeCheckPackage_ExternalTestPackage(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0755)
+		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0644)
+		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
 		}
 	}
@@ -772,10 +782,12 @@ func TestParser_TypeCheckPackage_ConcurrentSharedDependency(t *testing.T) {
 
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0755)
+		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0644)
+		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
 		}
 	}
@@ -914,7 +926,8 @@ func TestParser_WorkspaceImporter_ExternalModuleFallback(t *testing.T) {
 	if extPkg == nil {
 		t.Fatal("expected golang.org/x/tools/go/packages among pkg/analysis's resolved imports")
 	}
-	if obj := extPkg.Scope().Lookup("Load"); obj == nil {
+	obj := extPkg.Scope().Lookup("Load")
+	if obj == nil {
 		t.Error("expected golang.org/x/tools/go/packages.Load to resolve from the externally-loaded package")
 	}
 }
@@ -960,10 +973,12 @@ func TestSymbolResolver_CallSitesOf_TestOnlyThirdPartyImport(t *testing.T) {
 	tempDir := t.TempDir()
 	writeFile := func(rel, content string) {
 		full := filepath.Join(tempDir, rel)
-		if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		err := os.MkdirAll(filepath.Dir(full), 0755)
+		if err != nil {
 			t.Fatalf("failed to create dir for %s: %v", rel, err)
 		}
-		if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		err = os.WriteFile(full, []byte(content), 0644)
+		if err != nil {
 			t.Fatalf("failed to write %s: %v", rel, err)
 		}
 	}
@@ -1101,10 +1116,12 @@ func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
 			tempDir := t.TempDir()
 			for rel, content := range tt.files {
 				full := filepath.Join(tempDir, rel)
-				if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+				err := os.MkdirAll(filepath.Dir(full), 0755)
+				if err != nil {
 					t.Fatalf("failed to create dir for %s: %v", rel, err)
 				}
-				if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+				err = os.WriteFile(full, []byte(content), 0644)
+				if err != nil {
 					t.Fatalf("failed to write %s: %v", rel, err)
 				}
 			}
@@ -1114,7 +1131,8 @@ func TestParser_WorkspaceImporter_HasExternalImports(t *testing.T) {
 				t.Fatalf("failed to parse workspace: %v", err)
 			}
 
-			if got := parser.importer.hasExternalImports(); got != tt.want {
+			got := parser.importer.hasExternalImports()
+			if got != tt.want {
 				t.Errorf("hasExternalImports() = %v, want %v", got, tt.want)
 			}
 		})
@@ -1132,10 +1150,12 @@ func writeWorkspace(t *testing.T, files map[string]string) string {
 	files["go.mod"] = "module example.com/w\n\ngo 1.22\n"
 	for name, content := range files {
 		path := filepath.Join(root, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(path, []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1186,10 +1206,12 @@ func TestParseWorkspace_ExcludesConstrainedFilesAndTypeChecks(t *testing.T) {
 	if pkg == nil {
 		t.Fatal("package p not loaded")
 	}
-	if got := fileNames(pkg.TestFiles); !slices.Equal(got, []string{"x_nofts5_test.go"}) {
+	got := fileNames(pkg.TestFiles)
+	if !slices.Equal(got, []string{"x_nofts5_test.go"}) {
 		t.Errorf("TestFiles = %v", got)
 	}
-	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
+	got = fileNames(pkg.Files)
+	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
 	}
 	p.EnsureTypeChecked(ws, pkg)
@@ -1205,7 +1227,8 @@ func TestParseWorkspace_TagSelectsConstrainedTestFile(t *testing.T) {
 	root := constrainedWorkspace(t)
 	_, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false, "fts5"))
 	pkg := ws.Packages[filepath.Join(root, "p")]
-	if got := fileNames(pkg.TestFiles); !slices.Equal(got, []string{"x_fts5_test.go"}) {
+	got := fileNames(pkg.TestFiles)
+	if !slices.Equal(got, []string{"x_fts5_test.go"}) {
 		t.Errorf("TestFiles = %v", got)
 	}
 }
@@ -1214,7 +1237,8 @@ func TestParseWorkspace_GOOSSelectsSuffixedFile(t *testing.T) {
 	root := constrainedWorkspace(t)
 	_, ws := loadWithConfig(t, root, NewBuildConfig("windows", "amd64", false))
 	pkg := ws.Packages[filepath.Join(root, "p")]
-	if _, ok := pkg.Files["y_windows.go"]; !ok {
+	_, ok := pkg.Files["y_windows.go"]
+	if !ok {
 		t.Errorf("Files = %v, want y_windows.go", fileNames(pkg.Files))
 	}
 }
@@ -1226,7 +1250,8 @@ func TestParseWorkspace_LegacyPlusBuildIgnoreExcluded(t *testing.T) {
 	})
 	_, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
 	pkg := ws.Packages[filepath.Join(root, "p")]
-	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
+	got := fileNames(pkg.Files)
+	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
 	}
 }
@@ -1237,11 +1262,13 @@ func TestParseWorkspace_ImportCRequiresCgo(t *testing.T) {
 		"p/c.go": "package p\n\n// int x;\nimport \"C\"\n",
 	})
 	_, off := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
-	if got := fileNames(off.Packages[filepath.Join(root, "p")].Files); !slices.Equal(got, []string{"p.go"}) {
+	got := fileNames(off.Packages[filepath.Join(root, "p")].Files)
+	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("cgo off: Files = %v", got)
 	}
 	_, on := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", true))
-	if got := fileNames(on.Packages[filepath.Join(root, "p")].Files); !slices.Equal(got, []string{"c.go", "p.go"}) {
+	got = fileNames(on.Packages[filepath.Join(root, "p")].Files)
+	if !slices.Equal(got, []string{"c.go", "p.go"}) {
 		t.Errorf("cgo on: Files = %v", got)
 	}
 }
@@ -1256,7 +1283,8 @@ func TestParseWorkspace_UnparsableFileDoesNotDropPackage(t *testing.T) {
 	if pkg == nil {
 		t.Fatal("package p dropped")
 	}
-	if got := fileNames(pkg.Files); !slices.Equal(got, []string{"p.go"}) {
+	got := fileNames(pkg.Files)
+	if !slices.Equal(got, []string{"p.go"}) {
 		t.Errorf("Files = %v", got)
 	}
 	bad := p.sources.File(filepath.Join(root, "p", "bad.go"))
@@ -1271,10 +1299,12 @@ func TestParseWorkspace_FullyConstrainedDirectoryIsNotAPackage(t *testing.T) {
 		"win/w_windows.go": "package win\n",
 	})
 	p, ws := loadWithConfig(t, root, NewBuildConfig("linux", "amd64", false))
-	if _, ok := ws.Packages[filepath.Join(root, "win")]; ok {
+	_, ok := ws.Packages[filepath.Join(root, "win")]
+	if ok {
 		t.Error("win loaded as a package")
 	}
-	if _, ok := ws.Packages[filepath.Join(root, "p")]; !ok {
+	_, ok = ws.Packages[filepath.Join(root, "p")]
+	if !ok {
 		t.Error("p not loaded")
 	}
 	if p.sources.File(filepath.Join(root, "win", "w_windows.go")) == nil {
@@ -1325,7 +1355,8 @@ func TestTypeCheck_CgoFilePackageIsTyped(t *testing.T) {
 	}
 	var plainFunc, putsUse bool
 	for id, obj := range pkg.TypesInfo.Uses {
-		if _, ok := obj.(*gotypes.Func); ok && id.Name == "plain" {
+		_, ok := obj.(*gotypes.Func)
+		if ok && id.Name == "plain" {
 			plainFunc = true
 		}
 		if id.Name == "puts" || id.Name == "CString" {
@@ -1391,7 +1422,8 @@ func assertErrorIn(t *testing.T, ws *types.Workspace, pkg *types.Package, file s
 	if !errors.As(pkg.ExcludedTestFiles[file], &terr) {
 		t.Fatalf("%s: recorded error %v is not a types.Error", file, pkg.ExcludedTestFiles[file])
 	}
-	if got := filepath.Base(ws.FileSet.Position(terr.Pos).Filename); got != file {
+	got := filepath.Base(ws.FileSet.Position(terr.Pos).Filename)
+	if got != file {
 		t.Errorf("%s: recorded error is located in %s: %v", file, got, terr)
 	}
 }
@@ -1404,7 +1436,8 @@ func TestTypeCheck_OnlyTestFileWithErrorIsExcluded(t *testing.T) {
 	})
 	_, ws, pkg := checkedDir(t, root, "p")
 
-	if got := excludedNames(pkg); !slices.Equal(got, []string{"bad_test.go"}) {
+	got := excludedNames(pkg)
+	if !slices.Equal(got, []string{"bad_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want only bad_test.go", got)
 	}
 	assertErrorIn(t, ws, pkg, "bad_test.go")
@@ -1427,7 +1460,8 @@ func TestTypeCheck_TestOnlyPackageIsCheckedAndExcludesBrokenTestFile(t *testing.
 	})
 	_, _, pkg := checkedDir(t, root, "integration")
 
-	if got := excludedNames(pkg); !slices.Equal(got, []string{"bad_test.go"}) {
+	got := excludedNames(pkg)
+	if !slices.Equal(got, []string{"bad_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want only bad_test.go", got)
 	}
 	if pkg.TypesPkg == nil || !usesIn(pkg, "good_test.go", "F") {
@@ -1456,7 +1490,8 @@ func TestTypeCheck_TestFileDependingOnExcludedFileIsExcludedWithItsOwnError(t *t
 	})
 	_, ws, pkg := checkedDir(t, root, "p")
 
-	if got := excludedNames(pkg); !slices.Equal(got, []string{"helper_test.go", "user_test.go"}) {
+	got := excludedNames(pkg)
+	if !slices.Equal(got, []string{"helper_test.go", "user_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want helper_test.go and user_test.go", got)
 	}
 	assertErrorIn(t, ws, pkg, "helper_test.go")
@@ -1501,7 +1536,8 @@ func TestTypeCheck_ErrorChainLongerThanPassLimitDropsAllTestFilesUnattributed(t 
 	if pkg.UnattributedTestErr == nil {
 		t.Fatal("UnattributedTestErr = nil, want the error left after the last pass")
 	}
-	if got, want := excludedNames(pkg), fileNames(pkg.TestFiles); !slices.Equal(got, want) {
+	got, want := excludedNames(pkg), fileNames(pkg.TestFiles)
+	if !slices.Equal(got, want) {
 		t.Errorf("ExcludedTestFiles = %v, want every test file %v", got, want)
 	}
 	assertErrorIn(t, ws, pkg, "t0_test.go")
@@ -1524,7 +1560,8 @@ func TestTypeCheck_ExternalTestFileWithErrorIsExcludedAndTheRestMerged(t *testin
 	})
 	_, ws, pkg := checkedDir(t, root, "p")
 
-	if got := excludedNames(pkg); !slices.Equal(got, []string{"bad_ext_test.go"}) {
+	got := excludedNames(pkg)
+	if !slices.Equal(got, []string{"bad_ext_test.go"}) {
 		t.Fatalf("ExcludedTestFiles = %v, want only bad_ext_test.go", got)
 	}
 	assertErrorIn(t, ws, pkg, "bad_ext_test.go")

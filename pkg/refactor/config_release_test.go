@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/fsnotify/fsnotify"
+
 	"github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/types"
 	"github.com/mamaar/gorefactor/pkg/watch"
@@ -44,7 +45,8 @@ func TestPlanAcrossConfigs_ReleasesSecondaryViewsTypeInfo(t *testing.T) {
 	}
 	for i, v := range views {
 		for _, pkg := range v.Workspace.Packages {
-			if held := pkg.TypesChecked || pkg.TypesInfo != nil || pkg.TypesPkg != nil; held != (i == 0) {
+			held := pkg.TypesChecked || pkg.TypesInfo != nil || pkg.TypesPkg != nil
+			if held != (i == 0) {
 				t.Errorf("view %s: %s holds type info = %v, want %v", v.Config, pkg.ImportPath, held, i == 0)
 			}
 		}
@@ -122,7 +124,8 @@ func TestPlanAcrossConfigs_ConcurrentWithViewsAndUpdater(t *testing.T) {
 	}
 	wg.Go(func() {
 		for range 8 {
-			if views, err := set.Views(); err != nil || len(views) != 3 {
+			views, err := set.Views()
+			if err != nil || len(views) != 3 {
 				t.Errorf("Views = %d views, %v", len(views), err)
 			}
 		}
@@ -132,7 +135,8 @@ func TestPlanAcrossConfigs_ConcurrentWithViewsAndUpdater(t *testing.T) {
 		file := filepath.Join(dir, "q", "q.go")
 		for i := range 6 {
 			state.Lock()
-			if err := os.WriteFile(file, fmt.Appendf(nil, "package q\n\nconst rev = %d\n", i), 0o644); err != nil {
+			err := os.WriteFile(file, fmt.Appendf(nil, "package q\n\nconst rev = %d\n", i), 0o644)
+			if err != nil {
 				t.Error(err)
 			}
 			updater.HandleChanges([]watch.ChangeEvent{{Path: file, Op: fsnotify.Write}})

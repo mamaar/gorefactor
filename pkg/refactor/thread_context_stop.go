@@ -23,13 +23,15 @@ func resolveStopAt(wss []*pkgtypes.Workspace, entries []string) (pkgtypes.Symbol
 	out := make(pkgtypes.SymbolKeySet)
 	for _, entry := range entries {
 		file, name := "", entry
-		if i := strings.LastIndex(entry, ":"); i >= 0 {
+		i := strings.LastIndex(entry, ":")
+		if i >= 0 {
 			file, name = entry[:i], entry[i+1:]
 		}
 		matches := stopMatches(wss, file, name)
 		keys := make(map[pkgtypes.SymbolKey]string)
 		for _, m := range matches {
-			if prev, ok := keys[m.key]; !ok || m.file < prev {
+			prev, ok := keys[m.key]
+			if !ok || m.file < prev {
 				keys[m.key] = m.file
 			}
 		}
@@ -65,7 +67,8 @@ func stopMatches(wss []*pkgtypes.Workspace, file, name string) []stopMatch {
 	for _, ws := range wss {
 		for _, h := range matchSourceFiles(ws, file) {
 			rel := h.file.Path
-			if r, err := filepath.Rel(ws.RootPath, h.file.Path); err == nil {
+			r, err := filepath.Rel(ws.RootPath, h.file.Path)
+			if err == nil {
 				rel = filepath.ToSlash(r)
 			}
 			add := func(recv, n string) {

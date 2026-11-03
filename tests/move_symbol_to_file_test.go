@@ -41,11 +41,13 @@ func TestMoveSymbol_ToFile_MovesIntoTheTestFileOfItsOwnPackage(t *testing.T) {
 
 	args := map[string]any{"symbol": "ContainsAll", "from_package": "p", "to_package": "p", "to_file": "p/p_test.go"}
 	args["dry_run"] = true
-	if res := moveToFile(t, sess, args); res.IsError {
+	res := moveToFile(t, sess, args)
+	if res.IsError {
 		t.Fatalf("dry run: %s", errText(res))
 	}
 	delete(args, "dry_run")
-	if res := moveToFile(t, sess, args); res.IsError {
+	res = moveToFile(t, sess, args)
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 
@@ -77,13 +79,15 @@ func TestMoveSymbol_ToFile_MovesBetweenFilesOfOnePackageKeepingReferences(t *tes
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveToFile(t, sess, map[string]any{"symbol": "Foo", "from_package": "p", "to_package": "p", "to_file": "p/b.go"}); res.IsError {
+	res := moveToFile(t, sess, map[string]any{"symbol": "Foo", "from_package": "p", "to_package": "p", "to_file": "p/b.go"})
+	if res.IsError {
 		t.Fatalf("move_symbol: %s", errText(res))
 	}
 
 	assertFileContains(t, dir, "p/b.go", "package p")
 	assertFileContains(t, dir, "p/b.go", "func Foo")
-	if got := fileText(t, dir, "p/a.go"); strings.Contains(got, "func Foo") || !strings.Contains(got, "Foo()") {
+	got := fileText(t, dir, "p/a.go")
+	if strings.Contains(got, "func Foo") || !strings.Contains(got, "Foo()") {
 		t.Errorf("a.go:\n%s", got)
 	}
 	assertFileContains(t, dir, "use/use.go", "p.Foo()")
@@ -100,7 +104,8 @@ func TestMoveSymbol_ToFile_CreatesMissingFileAndUsesExistingTestFileOfAnotherPac
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveToFile(t, sess, map[string]any{"symbol": "Foo", "from_package": "src", "to_package": "dst", "to_file": "dst/extra.go"}); res.IsError {
+	res := moveToFile(t, sess, map[string]any{"symbol": "Foo", "from_package": "src", "to_package": "dst", "to_file": "dst/extra.go"})
+	if res.IsError {
 		t.Fatalf("move Foo: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/extra.go", "package dst")
@@ -110,7 +115,8 @@ func TestMoveSymbol_ToFile_CreatesMissingFileAndUsesExistingTestFileOfAnotherPac
 		t.Error("Foo went to the wrong file")
 	}
 
-	if res := moveToFile(t, sess, map[string]any{"symbol": "Bar", "from_package": "src", "to_package": "dst", "to_file": "dst/dst_test.go"}); res.IsError {
+	res = moveToFile(t, sess, map[string]any{"symbol": "Bar", "from_package": "src", "to_package": "dst", "to_file": "dst/dst_test.go"})
+	if res.IsError {
 		t.Fatalf("move Bar: %s", errText(res))
 	}
 	assertFileContains(t, dir, "dst/dst_test.go", "func Bar")
@@ -177,10 +183,12 @@ func TestMoveSymbol_DeletesTheSourceFileItEmptied(t *testing.T) {
 			if dry.IsError {
 				t.Fatalf("dry run: %s", errText(dry))
 			}
-			if got := strings.Contains(errText(dry), `"action": "delete"`) || strings.Contains(errText(dry), `"action":"delete"`); got != tc.deleted {
+			got := strings.Contains(errText(dry), `"action": "delete"`) || strings.Contains(errText(dry), `"action":"delete"`)
+			if got != tc.deleted {
 				t.Errorf("dry run delete action = %v, want %v:\n%s", got, tc.deleted, errText(dry))
 			}
-			if res := moveToFile(t, sess, map[string]any{"symbol": "Foo", "from_package": "src", "to_package": "dst"}); res.IsError {
+			res := moveToFile(t, sess, map[string]any{"symbol": "Foo", "from_package": "src", "to_package": "dst"})
+			if res.IsError {
 				t.Fatalf("move_symbol: %s", errText(res))
 			}
 			if fileExists(dir, "src/foo.go") == tc.deleted {
@@ -251,11 +259,13 @@ func TestMoveSymbol_ToFile_MovesAMethodAloneWithinItsPackage(t *testing.T) {
 
 			args := map[string]any{"symbol": name, "from_package": "p", "to_package": "p", "to_file": "p/get.go"}
 			args["dry_run"] = true
-			if res := moveToFile(t, sess, args); res.IsError {
+			res := moveToFile(t, sess, args)
+			if res.IsError {
 				t.Fatalf("dry run: %s", errText(res))
 			}
 			delete(args, "dry_run")
-			if res := moveToFile(t, sess, args); res.IsError {
+			res = moveToFile(t, sess, args)
+			if res.IsError {
 				t.Fatalf("move_symbol: %s", errText(res))
 			}
 
@@ -317,7 +327,8 @@ func TestMoveSymbol_ToFile_MovesASymbolOutOfATestFile(t *testing.T) {
 	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
 	defer sess.Close()
 
-	if res := moveToFile(t, sess, map[string]any{"symbol": "helper", "from_package": "p", "to_package": "p", "to_file": "p/b_test.go"}); res.IsError {
+	res := moveToFile(t, sess, map[string]any{"symbol": "helper", "from_package": "p", "to_package": "p", "to_file": "p/b_test.go"})
+	if res.IsError {
 		t.Fatalf("move helper: %s", errText(res))
 	}
 	assertFileContains(t, dir, "p/b_test.go", "func helper")
@@ -325,7 +336,8 @@ func TestMoveSymbol_ToFile_MovesASymbolOutOfATestFile(t *testing.T) {
 		t.Error("helper was not removed from a_test.go")
 	}
 
-	if res := moveToFile(t, sess, map[string]any{"symbol": "fake.Do", "from_package": "p", "to_package": "p", "to_file": "p/use_test.go"}); res.IsError {
+	res = moveToFile(t, sess, map[string]any{"symbol": "fake.Do", "from_package": "p", "to_package": "p", "to_file": "p/use_test.go"})
+	if res.IsError {
 		t.Fatalf("move Do: %s", errText(res))
 	}
 	assertFileContains(t, dir, "p/use_test.go", "func (fake) Do()")

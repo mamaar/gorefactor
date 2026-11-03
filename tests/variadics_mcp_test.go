@@ -122,7 +122,8 @@ func use(xs []int) {
 }
 `})
 
-	if got := variadicNames(out); !slices.Equal(got, []string{"F"}) {
+	got := variadicNames(out)
+	if !slices.Equal(got, []string{"F"}) {
 		t.Fatalf("listed %v, want only F", got)
 	}
 	f := findVariadic(t, out, "a.go", "F")
@@ -269,7 +270,8 @@ func use() { F(1) }
 `,
 	})
 
-	if got := variadicNames(out); !slices.Equal(got, []string{"F"}) {
+	got := variadicNames(out)
+	if !slices.Equal(got, []string{"F"}) {
 		t.Fatalf("listed %v, want only F", got)
 	}
 	checkShape(t, findVariadic(t, out, "a.go", "F"), variadicJSON{CallSites: 1, OneArg: 1})
@@ -323,7 +325,8 @@ func Sys(xs ...int) {}
 			t.Errorf("%s: configs is empty, want the configurations declaring it", base)
 		}
 	}
-	if f := findVariadic(t, out, "a.go", "F"); len(f.Configs) != 0 {
+	f := findVariadic(t, out, "a.go", "F")
+	if len(f.Configs) != 0 {
 		t.Errorf("F: configs = %v, want none when every configuration declares it", f.Configs)
 	}
 }
@@ -348,13 +351,15 @@ func Run() { lib.F(1) }
 
 	for _, pkg := range []string{"example.com/vari/lib", "lib"} {
 		out := callVariadics(t, map[string]any{"package": pkg}, files())
-		if got := variadicNames(out); !slices.Equal(got, []string{"F"}) {
+		got := variadicNames(out)
+		if !slices.Equal(got, []string{"F"}) {
 			t.Fatalf("package %q listed %v, want only F", pkg, got)
 		}
 		checkShape(t, findVariadic(t, out, "lib.go", "F"), variadicJSON{CallSites: 1, OneArg: 1})
 	}
 
-	if out := callVariadics(t, map[string]any{"package": "nosuch"}, files()); len(out.Variadics) != 0 {
+	out := callVariadics(t, map[string]any{"package": "nosuch"}, files())
+	if len(out.Variadics) != 0 {
 		t.Errorf("unknown package listed %v", variadicNames(out))
 	}
 }
@@ -504,7 +509,8 @@ func P(xs ...int) {}
 func A(xs ...int) {}
 `,
 		})
-		if got := variadicNames(out); !slices.Equal(got, []string{"P", "W"}) {
+		got := variadicNames(out)
+		if !slices.Equal(got, []string{"P", "W"}) {
 			t.Errorf("package %q listed %v, want P and W", pkg, got)
 		}
 	}
@@ -564,7 +570,8 @@ func M(xs ...int) {}
 `,
 	})
 
-	if got := []string{out.Variadics[0].Function, out.Variadics[1].Function, out.Variadics[2].Function}; !slices.Equal(got, []string{"M", "Z", "A"}) {
+	got := []string{out.Variadics[0].Function, out.Variadics[1].Function, out.Variadics[2].Function}
+	if !slices.Equal(got, []string{"M", "Z", "A"}) {
 		t.Errorf("order = %v", got)
 	}
 }

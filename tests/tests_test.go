@@ -284,14 +284,16 @@ func TestChangeSignature(t *testing.T) {
 		Logger:             logger,
 	}
 
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	compareGoldenFiles(t, "change_signature", tmpDir)
@@ -348,14 +350,16 @@ func TestAddContextParameter(t *testing.T) {
 		Logger:             logger,
 	}
 
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	compareGoldenFiles(t, "add_context_parameter", tmpDir)
@@ -677,14 +681,16 @@ func TestSafeDelete(t *testing.T) {
 		Force:      false,
 	}
 
-	if err := op.Validate(ws); err != nil {
+	err := op.Validate(ws)
+	if err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
 	plan, err := op.Execute(ws)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if err := eng.ExecutePlan(plan); err != nil {
+	err = eng.ExecutePlan(plan)
+	if err != nil {
 		t.Fatalf("ExecutePlan: %v", err)
 	}
 	compareGoldenFiles(t, "safe_delete", tmpDir)
@@ -775,7 +781,8 @@ func TestFixIfInitSkip(t *testing.T) {
 // an independent, non-engine check that the rendered output is real,
 // compiling Go.
 func TestFixIfInit_Compiles(t *testing.T) {
-	if _, err := exec.LookPath("go"); err != nil {
+	_, err := exec.LookPath("go")
+	if err != nil {
 		t.Skip("go binary not found on PATH")
 	}
 
@@ -793,13 +800,15 @@ func TestFixIfInit_Compiles(t *testing.T) {
 
 			buildCmd := exec.Command("go", "build", "./...")
 			buildCmd.Dir = tmpDir
-			if out, err := buildCmd.CombinedOutput(); err != nil {
+			out, err := buildCmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("go build ./... failed after ifinit fix:\n%s", out)
 			}
 
 			vetCmd := exec.Command("go", "vet", "./...")
 			vetCmd.Dir = tmpDir
-			if out, err := vetCmd.CombinedOutput(); err != nil {
+			out, err = vetCmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("go vet ./... failed after ifinit fix:\n%s", out)
 			}
 		})

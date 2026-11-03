@@ -40,7 +40,8 @@ func parsedGraphWorkspace(t *testing.T, files map[string]string) *types.Workspac
 		FileSet:  fset,
 	}
 	resolver := NewSymbolResolver(ws, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+	_, err := resolver.BuildSymbolTable(pkg)
+	if err != nil {
 		t.Fatalf("symbol table: %v", err)
 	}
 	return ws
@@ -185,7 +186,8 @@ func TestUsageGraph_BlankAndRepeatedInitAreSeparateNodes(t *testing.T) {
 	})
 	g := newUsageGraph(ws)
 
-	if got := len(g.nodes); got != 4 {
+	got := len(g.nodes)
+	if got != 4 {
 		t.Errorf("len(nodes) = %d, want 4", got)
 	}
 }
@@ -237,7 +239,8 @@ func typedGraph(t *testing.T, files map[string]string) graphFixture {
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
 		if pkg.Symbols == nil {
-			if _, err := v.Resolver.BuildSymbolTable(pkg); err != nil {
+			_, err := v.Resolver.BuildSymbolTable(pkg)
+			if err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -271,7 +274,8 @@ func assertRefs(t *testing.T, n *usageNode, prod, test int) {
 
 func assertEdge(t *testing.T, from, to *usageNode, want bool) {
 	t.Helper()
-	if got := slices.Contains(from.out, to); got != want {
+	got := slices.Contains(from.out, to)
+	if got != want {
 		t.Errorf("edge %s -> %s = %v, want %v", from.name, to.name, got, want)
 	}
 }
@@ -397,7 +401,8 @@ func TestUsageGraph_EmbeddingStructHasEdgeToEmbeddedType(t *testing.T) {
 	resolver := NewSymbolResolver(v.Workspace, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	for _, pkg := range v.Workspace.Packages {
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
-		if _, err := resolver.BuildSymbolTable(pkg); err != nil {
+		_, err := resolver.BuildSymbolTable(pkg)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}

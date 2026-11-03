@@ -54,7 +54,8 @@ func TestRenameSymbolPlanner_LinkedSupersetKeepsPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got, want := sortedChanges(second.plan), sortedChanges(first.plan); !slices.Equal(got, want) {
+	got, want := sortedChanges(second.plan), sortedChanges(first.plan)
+	if !slices.Equal(got, want) {
 		t.Errorf("replanned changes differ:\n got %+v\nwant %+v", got, want)
 	}
 }

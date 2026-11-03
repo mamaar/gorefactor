@@ -39,14 +39,17 @@ func TestFixDeepIfElse_CountsOnlyWhatItRewrote(t *testing.T) {
 	// including the one it declined to touch, so on this fixture it reported
 	// 6 early returns across 2 functions by coincidence rather than by
 	// counting what the rewrite actually emitted.
-	if got, _ := result["early_returns"].(float64); got != 7 {
+	got, _ := result["early_returns"].(float64)
+	if got != 7 {
 		t.Errorf("early_returns = %v, want 7 (3 from process + 4 from categorize)", got)
 	}
 
-	if unfixable, _ := result["unfixable"].([]any); len(unfixable) != 0 {
+	unfixable, _ := result["unfixable"].([]any)
+	if len(unfixable) != 0 {
 		t.Errorf("expected no unfixable findings on this fixture, got %v", unfixable)
 	}
-	if partial, _ := result["partial"].([]any); len(partial) != 0 {
+	partial, _ := result["partial"].([]any)
+	if len(partial) != 0 {
 		t.Errorf("expected no partial findings on this fixture (both chains flatten fully), got %v", partial)
 	}
 }
@@ -79,7 +82,8 @@ func TestDetectDeepIfElse_MarksUnfixableChains(t *testing.T) {
 		t.Error("categorize's else-if chain flattens fully too and should be marked fixable")
 	}
 	// describe nests only two deep, below the default threshold.
-	if _, found := fixable["describe"]; found {
+	_, found := fixable["describe"]
+	if found {
 		t.Error("describe is below the depth threshold and should not be reported at all")
 	}
 }
@@ -93,13 +97,16 @@ func TestFixDeepIfElse_DryRunLeavesFilesAlone(t *testing.T) {
 		"dry_run": true,
 	})
 
-	if after := readFile(t, filepath.Join(dir, "main.go")); after != before {
+	after := readFile(t, filepath.Join(dir, "main.go"))
+	if after != before {
 		t.Errorf("dry run modified the file on disk:\n%s", after)
 	}
-	if dryRun, _ := result["dry_run"].(bool); !dryRun {
+	dryRun, _ := result["dry_run"].(bool)
+	if !dryRun {
 		t.Error("result should report dry_run=true so the caller knows nothing was written")
 	}
-	if diffs, _ := result["diffs"].([]any); len(diffs) == 0 {
+	diffs, _ := result["diffs"].([]any)
+	if len(diffs) == 0 {
 		t.Error("a dry run should return the diffs it would apply")
 	}
 }

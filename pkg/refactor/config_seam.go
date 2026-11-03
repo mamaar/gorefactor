@@ -35,7 +35,8 @@ type configResult struct {
 func declaredFuncKeys(ws *types.Workspace) types.SymbolKeySet {
 	keys := make(types.SymbolKeySet)
 	for fn := range buildFuncDeclIndex(ws) {
-		if key, ok := types.SymbolKeyOf(fn); ok {
+		key, ok := types.SymbolKeyOf(fn)
+		if ok {
 			keys[key] = struct{}{}
 		}
 	}
@@ -147,13 +148,15 @@ func (c *viewIndexes) heldSecondaries() int {
 
 // indexOf returns v's index, waiting for or building it as needed.
 func (c *viewIndexes) indexOf(v *analysis.View) *analysis.ReferenceIndex {
-	if idx := c.indexes[v]; idx != nil {
+	idx := c.indexes[v]
+	if idx != nil {
 		return idx
 	}
 	if c.indexes == nil {
 		c.indexes = make(map[*analysis.View]*analysis.ReferenceIndex)
 	}
-	if p := c.preps[v]; p != nil {
+	p := c.preps[v]
+	if p != nil {
 		<-p.done
 		delete(c.preps, v)
 		c.indexes[v] = p.index
@@ -177,7 +180,8 @@ func (c *viewIndexes) planned(v *analysis.View, plan *types.RefactoringPlan) {
 	}
 	if plan != nil {
 		for _, op := range plan.Operations {
-			if h, ok := op.(analysisHolder); ok {
+			h, ok := op.(analysisHolder)
+			if ok {
 				h.dropAnalysis()
 			}
 		}
@@ -296,9 +300,11 @@ func planAcrossViews(views []*analysis.View, p configPlanner, maxRounds int) (*t
 		return nil, rounds, err
 	}
 	var unverified []types.Blocker
-	if g, ok := p.(gatedPlanner); ok {
+	g, ok := p.(gatedPlanner)
+	if ok {
 		blockers := run.blockers()
-		if err := g.refuse(blockers); err != nil {
+		err := g.refuse(blockers)
+		if err != nil {
 			return nil, rounds, err
 		}
 		unverified = unverifiedOf(blockers)
@@ -341,7 +347,8 @@ func settleViews(views []*analysis.View, p configPlanner, maxRounds int) (*confi
 			}
 		}
 		rounds++
-		if err := run.round(); err != nil {
+		err := run.round()
+		if err != nil {
 			return nil, rounds, err
 		}
 	}
@@ -432,7 +439,8 @@ func (r *configRun) absentEverywhere() error {
 // merge combines the views' plans and reports what they do not cover, with
 // unverified as further sites the plan leaves for the user.
 func (r *configRun) merge(unverified []types.Blocker) (*types.RefactoringPlan, error) {
-	if err := r.absentEverywhere(); err != nil {
+	err := r.absentEverywhere()
+	if err != nil {
 		return nil, err
 	}
 	var plans []ConfigPlan
@@ -440,7 +448,8 @@ func (r *configRun) merge(unverified []types.Blocker) (*types.RefactoringPlan, e
 	for i, v := range r.views {
 		name := v.Config.String()
 		configs = append(configs, name)
-		if res := r.results[i]; res.plan != nil {
+		res := r.results[i]
+		if res.plan != nil {
 			plans = append(plans, ConfigPlan{Config: name, Plan: res.plan})
 		}
 	}
@@ -449,7 +458,8 @@ func (r *configRun) merge(unverified []types.Blocker) (*types.RefactoringPlan, e
 		return nil, err
 	}
 	merged.Coverage = types.Coverage{Configs: configs}
-	if err := r.reportUncovered(merged); err != nil {
+	err = r.reportUncovered(merged)
+	if err != nil {
 		return nil, err
 	}
 	reportUnverified(merged, unverified)

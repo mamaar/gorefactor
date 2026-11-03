@@ -55,10 +55,12 @@ func writeSafeDeleteTestFilesFixture(t *testing.T) string {
 		"p/p_test.go": sdtfTest,
 	} {
 		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		err := os.MkdirAll(filepath.Dir(p), 0o755)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		err = os.WriteFile(p, []byte(content), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -83,7 +85,8 @@ func TestSafeDelete_DeclarationsInTestFiles(t *testing.T) {
 
 			for _, source := range []string{"p/p_test.go", path} {
 				dry := callJSON(t, sess, "safe_delete", map[string]any{"symbol": tc.symbol, "source_file": source, "dry_run": true})
-				if b, ok := dry["blocking_issue"]; ok {
+				b, ok := dry["blocking_issue"]
+				if ok {
 					t.Fatalf("unexpected blocking_issue: %v", b)
 				}
 				if readFile(t, path) != sdtfTest {

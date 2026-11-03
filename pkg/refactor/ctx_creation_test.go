@@ -16,7 +16,8 @@ func writeTemp(t *testing.T, src string) string {
 	t.Helper()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secret.go")
-	if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+	err := os.WriteFile(path, []byte(src), 0o644)
+	if err != nil {
 		t.Fatalf("writeTemp: %v", err)
 	}
 	return path

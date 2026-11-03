@@ -161,7 +161,8 @@ func decodePlanResult(t *testing.T, result *mcpsdk.CallToolResult) planResultJSO
 		t.Fatalf("CallTool returned error: %s", errText(result))
 	}
 	var out planResultJSON
-	if err := json.Unmarshal([]byte(errText(result)), &out); err != nil {
+	err := json.Unmarshal([]byte(errText(result)), &out)
+	if err != nil {
 		t.Fatalf("decode result: %v\n%s", err, errText(result))
 	}
 	return out
@@ -276,7 +277,8 @@ func TestAddContextParameter_Thread_AbortsWhenTestFilesAreUnattributed(t *testin
 	if !result.IsError {
 		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
-	if msg := errText(result); !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
+	msg := errText(result)
+	if !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
 		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
 	assertUnchanged(t, dir, "foo/foo.go")
@@ -293,7 +295,8 @@ func TestAddContextParameter_NoThread_AbortsWhenTestFilesAreUnattributed(t *test
 	if !result.IsError {
 		t.Fatalf("expected an abort, got: %s", errText(result))
 	}
-	if msg := errText(result); !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
+	msg := errText(result)
+	if !strings.Contains(msg, "example.com/threadmcp/foo") || !strings.Contains(msg, "_test.go") {
 		t.Errorf("abort does not name the package and its test files: %s", msg)
 	}
 	assertUnchanged(t, dir, "foo/foo.go")

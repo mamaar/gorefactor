@@ -46,7 +46,8 @@ type liveDecl struct {
 // workspace may call them.
 func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool) (live *liveness, err error) {
 	defer func() {
-		if r := recover(); r != nil {
+		r := recover()
+		if r != nil {
 			err = fmt.Errorf("analysing %s: %v", entry.Path, r)
 		}
 	}()
@@ -72,7 +73,8 @@ func (ua *UnusedAnalyzer) buildLiveness(entry *types.Package, includeTests bool)
 		if !includeTests {
 			continue
 		}
-		if t := sc.withTests(pkg); t != nil {
+		t := sc.withTests(pkg)
+		if t != nil {
 			testPkgs = append(testPkgs, create(t, false))
 		}
 		x, rebuilt := sc.externalTests(pkg)
@@ -212,7 +214,8 @@ func addReflected(set *typeutil.Map, t gotypes.Type) {
 				continue
 			}
 			addReflected(set, f.Type())
-			if _, isIface := f.Type().Underlying().(*gotypes.Interface); !isIface {
+			_, isIface := f.Type().Underlying().(*gotypes.Interface)
+			if !isIface {
 				addReflected(set, gotypes.NewPointer(f.Type()))
 			}
 		}
@@ -253,7 +256,8 @@ func newLiveness(cg *callgraph.Graph, roots []*ssa.Function, takenOnly map[*ssa.
 	l := &liveness{pred: make(map[*callgraph.Node]*callgraph.Node), inits: make(map[string]*callgraph.Node), graph: cg, scans: scans}
 	var queue []*callgraph.Node
 	for _, r := range roots {
-		if n := cg.CreateNode(r); !takenOnly[r] && !slices.Contains(queue, n) {
+		n := cg.CreateNode(r)
+		if !takenOnly[r] && !slices.Contains(queue, n) {
 			l.pred[n] = nil
 			queue = append(queue, n)
 		}
@@ -300,8 +304,10 @@ func (l *liveness) searchWithin(key types.SymbolKey, taken map[*ssa.Function]boo
 		if n.Func == nil || n.Func.Parent() != nil || n.Func.Synthetic != "" {
 			continue
 		}
-		if fn, ok := n.Func.Object().(*gotypes.Func); ok {
-			if k, ok := types.SymbolKeyOf(fn); ok && k == key {
+		fn, ok := n.Func.Object().(*gotypes.Func)
+		if ok {
+			k, ok := types.SymbolKeyOf(fn)
+			if ok && k == key {
 				w.pred[n] = nil
 				queue = append(queue, n)
 			}
@@ -345,7 +351,8 @@ func (l *liveness) search(queue []*callgraph.Node) {
 			}
 		}
 		for _, c := range next {
-			if _, seen := l.pred[c]; !seen {
+			_, seen := l.pred[c]
+			if !seen {
 				l.pred[c] = n
 				queue = append(queue, c)
 			}
@@ -364,21 +371,24 @@ type funcScan struct {
 type scanCache map[*ssa.Function]*funcScan
 
 func (c scanCache) of(fn *ssa.Function) *funcScan {
-	if sc := c[fn]; sc != nil {
+	sc := c[fn]
+	if sc != nil {
 		return sc
 	}
-	sc := &funcScan{}
+	sc = &funcScan{}
 	c[fn] = sc
 	var ops []*ssa.Value
 	for _, b := range fn.Blocks {
 		for _, instr := range b.Instrs {
-			if mi, ok := instr.(*ssa.MakeInterface); ok {
+			mi, ok := instr.(*ssa.MakeInterface)
+			if ok {
 				sc.converted = append(sc.converted, mi.X.Type())
 			}
 			ops = instr.Operands(ops[:0])
 			call, _ := instr.(ssa.CallInstruction)
 			for _, op := range ops {
-				if f, ok := (*op).(*ssa.Function); ok && (call == nil || op != &call.Common().Value) {
+				f, ok := (*op).(*ssa.Function)
+				if ok && (call == nil || op != &call.Common().Value) {
 					sc.taken = append(sc.taken, f)
 				}
 			}
@@ -400,7 +410,8 @@ func (l *liveness) index(n *callgraph.Node, seen map[token.Pos]bool) {
 		}
 		return
 	}
-	if decl, ok := top.Syntax().(*ast.FuncDecl); ok && !seen[decl.Pos()] {
+	decl, ok := top.Syntax().(*ast.FuncDecl)
+	if ok && !seen[decl.Pos()] {
 		seen[decl.Pos()] = true
 		l.decls = append(l.decls, liveDecl{decl.Pos(), decl.End(), n})
 	}
@@ -410,7 +421,8 @@ func (l *liveness) index(n *callgraph.Node, seen map[token.Pos]bool) {
 // closure the function enclosing it.
 func topFunc(fn *ssa.Function) *ssa.Function {
 	for {
-		if o := fn.Origin(); o != nil {
+		o := fn.Origin()
+		if o != nil {
 			fn = o
 		}
 		if fn.Parent() == nil {
@@ -480,7 +492,8 @@ func declLabel(fn *ssa.Function) string {
 		return ""
 	}
 	if decl.Recv != nil && len(decl.Recv.List) == 1 {
-		if recv := recvTypeName(decl.Recv.List[0].Type); recv != "" {
+		recv := recvTypeName(decl.Recv.List[0].Type)
+		if recv != "" {
 			return pkg + "." + recv + "." + decl.Name.Name
 		}
 	}

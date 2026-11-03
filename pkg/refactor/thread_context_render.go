@@ -180,7 +180,8 @@ func renderThreadPlan(ws *pkgtypes.Workspace, plan *threadPlan) ([]pkgtypes.Chan
 		if !needed || hasImport(ws, path, "context") {
 			continue
 		}
-		if imp := generateAddImportChange(ws, path, "", "context"); imp != nil {
+		imp := generateAddImportChange(ws, path, "", "context")
+		if imp != nil {
 			changes = append(changes, *imp)
 		}
 	}
@@ -266,7 +267,8 @@ func renderInternalCtxUses(ws *pkgtypes.Workspace, plan *threadPlan, emitted []p
 func internalRootContextCalls(body *ast.BlockStmt, intoClosures bool) []*ast.CallExpr {
 	var calls []*ast.CallExpr
 	ast.Inspect(body, func(n ast.Node) bool {
-		if _, isLit := n.(*ast.FuncLit); isLit && !intoClosures {
+		_, isLit := n.(*ast.FuncLit)
+		if isLit && !intoClosures {
 			return false
 		}
 		call, ok := n.(*ast.CallExpr)
@@ -361,7 +363,8 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 	call := site.Call
 	callee := edit.Callee
 
-	if _, gaining := plan.Funcs[callee]; gaining {
+	_, gaining := plan.Funcs[callee]
+	if gaining {
 		// Case (a): the callee is itself gaining a ctx parameter. Insert the
 		// new argument — zero-width, so it can never overlap anything else.
 		text := edit.Expr
@@ -384,7 +387,8 @@ func renderCallEdit(ws *pkgtypes.Workspace, plan *threadPlan, edit *callEdit) (*
 		return change, importFileFor(site.File.Path, edit.Expr), nil
 	}
 
-	if _, touched := plan.Decls[callee]; touched {
+	_, touched := plan.Decls[callee]
+	if touched {
 		// Case (b): the callee already had a context.Context parameter (that
 		// is why it never joined Funcs), so every call to it already passes
 		// something at that position. Bounded tightly on purpose: replace

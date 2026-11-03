@@ -72,7 +72,8 @@ func TestThreadContextAcrossConfigs_ExcludedTestFileMentioningSeedIsReportedAndS
 	})
 	plan := planSeed(t, eng)
 
-	if got := changesIn(plan, filepath.Join(dir, "p/p_test.go")); !reflect.DeepEqual(got, []string{"t.Context()"}) {
+	got := changesIn(plan, filepath.Join(dir, "p/p_test.go"))
+	if !reflect.DeepEqual(got, []string{"t.Context()"}) {
 		t.Errorf("changes in p_test.go = %q, want the ctx argument", got)
 	}
 	bad := filepath.Join(dir, "p/bad_test.go")
@@ -108,7 +109,8 @@ func TestThreadContextAcrossConfigs_ExcludedTestFileNotMentioningSeedIsOnlyListe
 	})
 	plan := planSeed(t, eng)
 
-	if got := uncoveredPaths(t, plan, dir); !reflect.DeepEqual(got, []string{"p/bad_test.go"}) {
+	got := uncoveredPaths(t, plan, dir)
+	if !reflect.DeepEqual(got, []string{"p/bad_test.go"}) {
 		t.Errorf("uncovered = %v, want p/bad_test.go", got)
 	}
 	if len(plan.SkippedSites) != 0 {
@@ -129,7 +131,8 @@ func TestThreadContextAcrossConfigs_FileExcludedInOneViewButCheckedInAnotherIsCo
 	if !reflect.DeepEqual(plan.Coverage.Configs, []string{linuxName, tagxName}) {
 		t.Fatalf("Coverage.Configs = %v", plan.Coverage.Configs)
 	}
-	if got := changesIn(plan, filepath.Join(dir, "p/shared_test.go")); !reflect.DeepEqual(got, []string{"t.Context()"}) {
+	got := changesIn(plan, filepath.Join(dir, "p/shared_test.go"))
+	if !reflect.DeepEqual(got, []string{"t.Context()"}) {
 		t.Errorf("changes in shared_test.go = %q, want the ctx argument from the primary view", got)
 	}
 	tagged := filepath.Join(dir, "p/tagged_test.go")
@@ -167,7 +170,8 @@ func TestThreadContextAcrossConfigs_UnattributedTestsInUnreachedPackageDoNotAbor
 	eng, dir := loadConfigsEngine(t, files)
 	plan := planSeed(t, eng)
 
-	if got := changesIn(plan, filepath.Join(dir, "p/p_test.go")); len(got) != 1 {
+	got := changesIn(plan, filepath.Join(dir, "p/p_test.go"))
+	if len(got) != 1 {
 		t.Errorf("changes in p_test.go = %q", got)
 	}
 	if len(plan.Coverage.Uncovered) != 0 {
@@ -187,7 +191,8 @@ func TestThreadContextAcrossConfigs_UncoveredFilesAreReportedOnlyForReachedPacka
 	})
 	plan := planSeed(t, eng)
 
-	if got, want := uncoveredPaths(t, plan, dir), []string{"caller/b_test.go", "p/bad_test.go"}; !reflect.DeepEqual(got, want) {
+	got, want := uncoveredPaths(t, plan, dir), []string{"caller/b_test.go", "p/bad_test.go"}
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("uncovered = %v, want %v", got, want)
 	}
 }

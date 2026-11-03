@@ -152,7 +152,8 @@ func (b *derefBody) refuse(n ast.Node, why string) {
 
 func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 	parent := stack[len(stack)-2]
-	if bin, ok := parent.(*ast.BinaryExpr); ok && nilComparison(b.info, b.obj, bin) != token.ILLEGAL {
+	bin, ok := parent.(*ast.BinaryExpr)
+	if ok && nilComparison(b.info, b.obj, bin) != token.ILLEGAL {
 		if b.handled[bin] {
 			return
 		}
@@ -168,7 +169,8 @@ func (b *derefBody) useOfParam(id *ast.Ident, stack []ast.Node) {
 		b.refuse(id, "is used other than as *"+b.param.Name+" or in a nil comparison")
 		return
 	}
-	if why := derefWriteOrAlias(stack[:len(stack)-2], star, b.info); why != "" {
+	why := derefWriteOrAlias(stack[:len(stack)-2], star, b.info)
+	if why != "" {
 		b.refuse(star, why)
 		return
 	}
@@ -266,7 +268,8 @@ func (b *derefBody) pairedCheck(e ast.Expr, isOr bool) (sameNil, emptiness bool)
 	if !ok {
 		return false, false
 	}
-	if _, builtin := b.info.Uses[fn].(*gotypes.Builtin); !builtin || fn.Name != "len" {
+	_, builtin := b.info.Uses[fn].(*gotypes.Builtin)
+	if !builtin || fn.Name != "len" {
 		return false, false
 	}
 	zero, ok := bin.Y.(*ast.BasicLit)
@@ -336,7 +339,8 @@ func chainDeletions(ops []ast.Expr, remove []bool) [][2]token.Pos {
 func flattenChain(e *ast.BinaryExpr) []ast.Expr {
 	var ops []ast.Expr
 	for _, side := range []ast.Expr{e.X, e.Y} {
-		if bin, ok := side.(*ast.BinaryExpr); ok && bin.Op == e.Op {
+		bin, ok := side.(*ast.BinaryExpr)
+		if ok && bin.Op == e.Op {
 			ops = append(ops, flattenChain(bin)...)
 		} else {
 			ops = append(ops, side)
@@ -417,9 +421,12 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 			if p.X != top {
 				return ""
 			}
-			if sel := info.Selections[p]; !shared && sel != nil && sel.Kind() == gotypes.MethodVal {
-				if recv := sel.Obj().(*gotypes.Func).Type().(*gotypes.Signature).Recv(); recv != nil {
-					if _, ptr := recv.Type().(*gotypes.Pointer); ptr {
+			sel := info.Selections[p]
+			if !shared && sel != nil && sel.Kind() == gotypes.MethodVal {
+				recv := sel.Obj().(*gotypes.Func).Type().(*gotypes.Signature).Recv()
+				if recv != nil {
+					_, ptr := recv.Type().(*gotypes.Pointer)
+					if ptr {
 						return "is the receiver of a pointer method"
 					}
 				}
@@ -437,7 +444,8 @@ func derefWriteOrAlias(outer []ast.Node, star *ast.StarExpr, info *gotypes.Info)
 			if p.X != top {
 				return ""
 			}
-			if _, arr := info.TypeOf(star).Underlying().(*gotypes.Array); arr {
+			_, arr := info.TypeOf(star).Underlying().(*gotypes.Array)
+			if arr {
 				return "slices an array it points to"
 			}
 			shared = shared || direct
@@ -482,10 +490,12 @@ func (op *ChangeSignatureOperation) derefArgs(args []string, callExpr *ast.CallE
 		}
 		arg = p.X
 	}
-	if id, ok := arg.(*ast.Ident); ok && info.Uses[id] == op.derefParamObj {
+	id, ok := arg.(*ast.Ident)
+	if ok && info.Uses[id] == op.derefParamObj {
 		return "" // recursive pass of the parameter itself, left as is
 	}
-	if done, reason := op.derefNilGuard(args, arg, callExpr, ws, info); done {
+	done, reason := op.derefNilGuard(args, arg, callExpr, ws, info)
+	if done {
 		return reason
 	}
 	text := func(e ast.Expr) string {
@@ -519,7 +529,8 @@ func (op *ChangeSignatureOperation) derefNilGuard(args []string, arg ast.Expr, c
 	if op.derefNil == derefNoNilCheck {
 		return false, ""
 	}
-	if u, ok := arg.(*ast.UnaryExpr); ok && u.Op == token.AND {
+	u, ok := arg.(*ast.UnaryExpr)
+	if ok && u.Op == token.AND {
 		return false, ""
 	}
 	if op.derefNil == derefNilCombined && isNilIdent(arg, info) {

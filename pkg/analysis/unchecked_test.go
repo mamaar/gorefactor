@@ -38,20 +38,24 @@ func TestUncheckedFiles_ReturnsFilesNoViewTypeChecks(t *testing.T) {
 		names = append(names, u.Source.Name)
 		byName[u.Source.Name] = u
 	}
-	if want := []string{"broken.go", "gen.go", "never.go", "tagged_test.go"}; !slices.Equal(names, want) {
+	want := []string{"broken.go", "gen.go", "never.go", "tagged_test.go"}
+	if !slices.Equal(names, want) {
 		t.Fatalf("unchecked = %v, want %v", names, want)
 	}
 	tagged := byName["tagged_test.go"]
 	if len(tagged.Configs) != 1 || tagged.Configs[0].Key() != views[1].Config.Key() || !strings.Contains(tagged.Reason, "could not import") {
 		t.Errorf("tagged_test.go = %+v, want the tagx view and its import error", tagged)
 	}
-	if u := byName["gen.go"]; len(u.Configs) != 0 || u.Reason != "//go:build ignore" {
+	u := byName["gen.go"]
+	if len(u.Configs) != 0 || u.Reason != "//go:build ignore" {
 		t.Errorf("gen.go = %+v", u)
 	}
-	if u := byName["never.go"]; len(u.Configs) != 0 || u.Reason != "unsatisfiable build constraint: linux && !linux" {
+	u = byName["never.go"]
+	if len(u.Configs) != 0 || u.Reason != "unsatisfiable build constraint: linux && !linux" {
 		t.Errorf("never.go = %+v", u)
 	}
-	if u := byName["broken.go"]; !strings.HasPrefix(u.Reason, "parse error: ") {
+	u = byName["broken.go"]
+	if !strings.HasPrefix(u.Reason, "parse error: ") {
 		t.Errorf("broken.go = %+v", u)
 	}
 }

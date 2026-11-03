@@ -292,7 +292,8 @@ func uncoveredSet(c analysis.Covering) map[string]bool {
 func importPathDirs(ws *types.Workspace, tree *analysis.SourceTree) map[string]string {
 	out := make(map[string]string)
 	for _, dir := range tree.Dirs() {
-		if ip := packagePathToImportPath(ws, dir); ip != "" {
+		ip := packagePathToImportPath(ws, dir)
+		if ip != "" {
 			out[ip] = dir
 		}
 	}

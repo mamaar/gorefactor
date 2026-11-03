@@ -48,7 +48,8 @@ func moveGroupNames(t *testing.T, srcText string, names ...string) (src, dst str
 		t.Fatal(err)
 	}
 	for p, text := range map[string]string{srcPath: src, filepath.Join(dir, "dst", "dst.go"): dst} {
-		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+		err := os.WriteFile(p, []byte(text), 0o644)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -70,7 +71,8 @@ func TestMoveSymbol_GroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {
 	if strings.Contains(src, "type (") {
 		t.Errorf("source keeps the group shell:\n%s", src)
 	}
-	if want := "package src\n\nfunc Keep() {}\n"; src != want {
+	want := "package src\n\nfunc Keep() {}\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 	if !strings.Contains(dst, "type A int") || !strings.Contains(dst, "type B int") {
@@ -92,7 +94,8 @@ func TestMoveSymbol_GroupDocAndSpecDocsRemovedWithFullyMovedGroup(t *testing.T) 
 func TestMoveSymbol_FloatingCommentBetweenSpecsRemovedWithFullyMovedGroup(t *testing.T) {
 	src, _ := moveGroupNames(t, "package src\n\ntype (\n\tA int\n\n\t// floating note\n\n\tB int\n)\n\nfunc Keep() {}\n", "A", "B")
 
-	if want := "package src\n\nfunc Keep() {}\n"; src != want {
+	want := "package src\n\nfunc Keep() {}\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 }
@@ -100,7 +103,8 @@ func TestMoveSymbol_FloatingCommentBetweenSpecsRemovedWithFullyMovedGroup(t *tes
 func TestMoveSymbol_GroupWithRemainingSpecKeepsItsShell(t *testing.T) {
 	src, _ := moveGroupNames(t, "package src\n\ntype (\n\tA int\n\tB int\n\tC int\n)\n", "A", "C")
 
-	if want := "package src\n\ntype (\n\tB int\n)\n"; src != want {
+	want := "package src\n\ntype (\n\tB int\n)\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 }
@@ -108,7 +112,8 @@ func TestMoveSymbol_GroupWithRemainingSpecKeepsItsShell(t *testing.T) {
 func TestMoveSymbol_DeclarationAfterFullyMovedGroupStaysSeparated(t *testing.T) {
 	src, _ := moveGroupNames(t, "package src\n\nfunc Before() {}\n\ntype (\n\tA int\n\tB int\n)\nfunc After() {}\n", "A", "B")
 
-	if want := "package src\n\nfunc Before() {}\n\nfunc After() {}\n"; src != want {
+	want := "package src\n\nfunc Before() {}\n\nfunc After() {}\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 }
@@ -127,7 +132,8 @@ func TestMoveSymbol_FullyMovedGroupAtEndOfFileWithoutTrailingNewline(t *testing.
 func TestMoveSymbol_ConstantGroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {
 	src, dst := moveGroupNames(t, "package src\n\n// Group doc.\nconst (\n\t// A doc.\n\tA = 1\n\n\t// B doc.\n\tB = 2\n)\n\nfunc Keep() {}\n", "A", "B")
 
-	if want := "package src\n\nfunc Keep() {}\n"; src != want {
+	want := "package src\n\nfunc Keep() {}\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 	if !strings.Contains(dst, "// A doc.\nconst A = 1") || !strings.Contains(dst, "// B doc.\nconst B = 2") {
@@ -138,7 +144,8 @@ func TestMoveSymbol_ConstantGroupWhoseSpecsAllMoveLeavesNoShell(t *testing.T) {
 func TestMoveSymbol_VariableGroupWithMultiNameSpecMovesAndLeavesNoShell(t *testing.T) {
 	src, dst := moveGroupNames(t, "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n\nvar (\n\ta, b = Pair()\n\tc    int\n)\n", "a", "b", "c")
 
-	if want := "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n"; src != want {
+	want := "package src\n\nfunc Pair() (int, int) { return 1, 2 }\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 	if !strings.Contains(dst, "var a, b = src.Pair()") || !strings.Contains(dst, "var c ") {
@@ -149,7 +156,8 @@ func TestMoveSymbol_VariableGroupWithMultiNameSpecMovesAndLeavesNoShell(t *testi
 func TestMoveSymbol_IotaGroupMovesVerbatimAndLeavesNothingBehind(t *testing.T) {
 	src, dst := moveGroupNames(t, "package src\n\nfunc Keep() {}\n\n// Doc.\nconst (\n\tA = iota\n\tB\n\t_\n\tC\n)\n", "A", "B", "C")
 
-	if want := "package src\n\nfunc Keep() {}\n"; src != want {
+	want := "package src\n\nfunc Keep() {}\n"
+	if src != want {
 		t.Errorf("source = %q, want %q", src, want)
 	}
 	if !strings.Contains(dst, "// Doc.\nconst (\n\tA = iota\n\tB\n\t_\n\tC\n)") {

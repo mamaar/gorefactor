@@ -306,17 +306,20 @@ func (op *ThreadContextOperation) stopSites() []pkgtypes.SkippedSite {
 		add(f, "stop_at")
 	}
 	for f := range op.plan.Outside {
-		if _, gains := op.plan.Funcs[f]; !gains {
+		_, gains := op.plan.Funcs[f]
+		if !gains {
 			add(f, "outside entry")
 		}
 	}
 	for f := range op.plan.OutsideWithin {
-		if _, gains := op.plan.Funcs[f]; !gains {
+		_, gains := op.plan.Funcs[f]
+		if !gains {
 			add(f, "outside within")
 		}
 	}
 	for f, reason := range op.plan.Blocked {
-		if fd := op.declIndex[f]; fd != nil && fd.File != nil {
+		fd := op.declIndex[f]
+		if fd != nil && fd.File != nil {
 			sites = append(sites, pkgtypes.SkippedSite{
 				File:    fd.File.Path,
 				Line:    offsetLine(fd.File, fd.Decl.Pos()),
@@ -465,7 +468,8 @@ func (op *ThreadContextOperation) linkedFuncs() []*gotypes.Func {
 	}
 	var out []*gotypes.Func
 	for f := range op.declIndex {
-		if key, ok := pkgtypes.SymbolKeyOf(f); ok && op.Linked.Has(key) {
+		key, ok := pkgtypes.SymbolKeyOf(f)
+		if ok && op.Linked.Has(key) {
 			out = append(out, f)
 		}
 	}
@@ -480,7 +484,8 @@ func (op *ThreadContextOperation) GainedKeys() pkgtypes.SymbolKeySet {
 		return keys
 	}
 	for f := range op.plan.Funcs {
-		if key, ok := pkgtypes.SymbolKeyOf(f); ok {
+		key, ok := pkgtypes.SymbolKeyOf(f)
+		if ok {
 			keys[key] = struct{}{}
 		}
 	}
@@ -520,7 +525,8 @@ func (plan *threadPlan) reachedPackages() []*pkgtypes.Package {
 		}
 	}
 	for _, edit := range plan.ArgFor {
-		if pkg := edit.Site.Pkg; pkg != nil {
+		pkg := edit.Site.Pkg
+		if pkg != nil {
 			byDir[pkg.Path] = pkg
 		}
 	}
@@ -576,7 +582,8 @@ func (op *ThreadContextOperation) discover(
 		f := queue[0]
 		queue = queue[1:]
 		if visited[f] {
-			if reason := plan.Blocked[f]; reason != "" && pinned[f] {
+			reason := plan.Blocked[f]
+			if reason != "" && pinned[f] {
 				return nil, blockedError(f, reason)
 			}
 			continue // the visited set is what terminates cycles and diamonds
@@ -593,7 +600,8 @@ func (op *ThreadContextOperation) discover(
 			continue
 		}
 		if len(op.CallSitesOf) > 0 {
-			if reason := op.gainBlocker(ws, idx, f); reason != "" {
+			reason := op.gainBlocker(ws, idx, f)
+			if reason != "" {
 				if pinned[f] {
 					return nil, blockedError(f, reason)
 				}
@@ -605,11 +613,13 @@ func (op *ThreadContextOperation) discover(
 
 		if !funcHasContextParam(f) {
 			plan.Funcs[f] = uniqueCtxName(fd.Pkg, fd.Decl)
-			if stmt, ok := isFakeRootCtxCreation(fd.Decl); ok {
+			stmt, ok := isFakeRootCtxCreation(fd.Decl)
+			if ok {
 				plan.Fake[f] = stmt
 			}
 			uses := gen.handWrittenUses(ws, f, idx.NonCallUsesOf(f))
-			if err := op.valueUseAbort(ws, f, uses); err != nil {
+			err := op.valueUseAbort(ws, f, uses)
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -648,7 +658,8 @@ func (op *ThreadContextOperation) discover(
 			}
 		}
 	}
-	if err := op.generatedAbort(ws, gen, seeds); err != nil {
+	err := op.generatedAbort(ws, gen, seeds)
+	if err != nil {
 		return nil, err
 	}
 	for f := range plan.Blocked {
@@ -703,7 +714,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	if site.Lit != nil {
 		// Still consult findCtxSource, purely so that missing type info is caught
 		// here in phase 1 rather than surfacing in phase 2 after Funcs is final.
-		if src, _ := findCtxSource(site.Pkg, site.Fn, site.Call); src.Kind == ctxUnknown {
+		src, _ := findCtxSource(site.Pkg, site.Fn, site.Call)
+		if src.Kind == ctxUnknown {
 			return nil, false, op.unknownCtxAbort(site)
 		}
 		return nil, false, nil
@@ -729,7 +741,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	if err != nil {
 		return nil, false, err
 	}
-	if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, cleanupHelper); isRoot {
+	_, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, cleanupHelper)
+	if isRoot {
 		return nil, false, nil
 	}
 
@@ -755,7 +768,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	}
 	if op.Reach != nil && !strings.HasSuffix(site.File.Path, "_test.go") && (op.Reach.outside(caller) || op.Reach.outsideWithin(caller)) {
 		// A conflict only costs the rename here: the caller can pass context.TODO().
-		if renamed, _ := op.renameBlankCtx(plan, caller, site); renamed {
+		renamed, _ := op.renameBlankCtx(plan, caller, site)
+		if renamed {
 			return nil, false, nil
 		}
 		if op.Reach.outside(caller) {
@@ -771,7 +785,8 @@ func (op *ThreadContextOperation) climbTarget(idx *analysis.ReferenceIndex, plan
 	// named one shadowed by a local cannot be fixed by guessing: abort and let
 	// the user un-shadow it.
 	if funcHasContextParam(caller) {
-		if renamed, err := op.renameBlankCtx(plan, caller, site); err != nil || renamed {
+		renamed, err := op.renameBlankCtx(plan, caller, site)
+		if err != nil || renamed {
 			return nil, false, err
 		}
 		return nil, false, &pkgtypes.RefactorError{
@@ -818,7 +833,8 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 		if err != nil {
 			return "", err
 		}
-		if name, ok := plan.Funcs[caller]; ok {
+		name, ok := plan.Funcs[caller]
+		if ok {
 			return name, nil
 		}
 		if plan.Renamed[caller] {
@@ -830,7 +846,8 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	//      literal. This is also what makes a root with a local ctx (main with
 	//      `ctx := context.Background()`) pass its own ctx rather than a fresh
 	//      context.TODO(), and what lets a closure use a captured outer ctx.
-	if src, ok := findCtxSource(site.Pkg, site.Fn, site.Call); ok {
+	src, ok := findCtxSource(site.Pkg, site.Fn, site.Call)
+	if ok {
 		return src.Expr, nil
 	} else if src.Kind == ctxUnknown {
 		return "", op.unknownCtxAbort(site)
@@ -842,13 +859,15 @@ func (op *ThreadContextOperation) argFor(idx *analysis.ReferenceIndex, plan *thr
 	if err != nil {
 		return "", err
 	}
-	if src, ok := classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call, cleanupHelper); ok {
+	src, ok = classifyRoot(site.Pkg, site.File, site.Fn, site.Lit, site.Call, cleanupHelper)
+	if ok {
 		return src.Expr, nil
 	}
 
 	// 5. A declared stop with no context in scope.
 	if site.Fn != nil && site.Lit == nil {
-		if caller, err := op.callerObject(site); err != nil {
+		caller, err := op.callerObject(site)
+		if err != nil {
 			return "", err
 		} else if op.isStop(caller) || plan.Outside[caller] || plan.OutsideWithin[caller] || plan.Blocked[caller] != "" {
 			return "context.TODO()", nil
@@ -908,10 +927,12 @@ func (op *ThreadContextOperation) expandInterfaces(
 	// ctx to ServeHTTP silently stops the type satisfying http.Handler. This is an
 	// abort rather than a SkippedSite because the product decision is that the
 	// user must never be handed a half-threaded, uncompilable workspace.
-	if err := op.externalInterfaceAbort(ws, f); err != nil {
+	err := op.externalInterfaceAbort(ws, f)
+	if err != nil {
 		return nil, err
 	}
-	if err := stdMethodError("thread context through", f); err != nil {
+	err = stdMethodError("thread context through", f)
+	if err != nil {
 		return nil, err
 	}
 
@@ -1071,7 +1092,8 @@ func funcHasContextParam(f *gotypes.Func) bool {
 // ReferenceIndex canonicalizes the objects it stores and the arguments it is
 // given, so keying every map here on the origin keeps both sides consistent.
 func canonicalFunc(f *gotypes.Func) *gotypes.Func {
-	if orig := f.Origin(); orig != nil {
+	orig := f.Origin()
+	if orig != nil {
 		return orig
 	}
 	return f
@@ -1098,7 +1120,8 @@ func buildFuncDeclIndex(ws *pkgtypes.Workspace) map[*gotypes.Func]*funcDecl {
 				continue
 			}
 			for _, decl := range file.AST.Decls {
-				if fd, ok := decl.(*ast.FuncDecl); ok {
+				fd, ok := decl.(*ast.FuncDecl)
+				if ok {
 					if fd.Name == nil {
 						continue
 					}
@@ -1202,7 +1225,8 @@ func (op *ThreadContextOperation) resolveSeed(ws *pkgtypes.Workspace) (*gotypes.
 	// seed names an interface method such as "Store.Save", which is an *ast.Field
 	// and so invisible to FindFuncDeclByName — that field's.
 	var seedIdent *ast.Ident
-	if fd := analysis.FindFuncDeclByName(file.AST, op.FunctionName); fd != nil {
+	fd := analysis.FindFuncDeclByName(file.AST, op.FunctionName)
+	if fd != nil {
 		seedIdent = fd.Name
 	} else {
 		seedIdent = findInterfaceMethodIdent(file.AST, op.FunctionName)

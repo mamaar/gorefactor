@@ -85,7 +85,8 @@ func VerifyPlanTypesWithImporter(ws *types.Workspace, plan *types.RefactoringPla
 	touched := make(map[*types.Package]bool)
 	var untracked []string
 	for file := range changesByFile {
-		if pkg, ok := fileToPkg[file]; ok {
+		pkg, ok := fileToPkg[file]
+		if ok {
 			touched[pkg] = true
 		} else {
 			// Most commonly a file the plan creates from scratch (a move or
@@ -164,7 +165,8 @@ type overlayImporter struct {
 }
 
 func (o *overlayImporter) Import(path string) (*gotypes.Package, error) {
-	if p := o.over[path]; p != nil {
+	p := o.over[path]
+	if p != nil {
 		return p, nil
 	}
 	return o.base.Import(path)
@@ -207,7 +209,8 @@ func orderVerification(ws *types.Workspace, touched []*types.Package, changesByF
 				continue
 			}
 			for _, imp := range f.AST.Imports {
-				if path, err := strconv.Unquote(imp.Path.Value); err == nil && byImport[path] != nil {
+				path, err := strconv.Unquote(imp.Path.Value)
+				if err == nil && byImport[path] != nil {
 					out = append(out, byImport[path])
 				}
 			}
@@ -492,7 +495,8 @@ func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPa
 // message-only comparison would incorrectly conflate into one.
 func normalizeTypeError(err error) (key string, full string) {
 	full = err.Error()
-	if terr, ok := err.(gotypes.Error); ok {
+	terr, ok := err.(gotypes.Error)
+	if ok {
 		base := "?"
 		if terr.Fset != nil {
 			base = filepath.Base(terr.Fset.Position(terr.Pos).Filename)
@@ -503,8 +507,10 @@ func normalizeTypeError(err error) (key string, full string) {
 	// elsewhere) — fall back to stripping a textual "file:line:col: " prefix
 	// if it looks like go/types' usual Error.Error() format, so this rare
 	// path degrades to the same comparison instead of never matching.
-	if idx := strings.Index(full, ": "); idx > 0 {
-		if prefix := full[:idx]; strings.Count(prefix, ":") >= 2 {
+	idx := strings.Index(full, ": ")
+	if idx > 0 {
+		prefix := full[:idx]
+		if strings.Count(prefix, ":") >= 2 {
 			return filepath.Base(prefix) + full[idx:], full
 		}
 	}

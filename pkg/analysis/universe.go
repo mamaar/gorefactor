@@ -44,7 +44,8 @@ func (u *universe) canonical(importPath string) *gotypes.Package {
 	if pkg == nil {
 		return nil
 	}
-	if rescued, ok := u.productionOnly[pkg]; ok {
+	rescued, ok := u.productionOnly[pkg]
+	if ok {
 		return rescued
 	}
 	return pkg.TypesPkg
@@ -67,7 +68,8 @@ func (u *universe) checkUses(pkg *types.Package) {
 		return
 	}
 	for _, obj := range pkg.TypesInfo.Uses {
-		if ref := obj.Pkg(); ref != nil && ref.Path() != pkg.ImportPath {
+		ref := obj.Pkg()
+		if ref != nil && ref.Path() != pkg.ImportPath {
 			u.checkRef(pkg.ImportPath, ref)
 		}
 	}

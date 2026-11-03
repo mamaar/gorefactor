@@ -112,7 +112,8 @@ func (r *implementationsRun) visit(v *analysis.View, out *ImplementationsReport)
 	r.pkgPath = pkgPath
 	survey := surveyInterfaces(ws)
 	var hits []Implementation
-	if _, isIface := asInterfaceType(named); isIface {
+	_, isIface := asInterfaceType(named)
+	if isIface {
 		out.IsInterface = true
 		hits, err = r.implementersOf(ws, survey, named)
 	} else {

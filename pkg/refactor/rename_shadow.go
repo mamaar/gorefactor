@@ -30,7 +30,8 @@ func checkShadowedAtReferences(ws *types.Workspace, symbol *types.Symbol, refs [
 			continue
 		}
 		kind := "a local declaration"
-		if _, ok := obj.(*gotypes.PkgName); ok {
+		_, ok := obj.(*gotypes.PkgName)
+		if ok {
 			kind = "an import"
 		}
 		return &types.RefactorError{
@@ -50,7 +51,8 @@ func relPos(ws *types.Workspace, pos token.Pos) string {
 }
 
 func relToRoot(ws *types.Workspace, path string) string {
-	if rel, err := filepath.Rel(ws.RootPath, path); err == nil {
+	rel, err := filepath.Rel(ws.RootPath, path)
+	if err == nil {
 		return filepath.ToSlash(rel)
 	}
 	return path

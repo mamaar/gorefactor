@@ -42,7 +42,8 @@ func buildTestIndex(t *testing.T, src, depSrc string) *testIndex {
 		}
 		conf := gotypes.Config{
 			Importer: importerFunc(func(p string) (*gotypes.Package, error) {
-				if pkg, ok := imports[p]; ok {
+				pkg, ok := imports[p]
+				if ok {
 					return pkg, nil
 				}
 				return nil, fmt.Errorf("unknown import %q", p)
@@ -76,7 +77,8 @@ func (ti *testIndex) lookup(t *testing.T, name string) gotypes.Object {
 	typeName, methodName, isMethod := strings.Cut(name, ".")
 	for _, pkg := range ti.pkgs {
 		if !isMethod {
-			if obj := pkg.Scope().Lookup(name); obj != nil {
+			obj := pkg.Scope().Lookup(name)
+			if obj != nil {
 				return canonicalObject(obj)
 			}
 			continue
@@ -90,7 +92,8 @@ func (ti *testIndex) lookup(t *testing.T, name string) gotypes.Object {
 			continue
 		}
 		for m := range named.Methods() {
-			if m := m; m.Name() == methodName {
+			m := m
+			if m.Name() == methodName {
 				return canonicalObject(m)
 			}
 		}
@@ -241,7 +244,8 @@ func g(fn func()) {}`,
 
 			var got int
 			for cur := range ti.ix.Calls(callee) {
-				if _, ok := cur.Node().(*ast.CallExpr); !ok {
+				_, ok := cur.Node().(*ast.CallExpr)
+				if !ok {
 					t.Errorf("Calls yielded %T, want *ast.CallExpr", cur.Node())
 				}
 				got++

@@ -80,7 +80,8 @@ func (e *DefaultEngine) moveSharedSymbols(ws *types.Workspace, op *MoveByDepende
 			good, bad := 0, len(accepted)
 			for bad-good > 1 {
 				mid := (good + bad) / 2
-				if _, midErr := planGroup(accepted[:mid]); midErr == nil {
+				_, midErr := planGroup(accepted[:mid])
+				if midErr == nil {
 					good = mid
 				} else {
 					bad, err = mid, midErr

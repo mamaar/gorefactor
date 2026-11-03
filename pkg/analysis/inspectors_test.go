@@ -39,14 +39,17 @@ func TestBuildReferenceIndex_ViewsShareTheInspectorOfAnIdenticalFileList(t *test
 	}
 
 	obj := tagged.Workspace.Packages[p].TypesPkg.Scope().Lookup("P")
-	if sites := tIdx.CallSitesOf(obj); len(sites) != 1 || filepath.Base(sites[0].File.Path) != "p_tag.go" {
+	sites := tIdx.CallSitesOf(obj)
+	if len(sites) != 1 || filepath.Base(sites[0].File.Path) != "p_tag.go" {
 		t.Errorf("tagged call sites of P = %+v, want the one in p_tag.go", sites)
 	}
-	if sites := pIdx.CallSitesOf(primary.Workspace.Packages[p].TypesPkg.Scope().Lookup("P")); len(sites) != 0 {
+	sites = pIdx.CallSitesOf(primary.Workspace.Packages[p].TypesPkg.Scope().Lookup("P"))
+	if len(sites) != 0 {
 		t.Errorf("primary call sites of P = %+v, want none", sites)
 	}
 	helperOf := tagged.Workspace.Packages[same].TypesPkg.Scope().Lookup("S")
-	if sites := tIdx.CallSitesOf(helperOf); len(sites) != 1 || sites[0].Pkg != tagged.Workspace.Packages[same] {
+	sites = tIdx.CallSitesOf(helperOf)
+	if len(sites) != 1 || sites[0].Pkg != tagged.Workspace.Packages[same] {
 		t.Errorf("tagged call sites of S = %+v, want one in the tagged view's own package", sites)
 	}
 }

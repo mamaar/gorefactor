@@ -118,14 +118,16 @@ func renamableUses(views []*analysis.View, fset *token.FileSet, path string, r p
 		included = true
 		pkg := file.Package
 		v.Parser.EnsureTypeChecked(v.Workspace, pkg)
-		if reason := uncheckedReason(pkg, file); reason != "" {
+		reason := uncheckedReason(pkg, file)
+		if reason != "" {
 			return nil, reason
 		}
 		viewUses, pkgName := importUses(pkg, file, r)
 		if pkgName == nil {
 			continue
 		}
-		if taken := nameTakenAt(typesPkgOf(pkg, file), pkgName, r.newName, viewUses); taken != nil {
+		taken := nameTakenAt(typesPkgOf(pkg, file), pkgName, r.newName, viewUses)
+		if taken != nil {
 			return nil, fmt.Sprintf("name %q is already declared at %s", r.newName, fset.Position(taken.Pos()))
 		}
 		for _, id := range viewUses {

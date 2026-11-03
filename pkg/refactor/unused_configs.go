@@ -48,7 +48,8 @@ func (e *DefaultEngine) UnusedAcrossConfigs(req UnusedRequest) (*UnusedReport, e
 	}
 	defer e.endRun(run)
 	for _, v := range views {
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			return nil, viewError(views, v, err)
 		}
 	}
@@ -239,7 +240,8 @@ func (r *unusedRun) keepCalleesOfUsedCallers() {
 
 func (r *unusedRun) anyCallerUsed(d *unusedDecl) bool {
 	for _, c := range d.UnusedCallers {
-		if key, ok := symbolKeyOf(c); ok && r.used.Has(key) {
+		key, ok := symbolKeyOf(c)
+		if ok && r.used.Has(key) {
 			return true
 		}
 	}

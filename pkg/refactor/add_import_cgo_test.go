@@ -40,7 +40,8 @@ func TestGenerateAddImportChange_KeepsCgoImportStandalone(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if got := addContextImport(t, tc.src); !strings.Contains(got, tc.want) {
+			got := addContextImport(t, tc.src)
+			if !strings.Contains(got, tc.want) {
 				t.Errorf("want %q in:\n%s", tc.want, got)
 			}
 		})

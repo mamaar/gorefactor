@@ -41,7 +41,8 @@ func entryNames(t *testing.T, out map[string]any, key string) []string {
 	for _, it := range items {
 		e := it.(map[string]any)
 		name := e["name"].(string)
-		if ptr, _ := e["pointer_receiver"].(bool); ptr {
+		ptr, _ := e["pointer_receiver"].(bool)
+		if ptr {
 			name = "*" + name
 		}
 		names = append(names, name)
@@ -64,7 +65,8 @@ func TestFindImplementations_InterfaceListsValueAndPointerImplementersOnly(t *te
 		t.Fatal(errMsg)
 	}
 	got := entryNames(t, out, "implementations")
-	if want := []string{"*B", "A"}; !slices.Equal(got, want) {
+	want := []string{"*B", "A"}
+	if !slices.Equal(got, want) {
 		t.Errorf("implementations = %v, want %v", got, want)
 	}
 }
@@ -118,7 +120,8 @@ func TestFindImplementations_FindsTypeDeclaredOnlyUnderAnotherConfig(t *testing.
 	if errMsg != "" {
 		t.Fatal(errMsg)
 	}
-	if got, want := entryNames(t, out, "implementations"), []string{"A", "B"}; !slices.Equal(got, want) {
+	got, want := entryNames(t, out, "implementations"), []string{"A", "B"}
+	if !slices.Equal(got, want) {
 		t.Errorf("implementations = %v, want %v", got, want)
 	}
 	for _, it := range out["implementations"].([]any) {

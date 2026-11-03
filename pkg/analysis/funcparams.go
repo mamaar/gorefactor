@@ -20,7 +20,8 @@ func FindFuncType(ws *types.Workspace, sourceFile, functionName string) (*ast.Fu
 	// Find the file in the workspace
 	var file *types.File
 	for _, pkg := range ws.Packages {
-		if f, exists := pkg.Files[sourceFile]; exists {
+		f, exists := pkg.Files[sourceFile]
+		if exists {
 			file = f
 			break
 		}
@@ -100,7 +101,8 @@ func FindFuncDeclByName(astFile *ast.File, name string) *ast.FuncDecl {
 
 	var found *ast.FuncDecl
 	ast.Inspect(astFile, func(n ast.Node) bool {
-		if fd, ok := n.(*ast.FuncDecl); ok && fd.Name != nil && fd.Name.Name == name {
+		fd, ok := n.(*ast.FuncDecl)
+		if ok && fd.Name != nil && fd.Name.Name == name {
 			found = fd
 			return false
 		}

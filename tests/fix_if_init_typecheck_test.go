@@ -20,10 +20,12 @@ func TestFixIfInit_DryRunReportsTypeErrorAsBlockingIssue(t *testing.T) {
 	if !strings.Contains(issue, "jumps over variable declaration") {
 		t.Errorf("blocking_issue = %q, want the goto type error", issue)
 	}
-	if diffs, _ := result["diffs"].([]any); len(diffs) == 0 {
+	diffs, _ := result["diffs"].([]any)
+	if len(diffs) == 0 {
 		t.Error("a blocked dry run should still carry the diffs")
 	}
-	if got := readFile(t, filepath.Join(dir, "main.go")); got != readFile(t, filepath.Join("testdata", "fix_if_init_goto", "main.go")) {
+	got := readFile(t, filepath.Join(dir, "main.go"))
+	if got != readFile(t, filepath.Join("testdata", "fix_if_init_goto", "main.go")) {
 		t.Errorf("dry run modified the file:\n%s", got)
 	}
 }
@@ -41,7 +43,8 @@ func TestFixIfInit_ApplyRefusesPlanThatWouldNotTypeCheck(t *testing.T) {
 	if !result.IsError || !strings.Contains(errText(result), "jumps over variable declaration") {
 		t.Fatalf("expected the apply refused with the type error, got IsError=%v: %s", result.IsError, errText(result))
 	}
-	if got := readFile(t, filepath.Join(dir, "main.go")); got != readFile(t, filepath.Join("testdata", "fix_if_init_goto", "main.go")) {
+	got := readFile(t, filepath.Join(dir, "main.go"))
+	if got != readFile(t, filepath.Join("testdata", "fix_if_init_goto", "main.go")) {
 		t.Errorf("refused apply modified the file:\n%s", got)
 	}
 }

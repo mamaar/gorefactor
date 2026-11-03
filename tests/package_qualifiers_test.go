@@ -18,7 +18,8 @@ func vetAs(t *testing.T, dir, goos string) {
 	cmd := exec.Command("go", "vet", "./...")
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=", "GOOS="+goos, "GOARCH=amd64")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
 		t.Errorf("go vet (GOOS=%s) failed: %v\n%s", goos, err, out)
 	}
 }

@@ -29,14 +29,16 @@ func TestUnusedAcrossConfigs_UseInAnyPortKeepsTheSymbol(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{"leaf.go:dead", "p_darwin.go:mac", "p_js.go:web", "p_tagx.go:tagged"}
-	if got := unusedNames(report.Unused); !reflect.DeepEqual(got, want) {
+	got := unusedNames(report.Unused)
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("unused = %v, want %v", got, want)
 	}
 	if len(report.Configs) != 5 || len(report.PossiblyUsed) != 0 {
 		t.Errorf("configs = %v, possibly used = %v", report.Configs, unusedNames(report.PossiblyUsed))
 	}
 	for _, f := range report.Unused {
-		if wantConfigs := map[bool]int{true: 0, false: 1}[f.Symbol.Name == "dead"]; len(f.Configs) != wantConfigs {
+		wantConfigs := map[bool]int{true: 0, false: 1}[f.Symbol.Name == "dead"]
+		if len(f.Configs) != wantConfigs {
 			t.Errorf("%s: Configs = %v, want %d configuration(s) named", f.Symbol.Name, f.Configs, wantConfigs)
 		}
 	}
@@ -52,7 +54,8 @@ func TestUnusedAcrossConfigs_BoundsAndReleasesSecondaryViews(t *testing.T) {
 	var held []int
 	for _, v := range views {
 		held = append(held, run.heldSecondaries())
-		if err := run.visit(v); err != nil {
+		err := run.visit(v)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -81,7 +84,8 @@ func TestUnusedAcrossConfigs_PackagesFilterKeepsOnlyThose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unusedNames(report.Unused); !reflect.DeepEqual(got, []string{"q.go:deadQ"}) {
+	got := unusedNames(report.Unused)
+	if !reflect.DeepEqual(got, []string{"q.go:deadQ"}) {
 		t.Errorf("unused = %v, want only deadQ", got)
 	}
 }
@@ -154,7 +158,8 @@ func TestUnusedAcrossConfigs_CalleeOfDeadSiblingWhoseKeyIsUsedElsewhereIsNotRepo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unusedNames(report.Unused); len(got) != 0 {
+	got := unusedNames(report.Unused)
+	if len(got) != 0 {
 		t.Errorf("unused = %v, want none: f is used under tagx and g only by f", got)
 	}
 }
@@ -172,7 +177,8 @@ func TestUnusedAcrossConfigs_ProductionUseUnderOneTagKeepsCalleeUnreportedDespit
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := unusedNames(report.Unused); len(got) != 0 {
+	got := unusedNames(report.Unused)
+	if len(got) != 0 {
 		t.Errorf("unused = %v, want none", got)
 	}
 }

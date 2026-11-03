@@ -25,10 +25,12 @@ func (op *ChangeSignatureOperation) signatureMembers(
 	}
 	survey := surveyInterfaces(ws)
 	if !isIface && !op.PropagateToInterface {
-		if ext, ok := survey.externalInterfaceOf(seed); ok {
+		ext, ok := survey.externalInterfaceOf(seed)
+		if ok {
 			return nil, externalInterfaceError("change", seed, ext)
 		}
-		if satisfied := survey.expansionOf(seed); len(satisfied) > 0 {
+		satisfied := survey.expansionOf(seed)
+		if len(satisfied) > 0 {
 			return nil, &pkgtypes.RefactorError{
 				Type: pkgtypes.InvalidOperation,
 				Message: fmt.Sprintf("cannot change %s: it satisfies %s, which would stop being satisfied; "+
@@ -46,7 +48,8 @@ func (op *ChangeSignatureOperation) signatureMembers(
 		return nil, err
 	}
 	for _, m := range members {
-		if err := stdMethodError("change", m); err != nil {
+		err := stdMethodError("change", m)
+		if err != nil {
 			return nil, err
 		}
 	}

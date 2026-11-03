@@ -41,8 +41,10 @@ func (op *ThreadContextOperation) callSiteSeeds(ws *pkgtypes.Workspace, idx *ana
 	}
 	op.targets = make(pkgtypes.SymbolKeySet)
 	for _, t := range all {
-		if fn, ok := t.Obj.(*gotypes.Func); ok {
-			if key, ok := pkgtypes.SymbolKeyOf(canonicalFunc(fn)); ok {
+		fn, ok := t.Obj.(*gotypes.Func)
+		if ok {
+			key, ok := pkgtypes.SymbolKeyOf(canonicalFunc(fn))
+			if ok {
 				op.StopAt[key] = struct{}{}
 				op.targets[key] = struct{}{}
 			}
@@ -79,7 +81,8 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 	if err != nil {
 		return nil, err
 	}
-	if key, ok := pkgtypes.SymbolKeyOf(enclosing); ok && op.targets.Has(key) {
+	key, ok := pkgtypes.SymbolKeyOf(enclosing)
+	if ok && op.targets.Has(key) {
 		return nil, nil
 	}
 	if op.Reach.outside(enclosing) || op.Reach.outsideWithin(enclosing) {
@@ -88,8 +91,10 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 
 	// A closure captures the ctx of its declaration, so the declaration is the seed.
 	site.Lit = nil
-	if src, found := findCtxSource(site.Pkg, site.Fn, site.Call); !found && src.Kind != ctxUnknown {
-		if _, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, false); isRoot {
+	src, found := findCtxSource(site.Pkg, site.Fn, site.Call)
+	if !found && src.Kind != ctxUnknown {
+		_, isRoot := classifyRoot(site.Pkg, site.File, site.Fn, nil, site.Call, false)
+		if isRoot {
 			kind := "root"
 			if site.Fn.Recv == nil && site.Fn.Name.Name == "init" {
 				kind = "init"
@@ -102,7 +107,8 @@ func (op *ThreadContextOperation) callSiteSeed(idx *analysis.ReferenceIndex, pla
 	if err != nil || !climb {
 		return nil, err
 	}
-	if fd := op.declIndex[caller]; fd != nil && fd.File != nil && fd.File.Generated {
+	fd := op.declIndex[caller]
+	if fd != nil && fd.File != nil && fd.File.Generated {
 		op.note(plan, site, funcLabel(caller), fmt.Sprintf("generated: %s is declared in generated code, which is not edited", funcLabel(caller)))
 		return nil, nil
 	}
@@ -122,15 +128,18 @@ func (op *ThreadContextOperation) note(plan *threadPlan, site analysis.CallSite,
 // build, or returns "" when it can.
 func (op *ThreadContextOperation) gainBlocker(ws *pkgtypes.Workspace, idx *analysis.ReferenceIndex, f *gotypes.Func) string {
 	if !funcHasContextParam(f) {
-		if uses := idx.NonCallUsesOf(f); len(uses) > 0 {
+		uses := idx.NonCallUsesOf(f)
+		if len(uses) > 0 {
 			pos := ws.FileSet.Position(uses[0].Pos)
 			return fmt.Sprintf("func value: %s is used as a value at %s:%d, so its signature stays", funcLabel(f), pos.Filename, pos.Line)
 		}
 	}
-	if ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f); ok {
+	ext, ok := op.interfaceSurvey(ws).externalInterfaceOf(f)
+	if ok {
 		return fmt.Sprintf("external interface: %s implements %s, declared outside the workspace, so its signature stays", funcLabel(f), ext.label())
 	}
-	if m := stdMethodOf(f.Name(), f); m != nil {
+	m := stdMethodOf(f.Name(), f)
+	if m != nil {
 		return fmt.Sprintf("standard method: %s: %s; its signature stays", funcLabel(f), stdMethodWhy(m))
 	}
 	return ""
