@@ -432,7 +432,8 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	fn := enclosingFunc(site.Cursor)
 	// Statement order decides which reads see the call's value only when nothing
 	// but fn's own statements can read the variable.
-	private := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End() && !stmtfacts.Captures(info, funcBody(fn), obj)
+	// A named result is never private: a deferred recover returns its value.
+	private := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End() && !isResultVar(obj) && !stmtfacts.Captures(info, funcBody(fn), obj)
 	uses := slices.DeleteFunc(refs.NonCallUsesOf(obj), func(u analysis.ValueUse) bool { return u.Pos == id.Pos() })
 
 	var kill *ast.AssignStmt
@@ -467,7 +468,7 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 // and so loses its declaration. Every use must fold or go with a dead branch,
 // except those after kill, a later `:=` that then declares obj.
 func declaredResultFold(info *gotypes.Info, site analysis.CallSite, assign *ast.AssignStmt, idx int, obj gotypes.Object, uses []analysis.ValueUse, kill *ast.AssignStmt) foldPlan {
-	if kill != nil && kill.Tok != token.DEFINE {
+	if kill != nil && (kill.Tok != token.DEFINE || !defineKeepsType(info, kill, obj)) {
 		kill = nil
 	}
 
@@ -486,6 +487,39 @@ func declaredResultFold(info *gotypes.Info, site analysis.CallSite, assign *ast.
 	}
 
 	return foldErrorReads(info, site, assign, idx, obj, rest)
+}
+
+// isResultVar reports whether obj is a named result.
+func isResultVar(obj gotypes.Object) bool {
+	v, ok := obj.(*gotypes.Var)
+	return ok && v.Kind() == gotypes.ResultVar
+}
+
+// defineKeepsType reports whether kill, a `:=` that will declare obj once the
+// call no longer does, gives it obj's type.
+func defineKeepsType(info *gotypes.Info, kill *ast.AssignStmt, obj gotypes.Object) bool {
+	for i, lhs := range kill.Lhs {
+		id, ok := lhs.(*ast.Ident)
+		if !ok || info.ObjectOf(id) != obj {
+			continue
+		}
+
+		var t gotypes.Type
+
+		switch {
+		case len(kill.Rhs) == len(kill.Lhs):
+			t = info.TypeOf(kill.Rhs[i])
+		case len(kill.Rhs) == 1:
+			tuple, ok := info.TypeOf(kill.Rhs[0]).(*gotypes.Tuple)
+			if ok && i < tuple.Len() {
+				t = tuple.At(i).Type()
+			}
+		}
+
+		return t != nil && gotypes.Identical(gotypes.Default(t), obj.Type())
+	}
+
+	return false
 }
 
 // reassignedResultFold plans the removal of obj, a variable of the calling
@@ -573,7 +607,7 @@ func enclosingFunc(c inspector.Cursor) ast.Node {
 	return nil
 }
 
-// killingWrite returns the first plain assignment to a local variable in the
+// killingWrite returns the first assignment (= or :=) to a local variable in the
 // same block as the call's assignment and after it. Whenever a later read
 // executes after the call, this assignment has run in between, so the read
 // never sees the call's value. It is nil when a loop, switch or select holds the
