@@ -36,7 +36,7 @@ func TestFixErrorWrapping_ExcludeFunctionsListsThemAsSkipped(t *testing.T) {
 		map[string]any{"exclude_functions": []string{"skipMe", "T.run"}})
 
 	got := readFile(t, filepath.Join(dir, "main.go"))
-	if !strings.Contains(got, "\treturn err\n}\n\ntype T") || strings.Contains(got, `"run: `) {
+	if !strings.Contains(got, "\t\treturn err\n\t}\n\treturn nil\n}\n\ntype T") || strings.Contains(got, `"run: `) || strings.Contains(got, `"skip me: `) {
 		t.Errorf("excluded functions were modified:\n%s", got)
 	}
 	if !strings.Contains(got, `fmt.Errorf("parse: %w", err)`) {

@@ -2024,7 +2024,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name:        "fix_error_wrapping",
-		Description: "Automatically fix improper error wrapping. Wraps bare `return err` with `fmt.Errorf` (adding the fmt import when the file lacks it), replaces `%v` with `%w`, and replaces generic error messages with descriptive context derived from the function name. Sites in `exclude_functions`, and sites in a file where another package is named fmt, are left unmodified and reported in `skipped`. The plan is type-checked before it is applied: new type errors refuse the apply and appear as `blocking_issue` in a dry run.",
+		Description: "Automatically fix improper error wrapping. Wraps a bare `return err` with `fmt.Errorf` only where err is provably non-nil (inside an `if err != nil` branch, not reassigned before the return; adding the fmt import when the file lacks it), replaces `%v` with `%w`, and replaces generic error messages with descriptive context derived from the function name. Context-adding sites in `exclude_functions` (not `%v`→`%w`, which keeps the message), and sites in a file where another package is named fmt, are left unmodified and reported in `skipped`. The plan is type-checked before it is applied: new type errors refuse the apply and appear as `blocking_issue` in a dry run.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in FixErrorWrappingInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 

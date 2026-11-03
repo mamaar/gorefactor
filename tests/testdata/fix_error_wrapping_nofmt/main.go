@@ -12,14 +12,20 @@ func parse(s string) (int, error) {
 
 func skipMe(s string) error {
 	_, err := strconv.Atoi(s)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 type T struct{}
 
 func (T) run(s string) error {
 	_, err := strconv.Atoi(s)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func main() {

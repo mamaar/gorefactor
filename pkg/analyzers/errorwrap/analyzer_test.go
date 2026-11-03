@@ -43,7 +43,10 @@ func TestErrorWrap_BareReturn(t *testing.T) {
 
 func foo() error {
 	err := bar()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func bar() error { return nil }
@@ -177,7 +180,10 @@ func TestErrorWrap_BareReturnWithoutFmtImportNeedsIt(t *testing.T) {
 
 func foo() error {
 	err := bar()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func bar() error { return nil }
@@ -195,7 +201,10 @@ import "fmt"
 func foo() error {
 	err := bar()
 	fmt.Println(err)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func bar() error { return nil }
@@ -213,7 +222,10 @@ import "example.com/other/fmt"
 func foo() error {
 	err := bar()
 	fmt.Do()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func bar() error { return nil }
@@ -232,23 +244,35 @@ type T struct{}
 
 func plain() error {
 	err := bar()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (t *T) method() error {
 	err := bar()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (t T) other() error {
 	err := bar()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func withLiteral() error {
 	run := func() error {
 		err := bar()
-		return err
+		if err != nil {
+			return err
+		}
+		return nil
 	}
 	return run()
 }
@@ -278,5 +302,46 @@ func bar() error { return nil }
 	// other (bare return) and kept (%v) are the only fixable sites.
 	if fixes != 2 {
 		t.Errorf("fixes = %d, want 2", fixes)
+	}
+}
+
+func TestErrorWrap_BareReturnOnlyWhereErrorIsProvablyNonNil(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"unconditional after call", "err := bar()\n\treturn err", 0},
+		{"or-condition does not prove it", "a, err := bar2()\n\tif a || err != nil {\n\t\treturn err\n\t}\n\treturn nil", 0},
+		{"reassigned after guard", "err := bar()\n\tif err != nil {\n\t\terr = bar()\n\t\treturn err\n\t}\n\treturn nil", 0},
+		{"guarded", "err := bar()\n\tif err != nil {\n\t\treturn err\n\t}\n\treturn nil", 1},
+		{"and-condition", "a, err := bar2()\n\tif a && err != nil {\n\t\treturn err\n\t}\n\treturn nil", 1},
+		{"else of nil check", "err := bar()\n\tif err == nil {\n\t\treturn nil\n\t} else {\n\t\treturn err\n\t}", 1},
+		{"guard on a different variable", "err := bar()\n\terr2 := bar()\n\tif err2 != nil {\n\t\treturn err\n\t}\n\treturn nil", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			results, fixes := runResults(t, "package testpkg\n\nfunc foo() error {\n\t"+c.body+"\n}\n\nfunc bar() error { return nil }\n\nfunc bar2() (bool, error) { return false, nil }\n")
+			if len(results) != c.want || fixes != c.want {
+				t.Fatalf("got %d results and %d fixes, want %d: %+v", len(results), fixes, c.want, results)
+			}
+		})
+	}
+}
+
+func TestErrorWrap_FormatVerbVInExcludedFunctionIsStillFixed(t *testing.T) {
+	results, fixes := runResults(t, `package testpkg
+
+import "fmt"
+
+func foo() error {
+	err := bar()
+	return fmt.Errorf("x: %v", err)
+}
+
+func bar() error { return nil }
+`, errorwrap.WithExcludedFunctions("foo"))
+	if len(results) != 1 || results[0].Skipped || fixes != 1 {
+		t.Fatalf("want one unskipped result with a fix, got %+v (fixes %d)", results, fixes)
 	}
 }

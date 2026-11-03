@@ -14,7 +14,10 @@ import (
 const bareReturn = `
 func foo() error {
 	err := bar()
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func bar() error { return nil }
