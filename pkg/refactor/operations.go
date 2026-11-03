@@ -395,10 +395,7 @@ func (op *MoveSymbolOperation) Execute(ws *types.Workspace) (*types.RefactoringP
 	var allReferences []*types.Reference
 	var refSource map[*types.Reference]*types.Package
 
-	allReferences, refSource, err = op.findMovedReferences(moving, resolver)
-	if err != nil {
-		return nil, err
-	}
+	allReferences, refSource = op.findMovedReferences(moving, resolver)
 
 	// Remove each moved symbol from its source file.
 	var removals map[string][]types.Change
@@ -573,7 +570,7 @@ func (op *MoveSymbolOperation) planReferenceRewrites(survivingReferences []*type
 	return nil
 }
 
-func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resolver *analysis.SymbolResolver) ([]*types.Reference, map[*types.Reference]*types.Package, error) {
+func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resolver *analysis.SymbolResolver) ([]*types.Reference, map[*types.Reference]*types.Package) {
 	var moveSet []*types.Symbol
 	var allReferences []*types.Reference
 	refSource := make(map[*types.Reference]*types.Package)
@@ -596,7 +593,7 @@ func (op *MoveSymbolOperation) findMovedReferences(moving []*movingSymbol, resol
 
 	op.moved, op.references = moveSet, allReferences
 
-	return allReferences, refSource, nil
+	return allReferences, refSource
 }
 
 func (op *MoveSymbolOperation) planSourceRemovals(moving []*movingSymbol) (map[string][]types.Change, []*types.File, error) {

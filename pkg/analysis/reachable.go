@@ -181,10 +181,7 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 		return nil, nil, fmt.Errorf("entry package %s is not package main", entry.Path)
 	}
 
-	g, idx, _, err := ua.prepare()
-	if err != nil {
-		return nil, nil, err
-	}
+	g, idx, _ := ua.prepare()
 
 	if !idx.HasTypeInfo() {
 		return nil, nil, fmt.Errorf("packages are not type-checked")
