@@ -103,6 +103,11 @@ func TestChangeSignature_RemoveReturnFoldsDeadErrorChecks(t *testing.T) {
 			want: []string{"x := f()\n", "y, err := h()"},
 			omit: []string{"x, err"},
 		},
+		"reassigned in the init of its check": {
+			use:  "package p\n\nfunc h() (int, error) { return 1, nil }\n\nfunc Use() (int, error) {\n\tn, err := h()\n\tif err != nil {\n\t\treturn 0, err\n\t}\n\tvar x int\n\tif x, err = f(); err != nil {\n\t\treturn 0, err\n\t}\n\treturn x + n, nil\n}\n",
+			want: []string{"\tx = f()\n", "return x + n, nil"},
+			omit: []string{"x, err = f()"},
+		},
 		"no blank line before the closing brace of a wrapped init": {
 			use:  "package p\n\nfunc Use() int {\n\tx := 5\n\tif x, err := f(); err == nil {\n\t\tprintln(x)\n\t}\n\treturn x\n}\n",
 			want: []string{"println(x)\n\t}\n"},
@@ -172,6 +177,15 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 		"address taken before the call":                 "package p\n\nfunc Use() {\n\tvar err error\n\tp := &err\n\t_, err = f()\n\tif err != nil {\n\t\tprintln(\"bad\")\n\t}\n\tprintln(*p)\n}\n",
 		"earlier declaration left unused":               "package p\n\nimport \"fmt\"\n\nfunc h() (int, error) { return 2, nil }\n\nfunc Use() {\n\tx, err := h()\n\tfmt.Println(x)\n\t_, err = f()\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
 		"variable used only by the dead branch":         "package p\n\nfunc Use() int {\n\tvar msg string\n\tx, err := f()\n\tif err != nil {\n\t\tmsg = err.Error()\n\t\tprintln(msg)\n\t\treturn 0\n\t}\n\treturn x\n}\n",
+		"parameter reassigned under an if":              "package p\n\nimport \"fmt\"\n\nfunc Use(err error, c bool) {\n\tif c {\n\t\t_, err = f()\n\t}\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"local read earlier then reassigned under if":   "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use(c bool) {\n\terr := errors.New(\"old\")\n\tfmt.Println(err)\n\tif c {\n\t\t_, err = f()\n\t}\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"closure invoked before the call":               "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\terr := errors.New(\"old\")\n\tfmt.Println(err)\n\th := func() {\n\t\tif err != nil {\n\t\t\tfmt.Println(\"bad\")\n\t\t}\n\t}\n\th()\n\t_, err = f()\n\th()\n}\n",
+		"closure run after the kill":                    "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tvar err error\n\th := func() {\n\t\tif err != nil {\n\t\t\tfmt.Println(\"h bad\")\n\t\t}\n\t}\n\t_, err = f()\n\terr = errors.New(\"k\")\n\th()\n\tfmt.Println(err)\n}\n",
+		"deferred closure run after the kill":           "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\tvar err error\n\tdefer func() {\n\t\tif err != nil {\n\t\t\tfmt.Println(\"deferred bad\")\n\t\t}\n\t}()\n\t_, err = f()\n\terr = errors.New(\"k\")\n\tfmt.Println(err)\n}\n",
+		"outer variable reassigned in a closure":        "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use(c bool) {\n\terr := errors.New(\"old\")\n\th := func() { _, err = f() }\n\tif c {\n\t\th()\n\t}\n\tif err != nil {\n\t\tfmt.Println(\"bad\")\n\t}\n}\n",
+		"outer variable checked only in a closure":      "package p\n\nimport (\n\t\"errors\"\n\t\"fmt\"\n)\n\nfunc Use() {\n\terr := errors.New(\"x\")\n\th := func() {\n\t\t_, err = f()\n\t\tif err != nil {\n\t\t\tfmt.Println(\"bad\")\n\t\t}\n\t}\n\th()\n}\n",
+		"declared variable read by a later closure":     "package p\n\nimport \"errors\"\n\nfunc h() (int, error) { return 0, errors.New(\"h\") }\n\nfunc Use() {\n\tx, err := f()\n\tshow := func() {\n\t\tif err != nil {\n\t\t\tprintln(\"bad\")\n\t\t}\n\t}\n\ty, err := h()\n\tshow()\n\tprintln(x, y)\n}\n",
+		"declared variable overwritten with =":          "package p\n\nimport \"errors\"\n\nfunc Use() {\n\tx, err := f()\n\terr = errors.New(\"k\")\n\tif err != nil {\n\t\tprintln(x)\n\t}\n}\n",
 	}
 	for name, use := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -182,8 +196,8 @@ func TestChangeSignature_RemoveReturnRefusesErrorReadsItCannotFold(t *testing.T)
 
 			res := changeSig(t, sess, returnArgs("f", "p/f.go", "remove_return", "int"))
 
-			if !res.IsError || !strings.Contains(errText(res), "use.go:") {
-				t.Errorf("want a refusal naming use.go, got IsError=%v %q", res.IsError, errText(res))
+			if !res.IsError || !strings.Contains(errText(res), "use.go:") || strings.Contains(errText(res), "type errors") {
+				t.Errorf("want a refusal naming use.go, not a type-check abort, got IsError=%v %q", res.IsError, errText(res))
 			}
 
 			assertFileUnchanged(t, dir, "p/f.go", foldF)

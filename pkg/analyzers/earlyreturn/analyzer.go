@@ -466,7 +466,9 @@ func (w *walker) reusable(name string, moved []ast.Stmt, enc enclosing) bool {
 
 	info := w.pass.TypesInfo
 
-	return !slices.ContainsFunc(enc.list[:enc.idx], func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, outer) }) &&
+	// The if counts too: a closure or pointer made in its header, or in the moved
+	// block before the `:=`, holds the outer variable.
+	return !slices.ContainsFunc(enc.list[:enc.idx+1], func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, outer) }) &&
 		!slices.ContainsFunc(moved, func(s ast.Stmt) bool { return stmtfacts.Captures(info, s, inner) })
 }
 

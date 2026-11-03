@@ -59,36 +59,34 @@ func (f *errFold) refusal(pos token.Pos, why string) {
 	f.refuse = append(f.refuse, returnRefusal{Pos: pos, Reason: why})
 }
 
-// foldErrorReads folds the reads of obj, the error variable that assign binds
-// at idx; writes are the other assignments to it. The value is nil only if this
-// assignment is the sole write that survives the fold, so any other write
-// refuses every read.
-func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.AssignStmt, idx int, obj gotypes.Object, reads []returnRefusal, writes []token.Pos) foldPlan {
+// foldErrorReads folds the uses of obj, the error variable that assign binds
+// at idx, by treating it as nil. A use with Read set folds when it is a nil
+// check; every other use is refused unless a dead branch of the fold deletes it.
+func foldErrorReads(info *gotypes.Info, site analysis.CallSite, assign *ast.AssignStmt, idx int, obj gotypes.Object, uses []returnRefusal) foldPlan {
 	if !gotypes.Identical(obj.Type(), gotypes.Universe.Lookup("error").Type()) {
-		return foldPlan{Refusals: reads}
+		return foldPlan{Refusals: uses}
 	}
 
 	f := &errFold{info: info, obj: obj, assign: assign, idx: idx, promoted: map[*ast.IfStmt]bool{}, gone: map[*ast.IfStmt]bool{}}
 	ifs := map[token.Pos]inspector.Cursor{}
 	var stray []returnRefusal
 
-	for _, r := range reads {
-		c, ok := nilCheckIf(info, r.Read.Cursor)
-		if ok {
-			ifs[c.Node().Pos()] = c
-		} else {
-			stray = append(stray, r)
+	for _, r := range uses {
+		if r.Read != nil {
+			c, ok := nilCheckIf(info, r.Read.Cursor)
+			if ok {
+				ifs[c.Node().Pos()] = c
+				continue
+			}
 		}
+
+		stray = append(stray, r)
 	}
 
 	for _, pos := range slices.Sorted(maps.Keys(ifs)) {
 		if !f.inDropped(pos) {
 			f.foldIf(ifs[pos])
 		}
-	}
-
-	if slices.ContainsFunc(writes, func(w token.Pos) bool { return !f.inDropped(w) }) {
-		return foldPlan{Refusals: reads}
 	}
 
 	for _, r := range stray {

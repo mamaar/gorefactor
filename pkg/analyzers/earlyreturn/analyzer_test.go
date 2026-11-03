@@ -1028,6 +1028,60 @@ L:
 }
 `,
 		},
+		{
+			name: "closure in the moved block captures the outer variable",
+			src: `package testpkg
+
+func f(m map[int]bool) {
+	x, ok := 1, m[1]
+	if !ok {
+		return
+	} else {
+		show := func() { println(x) }
+		x, y := 2, 3
+		show()
+		println(x, y)
+	}
+}
+`,
+		},
+		{
+			name: "address taken in the moved block",
+			src: `package testpkg
+
+func f(m map[int]bool) {
+	x, ok := 1, m[1]
+	if !ok {
+		return
+	} else {
+		p := &x
+		x, y := 2, 3
+		println(*p, x, y)
+	}
+}
+`,
+		},
+		{
+			name: "address taken in the condition",
+			src: `package testpkg
+
+var saved *int
+
+func check(p *int) bool { saved = p; return false }
+
+func f() {
+	x, ok := 1, true
+	_ = ok
+	if check(&x) {
+		return
+	} else {
+		x, y := 2, 3
+		println(x, y)
+	}
+	println(*saved)
+}
+`,
+		},
 	}
 
 	for _, tc := range tests {

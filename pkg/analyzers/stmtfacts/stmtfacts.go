@@ -488,7 +488,7 @@ func HasGoto(stmts []ast.Stmt) bool {
 }
 
 // Captures reports whether node uses obj inside a func literal or can observe
-// it through a pointer, see AddressTaken.
+// it through a pointer, see addressTaken.
 func Captures(info *types.Info, node ast.Node, obj types.Object) bool {
 	found := false
 
@@ -499,12 +499,12 @@ func Captures(info *types.Info, node ast.Node, obj types.Object) bool {
 		return !found
 	})
 
-	return found || AddressTaken(info, node, obj)
+	return found || addressTaken(info, node, obj)
 }
 
-// AddressTaken reports whether node takes obj's address: under '&', by calling
+// addressTaken reports whether node takes obj's address: under '&', by calling
 // a pointer method on it, or by slicing it when it is an array.
-func AddressTaken(info *types.Info, node ast.Node, obj types.Object) bool {
+func addressTaken(info *types.Info, node ast.Node, obj types.Object) bool {
 	found := false
 
 	ast.Inspect(node, func(n ast.Node) bool {

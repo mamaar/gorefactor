@@ -347,8 +347,8 @@ func addAffected(plan *pkgtypes.RefactoringPlan, file string) {
 type returnRefusal struct {
 	Pos    token.Pos
 	Reason string
-	// Read is the read of the removed result's variable that causes the refusal;
-	// nil for any other.
+	// Read is the read of the removed result's variable that causes the refusal
+	// unless it folds as a nil check; nil for any other.
 	Read *analysis.ValueUse
 }
 
@@ -428,45 +428,31 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	if obj == nil {
 		return refuse(id.Pos(), fmt.Sprintf("no type information to check whether %s is read", id.Name))
 	}
-	var reads []returnRefusal
-	var writes []token.Pos
 
 	fn := enclosingFunc(site.Cursor)
-	// A pointer to the variable can read it from anywhere, so every read counts.
-	local := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End() && !stmtfacts.AddressTaken(info, funcBody(fn), obj)
-	uses := refs.NonCallUsesOf(obj)
+	// Statement order decides which reads see the call's value only when nothing
+	// but fn's own statements can read the variable.
+	private := obj.Pos() >= fn.Pos() && obj.Pos() < fn.End() && !stmtfacts.Captures(info, funcBody(fn), obj)
+	uses := slices.DeleteFunc(refs.NonCallUsesOf(obj), func(u analysis.ValueUse) bool { return u.Pos == id.Pos() })
 
 	var kill *ast.AssignStmt
-	if local {
+	if private {
 		kill = killingWrite(site.Cursor, uses)
 	}
 
-	kept := false // a read that stays after the fold
+	var plan foldPlan
 
-	for _, u := range uses {
-		if u.Pos == id.Pos() {
-			continue
+	switch {
+	case info.Defs[id] == obj:
+		plan = declaredResultFold(info, site, assign, idx, obj, uses, kill)
+	case private:
+		plan = reassignedResultFold(info, site, assign, idx, obj, uses, kill)
+	default:
+		for _, u := range uses {
+			if !isAssignTarget(u.Cursor) {
+				plan.Refusals = append(plan.Refusals, returnRefusal{Pos: u.Pos, Reason: readReason(obj) + "; it is declared outside the calling function, captured by a func literal or reached through a pointer, so the read cannot be folded"})
+			}
 		}
-
-		target := isAssignTarget(u.Cursor)
-		skipped := local && cannotReach(site.Cursor, u.Cursor) ||
-			kill != nil && (u.Pos >= kill.End() || target && u.Cursor.Parent().Node() == kill)
-
-		switch {
-		case skipped:
-			kept = kept || !target
-		case target:
-			writes = append(writes, u.Pos)
-		default:
-			reads = append(reads, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s holds the result being removed and is read here", id.Name), Read: &u})
-		}
-	}
-
-	plan := foldErrorReads(info, site, assign, idx, obj, reads, writes)
-
-	declaredEarlier := obj.Pos() < id.Pos() && obj.Pos() >= funcBody(fn).Pos()
-	if declaredEarlier && !kept && len(plan.Refusals) == 0 {
-		plan.Refusals = append(plan.Refusals, returnRefusal{Pos: id.Pos(), Reason: fmt.Sprintf("removing the result leaves %s declared and not used", id.Name)})
 	}
 
 	ret := bareReturnOfResult(info, site.Cursor, obj)
@@ -477,25 +463,101 @@ func removedResultFold(info *gotypes.Info, refs *analysis.ReferenceIndex, site a
 	return plan
 }
 
-// cannotReach reports whether the statement at from cannot execute before the
-// identifier at use: it sits earlier in the same function, which has no goto,
-// and no loop holds both. Anything else, such as a closure, might run after it.
+// declaredResultFold plans the removal of obj, which the call's `:=` declares
+// and so loses its declaration. Every use must fold or go with a dead branch,
+// except those after kill, a later `:=` that then declares obj.
+func declaredResultFold(info *gotypes.Info, site analysis.CallSite, assign *ast.AssignStmt, idx int, obj gotypes.Object, uses []analysis.ValueUse, kill *ast.AssignStmt) foldPlan {
+	if kill != nil && kill.Tok != token.DEFINE {
+		kill = nil
+	}
+
+	var rest []returnRefusal
+
+	for _, u := range uses {
+		target := isAssignTarget(u.Cursor)
+
+		switch {
+		case kill != nil && (u.Pos >= kill.End() || target && u.Cursor.Parent().Node() == kill):
+		case target:
+			rest = append(rest, returnRefusal{Pos: u.Pos, Reason: fmt.Sprintf("%s is assigned here, so it does not hold only the result being removed", obj.Name())})
+		default:
+			rest = append(rest, returnRefusal{Pos: u.Pos, Reason: readReason(obj), Read: &u})
+		}
+	}
+
+	return foldErrorReads(info, site, assign, idx, obj, rest)
+}
+
+// reassignedResultFold plans the removal of obj, a variable of the calling
+// function that only its own statements read. A read folds only as the nil
+// check of the if that runs right after the call's assignment; every other
+// read must be one the call's value cannot reach.
+func reassignedResultFold(info *gotypes.Info, site analysis.CallSite, assign *ast.AssignStmt, idx int, obj gotypes.Object, uses []analysis.ValueUse, kill *ast.AssignStmt) foldPlan {
+	check, checked := checkingIf(site.Cursor.Parent())
+	kept := false // a read that stays after the fold
+	var reads []returnRefusal
+
+	for _, u := range uses {
+		switch {
+		case isAssignTarget(u.Cursor):
+		case cannotReach(site.Cursor, u.Cursor), kill != nil && u.Pos >= kill.End():
+			kept = true
+		case checked && check.Cond.Pos() <= u.Pos && u.Pos < check.Cond.End():
+			reads = append(reads, returnRefusal{Pos: u.Pos, Reason: readReason(obj), Read: &u})
+		default:
+			reads = append(reads, returnRefusal{Pos: u.Pos, Reason: readReason(obj)})
+		}
+	}
+
+	plan := foldErrorReads(info, site, assign, idx, obj, reads)
+
+	fn := enclosingFunc(site.Cursor)
+	if obj.Pos() >= funcBody(fn).Pos() && !kept && len(plan.Refusals) == 0 {
+		plan.Refusals = append(plan.Refusals, returnRefusal{Pos: assign.Lhs[idx].Pos(), Reason: fmt.Sprintf("removing the result leaves %s declared and not used", obj.Name())})
+	}
+
+	return plan
+}
+
+func readReason(obj gotypes.Object) string {
+	return fmt.Sprintf("%s holds the result being removed and is read here", obj.Name())
+}
+
+// checkingIf returns the if whose condition runs right after the assignment
+// at assign: the if it is the init of, or an if without init that follows it
+// in the same statement list.
+func checkingIf(assign inspector.Cursor) (*ast.IfStmt, bool) {
+	ifs, ok := assign.Parent().Node().(*ast.IfStmt)
+	if ok {
+		return ifs, ifs.Init == assign.Node()
+	}
+
+	next, ok := assign.NextSibling()
+	if !ok || next.ParentEdgeKind() != assign.ParentEdgeKind() {
+		return nil, false
+	}
+
+	ifs, ok = next.Node().(*ast.IfStmt)
+
+	return ifs, ok && ifs.Init == nil
+}
+
+// cannotReach reports whether the call at from never runs before use, a read
+// in the same function: the read comes first, no loop holds both, and the
+// function has no goto.
 func cannotReach(from, use inspector.Cursor) bool {
 	if use.Node().Pos() >= from.Node().Pos() {
 		return false
 	}
 
 	for c := range from.Enclosing((*ast.FuncDecl)(nil), (*ast.FuncLit)(nil), (*ast.ForStmt)(nil), (*ast.RangeStmt)(nil)) {
-		n := c.Node()
-		holdsUse := n.Pos() <= use.Node().Pos() && use.Node().End() <= n.End()
-
-		switch n.(type) {
+		switch n := c.Node().(type) {
 		case *ast.ForStmt, *ast.RangeStmt:
-			if holdsUse {
+			if n.Pos() <= use.Node().Pos() {
 				return false
 			}
 		default:
-			return holdsUse && enclosingFunc(use) == n && !stmtfacts.HasGoto(funcBody(n).List)
+			return !stmtfacts.HasGoto(funcBody(n).List)
 		}
 	}
 
