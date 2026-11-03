@@ -201,10 +201,7 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 
 	views := make([]*View, 0, len(configs))
 	for _, cfg := range configs {
-		v, err := s.viewLocked(cfg)
-		if err != nil {
-			return nil, fmt.Errorf("build view %s: %w", cfg.Key(), err)
-		}
+		v := s.viewLocked(cfg)
 
 		views = append(views, v)
 	}
@@ -212,19 +209,19 @@ func (s *WorkspaceSet) Views() ([]*View, error) {
 	return views, nil
 }
 
-func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
+func (s *WorkspaceSet) viewLocked(cfg BuildConfig) *View {
 	key := cfg.Key()
 
 	v := s.views[key]
 	if v != nil {
-		return v, nil
+		return v
 	}
 
 	v = s.buildView(cfg)
 
 	s.views[key] = v
 
-	return v, nil
+	return v
 }
 
 // pruneLocked drops the built views whose configuration is not in configs.
