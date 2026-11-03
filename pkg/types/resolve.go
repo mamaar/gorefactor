@@ -104,7 +104,7 @@ func ResolveNewPackagePath(workspace *Workspace, userPath string) (string, error
 		return "", fmt.Errorf("cannot resolve %q: workspace has no root path", userPath)
 	}
 
-	resolved := ""
+	var resolved string
 	switch {
 	case filepath.IsAbs(userPath):
 		resolved = filepath.Clean(userPath)

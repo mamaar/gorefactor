@@ -13,6 +13,7 @@ linters:
     - ineffassign
     - gocritic
     - misspell
+    - wastedassign
     - unconvert
     - modernize
     - mirror
