@@ -41,7 +41,7 @@ fmt:
 # Run linter
 lint:
 	@echo "Running linter..."
-	@golangci-lint run || echo "Install golangci-lint: https://golangci-lint.run/usage/install/"
+	@golangci-lint run
 
 # Development workflow - build and test
 dev: fmt build test

@@ -13,8 +13,3 @@ linters:
     - ineffassign
     - gocritic
     - misspell
-
-issues:
-  exclude-dirs:
-    - testdata
-    - bin
