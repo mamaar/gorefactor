@@ -142,6 +142,7 @@ func TestBatchOperations_RenamePackageStepAndRenameSymbolStepCombine(t *testing.
 const batchQ = "package q\n\nfunc Q() int { return 1 }\n"
 
 func batchPackageStepWorkspace(t *testing.T) (string, map[string]string) {
+	t.Helper()
 	files := map[string]string{
 		"src/s.go":   "package src\n\nfunc One() int { return 1 }\n\ntype T struct{ V int }\n\nfunc (T) M() {}\n",
 		"q/q.go":     batchQ,

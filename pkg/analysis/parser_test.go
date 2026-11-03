@@ -1093,6 +1093,7 @@ func parseWorkspace(root string) (*GoParser, *types.Workspace, error) {
 }
 
 func constrainedWorkspace(t *testing.T) string {
+	t.Helper()
 	return writeWorkspace(t, map[string]string{
 		"p/p.go":             "package p\n",
 		"p/x_fts5_test.go":   fts5TestSrc,

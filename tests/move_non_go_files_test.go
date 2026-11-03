@@ -163,12 +163,16 @@ func TestMoveRefusesExistingNonGoTargetWritingNothing(t *testing.T) {
 func TestMoveRefusesSymlinkAndRepositoryDirs(t *testing.T) {
 	for name, setup := range map[string]func(t *testing.T, dir string){
 		"symlink": func(t *testing.T, dir string) {
+			t.Helper()
 			err := os.Symlink("p.go", filepath.Join(dir, "p/link.go.txt"))
 			if err != nil {
 				t.Skip(err)
 			}
 		},
-		"git": func(t *testing.T, dir string) { mustWrite(t, filepath.Join(dir, "p/.git/HEAD"), "x") },
+		"git": func(t *testing.T, dir string) {
+			t.Helper()
+			mustWrite(t, filepath.Join(dir, "p/.git/HEAD"), "x")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := writeFiles(t, map[string]string{"p/p.go": "package p\n"})

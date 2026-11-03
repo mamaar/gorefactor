@@ -194,6 +194,7 @@ func BenchmarkCacheOperations(b *testing.B) {
 // Helper functions for benchmark workspaces
 
 func createBenchmarkWorkspace(b *testing.B, numPackages int) *types.Workspace {
+	b.Helper()
 	fileSet := token.NewFileSet()
 	workspace := &types.Workspace{
 		Packages: make(map[string]*types.Package),

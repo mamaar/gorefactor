@@ -283,7 +283,7 @@ func assertEdge(t *testing.T, from, to *usageNode, want bool) {
 
 func TestUsageGraph_CallFromProductionFunctionIsACountedEdge(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc callee() {}\n\nfunc caller() { callee() }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			callee, caller := f.node(t, "a.go", "callee()"), f.node(t, "a.go", "caller()")
 			assertRefs(t, callee, 1, 0)
 			assertEdge(t, caller, callee, true)
@@ -297,7 +297,7 @@ func TestUsageGraph_CallFromTestFileToProductionIsATestRefWithoutEdge(t *testing
 	inBothModes(t, map[string]string{
 		"a.go":      "package p\n\nfunc callee() {}\n",
 		"a_test.go": "package p\n\nimport \"testing\"\n\nfunc TestX(t *testing.T) { callee() }\n",
-	}, func(t *testing.T, f graphFixture) {
+	}, func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 		callee, test := f.node(t, "a.go", "callee()"), f.node(t, "a_test.go", "TestX")
 		assertRefs(t, callee, 0, 1)
 		assertEdge(t, test, callee, false)
@@ -322,7 +322,7 @@ func TestUsageGraph_TestHelperCalledFromTestIsACountedEdge(t *testing.T) {
 	inBothModes(t, map[string]string{
 		"a.go":      "package p\n",
 		"a_test.go": "package p\n\nimport \"testing\"\n\nfunc helper() {}\n\nfunc TestX(t *testing.T) { helper() }\n",
-	}, func(t *testing.T, f graphFixture) {
+	}, func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 		helper, test := f.node(t, "a_test.go", "helper()"), f.node(t, "a_test.go", "TestX")
 		assertRefs(t, helper, 1, 0)
 		assertEdge(t, test, helper, true)
@@ -331,7 +331,7 @@ func TestUsageGraph_TestHelperCalledFromTestIsACountedEdge(t *testing.T) {
 
 func TestUsageGraph_RecursionDoesNotCountAsAUse(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc rec(n int) {\n\tif n > 0 {\n\t\trec(n - 1)\n\t}\n}\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			rec := f.node(t, "a.go", "rec(n int)")
 			assertRefs(t, rec, 0, 0)
 			assertEdge(t, rec, rec, false)
@@ -340,7 +340,7 @@ func TestUsageGraph_RecursionDoesNotCountAsAUse(t *testing.T) {
 
 func TestUsageGraph_MethodDoesNotCountAsAUseOfItsReceiverType(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype T struct{}\n\nfunc (t *T) M() *T { return &T{} }\n\nfunc (t T) N() { _ = T{} }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			typ := f.node(t, "a.go", "T struct")
 			assertRefs(t, typ, 0, 0)
 			for _, m := range []string{"M()", "N()"} {
@@ -351,7 +351,7 @@ func TestUsageGraph_MethodDoesNotCountAsAUseOfItsReceiverType(t *testing.T) {
 
 func TestUsageGraph_PackageVarInitialiserReferenceIsAnEdgeFromTheVar(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\nfunc callee() int { return 1 }\n\nvar v = callee()\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			callee, v := f.node(t, "a.go", "callee()"), f.node(t, "a.go", "v =")
 			assertRefs(t, callee, 1, 0)
 			assertEdge(t, v, callee, true)
@@ -360,7 +360,7 @@ func TestUsageGraph_PackageVarInitialiserReferenceIsAnEdgeFromTheVar(t *testing.
 
 func TestUsageGraph_StructFieldTypeIsAnEdgeFromTheStructType(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\ntype S struct{ d Dep }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			dep, s := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "S struct")
 			assertRefs(t, dep, 1, 0)
 			assertEdge(t, s, dep, true)
@@ -369,7 +369,7 @@ func TestUsageGraph_StructFieldTypeIsAnEdgeFromTheStructType(t *testing.T) {
 
 func TestUsageGraph_InterfaceMethodSignatureTypeIsAnEdgeFromTheInterfaceType(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\ntype I interface{ M(d Dep) }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			dep, i := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "I interface")
 			assertRefs(t, dep, 1, 0)
 			assertEdge(t, i, dep, true)
@@ -378,7 +378,7 @@ func TestUsageGraph_InterfaceMethodSignatureTypeIsAnEdgeFromTheInterfaceType(t *
 
 func TestUsageGraph_ParameterTypeIsAnEdgeFromTheFunction(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype Dep struct{}\n\nfunc f(d Dep) {}\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			dep, fn := f.node(t, "a.go", "Dep struct"), f.node(t, "a.go", "f(d")
 			assertRefs(t, dep, 1, 0)
 			assertEdge(t, fn, dep, true)
@@ -387,7 +387,7 @@ func TestUsageGraph_ParameterTypeIsAnEdgeFromTheFunction(t *testing.T) {
 
 func TestUsageGraph_MethodCallIsAnEdgeToTheMethod(t *testing.T) {
 	inBothModes(t, map[string]string{"a.go": "package p\n\ntype T struct{}\n\nfunc (t T) M() {}\n\nfunc f(t T) { t.M() }\n"},
-		func(t *testing.T, f graphFixture) {
+		func(t *testing.T, f graphFixture) { //nolint:thelper // test body; Helper would hide the failing line
 			m, fn := f.node(t, "a.go", "M()"), f.node(t, "a.go", "f(t")
 			assertRefs(t, m, 1, 0)
 			assertEdge(t, fn, m, true)

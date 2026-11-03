@@ -152,6 +152,7 @@ func TestCacheInvalidation(t *testing.T) {
 // Helper functions to create test workspaces
 
 func createTestWorkspace(t *testing.T) *types.Workspace {
+	t.Helper()
 	fileSet := token.NewFileSet()
 
 	// Create main package
@@ -247,6 +248,7 @@ func privateFunction() string {
 }
 
 func createEmbeddedFieldWorkspace(t *testing.T) *types.Workspace {
+	t.Helper()
 	fileSet := token.NewFileSet()
 
 	src := `package embedded

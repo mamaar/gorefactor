@@ -39,11 +39,11 @@ type Transport interface {
 
 // Dial connects to an MCP server using the given transport,
 // then calls load_workspace with workspacePath.
-func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath string) *Session {
-	t.Helper()
+func Dial(ctx context.Context, tb testing.TB, transport Transport, workspacePath string) *Session {
+	tb.Helper()
 	sess, err := transport.connect(ctx)
 	if err != nil {
-		t.Fatalf("mcptest.Dial: connect: %v", err)
+		tb.Fatalf("mcptest.Dial: connect: %v", err)
 	}
 	// Load the workspace via the MCP tool.
 	result, err := sess.CallTool(ctx, &mcpsdk.CallToolParams{
@@ -52,11 +52,11 @@ func Dial(ctx context.Context, t testing.TB, transport Transport, workspacePath 
 	})
 	if err != nil {
 		sess.Close()
-		t.Fatalf("mcptest.Dial: load_workspace: %v", err)
+		tb.Fatalf("mcptest.Dial: load_workspace: %v", err)
 	}
 	if result.IsError {
 		sess.Close()
-		t.Fatalf("mcptest.Dial: load_workspace returned error: %v", result.Content)
+		tb.Fatalf("mcptest.Dial: load_workspace returned error: %v", result.Content)
 	}
 	return sess
 }

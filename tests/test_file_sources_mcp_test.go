@@ -62,30 +62,39 @@ func TestOperationsAcceptTestFileSources(t *testing.T) {
 		want string
 	}{
 		{"extract_function", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "start_line": tfsLine(t, "z := x + y"), "end_line": tfsLine(t, "z := x + y"), "new_function_name": "sum"}
 		}, "func sum"},
 		{"extract_method", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "start_line": tfsLine(t, "b := a * 3"), "end_line": tfsLine(t, "b := a * 3"), "new_method_name": "triple", "target_struct": "S"}
 		}, ") triple("},
 		{"extract_variable", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "start_line": tfsLine(t, "z := x + y"), "end_line": tfsLine(t, "z := x + y"), "variable_name": "total", "expression": "x + y"}
 		}, "total := x + y"},
 		{"extract_constant", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "line": tfsLine(t, "y := 2"), "column": 7, "constant_name": "Two"}
 		}, "y := Two"},
 		{"inline_variable", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "variable_name": "w"}
 		}, "_ = 5 + v"},
 		{"inline_function", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "function_name": "add"}
 		}, "v := 1 + 2 + 1"},
 		{"inline_method", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"target_file": "p/p_test.go", "method_name": "Double", "source_struct": "S"}
 		}, "(S{n: 1}).n * 2"},
 		{"add_context_parameter", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "function_name": "add"}
 		}, "func add(ctx context.Context"},
 		{"change_signature", func(t *testing.T) map[string]any {
+			t.Helper()
 			return map[string]any{"source_file": "p/p_test.go", "function_name": "add", "subcommand": "add_param", "params": []map[string]any{{"name": "a", "type": "int"}, {"name": "b", "type": "int"}, {"name": "c", "type": "int"}}, "default_value": "0"}
 		}, "c int"},
 	}
