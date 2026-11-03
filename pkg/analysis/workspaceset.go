@@ -136,10 +136,7 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 		views:  make(map[string]*View),
 	}
 
-	s.primary, err = s.buildView(primary)
-	if err != nil {
-		return nil, err
-	}
+	s.primary = s.buildView(primary)
 
 	s.views[primary.Key()] = s.primary
 
@@ -148,7 +145,7 @@ func LoadWorkspaceSet(root string, primary BuildConfig, logger *slog.Logger) (*W
 
 // buildView projects the source tree under cfg and indexes the result. It
 // reads and parses nothing.
-func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
+func (s *WorkspaceSet) buildView(cfg BuildConfig) *View {
 	parser := newViewParser(s.logger, s.tree, cfg)
 
 	ws := parser.projectWorkspace(s.root, s.module)
@@ -166,7 +163,7 @@ func (s *WorkspaceSet) buildView(cfg BuildConfig) (*View, error) {
 	analyzer := NewDependencyAnalyzer(ws, s.logger)
 	_ = analyzer.BuildDependencyGraph()
 
-	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}, nil
+	return &View{Config: cfg, Workspace: ws, Parser: parser, Resolver: resolver, Analyzer: analyzer}
 }
 
 // Primary returns the view of the configuration the set was loaded under.
@@ -223,10 +220,7 @@ func (s *WorkspaceSet) viewLocked(cfg BuildConfig) (*View, error) {
 		return v, nil
 	}
 
-	v, err := s.buildView(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("view locked: %w", err)
-	}
+	v = s.buildView(cfg)
 
 	s.views[key] = v
 

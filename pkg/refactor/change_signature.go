@@ -1323,15 +1323,17 @@ func (op *ChangeSignatureOperation) preserveExistingReturnsIfNeeded(sourceFile *
 
 	// Extract from concrete function/method
 	funcDecl := op.findFunction(sourceFile, op.FunctionName)
-	if funcDecl != nil && funcDecl.Type != nil {
-		op.NewReturns = op.extractReturnTypes(funcDecl.Type)
-		// Also populate NamedReturns when the original signature uses named results.
-		// NamedReturns preserves both the name and the type so that generateNewSignature
-		// can emit e.g. "(secret []byte, err error)" instead of "([]byte, error)".
-		// A bare "return" inside the body would be invalid if names are stripped.
-		if hasNamedResults(funcDecl.Type) {
-			op.NamedReturns = op.extractNamedReturnParams(funcDecl.Type)
-		}
+	if funcDecl == nil || funcDecl.Type == nil {
+		return
+	}
+
+	op.NewReturns = op.extractReturnTypes(funcDecl.Type)
+	// Also populate NamedReturns when the original signature uses named results.
+	// NamedReturns preserves both the name and the type so that generateNewSignature
+	// can emit e.g. "(secret []byte, err error)" instead of "([]byte, error)".
+	// A bare "return" inside the body would be invalid if names are stripped.
+	if hasNamedResults(funcDecl.Type) {
+		op.NamedReturns = op.extractNamedReturnParams(funcDecl.Type)
 	}
 }
 
