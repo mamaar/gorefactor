@@ -6,6 +6,7 @@ import (
 	"go/ast"
 	"go/format"
 	gotypes "go/types"
+	"slices"
 	"sort"
 	"strings"
 
@@ -75,6 +76,9 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		}
 		results = an.EnclosingResults
 	}
+	if an.ErrGuard {
+		results = append(slices.Clone(results), extractsig.Result{Type: "error"})
+	}
 
 	var b strings.Builder
 	b.WriteString("func ")
@@ -94,8 +98,17 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		b.WriteString(" (" + strings.Join(typeList, ", ") + ")")
 	}
 	b.WriteString(" {\n")
+	for _, d := range an.LocalDecls {
+		b.WriteString("var " + d.Name + " " + d.Type + "\n")
+	}
 	b.WriteString(an.BodyText)
-	if !an.TailReturns && len(an.Results) > 0 {
+	if an.ErrGuard {
+		names := make([]string, 0, len(an.Results)+1)
+		for _, r := range an.Results {
+			names = append(names, r.Name)
+		}
+		b.WriteString("\nreturn " + strings.Join(append(names, "nil"), ", "))
+	} else if !an.TailReturns && len(an.Results) > 0 {
 		// TailReturns is false, so extractsig found no return bound to the
 		// enclosing function anywhere in the block — the body therefore cannot
 		// already end in one, and the results need an explicit return.
@@ -117,11 +130,26 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 		callExpr = recvName + "." + callExpr
 	}
 
+	return decl, hoistedDecls(an) + callSite(an, callExpr), nil
+}
+
+// hoistedDecls renders the declarations of the no-copy variables the caller
+// now owns.
+func hoistedDecls(an *extractsig.Analysis) string {
+	var b strings.Builder
+	for _, h := range an.Hoisted {
+		b.WriteString("var " + h.Name + " " + h.Type + "\n")
+	}
+	return b.String()
+}
+
+// callSite renders the statement(s) that replace the block.
+func callSite(an *extractsig.Analysis, callExpr string) string {
 	switch {
 	case an.TailReturns:
-		return decl, "return " + callExpr, nil
-	case len(an.Results) == 0:
-		return decl, callExpr, nil
+		return "return " + callExpr
+	case len(an.Results) == 0 && !an.ErrGuard:
+		return callExpr
 	}
 
 	// Results that were already variables before the block must be assigned
@@ -129,29 +157,41 @@ func renderExtraction(an *extractsig.Analysis, name string, recv *extractReceive
 	// mixed set cannot be written as one assignment statement, so the new
 	// names get an explicit `var` on preceding lines and the assignment stays
 	// a plain `=`.
-	isParam := make(map[string]bool, len(an.Params))
+	existing := make(map[string]bool, len(an.Params)+len(an.LocalDecls))
 	for _, p := range an.Params {
-		isParam[p.Name] = true
+		existing[p.Name] = true
+	}
+	for _, d := range an.LocalDecls {
+		existing[d.Name] = true
 	}
 
-	lhs := make([]string, 0, len(an.Results))
+	outs := slices.Clone(an.Results)
+	if an.ErrGuard {
+		outs = append(outs, extractsig.Result{Name: an.ErrName, Type: "error"})
+		existing[an.ErrName] = an.ErrExists
+	}
+	lhs := make([]string, 0, len(outs))
 	var fresh []extractsig.Result
-	for _, r := range an.Results {
+	for _, r := range outs {
 		lhs = append(lhs, r.Name)
-		if !isParam[r.Name] {
+		if !existing[r.Name] {
 			fresh = append(fresh, r)
 		}
 	}
-	if len(fresh) == len(an.Results) {
-		return decl, strings.Join(lhs, ", ") + " := " + callExpr, nil
+	assign := strings.Join(lhs, ", ") + " := " + callExpr
+	if len(fresh) != len(outs) {
+		lines := make([]string, 0, len(fresh)+1)
+		for _, r := range fresh {
+			lines = append(lines, "var "+r.Name+" "+r.Type)
+		}
+		lines = append(lines, strings.Join(lhs, ", ")+" = "+callExpr)
+		assign = strings.Join(lines, "\n")
 	}
-
-	lines := make([]string, 0, len(fresh)+1)
-	for _, r := range fresh {
-		lines = append(lines, "var "+r.Name+" "+r.Type)
+	if !an.ErrGuard {
+		return assign
 	}
-	lines = append(lines, strings.Join(lhs, ", ")+" = "+callExpr)
-	return decl, strings.Join(lines, "\n"), nil
+	returned := append(slices.Clone(an.GuardZeros), an.ErrName)
+	return assign + "\nif " + an.ErrName + " != nil {\n\treturn " + strings.Join(returned, ", ") + "\n}"
 }
 
 func splitParamsAndArgs(an *extractsig.Analysis, recvIdx int) ([]string, []string) {
@@ -161,6 +201,10 @@ func splitParamsAndArgs(an *extractsig.Analysis, recvIdx int) ([]string, []strin
 			continue
 		}
 		sigParams = append(sigParams, p.Name+" "+p.Type)
+		if p.ByPointer {
+			args = append(args, "&"+p.Name)
+			continue
+		}
 		args = append(args, p.Name)
 	}
 	return sigParams, args

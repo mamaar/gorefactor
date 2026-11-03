@@ -34,6 +34,9 @@ import (
 type Param struct {
 	Name string // identifier as it appears in source
 	Type string // rendered type, qualified for the source file's imports
+	// ByPointer marks a value that must not be copied: Type is a pointer
+	// to its type and the call site passes &Name.
+	ByPointer bool
 }
 
 // Result is a value the extracted function must return.
@@ -53,6 +56,26 @@ type Analysis struct {
 	// EnclosingResults holds the enclosing function's result types; set only
 	// when TailReturns is true.
 	EnclosingResults []Result
+
+	// LocalDecls are variables the block assigns before reading. They are
+	// not parameters; the extracted function declares them at the top.
+	LocalDecls []Result
+
+	// Hoisted are no-copy variables the block declares and later code
+	// still uses. The caller declares them before the call (`var name Type`)
+	// and passes them by pointer; the declaration leaves the body.
+	Hoisted []Result
+
+	// ErrGuard is true when the block returns (zero..., err) on some paths
+	// and falls through on the others. The extracted function then returns
+	// Results plus an error, and the call site returns GuardZeros plus
+	// that error when it is non-nil.
+	ErrGuard   bool
+	GuardZeros []string
+	// ErrName is the call-site variable receiving the error; ErrExists says
+	// it is already declared there.
+	ErrName   string
+	ErrExists bool
 
 	Stmts    []ast.Stmt // selected statements, source order
 	BodyText string     // block source, dedented to zero base indentation
@@ -102,6 +125,20 @@ type analyzer struct {
 	// distinguish two shadowed variables that happen to share one.
 	paramObjs []gotypes.Object
 
+	flow *flowFacts
+	// pointerObjs are the no-copy parameters passed by pointer.
+	pointerObjs objSet
+	// localObjs are the write-first variables, in order of first appearance.
+	localObjs  []gotypes.Object
+	localDecls []Result
+	hoisted    []Result
+	hoistEdits []edit
+	// earlyOuts holds, per Result, the expression returned for it on an
+	// early error return: the variable itself when the extracted function
+	// has it in scope, else a zero value.
+	earlyOuts    []string
+	guardReturns []*ast.ReturnStmt
+
 	// fileImports maps import path -> local alias for the imports the source
 	// file already has. An empty alias means "imported under its own package
 	// name".
@@ -143,6 +180,7 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 		fset:        ws.FileSet,
 		fileImports: fileImportAliases(file.AST),
 		newImports:  make(map[string]string),
+		pointerObjs: objSet{},
 	}
 
 	err := a.locate(startLine, endLine)
@@ -154,7 +192,13 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 		return nil, err
 	}
 
+	a.flow = a.analyzeFlow()
+
 	params, err := a.collectParams()
+	if err != nil {
+		return nil, err
+	}
+	params, err = a.hoistNoCopy(params)
 	if err != nil {
 		return nil, err
 	}
@@ -166,6 +210,8 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	res := &Analysis{
 		Params:        params,
 		Results:       results,
+		LocalDecls:    a.localDecls,
+		Hoisted:       a.hoisted,
 		Stmts:         a.stmts,
 		EnclosingFunc: a.fn,
 	}
@@ -558,7 +604,17 @@ func (a *analyzer) collectParams() ([]Param, error) {
 		if err != nil {
 			return nil, fmt.Errorf("collect params: %w", err)
 		}
-		params = append(params, Param{Name: obj.Name(), Type: typeStr})
+		byPointer := mustNotCopy(obj.Type())
+		if !byPointer && a.writeFirst(obj) {
+			a.localObjs = append(a.localObjs, obj)
+			a.localDecls = append(a.localDecls, Result{Name: obj.Name(), Type: typeStr})
+			continue
+		}
+		if byPointer {
+			typeStr = "*" + typeStr
+			a.pointerObjs[obj] = true
+		}
+		params = append(params, Param{Name: obj.Name(), Type: typeStr, ByPointer: byPointer})
 		a.paramObjs = append(a.paramObjs, obj)
 	}
 	return params, nil
@@ -567,6 +623,52 @@ func (a *analyzer) collectParams() ([]Param, error) {
 // ---------------------------------------------------------------------------
 // 4. Results
 // ---------------------------------------------------------------------------
+
+// hoistNoCopy moves the declaration of each no-copy variable that the block
+// declares and later code uses out to the call site, so the extracted function
+// receives it by pointer instead of returning a copy. Only a top-level
+// `var x T` can move; anything else is refused.
+func (a *analyzer) hoistNoCopy(params []Param) ([]Param, error) {
+	for _, obj := range a.blockDeclaredVars() {
+		if !mustNotCopy(obj.Type()) || !a.usedAfterBlock(obj) {
+			continue
+		}
+		decl := a.topLevelVarDecl(obj)
+		if decl == nil {
+			return nil, refuse("variable %s is declared in the block and used after it, but its type must not be copied and its declaration is not a plain `var %s T` statement, so it can neither be returned nor hoisted to the call site", obj.Name(), obj.Name())
+		}
+		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("hoist: %w", err)
+		}
+		a.hoisted = append(a.hoisted, Result{Name: obj.Name(), Type: typeStr})
+		a.hoistEdits = append(a.hoistEdits, edit{a.offset(decl.Pos()), a.offset(decl.End()), ""})
+		a.pointerObjs[obj] = true
+		params = append(params, Param{Name: obj.Name(), Type: "*" + typeStr, ByPointer: true})
+		a.paramObjs = append(a.paramObjs, obj)
+	}
+	return params, nil
+}
+
+// topLevelVarDecl returns the `var x T` statement, directly in the selection,
+// that declares obj without an initial value.
+func (a *analyzer) topLevelVarDecl(obj gotypes.Object) ast.Stmt {
+	for _, s := range a.stmts {
+		ds, ok := s.(*ast.DeclStmt)
+		if !ok {
+			continue
+		}
+		gd, ok := ds.Decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR || len(gd.Specs) != 1 {
+			continue
+		}
+		spec := gd.Specs[0].(*ast.ValueSpec)
+		if len(spec.Names) == 1 && len(spec.Values) == 0 && a.info.Defs[spec.Names[0]] == obj {
+			return ds
+		}
+	}
+	return nil
+}
 
 // collectResults determines which values must travel back out of the extracted
 // function: captured variables the block mutates in a way that value-passing
@@ -577,8 +679,16 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 
 	var results []Result
 	for i, p := range params {
-		if mutated[a.paramObjs[i]] {
-			results = append(results, Result(p))
+		if mutated[a.paramObjs[i]] && !p.ByPointer {
+			results = append(results, Result{Name: p.Name, Type: p.Type})
+			a.earlyOuts = append(a.earlyOuts, p.Name)
+		}
+	}
+
+	for i, obj := range a.localObjs {
+		if a.liveOut(obj) {
+			results = append(results, a.localDecls[i])
+			a.earlyOuts = append(a.earlyOuts, obj.Name())
 		}
 	}
 
@@ -586,6 +696,14 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 		if !a.usedAfterBlock(obj) {
 			continue
 		}
+		if a.pointerObjs[obj] {
+			continue
+		}
+		zero, err := a.zeroExpr(obj.Type())
+		if err != nil {
+			return nil, fmt.Errorf("collect results: %w", err)
+		}
+		a.earlyOuts = append(a.earlyOuts, zero)
 		typeStr, err := a.renderType(obj.Type(), fmt.Sprintf("variable %s", obj.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("collect results: %w", err)
@@ -843,7 +961,7 @@ func (a *analyzer) analyzeReturns(res *Analysis) error {
 		return refuse("block sits inside a function literal and contains `return`; its returns bind to the literal and cannot be extracted")
 	}
 	if !alwaysTerminates(a.stmts) {
-		return refuse("block mixes early returns with fall-through: some paths return from the enclosing function and others continue past the block, which cannot be expressed by a single extracted call")
+		return a.analyzeErrGuard(res)
 	}
 
 	res.TailReturns = true
@@ -1152,7 +1270,84 @@ func (a *analyzer) bodyText() (string, error) {
 		start = lineStart
 	}
 
-	return dedent(string(src[start:end])), nil
+	edits := append(a.pointerEdits(), a.guardEdits()...)
+	edits = append(edits, a.hoistEdits...)
+	return dedent(applyEdits(string(src[start:end]), start, edits)), nil
+}
+
+// edit replaces src[start:end] (file offsets) with text.
+type edit struct {
+	start, end int
+	text       string
+}
+
+// applyEdits applies non-overlapping edits to s, which begins at file offset
+// base.
+func applyEdits(s string, base int, edits []edit) string {
+	sort.Slice(edits, func(i, j int) bool { return edits[i].start > edits[j].start })
+	for _, e := range edits {
+		s = s[:e.start-base] + e.text + s[e.end-base:]
+	}
+	return s
+}
+
+func (a *analyzer) offset(p token.Pos) int { return a.fset.Position(p).Offset }
+
+// pointerEdits rewrites uses of the by-pointer parameters so the body still
+// compiles with the pointer: `&x` becomes `x`, a selector base stays, and
+// any other use becomes `(*x)`.
+func (a *analyzer) pointerEdits() []edit {
+	if len(a.pointerObjs) == 0 {
+		return nil
+	}
+	var edits []edit
+	var stack []ast.Node
+	for _, s := range a.stmts {
+		ast.Inspect(s, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			stack = append(stack, n)
+			id, ok := n.(*ast.Ident)
+			if !ok || !a.pointerObjs[a.info.Uses[id]] {
+				return true
+			}
+			var parent ast.Node
+			if len(stack) > 1 {
+				parent = stack[len(stack)-2]
+			}
+			switch p := parent.(type) {
+			case *ast.SelectorExpr:
+				if p.X == id {
+					return true
+				}
+			case *ast.UnaryExpr:
+				if p.Op == token.AND {
+					edits = append(edits, edit{a.offset(p.Pos()), a.offset(id.Pos()), ""})
+					return true
+				}
+			}
+			edits = append(edits, edit{a.offset(id.Pos()), a.offset(id.End()), "(*" + id.Name + ")"})
+			return true
+		})
+	}
+	return edits
+}
+
+// guardEdits rewrites each early `return zero..., err` so it also carries
+// the extracted function's outputs.
+func (a *analyzer) guardEdits() []edit {
+	prefix := ""
+	if len(a.earlyOuts) > 0 {
+		prefix = strings.Join(a.earlyOuts, ", ") + ", "
+	}
+	var edits []edit
+	for _, ret := range a.guardReturns {
+		last := ret.Results[len(ret.Results)-1]
+		edits = append(edits, edit{a.offset(ret.Results[0].Pos()), a.offset(last.Pos()), prefix})
+	}
+	return edits
 }
 
 // dedent strips the longest whitespace prefix common to all non-blank lines.
