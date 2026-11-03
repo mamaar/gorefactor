@@ -158,7 +158,6 @@ func analyze(auth sourceInfo, feed feedInfo) scanReport {
 			startMark: "res.Checks = append(res.Checks,",
 			endOffset: 3,
 			wantParams: []Param{
-				{Name: "res", Type: "scanReport"},
 				{Name: "auth", Type: "sourceInfo"},
 				{Name: "feed", Type: "feedInfo"},
 			},
@@ -226,7 +225,6 @@ func run(items []string) []string {
 			endOffset: 2,
 			wantParams: []Param{
 				{Name: "items", Type: "[]string"},
-				{Name: "out", Type: "[]string"},
 			},
 			wantResults:    []Result{{Name: "out", Type: "[]string"}},
 			wantBodyAbsent: []string{"\n\tif len"}, // dedented: no leading tab

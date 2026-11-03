@@ -76,6 +76,15 @@ type Analysis struct {
 	// it is already declared there.
 	ErrName   string
 	ErrExists bool
+	// ErrInline is true when the call site can scope the error to the
+	// guard: `if err := f(...); err != nil`. It needs no outputs and no
+	// later reader of an existing variable of that name.
+	ErrInline bool
+
+	// DroppedDecls are `var x T` statements the extraction makes redundant;
+	// the plan deletes them. A dropped variable that is a Result is declared
+	// by the call site's `:=` instead.
+	DroppedDecls []DroppedDecl
 
 	Stmts    []ast.Stmt // selected statements, source order
 	BodyText string     // block source, dedented to zero base indentation
@@ -84,6 +93,12 @@ type Analysis struct {
 	Imports map[string]string
 	// EnclosingFunc is the FuncDecl the block was taken from.
 	EnclosingFunc *ast.FuncDecl
+}
+
+// DroppedDecl is a `var Name T` statement spanning byte offsets [Start,End).
+type DroppedDecl struct {
+	Name       string
+	Start, End int
 }
 
 // Refusal reports that extraction cannot be performed soundly. It is returned
@@ -128,7 +143,8 @@ type analyzer struct {
 	flow *flowFacts
 	// pointerObjs are the no-copy parameters passed by pointer.
 	pointerObjs objSet
-	// localObjs are the write-first variables, in order of first appearance.
+	// localObjs are the variables declared inside the extracted function
+	// (write-first or known-zero), in order of first appearance.
 	localObjs  []gotypes.Object
 	localDecls []Result
 	hoisted    []Result
@@ -220,6 +236,7 @@ func Analyze(ws *types.Workspace, pkg *types.Package, file *types.File, startLin
 	if err != nil {
 		return nil, err
 	}
+	a.dropRedundantDecls(res)
 
 	body, err := a.bodyText()
 	if err != nil {
@@ -605,7 +622,7 @@ func (a *analyzer) collectParams() ([]Param, error) {
 			return nil, fmt.Errorf("collect params: %w", err)
 		}
 		byPointer := mustNotCopy(obj.Type())
-		if !byPointer && a.writeFirst(obj) {
+		if !byPointer && (a.writeFirst(obj) || a.knownZero(obj)) {
 			a.localObjs = append(a.localObjs, obj)
 			a.localDecls = append(a.localDecls, Result{Name: obj.Name(), Type: typeStr})
 			continue
@@ -679,7 +696,7 @@ func (a *analyzer) collectResults(params []Param) ([]Result, error) {
 
 	var results []Result
 	for i, p := range params {
-		if mutated[a.paramObjs[i]] && !p.ByPointer {
+		if mutated[a.paramObjs[i]] && !p.ByPointer && a.liveOut(a.paramObjs[i]) {
 			results = append(results, Result{Name: p.Name, Type: p.Type})
 			a.earlyOuts = append(a.earlyOuts, p.Name)
 		}
@@ -944,6 +961,41 @@ func (a *analyzer) usedAfterBlock(obj gotypes.Object) bool {
 		return true
 	})
 	return found
+}
+
+// dropRedundantDecls lists the `var x T` statements of known-zero locals
+// that the extraction leaves without a use. A local the call site must
+// receive is dropped only when every output is new, so one `:=` declares them
+// all.
+func (a *analyzer) dropRedundantDecls(res *Analysis) {
+	existing := map[string]bool{}
+	for _, p := range res.Params {
+		existing[p.Name] = true
+	}
+	decls := map[string]*ast.DeclStmt{}
+	for _, obj := range a.localObjs {
+		ds := a.droppableDecl(obj)
+		if ds != nil && a.knownZero(obj) {
+			decls[obj.Name()] = ds
+			continue
+		}
+		existing[obj.Name()] = true
+	}
+	allFresh := !res.TailReturns && !(res.ErrGuard && res.ErrExists)
+	for _, r := range res.Results {
+		allFresh = allFresh && !existing[r.Name]
+	}
+	resultNames := map[string]bool{}
+	for _, r := range res.Results {
+		resultNames[r.Name] = true
+	}
+	for _, obj := range a.localObjs {
+		ds := decls[obj.Name()]
+		if ds == nil || (resultNames[obj.Name()] && !allFresh) || (!resultNames[obj.Name()] && a.usedAfterBlock(obj)) {
+			continue
+		}
+		res.DroppedDecls = append(res.DroppedDecls, DroppedDecl{obj.Name(), a.offset(ds.Pos()), a.offset(ds.End())})
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -160,6 +160,11 @@ func callSite(an *extractsig.Analysis, callExpr string) string {
 		return callExpr
 	}
 
+	if an.ErrInline {
+		returned := append(slices.Clone(an.GuardZeros), an.ErrName)
+		return "if " + an.ErrName + " := " + callExpr + "; " + an.ErrName + " != nil {\n\treturn " + strings.Join(returned, ", ") + "\n}"
+	}
+
 	// Results that were already variables before the block must be assigned
 	// with `=`; results the block declared for the first time need `:=`. A
 	// mixed set cannot be written as one assignment statement, so the new
@@ -171,6 +176,9 @@ func callSite(an *extractsig.Analysis, callExpr string) string {
 	}
 	for _, d := range an.LocalDecls {
 		existing[d.Name] = true
+	}
+	for _, d := range an.DroppedDecls {
+		delete(existing, d.Name)
 	}
 
 	outs := slices.Clone(an.Results)
@@ -284,6 +292,20 @@ func lineByteSpan(content string, startLine, endLine int) (int, int, bool) {
 		}
 	}
 	return start, end, true
+}
+
+// wholeLineIfAlone widens [start,end) to the full line, newline included,
+// when only whitespace shares the line with it.
+func wholeLineIfAlone(content string, start, end int) (int, int) {
+	lineStart := strings.LastIndex(content[:start], "\n") + 1
+	lineEnd := len(content)
+	if i := strings.Index(content[end:], "\n"); i >= 0 {
+		lineEnd = end + i + 1
+	}
+	if strings.TrimSpace(content[lineStart:start]+content[end:lineEnd]) != "" {
+		return start, end
+	}
+	return lineStart, lineEnd
 }
 
 // errNoImportChange reports that extractImportsChange has no imports to add.
@@ -406,6 +428,18 @@ func buildVerifiedExtractPlan(
 			NewText:     "\n\n" + decl + "\n",
 			Description: fmt.Sprintf("Add extracted %s %s", kind, name),
 		},
+	}
+
+	for _, d := range an.DroppedDecls {
+		start, end := wholeLineIfAlone(content, d.Start, d.End)
+		changes = append(changes, types.Change{
+			File:        sourceFile.Path,
+			Start:       start,
+			End:         end,
+			OldText:     content[start:end],
+			NewText:     "",
+			Description: fmt.Sprintf("Remove declaration of %s, now declared by the call to %s", d.Name, name),
+		})
 	}
 
 	importChange, err := extractImportsChange(ws, sourceFile, an.Imports)

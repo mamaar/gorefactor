@@ -41,7 +41,13 @@ func (a *analyzer) analyzeErrGuard(res *Analysis) error {
 		res.GuardZeros = append(res.GuardZeros, zero)
 	}
 	res.ErrGuard = true
-	res.ErrName, res.ErrExists = a.guardErrName(res.Results)
+	var errVar *gotypes.Var
+	res.ErrName, errVar = a.guardErrName(res.Results)
+	res.ErrExists = errVar != nil
+	res.ErrInline = len(res.Results) == 0 && (errVar == nil || !a.liveOut(errVar))
+	if res.ErrInline {
+		res.ErrName = "err" // scoped to the if, so nothing else can collide
+	}
 	return nil
 }
 
@@ -176,10 +182,11 @@ func (a *analyzer) zeroExpr(t gotypes.Type) (string, error) {
 
 // guardErrName picks the variable that receives the extracted function's
 // error. A visible error variable of the enclosing function is reused (and
-// reported as existing); a name taken by anything else, or by a result, is
-// skipped.
-func (a *analyzer) guardErrName(results []Result) (string, bool) {
-	scope := a.pkg.TypesPkg.Scope().Innermost(a.blockStart)
+// returned); a name taken by anything else, or by a result, is skipped.
+func (a *analyzer) guardErrName(results []Result) (string, *gotypes.Var) {
+	// One byte earlier, so a block that is itself a for/if/switch does not
+	// resolve to the scope that statement opens.
+	scope := a.pkg.TypesPkg.Scope().Innermost(a.blockStart - 1)
 	taken := map[string]bool{}
 	for _, r := range results {
 		taken[r.Name] = true
@@ -193,12 +200,15 @@ func (a *analyzer) guardErrName(results []Result) (string, bool) {
 			continue
 		}
 		_, obj := scope.LookupParent(name, a.blockStart)
+		if obj == nil && scope.Lookup(name) != nil {
+			continue // declared later in the call site's own scope
+		}
 		if obj == nil || obj.Pos() < a.fn.Pos() || obj.Pos() >= a.fn.End() {
-			return name, false
+			return name, nil
 		}
 		v, ok := obj.(*gotypes.Var)
 		if ok && gotypes.Identical(v.Type(), errorType) {
-			return name, true
+			return name, v
 		}
 	}
 }

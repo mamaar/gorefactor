@@ -888,3 +888,248 @@ func TestExtractFunctionRefusesNonGuardReturns(t *testing.T) {
 		})
 	}
 }
+
+// extractAndVet extracts the marked lines from src into measure, checks the
+// signature and call site, and vets the applied plan.
+func extractAndVet(t *testing.T, src, wantSig, wantCall string) *types.RefactoringPlan {
+	t.Helper()
+	eng, ws := writeExtractWorkspace(t, map[string]string{"main.go": src})
+	startLine, endLine := extractLines(t, src, "// start", "// end")
+	plan, err := eng.ExtractFunction(ws, types.ExtractFunctionRequest{
+		SourceFile:      filepath.Join(ws.RootPath, "main.go"),
+		StartLine:       startLine,
+		EndLine:         endLine,
+		NewFunctionName: "measure",
+	})
+	if err != nil {
+		t.Fatalf("ExtractFunction: %v", err)
+	}
+	decl := declOf(t, plan)
+	if !strings.Contains(decl, wantSig) {
+		t.Errorf("signature: want %q in:\n%s", wantSig, decl)
+	}
+	if call := callOf(t, plan); call != wantCall {
+		t.Errorf("call site = %q, want %q", call, wantCall)
+	}
+	vetPlan(t, ws, plan)
+	return plan
+}
+
+// TestExtractFunctionGuardCallSiteDoesNotRedeclareErr: a guard with no
+// outputs whose err is not read afterwards uses an if-init, so a later
+// `err :=` in the same scope still compiles; a live err is reused with `=`.
+func TestExtractFunctionGuardCallSiteDoesNotRedeclareErr(t *testing.T) {
+	cases := []struct{ name, src, wantCall string }{
+		{
+			name: "later err declaration",
+			src: `package main
+
+import "errors"
+
+func step(n int) error { return nil }
+
+func run(n int) error {
+	if n < 0 { // start
+		return errors.New("negative")
+	} // end
+	err := step(n)
+	return err
+}
+`,
+			wantCall: "if err := measure(n); err != nil {\n\treturn err\n}",
+		},
+		{
+			name: "err read afterwards",
+			src: `package main
+
+import "errors"
+
+func step(n int) error { return nil }
+
+func run(n int) error {
+	var err error
+	if n < 0 { // start
+		return errors.New("negative")
+	} // end
+	if err != nil {
+		return err
+	}
+	return step(n)
+}
+`,
+			wantCall: "err = measure(n)\nif err != nil {\n\treturn err\n}",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			extractAndVet(t, tc.src, "func measure(n int) error {", tc.wantCall)
+		})
+	}
+	t.Run("outputs with err declared later in the scope", func(t *testing.T) {
+		src := `package main
+
+import "errors"
+
+func step(n int) error { return nil }
+
+func run(n int) ([]int, error) {
+	var out []int
+	for i := 0; i < n; i++ { // start
+		if i > 5 {
+			return nil, errors.New("too many")
+		}
+		out = append(out, i)
+	} // end
+	var err error
+	err = step(n)
+	return out, err
+}
+`
+		extractAndVet(t, src, "func measure(n int) ([]int, error) {",
+			"out, err2 := measure(n)\nif err2 != nil {\n\treturn nil, err2\n}")
+	})
+}
+
+// TestExtractFunctionResultsNeedAReadThatSeesTheWrite: an outer variable the
+// block writes is a result only if a later read can observe that write.
+func TestExtractFunctionResultsNeedAReadThatSeesTheWrite(t *testing.T) {
+	cases := []struct {
+		name, src, wantSig, wantCall string
+	}{
+		{
+			name: "overwritten before the next read",
+			src: `package main
+
+func step(n int) error { return nil }
+func note(error)       {}
+
+func run(n int) (err error) {
+	err = step(n) // start
+	if err != nil {
+		note(err)
+	} // end
+	err = step(n + 1)
+	return err
+}
+`,
+			wantSig:  "func measure(n int) {",
+			wantCall: "measure(n)",
+		},
+		{
+			name: "bare return reads the named result",
+			src: `package main
+
+func step(n int) error { return nil }
+func note(error)       {}
+
+func run(n int) (err error) {
+	err = step(n) // start
+	if err != nil {
+		note(err)
+	} // end
+	return
+}
+`,
+			wantSig:  "func measure(n int) error {",
+			wantCall: "err = measure(n)",
+		},
+		{
+			name: "written on one path, read only inside, never afterwards",
+			src: `package main
+
+func run(c bool) int {
+	n := 7
+	_ = n
+	total := 0
+	if c { // start
+		n = 1
+		total += n
+	} // end
+	return total
+}
+`,
+			wantSig:  "func measure(c bool, total int) int {",
+			wantCall: "total = measure(c, total)",
+		},
+		{
+			name: "in/out parameter never read afterwards",
+			src: `package main
+
+func run(items []int) int {
+	total, count := 0, 0
+	_ = count
+	for _, it := range items { // start
+		total += it
+		count++
+	} // end
+	return total
+}
+`,
+			wantSig:  "func measure(items []int, total int, count int) int {",
+			wantCall: "total = measure(items, total, count)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			extractAndVet(t, tc.src, tc.wantSig, tc.wantCall)
+		})
+	}
+}
+
+// TestExtractFunctionKnownZeroLocalsAreDeclaredInside: a variable still at its
+// zero value when the block starts is not a parameter; its now-redundant
+// `var` line goes when the call site can declare it.
+func TestExtractFunctionKnownZeroLocalsAreDeclaredInside(t *testing.T) {
+	t.Run("declared inside, declarations dropped", func(t *testing.T) {
+		src := `package main
+
+func run(items []string) int {
+	var out []string
+	var n int
+	for _, it := range items { // start
+		out = append(out, it)
+		n += len(it)
+	} // end
+	return n + len(out)
+}
+`
+		plan := extractAndVet(t, src, "func measure(items []string) ([]string, int) {", "out, n := measure(items)")
+		var dropped int
+		for _, c := range plan.Changes {
+			if c.NewText == "" {
+				dropped++
+			}
+		}
+		if dropped != 2 {
+			t.Errorf("want the two var declarations removed, got %d deletions", dropped)
+		}
+	})
+	t.Run("assigned earlier stays a parameter", func(t *testing.T) {
+		src := `package main
+
+func run(items []string) int {
+	var n int
+	n = 5
+	for _, it := range items { // start
+		n += len(it)
+	} // end
+	return n
+}
+`
+		extractAndVet(t, src, "func measure(items []string, n int) int {", "n = measure(items, n)")
+	})
+	t.Run("declared outside the loop around the block stays a parameter", func(t *testing.T) {
+		src := `package main
+
+func run(items []string) int {
+	var n int
+	for _, it := range items {
+		n += len(it) // start
+		n++          // end
+	}
+	return n
+}
+`
+		extractAndVet(t, src, "func measure(n int, it string) int {", "n = measure(n, it)")
+	})
+}
