@@ -93,8 +93,23 @@ func TestChangeSignature_RemoveOnlyReturnTurnsAssignmentsIntoCalls(t *testing.T)
 
 	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return"))
 
-	assertFileContains(t, dir, "p/f.go", "func f() { n++; return }")
+	assertFileContains(t, dir, "p/f.go", "func f() { n++ }")
 	assertFileContains(t, dir, "p/use.go", "\tf()\n\tf()\n")
+	goVets(t, dir, "")
+}
+
+func TestChangeSignature_RemoveOnlyReturnDropsTheFinalReturnAndKeepsEarlyOnes(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{
+		"p/f.go":   "package p\n\nvar n int\n\nfunc f() error {\n\tif n > 0 {\n\t\treturn nil\n\t}\n\n\tn++\n\n\treturn nil\n}\n",
+		"p/use.go": "package p\n\nfunc Use() { _ = f() }\n",
+	})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return"))
+
+	assertFileContains(t, dir, "p/f.go", "func f() {\n\tif n > 0 {\n\t\treturn\n\t}\n\n\tn++\n}\n")
 	goVets(t, dir, "")
 }
 

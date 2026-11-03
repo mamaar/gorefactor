@@ -209,6 +209,13 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 
 		start, end := ws.FileSet.Position(ret.Pos()).Offset, ws.FileSet.Position(ret.End()).Offset
 		newText := strings.TrimSpace("return " + strings.Join(values, ", "))
+
+		if len(values) == 0 {
+			if from, ok := finalReturnSpan(ws.FileSet, content, d.Decl.Body, ret); ok {
+				start, newText = from, ""
+			}
+		}
+
 		plan.Changes = append(plan.Changes, pkgtypes.Change{
 			File:        d.File.Path,
 			Start:       start,
@@ -219,6 +226,26 @@ func (op *ChangeSignatureOperation) planReturnBody(ws *pkgtypes.Workspace, d *fu
 		})
 		addAffected(plan, d.File.Path)
 	})
+}
+
+// finalReturnSpan returns where to start deleting ret when it is the last
+// statement of body, together with the separator before it, so no redundant
+// trailing return is left. It declines when a comment sits in that separator.
+func finalReturnSpan(fset *token.FileSet, content []byte, body *ast.BlockStmt, ret *ast.ReturnStmt) (int, bool) {
+	list := body.List
+	if list[len(list)-1] != ret {
+		return 0, false
+	}
+
+	prev := body.Lbrace + 1
+	if len(list) > 1 {
+		prev = list[len(list)-2].End()
+	}
+
+	from := fset.Position(prev).Offset
+	gap := string(content[from:fset.Position(ret.Pos()).Offset])
+
+	return from, strings.Trim(gap, " \t\r\n;") == ""
 }
 
 // planReturnCall rewrites the call site of c and reports whether it did. A

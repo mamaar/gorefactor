@@ -127,7 +127,7 @@ func TestChangeSignature_RemoveReturnFoldsInitStatementWithNothingLeft(t *testin
 
 	changeSigOK(t, sess, returnArgs("f", "p/f.go", "remove_return"))
 
-	assertFileContains(t, dir, "p/f.go", "func f() { return }")
+	assertFileContains(t, dir, "p/f.go", "func f() {}")
 	assertFileContains(t, dir, "p/use.go", "\tf()\n\tprintln(1)")
 	assertFileOmits(t, dir, "p/use.go", "err")
 	goVets(t, dir, "")
