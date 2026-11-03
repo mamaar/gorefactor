@@ -138,43 +138,7 @@ func (c *SymbolCache) SetIdentifierType(key string, symbol *types.Symbol) {
 
 // Method-to-type mapping caching (NEW)
 
-// GetMethodTypeMapping retrieves a cached method-to-type mapping
-func (c *SymbolCache) GetMethodTypeMapping(key string) (bool, bool) {
-	c.methodTypeMapLock.RLock()
-	defer c.methodTypeMapLock.RUnlock()
-
-	if result, exists := c.methodTypeMap[key]; exists {
-		c.incrementMethodTypeMapHits()
-		return result, true
-	}
-
-	c.incrementMethodTypeMapMisses()
-	return false, false
-}
-
-// SetMethodTypeMapping caches a method-to-type mapping
-func (c *SymbolCache) SetMethodTypeMapping(key string, matches bool) {
-	c.methodTypeMapLock.Lock()
-	defer c.methodTypeMapLock.Unlock()
-
-	c.methodTypeMap[key] = matches
-}
-
 // Package symbol table caching
-
-// GetPackageSymbols retrieves a cached package symbol table
-func (c *SymbolCache) GetPackageSymbols(packagePath string) *types.SymbolTable {
-	c.packagesLock.RLock()
-	defer c.packagesLock.RUnlock()
-
-	if symbolTable, exists := c.packageSymbols[packagePath]; exists {
-		c.incrementPackageHits()
-		return symbolTable
-	}
-
-	c.incrementPackageMisses()
-	return nil
-}
 
 // SetPackageSymbols caches a package symbol table
 func (c *SymbolCache) SetPackageSymbols(packagePath string, symbolTable *types.SymbolTable) {
@@ -261,11 +225,6 @@ func (c *SymbolCache) GetStats() CacheStats {
 	return c.cacheStats
 }
 
-// ResetStats resets cache statistics
-func (c *SymbolCache) ResetStats() {
-	c.resetStats()
-}
-
 // GetCacheSize returns the current size of all caches
 func (c *SymbolCache) GetCacheSize() CacheSize {
 	c.refsLock.RLock()
@@ -310,42 +269,6 @@ func (c *SymbolCache) GetHitRate() float64 {
 	return float64(totalHits) / float64(totalRequests) * 100.0
 }
 
-// GetResolvedRefHitRate returns the hit rate for resolved references
-func (c *SymbolCache) GetResolvedRefHitRate() float64 {
-	stats := c.GetStats()
-	total := stats.ResolvedRefHits + stats.ResolvedRefMisses
-
-	if total == 0 {
-		return 0.0
-	}
-
-	return float64(stats.ResolvedRefHits) / float64(total) * 100.0
-}
-
-// GetMethodSetHitRate returns the hit rate for method sets
-func (c *SymbolCache) GetMethodSetHitRate() float64 {
-	stats := c.GetStats()
-	total := stats.MethodSetHits + stats.MethodSetMisses
-
-	if total == 0 {
-		return 0.0
-	}
-
-	return float64(stats.MethodSetHits) / float64(total) * 100.0
-}
-
-// GetPackageHitRate returns the hit rate for package symbols
-func (c *SymbolCache) GetPackageHitRate() float64 {
-	stats := c.GetStats()
-	total := stats.PackageHits + stats.PackageMisses
-
-	if total == 0 {
-		return 0.0
-	}
-
-	return float64(stats.PackageHits) / float64(total) * 100.0
-}
-
 // Private helper methods for statistics
 
 func (c *SymbolCache) incrementResolvedRefHits() {
@@ -372,18 +295,6 @@ func (c *SymbolCache) incrementMethodSetMisses() {
 	c.cacheStats.MethodSetMisses++
 }
 
-func (c *SymbolCache) incrementPackageHits() {
-	c.statsLock.Lock()
-	defer c.statsLock.Unlock()
-	c.cacheStats.PackageHits++
-}
-
-func (c *SymbolCache) incrementPackageMisses() {
-	c.statsLock.Lock()
-	defer c.statsLock.Unlock()
-	c.cacheStats.PackageMisses++
-}
-
 func (c *SymbolCache) incrementIdentifierTypeHits() {
 	c.statsLock.Lock()
 	defer c.statsLock.Unlock()
@@ -394,18 +305,6 @@ func (c *SymbolCache) incrementIdentifierTypeMisses() {
 	c.statsLock.Lock()
 	defer c.statsLock.Unlock()
 	c.cacheStats.IdentifierTypeMisses++
-}
-
-func (c *SymbolCache) incrementMethodTypeMapHits() {
-	c.statsLock.Lock()
-	defer c.statsLock.Unlock()
-	c.cacheStats.MethodTypeMapHits++
-}
-
-func (c *SymbolCache) incrementMethodTypeMapMisses() {
-	c.statsLock.Lock()
-	defer c.statsLock.Unlock()
-	c.cacheStats.MethodTypeMapMisses++
 }
 
 func (c *SymbolCache) resetStats() {
@@ -430,21 +329,3 @@ func (c *SymbolCache) WarmCache(workspace *types.Workspace) {
 }
 
 // Maintenance methods
-
-// CleanupStaleEntries removes old cache entries (not implemented in this basic version)
-// In a production system, this could remove entries based on last access time
-func (c *SymbolCache) CleanupStaleEntries() {
-	// This is a placeholder for more sophisticated cache management
-	// Could be implemented with TTL (time-to-live) tracking
-}
-
-// GetMemoryUsage estimates memory usage (basic implementation)
-func (c *SymbolCache) GetMemoryUsage() int64 {
-	// This is a rough estimate - in production, you'd want more accurate measurement
-	size := c.GetCacheSize()
-
-	// Rough estimate: each symbol ~1KB, each method set ~5KB average
-	estimatedBytes := int64(size.ResolvedRefs*1024 + size.MethodSets*5120 + size.PackageSymbols*10240)
-
-	return estimatedBytes
-}

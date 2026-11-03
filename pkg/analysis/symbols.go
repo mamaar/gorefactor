@@ -13,8 +13,9 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/ast/inspector"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // indexEntry represents a single identifier occurrence found during index building.
@@ -1706,18 +1707,6 @@ func (sr *SymbolResolver) ResolveEmbeddedFields(symbol *types.Symbol) ([]*types.
 // FindPromotedMethods finds methods promoted from embedded fields
 func (sr *SymbolResolver) FindPromotedMethods(symbol *types.Symbol) ([]*types.Symbol, error) {
 	return sr.findPromotedMethods(symbol)
-}
-
-// UpdateSymbolTable incrementally updates a package's symbol table
-func (sr *SymbolResolver) UpdateSymbolTable(pkg *types.Package, changedFiles []string) error {
-	// Invalidate cache for changed files
-	for _, filePath := range changedFiles {
-		sr.InvalidateCacheForFile(filePath)
-	}
-
-	// Rebuild symbol table for the package
-	_, err := sr.BuildSymbolTable(pkg)
-	return err
 }
 
 // InvalidateCacheForPackage clears cache entries for a package

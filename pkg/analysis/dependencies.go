@@ -45,18 +45,6 @@ func (da *DependencyAnalyzer) BuildDependencyGraph() (*types.DependencyGraph, er
 	return graph, nil
 }
 
-// DetectCycles detects import cycles in package graph
-func (da *DependencyAnalyzer) DetectCycles() ([][]string, error) {
-	if da.workspace.Dependencies == nil {
-		_, err := da.BuildDependencyGraph()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return da.workspace.Dependencies.ImportCycles, nil
-}
-
 func (da *DependencyAnalyzer) collectPackageImports(pkg *types.Package, imports map[string][]string) {
 	if pkg == nil {
 		return

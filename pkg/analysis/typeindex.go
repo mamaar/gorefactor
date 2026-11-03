@@ -7,9 +7,10 @@ import (
 	gotypes "go/types"
 	"iter"
 
-	"github.com/mamaar/gorefactor/pkg/types"
 	"golang.org/x/tools/go/ast/edge"
 	"golang.org/x/tools/go/ast/inspector"
+
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // uses is a varint-compressed list of inspector.Cursor index values.
@@ -138,16 +139,6 @@ func (ix *packageIndex) Uses(obj gotypes.Object) iter.Seq[inspector.Cursor] {
 			}
 		}
 	}
-}
-
-// Used reports whether any of the given objects are referenced in this package.
-func (ix *packageIndex) Used(objs ...gotypes.Object) bool {
-	for _, obj := range objs {
-		if u := ix.uses[ObjectIDOf(obj)]; u != nil && len(u.code) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // Def returns the cursor for the definition of obj in this package, if any.

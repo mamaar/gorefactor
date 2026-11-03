@@ -4,12 +4,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"maps"
 	"sort"
 	"strings"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 
 	"github.com/mamaar/gorefactor/pkg/types"
 )
@@ -66,121 +62,6 @@ func (de *DiagnosticEngine) AnalyzeResolutionFailure(ident *ast.Ident, file *typ
 		Suggestions: suggestions,
 		Context:     context,
 		Similar:     similar,
-	}
-}
-
-// AnalyzeTypeError provides analysis for type-related errors
-func (de *DiagnosticEngine) AnalyzeTypeError(symbol *types.Symbol, expectedKind types.SymbolKind) *ResolutionError {
-	suggestions := []string{
-		fmt.Sprintf("Expected %s, but '%s' is a %s", expectedKind.String(), symbol.Name, symbol.Kind.String()),
-	}
-
-	// Look for symbols with the same name but different kind
-	for _, pkg := range de.workspace.Packages {
-		if pkg.Symbols == nil {
-			continue
-		}
-
-		// Check all symbol categories
-		allSymbols := make(map[string]*types.Symbol)
-		maps.Copy(allSymbols, pkg.Symbols.Functions)
-		maps.Copy(allSymbols, pkg.Symbols.Types)
-		maps.Copy(allSymbols, pkg.Symbols.Variables)
-		maps.Copy(allSymbols, pkg.Symbols.Constants)
-
-		if altSymbol, exists := allSymbols[symbol.Name]; exists && altSymbol != symbol {
-			if altSymbol.Kind == expectedKind {
-				if altSymbol.Package != symbol.Package {
-					suggestions = append(suggestions, fmt.Sprintf("Did you mean '%s' from package '%s'?", altSymbol.Name, altSymbol.Package))
-				} else {
-					suggestions = append(suggestions, fmt.Sprintf("There is a %s named '%s' in the same package", expectedKind.String(), altSymbol.Name))
-				}
-			}
-		}
-	}
-
-	return &ResolutionError{
-		RefactorError: &types.RefactorError{
-			Type:    types.InvalidOperation,
-			Message: fmt.Sprintf("symbol '%s' has wrong type", symbol.Name),
-			File:    symbol.File,
-		},
-		Suggestions: suggestions,
-		Context:     nil, // Type errors don't need scope context
-	}
-}
-
-// AnalyzeVisibilityError provides analysis for visibility-related errors
-func (de *DiagnosticEngine) AnalyzeVisibilityError(symbol *types.Symbol, accessingPackage string) *ResolutionError {
-	suggestions := []string{
-		fmt.Sprintf("Symbol '%s' is not exported from package '%s'", symbol.Name, symbol.Package),
-	}
-
-	if symbol.Package == accessingPackage {
-		suggestions = append(suggestions, "This symbol should be accessible within the same package - this might be a scoping issue")
-	} else {
-		exportedName := cases.Title(language.English).String(symbol.Name)
-		if exportedName != symbol.Name {
-			suggestions = append(suggestions, fmt.Sprintf("To make it accessible, rename it to '%s' (capitalize first letter)", exportedName))
-		}
-
-		// Look for exported symbols with similar names
-		if pkg := de.workspace.Packages[symbol.Package]; pkg != nil && pkg.Symbols != nil {
-			for name, sym := range pkg.Symbols.Functions {
-				if sym.Exported && de.isSimilarName(name, symbol.Name) {
-					suggestions = append(suggestions, fmt.Sprintf("Did you mean the exported function '%s'?", name))
-				}
-			}
-			for name, sym := range pkg.Symbols.Types {
-				if sym.Exported && de.isSimilarName(name, symbol.Name) {
-					suggestions = append(suggestions, fmt.Sprintf("Did you mean the exported type '%s'?", name))
-				}
-			}
-		}
-	}
-
-	return &ResolutionError{
-		RefactorError: &types.RefactorError{
-			Type:    types.VisibilityViolation,
-			Message: fmt.Sprintf("cannot access unexported symbol '%s'", symbol.Name),
-			File:    symbol.File,
-		},
-		Suggestions: suggestions,
-	}
-}
-
-// AnalyzeImportError provides analysis for import-related errors
-func (de *DiagnosticEngine) AnalyzeImportError(packagePath string, file *types.File) *ResolutionError {
-	suggestions := []string{
-		fmt.Sprintf("Package '%s' not found", packagePath),
-	}
-
-	// Look for similar package names
-	for existingPath := range de.workspace.Packages {
-		if de.isSimilarName(existingPath, packagePath) {
-			suggestions = append(suggestions, fmt.Sprintf("Did you mean '%s'?", existingPath))
-		}
-	}
-
-	// Check if it's a standard library package that might be misspelled
-	commonStdLib := []string{
-		"fmt", "os", "io", "net", "http", "json", "time", "strings", "strconv",
-		"context", "sync", "errors", "log", "path", "filepath", "bufio",
-	}
-
-	for _, stdPkg := range commonStdLib {
-		if de.isSimilarName(stdPkg, packagePath) {
-			suggestions = append(suggestions, fmt.Sprintf("Did you mean the standard library package '%s'?", stdPkg))
-		}
-	}
-
-	return &ResolutionError{
-		RefactorError: &types.RefactorError{
-			Type:    types.SymbolNotFound,
-			Message: fmt.Sprintf("package '%s' not found", packagePath),
-			File:    file.Path,
-		},
-		Suggestions: suggestions,
 	}
 }
 

@@ -158,18 +158,6 @@ func (sa *ScopeAnalyzer) ResolveInScope(ident *ast.Ident, file *types.File, pos 
 	}
 }
 
-// FindInLocalScope searches for a symbol in the immediate local scope
-func (sa *ScopeAnalyzer) FindInLocalScope(name string, scope *Scope) (*types.Symbol, error) {
-	if symbol, exists := scope.Symbols[name]; exists {
-		return symbol, nil
-	}
-
-	return nil, &types.RefactorError{
-		Type:    types.SymbolNotFound,
-		Message: "symbol not found in local scope: " + name,
-	}
-}
-
 // GetScopeAt returns the scope at a specific position
 func (sa *ScopeAnalyzer) GetScopeAt(file *types.File, pos token.Pos) (*Scope, error) {
 	rootScope, err := sa.BuildScopeTree(file)
@@ -599,11 +587,6 @@ func (sa *ScopeAnalyzer) resolveBuiltinSymbol(name string) *types.Symbol {
 // InvalidateCache clears the scope cache for a file
 func (sa *ScopeAnalyzer) InvalidateCache(filePath string) {
 	delete(sa.scopeCache, filePath)
-}
-
-// ClearCache clears all cached scopes
-func (sa *ScopeAnalyzer) ClearCache() {
-	sa.scopeCache = make(map[string]*Scope)
 }
 
 // NEW: Type Resolution Helpers for Method Call Matching

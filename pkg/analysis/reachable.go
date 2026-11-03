@@ -210,14 +210,6 @@ func (ua *UnusedAnalyzer) ReachableSites(entry *types.Package, targets []Target,
 	return sites, live.bodiless, nil
 }
 
-// ReachedFuncs returns the keys of the declared functions and methods whose code
-// is reachable from main of entry, and the packages whose code it could not see.
-// An entry that cannot be analysed is an *EntryBodilessError.
-func (ua *UnusedAnalyzer) ReachedFuncs(entry *types.Package) (types.SymbolKeySet, []BodilessPackage, error) {
-	keys, _, bodiless, err := ua.ReachedFuncsWithin(entry)
-	return keys, bodiless, err
-}
-
 // ReachedFuncsWithin is ReachedFuncs plus, when SetWithin was called, the keys
 // reached from that declaration (nil when the entry program does not reach it).
 func (ua *UnusedAnalyzer) ReachedFuncsWithin(entry *types.Package) (all, within types.SymbolKeySet, bodiless []BodilessPackage, err error) {
