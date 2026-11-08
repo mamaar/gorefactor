@@ -15,6 +15,8 @@ import (
 // UnusedRequest selects what UnusedAcrossConfigs reports.
 type UnusedRequest struct {
 	IncludeExported bool
+	// RootMarkers are "importpath.Func" names; see UnusedAnalyzer.SetRootMarkers.
+	RootMarkers []string
 	// Packages keeps the symbols whose package is one of these import paths
 	// or directories; empty keeps every package.
 	Packages []string
@@ -127,6 +129,7 @@ func declaredIn(list []*types.Symbol, s *types.Symbol) bool {
 func (r *unusedRun) visit(v *analysis.View) {
 	a := analysis.NewUnusedAnalyzer(v.Workspace, r.engine.logger)
 	a.SetIncludeExported(r.req.IncludeExported)
+	a.SetRootMarkers(r.req.RootMarkers)
 	a.SetIndex(r.indexOf(v))
 
 	unused := a.FindUnusedSymbols()

@@ -337,3 +337,26 @@ func TestUnused_ReferencedFromListsTheTestDeclarationThatUsesTheSymbol(t *testin
 		t.Errorf("referenced_from = %+v, want TestHelper at f_test.go:5", ref)
 	}
 }
+
+func TestUnused_RootMarkersKeepWhatAMarkedTestReaches(t *testing.T) {
+	files := map[string]string{
+		"skip/skip.go": "package skip\n\nimport \"testing\"\n\nfunc ManualTool(t *testing.T) {}\n",
+		"p/f.go":       "package p\n\nfunc viaMarked() {}\n\nfunc viaPlain() {}\n",
+		"p/f_test.go": "package p\n\nimport (\n\t\"testing\"\n\n\t\"example.com/threadmcp/skip\"\n)\n\n" +
+			"func TestTool(t *testing.T) { skip.ManualTool(t); viaMarked() }\n\nfunc TestPlain(t *testing.T) { viaPlain() }\n",
+	}
+
+	without, _ := callUnused(t, nil, files)
+	with, _ := callUnused(t, map[string]any{"root_markers": []string{"example.com/threadmcp/skip.ManualTool"}}, files)
+
+	if itemNamed(without.Unused, "viaMarked") == nil {
+		t.Errorf("without markers unused = %v, want viaMarked", declarations(without.Unused))
+	}
+
+	want := []string{"f.go:viaPlain"}
+
+	got := declarations(with.Unused)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("with markers unused = %v, want %v", got, want)
+	}
+}

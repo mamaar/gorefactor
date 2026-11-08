@@ -134,8 +134,9 @@ type BodilessPackageItem struct {
 // --- unused ---
 
 type UnusedInput struct {
-	IncludeExported bool   `json:"include_exported,omitempty" jsonschema:"include exported (public) symbols, judged by use within the workspace only"`
-	Package         string `json:"package,omitempty" jsonschema:"restrict the report to one package, given as import path, directory or workspace-relative path"`
+	IncludeExported bool     `json:"include_exported,omitempty" jsonschema:"include exported (public) symbols, judged by use within the workspace only"`
+	Package         string   `json:"package,omitempty" jsonschema:"restrict the report to one package, given as import path, directory or workspace-relative path"`
+	RootMarkers     []string `json:"root_markers,omitempty" jsonschema:"functions given as importpath.Func; a test function that calls one is live, and so is everything it reaches"`
 }
 
 type UnusedSymbolItem struct {
@@ -179,7 +180,7 @@ func findUnused(state *MCPServer, in UnusedInput) (*refactor.UnusedReport, error
 		return nil, fmt.Errorf("find unused: %w", err)
 	}
 
-	req := refactor.UnusedRequest{IncludeExported: in.IncludeExported}
+	req := refactor.UnusedRequest{IncludeExported: in.IncludeExported, RootMarkers: in.RootMarkers}
 	if in.Package != "" {
 		req.Packages = []string{in.Package, types.ResolvePackagePath(ws, in.Package)}
 	}
@@ -777,6 +778,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Find unused symbols in the workspace. A symbol is reported when no build configuration (GOOS/GOARCH variants, custom build tags) covering the workspace uses it. " +
 			"References from _test.go files do not count for symbols declared in non-test files, and neither do references from code that is itself unused. " +
 			"By default only unexported symbols are reported; include_exported adds exported ones, judged by use within the workspace only. " +
+			"root_markers (importpath.Func, e.g. \"example.com/m/skip.ManualTool\") makes a test function that calls one of them an entry point: what it reaches, through test helpers and production code, is live (for manual tools gated by a skip helper). " +
 			"safe_to_delete is true only for an unexported symbol with no references outside its own declaration. When referenced_from is present, those tests or unused callers must go first and safe_delete refuses while they exist. Exported symbols are never marked safe, because use outside the workspace is not visible. " +
 			"A symbol that a file no configuration type-checks mentions, or that is named unresolved in a file with a type error, is listed under possibly_used instead.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in UnusedInput) (*mcpsdk.CallToolResult, any, error) {

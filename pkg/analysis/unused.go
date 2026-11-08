@@ -51,6 +51,7 @@ type UnusedAnalyzer struct {
 	workspace       *types.Workspace
 	resolver        *SymbolResolver
 	includeExported bool
+	rootMarkers     []string
 	index           *ReferenceIndex
 	within          *types.SymbolKey
 }
@@ -71,6 +72,13 @@ func (ua *UnusedAnalyzer) SetIncludeExported(include bool) {
 	ua.includeExported = include
 }
 
+// SetRootMarkers makes a test function that calls one of markers, given as
+// "importpath.Func", keep alive everything it reaches, so tests gated by such a
+// function count as entry points.
+func (ua *UnusedAnalyzer) SetRootMarkers(markers []string) {
+	ua.rootMarkers = markers
+}
+
 // NewUnusedAnalyzer creates a new unused symbol analyzer
 func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer {
 	return &UnusedAnalyzer{
@@ -85,6 +93,7 @@ func NewUnusedAnalyzer(ws *types.Workspace, logger *slog.Logger) *UnusedAnalyzer
 func (ua *UnusedAnalyzer) FindUnusedSymbols() []*UnusedSymbol {
 	g, idx, m := ua.prepare()
 
+	m.followMarkedTests(g)
 	m.markFrom(g, m.isRoot)
 
 	r := &unusedReport{ua: ua, idx: idx, live: m.live, outside: outsideCallers(g, m.live), callers: deadCallers(g, m.live)}
@@ -121,6 +130,7 @@ func (ua *UnusedAnalyzer) prepare() (*usageGraph, *ReferenceIndex, *marker) {
 	g := buildUsageGraph(ua.workspace, ua.resolver, idx)
 	m := &marker{
 		ua:               ua,
+		followed:         make(map[*usageNode]bool),
 		live:             make(map[*usageNode]bool, len(g.nodes)),
 		from:             make(map[*usageNode]*usageNode),
 		includeExported:  ua.includeExported,
@@ -244,9 +254,49 @@ type marker struct {
 	from             map[*usageNode]*usageNode // first node found to keep a node live; none for roots
 	work             []*usageNode              // FIFO, so from gives shortest paths
 	includeExported  bool
-	followTests      bool            // also follow test-to-production edges
-	ifaceMethodNames map[string]bool // for test methods and packages that are not type-checked
+	followTests      bool                // also follow test-to-production edges
+	followed         map[*usageNode]bool // test nodes whose test-to-production edges count
+	ifaceMethodNames map[string]bool     // for test methods and packages that are not type-checked
 	conversions      *InterfaceConversions
+}
+
+// followMarkedTests lets the production edges of each test node that calls a
+// root marker, and of the test helpers it calls, keep their targets alive.
+func (m *marker) followMarkedTests(g *usageGraph) {
+	if len(m.ua.rootMarkers) == 0 {
+		return
+	}
+
+	var work []*usageNode
+
+	for _, n := range g.nodes {
+		if n.symbol != nil && m.ua.isTestFunction(n.symbol) && m.callsRootMarker(n) {
+			m.followed[n] = true
+			work = append(work, n)
+		}
+	}
+
+	for len(work) > 0 {
+		n := work[len(work)-1]
+		work = work[:len(work)-1]
+
+		for _, target := range n.out {
+			if target.test && !m.followed[target] {
+				m.followed[target] = true
+				work = append(work, target)
+			}
+		}
+	}
+}
+
+func (m *marker) callsRootMarker(n *usageNode) bool {
+	for _, target := range n.testOut {
+		if target.symbol != nil && slices.Contains(m.ua.rootMarkers, target.pkg.ImportPath+"."+target.name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // markFrom marks every declaration reachable from the nodes of g that isRoot accepts.
@@ -284,7 +334,7 @@ func (m *marker) visit(n *usageNode) {
 		m.mark(target, n)
 	}
 
-	if m.followTests {
+	if m.followTests || m.followed[n] {
 		for _, target := range n.testOut {
 			m.mark(target, n)
 		}
