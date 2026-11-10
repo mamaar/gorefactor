@@ -355,7 +355,8 @@ type UnusedParamItem struct {
 // --- dependency_usage ---
 
 type DependencyUsageInput struct {
-	MaxReferences *int `json:"max_references,omitempty" jsonschema:"keep only the modules referenced at most this many times; 0 lists the direct requirements the code never references"`
+	MaxReferences  *int `json:"max_references,omitempty" jsonschema:"keep only the modules referenced at most this many times; 0 lists the direct requirements the code never references"`
+	MultipleMajors bool `json:"multiple_majors,omitempty" jsonschema:"keep only the modules listed at another major version too, to find majors to consolidate"`
 }
 
 type DependencySymbolItem struct {
@@ -379,6 +380,7 @@ type DependencyModuleItem struct {
 	TestReferences int                     `json:"test_references"`
 	Files          int                     `json:"files"`
 	Packages       []DependencyPackageItem `json:"packages"`
+	OtherMajors    []string                `json:"other_majors,omitempty"`
 }
 
 type DetectAlwaysNilErrorsInput struct {
@@ -995,7 +997,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		Name: "dependency_usage",
 		Description: "Count how often the code references each module in go.mod, to find dependencies with few call sites that are candidates to inline or drop. Lists every module the code references, plus every direct requirement with 0 references when unused; indirect requirements appear only when referenced. Each module reports references, test_references (the part from _test.go files), files (distinct files referencing it) and packages, each with its symbols (Name, Type.Method or Type.Field; a field of an unnamed struct is its bare name), sorted by references ascending then name. " +
 			"A reference is any use of an identifier declared in the module: a call, type, constant, field or method. The package qualifier in pkg.Name is not counted separately, so dep.Foo() is one reference. Test files are included. References are merged across build configurations, so a file several configurations check counts once. A package belongs to the longest required module path that is a path prefix of it; the standard library and workspace packages are not listed. " +
-			"max_references keeps only the modules at or below that count. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error in type_error_files: references in them may be missing. Only the workspace root go.mod is read, and it is an error when there is none. Packages of the workspace's own module are never listed even when go.mod requires them. Counts only, no positions.",
+			"max_references keeps only the modules at or below that count. other_majors names the other listed modules with the same path apart from the major version suffix (/v2, gopkg.in/x.v2), computed before max_references applies; multiple_majors keeps only modules that have one, to find majors to consolidate. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error in type_error_files: references in them may be missing. Only the workspace root go.mod is read, and it is an error when there is none. Packages of the workspace's own module are never listed even when go.mod requires them. Counts only, no positions.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DependencyUsageInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
 		defer state.RUnlock()
@@ -1009,7 +1011,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(fmt.Errorf("max_references must not be negative, got %d", *in.MaxReferences)), nil, nil
 		}
 
-		report, err := state.GetEngine().DependencyUsageAcrossConfigs(refactor.DependencyUsageRequest{MaxReferences: in.MaxReferences})
+		report, err := state.GetEngine().DependencyUsageAcrossConfigs(refactor.DependencyUsageRequest{MaxReferences: in.MaxReferences, MultipleMajors: in.MultipleMajors})
 		if err != nil {
 			return errResult(err), nil, nil
 		}
@@ -1028,7 +1030,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 			items[i] = DependencyModuleItem{
 				Module: m.Module, Version: m.Version, Indirect: m.Indirect,
-				References: m.References, TestReferences: m.TestReferences, Files: m.Files, Packages: pkgs,
+				References: m.References, TestReferences: m.TestReferences, Files: m.Files, Packages: pkgs, OtherMajors: m.OtherMajors,
 			}
 		}
 

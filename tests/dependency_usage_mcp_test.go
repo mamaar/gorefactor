@@ -2,6 +2,7 @@ package tests_test
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -34,6 +35,7 @@ type depModuleJSON struct {
 	TestReferences int              `json:"test_references"`
 	Files          int              `json:"files"`
 	Packages       []depPackageJSON `json:"packages"`
+	OtherMajors    []string         `json:"other_majors"`
 }
 
 type depReportJSON struct {
@@ -117,10 +119,7 @@ func TestFoo(t *testing.T) { dep.Foo() }
 func TestDependencyUsageMCP_CountsAndSorts(t *testing.T) {
 	out := callDependencyUsage(t, map[string]any{})
 
-	var names []string
-	for _, m := range out.Dependencies {
-		names = append(names, m.Module)
-	}
+	names := depModulePaths(out)
 
 	want := []string{"example.com/idle", "example.com/dep"}
 	if !slices.Equal(names, want) {
@@ -386,4 +385,99 @@ func TestDependencyUsageMCP_Errors(t *testing.T) {
 	if !strings.Contains(msg, "no go.mod") {
 		t.Errorf("workspace without go.mod error = %q", msg)
 	}
+}
+
+func TestDependencyUsageMCP_MultipleMajors(t *testing.T) {
+	mods := map[string][2]string{ // package name, version matching the path major
+		"example.com/lib":    {"lib", "v0.0.0"},
+		"example.com/lib/v2": {"lib", "v2.0.0"},
+		"gopkg.in/foo.v1":    {"foo", "v1.0.0"},
+		"gopkg.in/foo.v2":    {"foo", "v2.0.0"},
+		"example.com/solo":   {"solo", "v0.0.0"},
+	}
+
+	var require, replace strings.Builder
+
+	for _, path := range slices.Sorted(maps.Keys(mods)) {
+		src := writeInlineWorkspace(t, map[string]string{
+			"go.mod": "module " + path + "\n\ngo 1.21\n",
+			"f.go":   "package " + mods[path][0] + "\n\nfunc F() {}\n",
+		})
+		require.WriteString("\t" + path + " " + mods[path][1] + "\n")
+		replace.WriteString("replace " + path + " => " + src + "\n")
+	}
+
+	dir := writeInlineWorkspace(t, map[string]string{
+		"go.mod": "module example.com/app\n\ngo 1.21\n\nrequire (\n" + require.String() + ")\n\n" + replace.String(),
+		"main.go": `package main
+
+import (
+	libv1 "example.com/lib"
+	libv2 "example.com/lib/v2"
+	"example.com/solo"
+	foov1 "gopkg.in/foo.v1"
+	foov2 "gopkg.in/foo.v2"
+)
+
+func main() {
+	libv1.F()
+	libv2.F()
+	libv2.F()
+	libv2.F()
+	foov1.F()
+	foov2.F()
+	solo.F()
+}
+`,
+	})
+
+	out, msg := dependencyUsageAt(t, dir, map[string]any{})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+
+	wantOthers := map[string][]string{
+		"example.com/lib":    {"example.com/lib/v2"},
+		"example.com/lib/v2": {"example.com/lib"},
+		"gopkg.in/foo.v1":    {"gopkg.in/foo.v2"},
+		"gopkg.in/foo.v2":    {"gopkg.in/foo.v1"},
+		"example.com/solo":   nil,
+	}
+	for path, want := range wantOthers {
+		if got := findDepModule(t, out, path).OtherMajors; !slices.Equal(got, want) {
+			t.Errorf("%s other_majors = %v, want %v", path, got, want)
+		}
+	}
+
+	out, msg = dependencyUsageAt(t, dir, map[string]any{"multiple_majors": true})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+
+	if got := depModulePaths(out); !slices.Equal(got, []string{"example.com/lib", "gopkg.in/foo.v1", "gopkg.in/foo.v2", "example.com/lib/v2"}) {
+		t.Errorf("multiple_majors modules = %v", got)
+	}
+
+	// The filter keeps the cheap major and still names the one it filtered out.
+	out, msg = dependencyUsageAt(t, dir, map[string]any{"multiple_majors": true, "max_references": 2})
+	if msg != "" {
+		t.Fatal(msg)
+	}
+
+	if got := depModulePaths(out); !slices.Equal(got, []string{"example.com/lib", "gopkg.in/foo.v1", "gopkg.in/foo.v2"}) {
+		t.Errorf("multiple_majors + max_references modules = %v", got)
+	}
+
+	if got := findDepModule(t, out, "example.com/lib").OtherMajors; !slices.Equal(got, []string{"example.com/lib/v2"}) {
+		t.Errorf("filtered example.com/lib other_majors = %v", got)
+	}
+}
+
+func depModulePaths(out depReportJSON) []string {
+	paths := make([]string, len(out.Dependencies))
+	for i, m := range out.Dependencies {
+		paths[i] = m.Module
+	}
+
+	return paths
 }

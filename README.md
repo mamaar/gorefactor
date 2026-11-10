@@ -72,7 +72,7 @@ The server communicates over stdio using the MCP protocol.
 | `analyze_symbol` | Analyze a symbol's usage, references, and dependencies |
 | `find_implementations` | For an interface, the workspace types that implement it; for any other type, the interfaces it satisfies, from the workspace and from packages the workspace imports directly or whose interfaces its code mentions. Without `package` the type name must be declared in one package. Matched by go/types, with `pointer_receiver` set when only `*T` satisfies the interface; `method` reports the matching methods instead. Runs under every build configuration |
 | `analyze_dependencies` | Analyze package dependency structure |
-| `dependency_usage` | Count references to each go.mod module (with package and symbol breakdown, tests counted separately), to find dependencies with few call sites; `max_references` keeps the modules at or below N, and `0` lists unused direct requirements. Merged across build configurations |
+| `dependency_usage` | Count references to each go.mod module (with package and symbol breakdown, tests counted separately), to find dependencies with few call sites; `max_references` keeps the modules at or below N, and `0` lists unused direct requirements; `other_majors` / `multiple_majors` find modules used at several major versions. Merged across build configurations |
 | `complexity` | Compute cyclomatic complexity for functions |
 | `unused` | Find symbols that no build configuration uses; references from tests and from unused code do not count |
 

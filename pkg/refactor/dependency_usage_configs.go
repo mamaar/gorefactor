@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"golang.org/x/mod/modfile"
+	"golang.org/x/mod/module"
 
 	"github.com/mamaar/gorefactor/pkg/analysis"
 )
@@ -17,6 +18,8 @@ type DependencyUsageRequest struct {
 	// MaxReferences keeps the modules referenced at most this many times; nil
 	// keeps every module.
 	MaxReferences *int
+	// MultipleMajors keeps the modules listed at another major version too.
+	MultipleMajors bool
 }
 
 // SymbolUsage is how often one symbol of a dependency package is referenced.
@@ -43,6 +46,9 @@ type ModuleUsage struct {
 	TestReferences int
 	Files          int
 	Packages       []PackageUsage
+	// OtherMajors lists the other modules of the report with the same path
+	// apart from the major version suffix.
+	OtherMajors []string
 }
 
 // DependencyUsageReport is the outcome of DependencyUsageAcrossConfigs.
@@ -149,14 +155,14 @@ func (r *dependencyUsageRun) visit(v *analysis.View) error {
 				continue
 			}
 
-			module := moduleOf(path, r.paths)
-			if module == "" {
+			mod := moduleOf(path, r.paths)
+			if mod == "" {
 				continue
 			}
 
 			pos := ws.FileSet.Position(id.Pos())
 			r.refs[depRefSite{pos.Filename, pos.Offset}] = depRefInfo{
-				module: module,
+				module: mod,
 				pkg:    obj.Pkg().Path(),
 				symbol: r.symbolName(obj),
 				test:   strings.HasSuffix(pos.Filename, "_test.go"),
@@ -220,6 +226,15 @@ func (r *dependencyUsageRun) report(req DependencyUsageRequest, views []*analysi
 		b.files[site.file] = true
 	}
 
+	majors := make(map[string][]string)
+
+	for _, rq := range r.requires {
+		if buckets[rq.Mod.Path] != nil {
+			base := majorFree(rq.Mod.Path)
+			majors[base] = append(majors[base], rq.Mod.Path)
+		}
+	}
+
 	out := &DependencyUsageReport{DetectHeader: r.header(views)}
 
 	for _, rq := range r.requires {
@@ -228,9 +243,16 @@ func (r *dependencyUsageRun) report(req DependencyUsageRequest, views []*analysi
 			continue
 		}
 
+		others := slices.DeleteFunc(slices.Clone(majors[majorFree(rq.Mod.Path)]), func(p string) bool { return p == rq.Mod.Path })
+		if req.MultipleMajors && len(others) == 0 {
+			continue
+		}
+
+		slices.Sort(others)
+
 		m := ModuleUsage{
 			Module: rq.Mod.Path, Version: rq.Mod.Version, Indirect: rq.Indirect,
-			References: b.total, TestReferences: b.test, Files: len(b.files),
+			References: b.total, TestReferences: b.test, Files: len(b.files), OtherMajors: others,
 		}
 
 		for pkg, t := range b.pkgs {
@@ -261,6 +283,16 @@ func (r *dependencyUsageRun) report(req DependencyUsageRequest, views []*analysi
 	})
 
 	return out
+}
+
+// majorFree returns the module path without its major version suffix.
+func majorFree(path string) string {
+	prefix, _, ok := module.SplitPathVersion(path)
+	if !ok {
+		return path
+	}
+
+	return prefix
 }
 
 // moduleOf returns the longest of required that equals pkgPath or is a
