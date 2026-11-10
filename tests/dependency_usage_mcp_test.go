@@ -383,7 +383,7 @@ func TestDependencyUsageMCP_Errors(t *testing.T) {
 	_ = os.Remove(filepath.Join(none, "go.mod"))
 
 	_, msg = dependencyUsageAt(t, none, map[string]any{})
-	if msg == "" {
-		t.Error("workspace without go.mod returned no error")
+	if !strings.Contains(msg, "no go.mod") {
+		t.Errorf("workspace without go.mod error = %q", msg)
 	}
 }
