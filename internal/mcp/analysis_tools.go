@@ -352,6 +352,33 @@ type UnusedParamItem struct {
 
 // --- detect_always_nil_errors ---
 
+type DependencyUsageInput struct {
+	MaxReferences *int `json:"max_references,omitempty" jsonschema:"keep only the modules referenced at most this many times; 0 lists the direct requirements the code never references"`
+}
+
+type DependencySymbolItem struct {
+	Symbol         string `json:"symbol"`
+	References     int    `json:"references"`
+	TestReferences int    `json:"test_references"`
+}
+
+type DependencyPackageItem struct {
+	Package        string                 `json:"package"`
+	References     int                    `json:"references"`
+	TestReferences int                    `json:"test_references"`
+	Symbols        []DependencySymbolItem `json:"symbols"`
+}
+
+type DependencyModuleItem struct {
+	Module         string                  `json:"module"`
+	Version        string                  `json:"version"`
+	Indirect       bool                    `json:"indirect,omitempty"`
+	References     int                     `json:"references"`
+	TestReferences int                     `json:"test_references"`
+	Files          int                     `json:"files"`
+	Packages       []DependencyPackageItem `json:"packages"`
+}
+
 type DetectAlwaysNilErrorsInput struct {
 	Package string `json:"package,omitempty" jsonschema:"list only the declarations of this package; calls are still counted across the workspace"`
 }
@@ -956,6 +983,52 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		out := map[string]any{
 			"unused_params": items,
 			"total_count":   len(items),
+		}
+		addDetectHeader(out, ws, report.DetectHeader)
+
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "dependency_usage",
+		Description: "Count how often the code references each module in go.mod, to find dependencies with few call sites that are candidates to inline or drop. Lists every module the code references, plus every direct requirement with 0 references when unused; indirect requirements appear only when referenced. Each module reports references, test_references (the part from _test.go files), files (distinct files referencing it) and packages, each with its symbols (Name or Type.Method), sorted by references ascending then name. " +
+			"A reference is any use of an identifier declared in the module: a call, type, constant, field or method. The package qualifier in pkg.Name is not counted separately, so dep.Foo() is one reference. Test files are included. References are merged across build configurations, so a file several configurations check counts once. A package belongs to the longest required module path that is a path prefix of it; the standard library and workspace packages are not listed. " +
+			"max_references keeps only the modules at or below that count. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error in type_error_files: references in them may be missing. Only the workspace root go.mod is read. Counts only, no positions.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in DependencyUsageInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		report, err := state.GetEngine().DependencyUsageAcrossConfigs(refactor.DependencyUsageRequest{MaxReferences: in.MaxReferences})
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := make([]DependencyModuleItem, len(report.Modules))
+		for i, m := range report.Modules {
+			pkgs := make([]DependencyPackageItem, len(m.Packages))
+			for j, p := range m.Packages {
+				syms := make([]DependencySymbolItem, len(p.Symbols))
+				for k, sym := range p.Symbols {
+					syms[k] = DependencySymbolItem(sym)
+				}
+
+				pkgs[j] = DependencyPackageItem{Package: p.Package, References: p.References, TestReferences: p.TestReferences, Symbols: syms}
+			}
+
+			items[i] = DependencyModuleItem{
+				Module: m.Module, Version: m.Version, Indirect: m.Indirect,
+				References: m.References, TestReferences: m.TestReferences, Files: m.Files, Packages: pkgs,
+			}
+		}
+
+		out := map[string]any{
+			"dependencies": items,
+			"total_count":  len(items),
 		}
 		addDetectHeader(out, ws, report.DetectHeader)
 
