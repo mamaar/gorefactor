@@ -55,8 +55,9 @@ type DependencyUsageReport struct {
 // each module in its go.mod require list, merged across build configurations.
 func (e *DefaultEngine) DependencyUsageAcrossConfigs(req DependencyUsageRequest) (*DependencyUsageReport, error) {
 	run := &dependencyUsageRun{
-		detectRun: newDetectRun(nil),
-		refs:      make(map[depRefSite]depRefInfo),
+		detectRun:   newDetectRun(nil),
+		refs:        make(map[depRefSite]depRefInfo),
+		fieldOwners: make(map[*gotypes.Package]map[*gotypes.Var]string),
 	}
 
 	views, err := e.beginRun(run)
@@ -64,6 +65,11 @@ func (e *DefaultEngine) DependencyUsageAcrossConfigs(req DependencyUsageRequest)
 		return nil, fmt.Errorf("dependency usage across configs: %w", err)
 	}
 	defer e.endRun(run)
+
+	err = run.parseGoMod(views[0])
+	if err != nil {
+		return nil, err
+	}
 
 	for _, v := range views {
 		err := run.visit(v)
@@ -91,6 +97,32 @@ type dependencyUsageRun struct {
 	detectRun
 	refs     map[depRefSite]depRefInfo
 	requires []*modfile.Require
+	// paths are the require paths; modulePath is the workspace's own module.
+	paths      []string
+	modulePath string
+	// fieldOwners names the struct type declaring each field, per package.
+	fieldOwners map[*gotypes.Package]map[*gotypes.Var]string
+}
+
+func (r *dependencyUsageRun) parseGoMod(v *analysis.View) error {
+	mod := v.Workspace.Module
+	if mod == nil {
+		return fmt.Errorf("no go.mod at workspace root")
+	}
+
+	mf, err := modfile.ParseLax("go.mod", []byte(mod.GoMod), nil)
+	if err != nil {
+		return fmt.Errorf("parse go.mod: %w", err)
+	}
+
+	r.requires = mf.Require
+	r.modulePath = mod.Path
+
+	for _, req := range r.requires {
+		r.paths = append(r.paths, req.Mod.Path)
+	}
+
+	return nil
 }
 
 func (r *dependencyUsageRun) visit(v *analysis.View) error {
@@ -100,20 +132,6 @@ func (r *dependencyUsageRun) visit(v *analysis.View) error {
 	}
 
 	ws := v.Workspace
-
-	if r.requires == nil {
-		mf, err := modfile.ParseLax("go.mod", []byte(ws.Module.GoMod), nil)
-		if err != nil {
-			return fmt.Errorf("parse go.mod: %w", err)
-		}
-
-		r.requires = mf.Require
-	}
-
-	paths := make([]string, len(r.requires))
-	for i, req := range r.requires {
-		paths[i] = req.Mod.Path
-	}
 
 	for _, pkg := range ws.Packages {
 		if pkg.TypesInfo == nil {
@@ -126,7 +144,12 @@ func (r *dependencyUsageRun) visit(v *analysis.View) error {
 				continue
 			}
 
-			module := moduleOf(obj.Pkg().Path(), paths)
+			path := obj.Pkg().Path()
+			if moduleOf(path, []string{r.modulePath}) != "" {
+				continue
+			}
+
+			module := moduleOf(path, r.paths)
 			if module == "" {
 				continue
 			}
@@ -135,7 +158,7 @@ func (r *dependencyUsageRun) visit(v *analysis.View) error {
 			r.refs[depRefSite{pos.Filename, pos.Offset}] = depRefInfo{
 				module: module,
 				pkg:    obj.Pkg().Path(),
-				symbol: symbolName(obj),
+				symbol: r.symbolName(obj),
 				test:   strings.HasSuffix(pos.Filename, "_test.go"),
 			}
 		}
@@ -159,18 +182,22 @@ func (r *dependencyUsageRun) report(req DependencyUsageRequest, views []*analysi
 		symbols map[[2]string]*tally
 	}
 
+	newBucket := func() *bucket {
+		return &bucket{files: map[string]bool{}, pkgs: map[string]*tally{}, symbols: map[[2]string]*tally{}}
+	}
+
 	buckets := make(map[string]*bucket)
 
 	for _, req := range r.requires {
 		if !req.Indirect {
-			buckets[req.Mod.Path] = &bucket{files: map[string]bool{}, pkgs: map[string]*tally{}, symbols: map[[2]string]*tally{}}
+			buckets[req.Mod.Path] = newBucket()
 		}
 	}
 
 	for site, ref := range r.refs {
 		b := buckets[ref.module]
 		if b == nil {
-			b = &bucket{files: map[string]bool{}, pkgs: map[string]*tally{}, symbols: map[[2]string]*tally{}}
+			b = newBucket()
 			buckets[ref.module] = b
 		}
 
@@ -254,8 +281,20 @@ func moduleOf(pkgPath string, required []string) string {
 	return best
 }
 
-// symbolName is Type.Method for a method and the object's name otherwise.
-func symbolName(obj gotypes.Object) string {
+// symbolName is Type.Method for a method, Type.Field for a field of a named
+// struct type and the object's name otherwise.
+func (r *dependencyUsageRun) symbolName(obj gotypes.Object) string {
+	v, ok := obj.(*gotypes.Var)
+	if ok && v.IsField() {
+		owner := r.fieldOwnersOf(v.Pkg())[v.Origin()]
+		if owner == "" {
+			// A field of an unnamed struct has no owner to name; same-named ones merge.
+			return v.Name()
+		}
+
+		return owner + "." + v.Name()
+	}
+
 	fn, ok := obj.(*gotypes.Func)
 	if !ok {
 		return obj.Name()
@@ -279,4 +318,33 @@ func symbolName(obj gotypes.Object) string {
 	}
 
 	return named.Obj().Name() + "." + fn.Name()
+}
+
+// fieldOwnersOf maps each field of pkg's named struct types to the type's name.
+func (r *dependencyUsageRun) fieldOwnersOf(pkg *gotypes.Package) map[*gotypes.Var]string {
+	owners, ok := r.fieldOwners[pkg]
+	if ok {
+		return owners
+	}
+
+	owners = make(map[*gotypes.Var]string)
+	r.fieldOwners[pkg] = owners
+
+	for _, name := range pkg.Scope().Names() {
+		tn, ok := pkg.Scope().Lookup(name).(*gotypes.TypeName)
+		if !ok || tn.IsAlias() {
+			continue
+		}
+
+		st, ok := tn.Type().Underlying().(*gotypes.Struct)
+		if !ok {
+			continue
+		}
+
+		for f := range st.Fields() {
+			owners[f.Origin()] = name
+		}
+	}
+
+	return owners
 }
