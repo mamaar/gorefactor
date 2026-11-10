@@ -388,11 +388,14 @@ func TestDependencyUsageMCP_Errors(t *testing.T) {
 }
 
 func TestDependencyUsageMCP_MultipleMajors(t *testing.T) {
-	mods := map[string][2]string{ // package name, version matching the path major
+	// lib/v3 is a direct requirement nothing imports; foo.v3 an indirect one.
+	mods := map[string][2]string{ // package name, version (and indirect marker)
 		"example.com/lib":    {"lib", "v0.0.0"},
 		"example.com/lib/v2": {"lib", "v2.0.0"},
+		"example.com/lib/v3": {"lib", "v3.0.0"},
 		"gopkg.in/foo.v1":    {"foo", "v1.0.0"},
 		"gopkg.in/foo.v2":    {"foo", "v2.0.0"},
+		"gopkg.in/foo.v3":    {"foo", "v3.0.0 // indirect"},
 		"example.com/solo":   {"solo", "v0.0.0"},
 	}
 
@@ -437,8 +440,9 @@ func main() {
 	}
 
 	wantOthers := map[string][]string{
-		"example.com/lib":    {"example.com/lib/v2"},
-		"example.com/lib/v2": {"example.com/lib"},
+		"example.com/lib":    {"example.com/lib/v2", "example.com/lib/v3"},
+		"example.com/lib/v2": {"example.com/lib", "example.com/lib/v3"},
+		"example.com/lib/v3": {"example.com/lib", "example.com/lib/v2"},
 		"gopkg.in/foo.v1":    {"gopkg.in/foo.v2"},
 		"gopkg.in/foo.v2":    {"gopkg.in/foo.v1"},
 		"example.com/solo":   nil,
@@ -454,7 +458,7 @@ func main() {
 		t.Fatal(msg)
 	}
 
-	if got := depModulePaths(out); !slices.Equal(got, []string{"example.com/lib", "gopkg.in/foo.v1", "gopkg.in/foo.v2", "example.com/lib/v2"}) {
+	if got := depModulePaths(out); !slices.Equal(got, []string{"example.com/lib/v3", "example.com/lib", "gopkg.in/foo.v1", "gopkg.in/foo.v2", "example.com/lib/v2"}) {
 		t.Errorf("multiple_majors modules = %v", got)
 	}
 
@@ -464,11 +468,11 @@ func main() {
 		t.Fatal(msg)
 	}
 
-	if got := depModulePaths(out); !slices.Equal(got, []string{"example.com/lib", "gopkg.in/foo.v1", "gopkg.in/foo.v2"}) {
+	if got := depModulePaths(out); !slices.Equal(got, []string{"example.com/lib/v3", "example.com/lib", "gopkg.in/foo.v1", "gopkg.in/foo.v2"}) {
 		t.Errorf("multiple_majors + max_references modules = %v", got)
 	}
 
-	if got := findDepModule(t, out, "example.com/lib").OtherMajors; !slices.Equal(got, []string{"example.com/lib/v2"}) {
+	if got := findDepModule(t, out, "example.com/lib").OtherMajors; !slices.Equal(got, []string{"example.com/lib/v2", "example.com/lib/v3"}) {
 		t.Errorf("filtered example.com/lib other_majors = %v", got)
 	}
 }
