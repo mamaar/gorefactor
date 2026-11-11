@@ -16,7 +16,8 @@ import (
 // alongside a method entering the worklist, and aborting when the method
 // satisfies an interface the refactoring cannot edit.
 
-// ifaceCandidate is a named interface type paired with its completed method set.
+// ifaceCandidate is an interface type paired with its completed method set.
+// named is nil for an anonymous interface literal.
 type ifaceCandidate struct {
 	named *gotypes.Named
 	iface *gotypes.Interface
@@ -25,6 +26,10 @@ type ifaceCandidate struct {
 // label renders the candidate as "net/http.Handler" — the form the abort
 // messages must use so the user can find the offender.
 func (c ifaceCandidate) label() string {
+	if c.named == nil {
+		return "anonymous " + gotypes.TypeString(c.iface, nil)
+	}
+
 	obj := c.named.Obj()
 	if obj.Pkg() == nil {
 		return obj.Name() // a builtin such as `error`
@@ -41,6 +46,9 @@ func (c ifaceCandidate) label() string {
 type ifaceSurvey struct {
 	workspace []ifaceCandidate
 	external  []ifaceCandidate
+	// anonymous holds the interface literals the workspace mentions. They have
+	// no declaration to rewrite, so like external ones they are abort triggers.
+	anonymous []ifaceCandidate
 	impls     []*gotypes.Named
 
 	// views holds every checked copy of a workspace type declaration: the one of
@@ -66,6 +74,9 @@ type ifaceSurveyor struct {
 	inWorkspace func(*gotypes.Package) bool
 	seenIface   map[*gotypes.Named]bool
 	seenType    map[gotypes.Type]bool
+	// anonymous holds every interface type found, named ones included: a
+	// declaration `type I interface{...}` records its literal's type too.
+	anonymous []ifaceCandidate
 }
 
 // surveyInterfaces surveys the interfaces and implementation types of ws.
@@ -94,7 +105,25 @@ func surveyInterfaces(ws *pkgtypes.Workspace) *ifaceSurvey {
 		b.addScope(checked)
 	}
 
+	b.keepLiterals()
+
 	return b.survey
+}
+
+// keepLiterals records as anonymous the interface types found that no named
+// interface owns.
+func (b *ifaceSurveyor) keepLiterals() {
+	owned := make(map[*gotypes.Interface]bool)
+
+	for _, named := range slices.Concat(b.survey.workspace, b.survey.external) {
+		owned[named.iface] = true
+	}
+
+	for _, c := range b.anonymous {
+		if !owned[c.iface] {
+			b.survey.anonymous = append(b.survey.anonymous, c)
+		}
+	}
 }
 
 // checkedPackages returns every go/types package checked for a workspace
@@ -132,6 +161,11 @@ func checkedPackages(ws *pkgtypes.Workspace, inWorkspace func(*gotypes.Package) 
 }
 
 func (b *ifaceSurveyor) add(c ifaceCandidate) {
+	if c.named == nil {
+		b.anonymous = append(b.anonymous, c)
+		return
+	}
+
 	if b.seenIface[c.named] {
 		return
 	}
@@ -309,6 +343,8 @@ func collectIfaceTypes(t gotypes.Type, seen map[gotypes.Type]bool, add func(ifac
 		if !isStruct {
 			collectIfaceTypes(t.Underlying(), seen, add)
 		}
+	case *gotypes.Interface:
+		add(ifaceCandidate{iface: t})
 	case *gotypes.Pointer:
 		collectIfaceTypes(t.Elem(), seen, add)
 	case *gotypes.Slice:
@@ -350,7 +386,7 @@ func (op *ThreadContextOperation) externalInterfaceAbort(ws *pkgtypes.Workspace,
 // method set satisfies.
 func (s *ifaceSurvey) externalInterfaceOf(f *gotypes.Func) (ifaceCandidate, bool) {
 	for _, recv := range s.receiversOf(f) {
-		for _, ext := range s.external {
+		for _, ext := range slices.Concat(s.external, s.anonymous) {
 			if interfaceMethodNamed(ext.iface, f.Name()) != nil && typeImplements(recv, ext.iface) {
 				return ext, true
 			}
