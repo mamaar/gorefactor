@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"io"
 	"log/slog"
@@ -167,6 +168,8 @@ func (op *InlineMethodOperation) Description() string {
 type MethodImpl struct {
 	Body       string
 	ParamNames []string
+	// Variadic is set when the last of ParamNames is a ...T parameter.
+	Variadic bool
 	// Receiver is the method's receiver identifier, empty when it has none or is blank.
 	// ReceiverType and ResultType are source text, ResultType empty for no result.
 	Receiver     string
@@ -526,6 +529,11 @@ func inlineStatements(impl MethodImpl, receiver string, arguments []string, fset
 	var binds []string
 
 	bind := func(name, expr string, force bool) {
+		if !usesIdent(block, name) {
+			discard(&binds, expr)
+			return
+		}
+
 		if !force && !evaluatesCode(expr) {
 			subst[name] = receiverOperand(expr)
 			return
@@ -544,19 +552,74 @@ func inlineStatements(impl MethodImpl, receiver string, arguments []string, fset
 	}
 
 	for i, name := range impl.ParamNames {
-		if i < len(arguments) {
+		switch {
+		case impl.Variadic && i == len(impl.ParamNames)-1:
+			for _, extra := range arguments[min(i, len(arguments)):] {
+				discard(&binds, extra)
+			}
+		case i < len(arguments):
 			bind(name, arguments[i], false)
 		}
 	}
 
-	text := replaceIdentsInExpr(block, subst, fset, src)
+	text := ""
+	if len(block.List) > 0 {
+		text = strings.TrimSpace(replaceIdentsInExpr(block, subst, fset, src))
+		text = strings.TrimSpace(text[1 : len(text)-1])
+	}
 
-	text = strings.TrimSpace(text[1 : len(text)-1])
 	if len(binds) == 0 {
-		return text
+		return text + lineBreakAfterComment(text)
 	}
 
 	return "{\n" + strings.Join(binds, "\n") + "\n" + text + "\n}"
+}
+
+// discard keeps an operand that runs code but is not used, as `_ = expr`, so it is still evaluated.
+func discard(binds *[]string, expr string) {
+	if evaluatesCode(expr) {
+		*binds = append(*binds, "_ = "+expr)
+	}
+}
+
+// usesIdent reports whether node refers to the free identifier name.
+func usesIdent(node ast.Node, name string) bool {
+	found := false
+
+	inspectIdents(node, func(id *ast.Ident) {
+		found = found || id.Name == name && id.Obj == nil
+	})
+
+	return found
+}
+
+// lineBreakAfterComment returns "\n" when text ends in a line comment, which
+// would otherwise swallow the code that follows it on the caller's line.
+func lineBreakAfterComment(text string) string {
+	var sc scanner.Scanner
+
+	file := token.NewFileSet().AddFile("", -1, len(text))
+	sc.Init(file, []byte(text), nil, scanner.ScanComments)
+
+	endsInComment := false
+
+	for {
+		_, tok, lit := sc.Scan()
+
+		switch {
+		case tok == token.EOF:
+			if endsInComment {
+				return "\n"
+			}
+
+			return ""
+		case tok == token.COMMENT:
+			endsInComment = strings.HasPrefix(lit, "//")
+		case tok == token.SEMICOLON && lit == "\n":
+		default:
+			endsInComment = false
+		}
+	}
 }
 
 // writesFieldsOf reports whether block assigns to or increments a field reached through name.
@@ -658,36 +721,6 @@ func replaceIdentsInExpr(expr ast.Node, paramToArg map[string]string, fset *toke
 	}
 
 	return exprText
-}
-
-// replaceIdentToken does a token-aware replacement of identifier tokens in Go source text.
-func replaceIdentToken(src, oldIdent, newText string) string {
-	var result strings.Builder
-
-	remainder := src
-	for len(remainder) > 0 {
-		idx := strings.Index(remainder, oldIdent)
-		if idx < 0 {
-			result.WriteString(remainder)
-			break
-		}
-		// Check that the character before and after are not identifier characters
-		before := idx == 0 || !isIdentChar(remainder[idx-1]) && remainder[idx-1] != '.'
-		afterIdx := idx + len(oldIdent)
-
-		after := afterIdx >= len(remainder) || !isIdentChar(remainder[afterIdx])
-		if before && after {
-			result.WriteString(remainder[:idx])
-			result.WriteString(newText)
-
-			remainder = remainder[afterIdx:]
-		} else {
-			result.WriteString(remainder[:afterIdx])
-			remainder = remainder[afterIdx:]
-		}
-	}
-
-	return result.String()
 }
 
 // InlineVariableOperation implements inlining a variable with its value
@@ -1149,12 +1182,17 @@ func (op *InlineFunctionOperation) Execute(ws *types.Workspace) (*types.Refactor
 
 		// Replace each call with inlined implementation
 		for _, call := range calls {
+			newText, err := op.adaptFunctionBodyForInlining(impl, call.Arguments)
+			if err != nil {
+				return nil, err
+			}
+
 			changes = append(changes, types.Change{
 				File:        targetFile,
 				Start:       call.Start,
 				End:         call.End,
 				OldText:     call.CallText,
-				NewText:     op.adaptFunctionBodyForInlining(impl, call.Arguments),
+				NewText:     newText,
 				Description: fmt.Sprintf("Inline function call %s", op.FunctionName),
 			})
 		}
@@ -1279,6 +1317,7 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 		return MethodImpl{
 			Body:       content[start:end],
 			ParamNames: paramNames,
+			Variadic:   isVariadic(funcDecl.Type),
 		}, nil
 	}
 
@@ -1286,6 +1325,17 @@ func (op *InlineFunctionOperation) findFunctionImplementation(ws *types.Workspac
 		Type:    types.SymbolNotFound,
 		Message: fmt.Sprintf("function body not found: %s", op.FunctionName),
 	}
+}
+
+// isVariadic reports whether the last parameter of ft is a ...T parameter.
+func isVariadic(ft *ast.FuncType) bool {
+	if ft.Params == nil || len(ft.Params.List) == 0 {
+		return false
+	}
+
+	_, ok := ft.Params.List[len(ft.Params.List)-1].Type.(*ast.Ellipsis)
+
+	return ok
 }
 
 func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, targetFile string) ([]MethodCall, error) {
@@ -1358,44 +1408,44 @@ func (op *InlineFunctionOperation) findFunctionCalls(ws *types.Workspace, target
 	return calls, nil
 }
 
-func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl, arguments []string) string {
+func (op *InlineFunctionOperation) adaptFunctionBodyForInlining(impl MethodImpl, arguments []string) (string, error) {
 	body := strings.TrimSpace(impl.Body)
-
-	// Build param→arg substitution map
-	paramToArg := make(map[string]string)
-
-	for i, name := range impl.ParamNames {
-		if i < len(arguments) {
-			paramToArg[name] = arguments[i]
-		}
-	}
-
-	// Try to parse the body as a single return expression.
 	wrapped := "package p\nfunc _() {\n" + body + "\n}"
 	fset := token.NewFileSet()
 
 	f, err := parser.ParseFile(fset, "", wrapped, 0)
-	if err == nil {
-		funcDecl, ok := f.Decls[0].(*ast.FuncDecl)
-		if ok && funcDecl.Body != nil {
-			stmts := funcDecl.Body.List
-			if len(stmts) == 1 {
-				retStmt, ok := stmts[0].(*ast.ReturnStmt)
-				if ok && len(retStmt.Results) == 1 {
-					expr := retStmt.Results[0]
-					result := replaceIdentsInExpr(expr, paramToArg, fset, wrapped)
-
-					return result
-				}
-			}
+	if err != nil {
+		return "", &types.RefactorError{
+			Type:    types.ParseError,
+			Message: fmt.Sprintf("failed to parse body of %s: %v", op.FunctionName, err),
 		}
 	}
 
-	// Fallback: do textual param substitution on the whole body
-	result := body
-	for param, arg := range paramToArg {
-		result = replaceIdentToken(result, param, arg)
+	block := f.Decls[0].(*ast.FuncDecl).Body
+
+	if impl.Variadic && usesIdent(block, impl.ParamNames[len(impl.ParamNames)-1]) {
+		return "", &types.RefactorError{
+			Type: types.InvalidOperation,
+			Message: fmt.Sprintf("cannot inline %s: its variadic parameter %s is used in the body",
+				op.FunctionName, impl.ParamNames[len(impl.ParamNames)-1]),
+		}
 	}
 
-	return result
+	// A single return of one expression replaces the call as an expression.
+	if len(block.List) == 1 {
+		ret, ok := block.List[0].(*ast.ReturnStmt)
+		if ok && len(ret.Results) == 1 {
+			paramToArg := make(map[string]string)
+
+			for i, name := range impl.ParamNames {
+				if i < len(arguments) {
+					paramToArg[name] = arguments[i]
+				}
+			}
+
+			return replaceIdentsInExpr(ret.Results[0], paramToArg, fset, wrapped), nil
+		}
+	}
+
+	return inlineStatements(impl, "", arguments, fset, wrapped, block), nil
 }
