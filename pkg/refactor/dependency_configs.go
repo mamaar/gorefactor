@@ -285,7 +285,7 @@ func declaredSymbolCounts(wss ...*types.Workspace) map[string]int {
 
 			for _, group := range []map[string]*types.Symbol{pkg.Symbols.Functions, pkg.Symbols.Types, pkg.Symbols.Variables, pkg.Symbols.Constants} {
 				for _, sym := range group {
-					seen[path][declSite{sym.File, sym.Position}] = true
+					seen[path][declSite{File: sym.File, Pos: sym.Position}] = true
 				}
 			}
 		}

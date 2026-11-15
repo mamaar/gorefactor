@@ -119,7 +119,7 @@ func (r *alwaysNilRun) visit(v *analysis.View) error {
 		}
 
 		key := declKey{symbol, fn.Pkg().Name()}
-		site := declSite{decl.File.Path, fn.Pos()}
+		site := declSite{File: decl.File.Path, Pos: fn.Pos()}
 		r.declaredIn[site] = append(r.declaredIn[site], v.Config.String())
 		r.declViews[key]++
 		r.recordSignature(key, declShape(decl))
@@ -233,7 +233,7 @@ func propagatedRefusal(decls map[*gotypes.Func]*funcDecl, m *gotypes.Func) strin
 
 // add records fn as always nil in one view. The first reason any view gives is kept.
 func (r *alwaysNilRun) add(v *analysis.View, fn *gotypes.Func, decl *funcDecl, key declKey, j nilJudgement) {
-	site := declSite{decl.File.Path, fn.Pos()}
+	site := declSite{File: decl.File.Path, Pos: fn.Pos()}
 
 	d := r.decls[site]
 	if d == nil {

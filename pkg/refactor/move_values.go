@@ -67,14 +67,18 @@ func findValueUnit(file *types.File, pos token.Pos) *valueUnit {
 					continue
 				}
 
-				whole := d.Lparen.IsValid() && len(d.Specs) > 1 && !selfContained(d)
-
-				return &valueUnit{decl: d, spec: vs, whole: whole}
+				return &valueUnit{decl: d, spec: vs, whole: wholeGroup(d)}
 			}
 		}
 	}
 
 	return nil
+}
+
+// wholeGroup reports whether the specs of d move as one: a parenthesised group
+// whose specs depend on each other.
+func wholeGroup(d *ast.GenDecl) bool {
+	return d.Lparen.IsValid() && len(d.Specs) > 1 && !selfContained(d)
 }
 
 // selfContained reports whether every spec of d stands alone: explicit values

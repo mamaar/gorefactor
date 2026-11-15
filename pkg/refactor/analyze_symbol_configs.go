@@ -115,7 +115,7 @@ func (r *symbolRun) visit(e *DefaultEngine, v *analysis.View, out *SymbolReport)
 		out.Symbol = symbol
 	}
 
-	site := declSite{symbol.File, symbol.Position}
+	site := declSite{File: symbol.File, Pos: symbol.Position}
 
 	d := r.decls[site]
 	if d == nil {

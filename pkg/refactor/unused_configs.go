@@ -3,7 +3,6 @@ package refactor
 import (
 	"cmp"
 	"fmt"
-	"go/token"
 	"math"
 	"path/filepath"
 	"slices"
@@ -69,11 +68,7 @@ type unusedRun struct {
 	decls map[declSite]*unusedDecl
 }
 
-// declSite identifies a declaration across views, which share the file set.
-type declSite struct {
-	file string
-	pos  token.Pos
-}
+type declSite = analysis.DeclSite
 
 // unusedDecl is a declaration at least one view reports unused.
 type unusedDecl struct {
@@ -139,7 +134,7 @@ func (r *unusedRun) visit(v *analysis.View) {
 	names := make(map[string]bool, len(unused))
 	for _, u := range unused {
 		names[u.Symbol.Name] = true
-		site := declSite{u.Symbol.File, u.Symbol.Position}
+		site := declSite{File: u.Symbol.File, Pos: u.Symbol.Position}
 
 		d := r.decls[site]
 		if d == nil {
@@ -171,7 +166,7 @@ func (r *unusedRun) visit(v *analysis.View) {
 func (r *unusedRun) markUnresolved(v *analysis.View, unused []*analysis.UnusedSymbol, mentions []unresolvedMention) {
 	for _, m := range mentions {
 		for _, u := range unused {
-			d := r.decls[declSite{u.Symbol.File, u.Symbol.Position}]
+			d := r.decls[declSite{File: u.Symbol.File, Pos: u.Symbol.Position}]
 			if u.Symbol.Name != m.name || !d.keyed || d.unresolved != nil || m.Position == u.Symbol.Position {
 				continue
 			}

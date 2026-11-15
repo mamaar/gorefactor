@@ -15,10 +15,14 @@ type DeclSite struct {
 	Pos  token.Pos
 }
 
-// ExtractionDecl is one declaration of an ExtractionUnit and the lines it spans.
+// ExtractionDecl is one declaration of an ExtractionUnit: where it starts and
+// ends and the lines it spans.
 type ExtractionDecl struct {
 	Site  DeclSite
+	End   token.Pos
 	Lines int
+	Name  string // the name, or the first of a group; the method name for a method
+	Type  string // the receiver type of a method; empty otherwise
 }
 
 // ExtractionRef is a reference from one unit to a member of another.
@@ -53,8 +57,9 @@ type extractionGroup struct {
 }
 
 // ExtractionUnits returns the production units of pkg with the references
-// between them. idx must index ws.
-func ExtractionUnits(ws *types.Workspace, resolver *SymbolResolver, idx *ReferenceIndex, pkg *types.Package) []ExtractionUnit {
+// between them. idx must index ws. grouped says whether the specs of a const
+// or var declaration move as one.
+func ExtractionUnits(ws *types.Workspace, resolver *SymbolResolver, idx *ReferenceIndex, pkg *types.Package, grouped func(*ast.GenDecl) bool) []ExtractionUnit {
 	for _, p := range ws.Packages {
 		if p.Symbols == nil {
 			_ = resolver.BuildSymbolTable(p)
@@ -62,7 +67,7 @@ func ExtractionUnits(ws *types.Workspace, resolver *SymbolResolver, idx *Referen
 	}
 
 	g := buildUsageGraph(ws, resolver, idx)
-	b := &extractionBuilder{g: g, fset: ws.FileSet, pkg: pkg, groupOf: make(map[*usageNode]*extractionGroup)}
+	b := &extractionBuilder{g: g, fset: ws.FileSet, pkg: pkg, grouped: grouped, groupOf: make(map[*usageNode]*extractionGroup), recvName: make(map[*usageNode]string)}
 
 	for _, file := range indexedFiles(pkg) {
 		if !strings.HasSuffix(file.Path, "_test.go") {
@@ -80,22 +85,30 @@ type extractionBuilder struct {
 	fset    *token.FileSet
 	pkg     *types.Package
 	groups  []*extractionGroup
+	grouped func(*ast.GenDecl) bool
 	groupOf map[*usageNode]*extractionGroup
 	methods []methodNode
+	// recvName is the type name a method's receiver spells, which may be an alias.
+	recvName map[*usageNode]string
 }
 
 type methodNode struct {
 	node *usageNode
 	pos  token.Pos
-	decl ExtractionDecl
+	decl ast.Decl
 }
 
 func (b *extractionBuilder) site(pos token.Pos) DeclSite {
 	return DeclSite{File: b.fset.Position(pos).Filename, Pos: pos}
 }
 
-func (b *extractionBuilder) decl(pos, end token.Pos) ExtractionDecl {
-	return ExtractionDecl{Site: b.site(pos), Lines: b.fset.Position(end).Line - b.fset.Position(pos).Line + 1}
+func (b *extractionBuilder) decl(n ast.Node, name *usageNode) ExtractionDecl {
+	return ExtractionDecl{
+		Site:  b.site(n.Pos()),
+		End:   n.End(),
+		Lines: b.fset.Position(n.End()).Line - b.fset.Position(n.Pos()).Line + 1,
+		Name:  name.name,
+	}
 }
 
 func (b *extractionBuilder) addGroup(pos token.Pos) *extractionGroup {
@@ -121,13 +134,15 @@ func (b *extractionBuilder) addFile(file *ast.File) {
 		case *ast.FuncDecl:
 			n := b.g.nodes[d.Name.Pos()]
 			if d.Recv != nil {
-				b.methods = append(b.methods, methodNode{n, d.Name.Pos(), b.decl(d.Pos(), d.End())})
+				b.methods = append(b.methods, methodNode{n, d.Name.Pos(), d})
+				b.recvName[n] = receiverTypeName(d.Recv)
+
 				continue
 			}
 
 			grp := b.addGroup(d.Name.Pos())
 			b.add(grp, n)
-			grp.decls = append(grp.decls, b.decl(d.Pos(), d.End()))
+			grp.decls = append(grp.decls, b.decl(d, n))
 			grp.skip = d.Name.Name == "init" || (d.Name.Name == "main" && b.pkg.Name == "main")
 		case *ast.GenDecl:
 			b.addGenDecl(d)
@@ -138,13 +153,15 @@ func (b *extractionBuilder) addFile(file *ast.File) {
 func (b *extractionBuilder) addGenDecl(d *ast.GenDecl) {
 	var shared *extractionGroup
 
+	grouped := (d.Tok == token.CONST || d.Tok == token.VAR) && b.grouped(d)
+
 	for _, spec := range d.Specs {
 		switch s := spec.(type) {
 		case *ast.TypeSpec:
 			n := b.g.nodes[s.Name.Pos()]
 			grp := b.addGroup(s.Name.Pos())
 			b.add(grp, n)
-			grp.decls = append(grp.decls, b.decl(s.Pos(), s.End()))
+			grp.decls = append(grp.decls, b.decl(s, n))
 		case *ast.ValueSpec:
 			grp := shared
 			if grp == nil {
@@ -155,41 +172,13 @@ func (b *extractionBuilder) addGenDecl(d *ast.GenDecl) {
 				b.add(grp, b.g.nodes[name.Pos()])
 			}
 
-			grp.decls = append(grp.decls, b.decl(s.Pos(), s.End()))
+			grp.decls = append(grp.decls, b.decl(s, b.g.nodes[s.Names[0].Pos()]))
 
-			if d.Tok == token.CONST && isIotaGroup(d) {
+			if shared == nil && grouped {
 				shared = grp
 			}
 		}
 	}
-}
-
-// isIotaGroup reports whether a const declaration repeats an implicit
-// expression or uses iota, which ties its specs together.
-func isIotaGroup(d *ast.GenDecl) bool {
-	for _, spec := range d.Specs {
-		s := spec.(*ast.ValueSpec)
-		if len(s.Values) == 0 {
-			return true
-		}
-
-		found := false
-
-		for _, v := range s.Values {
-			ast.Inspect(v, func(n ast.Node) bool {
-				id, ok := n.(*ast.Ident)
-				found = found || (ok && id.Name == "iota")
-
-				return !found
-			})
-		}
-
-		if found {
-			return true
-		}
-	}
-
-	return false
 }
 
 // attachMethods joins each method to its receiver type's group; one whose type
@@ -203,17 +192,20 @@ func (b *extractionBuilder) attachMethods() {
 		}
 
 		b.add(grp, m.node)
-		grp.decls = append(grp.decls, m.decl)
+
+		decl := b.decl(m.decl, m.node)
+		if m.node.recv != nil {
+			decl.Type = m.node.recv.name
+		}
+
+		grp.decls = append(grp.decls, decl)
 	}
 }
 
-// member names a node the way move_symbol does: Type.method for a method.
-func member(n *usageNode) string {
-	if n.recv == nil {
-		return n.name
-	}
-
-	return n.recv.name + "." + n.name
+// isReceiverAlias reports whether t is the alias method n spells its receiver
+// with: the method belongs to the aliased type, not to a dependency on the alias.
+func (b *extractionBuilder) isReceiverAlias(n, t *usageNode) bool {
+	return n.recv != nil && t.aliasOf != "" && t.name == b.recvName[n]
 }
 
 func (b *extractionBuilder) units() []ExtractionUnit {
@@ -232,11 +224,11 @@ func (b *extractionBuilder) units() []ExtractionUnit {
 		for _, n := range grp.nodes {
 			for _, t := range n.out {
 				tg := b.groupOf[t]
-				if tg == nil || tg == grp {
+				if tg == nil || tg == grp || b.isReceiverAlias(n, t) {
 					continue
 				}
 
-				ref := ExtractionRef{To: out[index[tg]].Site, Name: member(t), Exported: ast.IsExported(t.name)}
+				ref := ExtractionRef{To: out[index[tg]].Site, Name: declName(t), Exported: ast.IsExported(t.name)}
 				if !slices.Contains(out[i].Refs, ref) {
 					out[i].Refs = append(out[i].Refs, ref)
 				}
@@ -256,8 +248,8 @@ func (b *extractionBuilder) units() []ExtractionUnit {
 			}
 
 			u := &out[index[tg]]
-			if !slices.Contains(u.TestRefs, member(t)) {
-				u.TestRefs = append(u.TestRefs, member(t))
+			if !slices.Contains(u.TestRefs, declName(t)) {
+				u.TestRefs = append(u.TestRefs, declName(t))
 			}
 		}
 	}

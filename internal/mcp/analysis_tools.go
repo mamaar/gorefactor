@@ -268,6 +268,16 @@ type MissingContextViolationItem struct {
 	ContextCalls []string `json:"context_calls"`
 }
 
+// rootRelativeAll drops the workspace root from the paths inside messages.
+func rootRelativeAll(root string, messages []string) []string {
+	out := make([]string, len(messages))
+	for i, m := range messages {
+		out[i] = strings.ReplaceAll(m, root+string(filepath.Separator), "")
+	}
+
+	return out
+}
+
 // packageFilter returns the names a declaration's package may go by when the
 // caller limits a detector to pkg, or nil for no limit. The joined path covers
 // a directory only another configuration holds a package in.
@@ -400,6 +410,7 @@ type ExtractionCandidateItem struct {
 	File        string   `json:"file"`
 	Line        int      `json:"line"`
 	Configs     []string `json:"configs,omitempty"`
+	Blockers    []string `json:"blockers"`
 }
 
 type DetectAlwaysNilErrorsInput struct {
@@ -1064,9 +1075,9 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "extraction_candidates",
-		Description: "List the top-level declarations of one package as candidates to move out of it, each with the in-package declarations it depends on, to split a package that has grown too large without creating an import cycle back to it. symbols is what to pass to move_symbol in one call; depends_on is symbols without the candidate's own names, and tier is its length: 0 depends on nothing in the package. Candidates are sorted by tier ascending, then lines descending, so the largest free-standing pieces come first. " +
-			"A type is one candidate with all its methods (a method is never a candidate or a symbol), and the names of one declaration (var a, b = f()) or of a const group using iota are one. init, main of package main and blank names are not listed. Dependencies are the references between the package's declarations in non-test files, followed transitively; a cycle makes each member list the others. Test declarations are not candidates and add no dependencies. " +
-			"lines sums the declarations of the whole set, methods included. used_by counts the declarations that stay in the package and reference the set, each of which will import the new package. needs_export lists the unexported members of the set (Type.method for a method) that code staying in the package references, tests included: they must be exported when moved. Unexported struct fields are not checked. " +
+		Description: "List the top-level declarations of one package as candidates to move out of it, each with the in-package declarations it depends on, to split a package that has grown too large without creating an import cycle back to it. symbols is what to pass to move_symbol in one call; depends_on is symbols without the candidate's own names, and tier is its length: 0 depends on nothing in the package. Candidates are sorted by tier ascending, then unblocked before blocked, then lines descending, so the largest free-standing pieces that can move come first. " +
+			"A type is one candidate with all its methods, including those declared on an alias of it (a method is never a candidate or a symbol), and the names of one declaration (var a, b = f()) or of a const group whose specs depend on each other (iota, implicit repetition), which move_symbol moves as one, are one. init, main of package main and blank names are not listed. Dependencies are the references between the package's declarations in non-test files, followed transitively; a cycle makes each member list the others. Test declarations are not candidates and add no dependencies. " +
+			"lines sums the declarations of the whole set, methods included. used_by counts the units that stay in the package and reference the set (a type with its methods is one), each of which will import the new package. needs_export lists the unexported members of the set (Type.method for a method) that code staying in the package references, tests included: they must be exported when moved. blockers lists, in move_symbol's wording, what would make it refuse to move symbols as one call: a method of a type in the set declared in a _test.go file, an unexported struct field used by code that stays, a type and an interface with an unexported method split by the move, a declaration in a generated file, and a declaration or reference that exists only outside the default build configuration. It is a cheap check, not a dry run: a candidate with no blockers can still be refused, and the set is the one each configuration sees alone. Blocked candidates sort after unblocked ones of the same tier. " +
 			"Dependencies are the union over build configurations, so a reference under one configuration counts; configs names the configurations declaring a candidate, omitted when all do. max_dependencies keeps only candidates with tier at or below it, since a large package yields hundreds. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error in type_error_files: dependencies in them may be missing. Read-only.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ExtractionCandidatesInput) (*mcpsdk.CallToolResult, any, error) {
 		state.RLock()
@@ -1105,6 +1116,7 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 				File:        relativeTo(ws.RootPath, c.File),
 				Line:        c.Line,
 				Configs:     c.Configs,
+				Blockers:    rootRelativeAll(ws.RootPath, c.Blockers),
 			}
 		}
 

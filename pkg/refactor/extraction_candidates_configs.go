@@ -36,6 +36,9 @@ type ExtractionCandidate struct {
 	Line        int
 	// Configs names the configurations that declare it; empty when all do.
 	Configs []string
+	// Blockers are the reasons move_symbol would refuse to move Symbols, in
+	// move_symbol's wording.
+	Blockers []string
 }
 
 // ExtractionCandidatesReport is the outcome of ExtractionCandidatesAcrossConfigs.
@@ -48,7 +51,7 @@ type ExtractionCandidatesReport struct {
 // package with what each drags along when moved, lowest-hanging first. The
 // dependencies are the union over build configurations.
 func (e *DefaultEngine) ExtractionCandidatesAcrossConfigs(req ExtractionCandidatesRequest) (*ExtractionCandidatesReport, error) {
-	run := &extractionRun{detectRun: newDetectRun(req.Packages), units: make(map[analysis.DeclSite]*mergedUnit)}
+	run := &extractionRun{detectRun: newDetectRun(req.Packages), units: make(map[declSite]*mergedUnit), blockers: make(map[declSite]map[string]bool), primaryDecls: make(map[declSite]bool), primaryRefs: make(map[primaryRef]bool)}
 
 	views, err := e.beginRun(run)
 	if err != nil {
@@ -68,19 +71,31 @@ func (e *DefaultEngine) ExtractionCandidatesAcrossConfigs(req ExtractionCandidat
 
 // mergedUnit is an analysis.ExtractionUnit as every configuration sees it.
 type mergedUnit struct {
-	site      analysis.DeclSite
+	site      declSite
 	line      int
 	candidate bool
 	names     map[string]bool
-	decls     map[analysis.DeclSite]int
+	decls     map[declSite]analysis.ExtractionDecl
 	refs      map[analysis.ExtractionRef]bool
 	testRefs  map[string]bool
 	configs   []string
 }
 
+// primaryRef is a reference between units the default configuration makes.
+type primaryRef struct {
+	from declSite
+	ref  analysis.ExtractionRef
+}
+
 type extractionRun struct {
 	detectRun
-	units map[analysis.DeclSite]*mergedUnit
+	units map[declSite]*mergedUnit
+	// blockers holds, per candidate, what move_symbol refuses in a
+	// configuration that holds the candidate's set.
+	blockers map[declSite]map[string]bool
+	// primaryDecls and primaryRefs are what the default configuration holds.
+	primaryDecls map[declSite]bool
+	primaryRefs  map[primaryRef]bool
 }
 
 func (r *extractionRun) visit(v *analysis.View) error {
@@ -89,24 +104,27 @@ func (r *extractionRun) visit(v *analysis.View) error {
 		return fmt.Errorf("no package has type information")
 	}
 
+	primary := v == r.views[0]
+
 	for _, pkg := range v.Workspace.Packages {
 		if !r.wanted(pkg) {
 			continue
 		}
 
-		for _, u := range analysis.ExtractionUnits(v.Workspace, v.Resolver, idx, pkg) {
-			m := r.units[u.Site]
-			if m == nil {
-				m = &mergedUnit{
-					site: u.Site, line: u.Line,
-					names: map[string]bool{}, decls: map[analysis.DeclSite]int{},
-					refs: map[analysis.ExtractionRef]bool{}, testRefs: map[string]bool{},
-				}
-				r.units[u.Site] = m
-			}
+		local := make(map[declSite]*mergedUnit)
+		raw := make(map[declSite]analysis.ExtractionUnit)
 
-			m.merge(u, v.Config.String())
+		for _, u := range analysis.ExtractionUnits(v.Workspace, v.Resolver, idx, pkg, wholeGroup) {
+			raw[u.Site] = u
+			mergeUnit(local, u, v.Config.String())
+			mergeUnit(r.units, u, v.Config.String())
+
+			if primary {
+				r.notePrimary(u)
+			}
 		}
+
+		r.collectBlockers(v.Workspace, pkg, raw, local)
 	}
 
 	r.collectTypeErrors(v)
@@ -115,7 +133,28 @@ func (r *extractionRun) visit(v *analysis.View) error {
 	return nil
 }
 
-func (m *mergedUnit) merge(u analysis.ExtractionUnit, config string) {
+func (r *extractionRun) notePrimary(u analysis.ExtractionUnit) {
+	for _, d := range u.Decls {
+		r.primaryDecls[d.Site] = true
+	}
+
+	for _, ref := range u.Refs {
+		r.primaryRefs[primaryRef{u.Site, ref}] = true
+	}
+}
+
+// mergeUnit folds u, as seen under config, into units.
+func mergeUnit(units map[declSite]*mergedUnit, u analysis.ExtractionUnit, config string) {
+	m := units[u.Site]
+	if m == nil {
+		m = &mergedUnit{
+			site: u.Site, line: u.Line,
+			names: map[string]bool{}, decls: map[declSite]analysis.ExtractionDecl{},
+			refs: map[analysis.ExtractionRef]bool{}, testRefs: map[string]bool{},
+		}
+		units[u.Site] = m
+	}
+
 	m.candidate = m.candidate || u.Candidate
 	m.configs = append(m.configs, config)
 
@@ -124,7 +163,7 @@ func (m *mergedUnit) merge(u analysis.ExtractionUnit, config string) {
 	}
 
 	for _, d := range u.Decls {
-		m.decls[d.Site] = d.Lines
+		m.decls[d.Site] = d
 	}
 
 	for _, ref := range u.Refs {
@@ -136,6 +175,27 @@ func (m *mergedUnit) merge(u analysis.ExtractionUnit, config string) {
 	}
 }
 
+// closureOf returns the sites of the units head references, transitively, and head.
+func closureOf(units map[declSite]*mergedUnit, head declSite) map[declSite]bool {
+	set := map[declSite]bool{head: true}
+
+	for todo := []*mergedUnit{units[head]}; len(todo) > 0; {
+		cur := todo[0]
+		todo = todo[1:]
+
+		for ref := range cur.refs {
+			next := units[ref.To]
+			if next != nil && !set[ref.To] {
+				set[ref.To] = true
+
+				todo = append(todo, next)
+			}
+		}
+	}
+
+	return set
+}
+
 func (r *extractionRun) report(req ExtractionCandidatesRequest, views []*analysis.View) *ExtractionCandidatesReport {
 	out := &ExtractionCandidatesReport{DetectHeader: r.header(views)}
 
@@ -144,7 +204,7 @@ func (r *extractionRun) report(req ExtractionCandidatesRequest, views []*analysi
 			continue
 		}
 
-		c := r.candidate(m)
+		c := r.candidate(m, len(views) > 1)
 		if len(c.Configs) == len(views) {
 			c.Configs = nil
 		}
@@ -155,7 +215,14 @@ func (r *extractionRun) report(req ExtractionCandidatesRequest, views []*analysi
 	}
 
 	slices.SortFunc(out.Candidates, func(a, b ExtractionCandidate) int {
-		return cmp.Or(cmp.Compare(a.Tier, b.Tier), cmp.Compare(b.Lines, a.Lines), cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line))
+		return cmp.Or(
+			cmp.Compare(a.Tier, b.Tier),
+			cmp.Compare(blockedRank(a), blockedRank(b)),
+			cmp.Compare(b.Lines, a.Lines),
+			cmp.Compare(a.File, b.File),
+			cmp.Compare(a.Line, b.Line),
+			slices.Compare(a.Symbols, b.Symbols),
+		)
 	})
 
 	return out
@@ -163,22 +230,8 @@ func (r *extractionRun) report(req ExtractionCandidatesRequest, views []*analysi
 
 // candidate computes what moving m drags along: the units it references,
 // transitively.
-func (r *extractionRun) candidate(m *mergedUnit) ExtractionCandidate {
-	set := map[analysis.DeclSite]bool{m.site: true}
-
-	for todo := []*mergedUnit{m}; len(todo) > 0; {
-		cur := todo[0]
-		todo = todo[1:]
-
-		for ref := range cur.refs {
-			next := r.units[ref.To]
-			if next != nil && !set[ref.To] {
-				set[ref.To] = true
-
-				todo = append(todo, next)
-			}
-		}
-	}
+func (r *extractionRun) candidate(m *mergedUnit, multiConfig bool) ExtractionCandidate {
+	set := closureOf(r.units, m.site)
 
 	symbols := make(map[string]bool)
 	own := make(map[string]bool)
@@ -192,8 +245,8 @@ func (r *extractionRun) candidate(m *mergedUnit) ExtractionCandidate {
 			own[n] = own[n] || site == m.site
 		}
 
-		for _, l := range u.decls {
-			lines += l
+		for _, d := range u.decls {
+			lines += d.Lines
 		}
 
 		for n := range u.testRefs {
@@ -202,6 +255,8 @@ func (r *extractionRun) candidate(m *mergedUnit) ExtractionCandidate {
 	}
 
 	usedBy := 0
+
+	var outside []string
 
 	for site, u := range r.units {
 		if set[site] {
@@ -220,10 +275,33 @@ func (r *extractionRun) candidate(m *mergedUnit) ExtractionCandidate {
 			if !ref.Exported {
 				needsExport[ref.Name] = true
 			}
+
+			if multiConfig && !r.primaryRefs[primaryRef{site, ref}] {
+				outside = append(outside, fmt.Sprintf("%s is referenced from %s, outside the default build configuration; the move would not rewrite it", ref.Name, u.site.File))
+			}
 		}
 
 		if used {
 			usedBy++
+		}
+	}
+
+	blockers := r.blockers[m.site]
+	if blockers == nil {
+		blockers = make(map[string]bool)
+	}
+
+	for _, b := range outside {
+		blockers[b] = true
+	}
+
+	if multiConfig {
+		for site := range set {
+			for _, d := range r.units[site].decls {
+				if !r.primaryDecls[d.Site] {
+					blockers[fmt.Sprintf("%s is declared only outside the default build configuration, in %s", d.Name, d.Site.File)] = true
+				}
+			}
 		}
 	}
 
@@ -234,11 +312,22 @@ func (r *extractionRun) candidate(m *mergedUnit) ExtractionCandidate {
 		NeedsExport: slices.AppendSeq([]string{}, maps.Keys(needsExport)),
 		Line:        m.line,
 		Configs:     m.configs,
+		Blockers:    slices.AppendSeq([]string{}, maps.Keys(blockers)),
 	}
 	c.DependsOn = slices.DeleteFunc(slices.Clone(c.Symbols), func(n string) bool { return own[n] })
 	slices.Sort(c.NeedsExport)
+	slices.Sort(c.Blockers)
 	c.Tier = len(c.DependsOn)
 	c.File = m.site.File
 
 	return c
+}
+
+// blockedRank sorts a candidate move_symbol would refuse after one it would not.
+func blockedRank(c ExtractionCandidate) int {
+	if len(c.Blockers) > 0 {
+		return 1
+	}
+
+	return 0
 }

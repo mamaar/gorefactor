@@ -150,7 +150,7 @@ func (r *variadicsRun) visit(v *analysis.View) error {
 }
 
 func (r *variadicsRun) addDecl(v *analysis.View, fn *gotypes.Func, decl *funcDecl, key declKey) {
-	site := declSite{decl.File.Path, fn.Pos()}
+	site := declSite{File: decl.File.Path, Pos: fn.Pos()}
 
 	d := r.decls[site]
 	if d == nil {

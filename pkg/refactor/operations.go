@@ -869,31 +869,10 @@ func filesByPath(files map[string]*types.File, first *types.File) []*types.File 
 // in an in-package test file cannot move and is refused.
 func methodEntries(ws *types.Workspace, typ *movingSymbol) ([]*movingSymbol, error) {
 	typeName := typ.sym.Name
-	for _, file := range filesByPath(typ.pkg.TestFiles, nil) {
-		if file.AST == nil || file.AST.Name.Name != typ.pkg.Name {
-			continue
-		}
 
-		for _, decl := range file.AST.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok || receiverTypeName(fd) != typeName {
-				continue
-			}
-
-			rel, err := filepath.Rel(ws.RootPath, file.Path)
-			if err != nil {
-				rel = file.Path
-			}
-
-			line := ws.FileSet.Position(fd.Name.Pos()).Line
-
-			return nil, &types.RefactorError{
-				Type:    types.InvalidOperation,
-				Message: fmt.Sprintf("cannot move %s: its method %s is declared in the test file %s:%d; move or remove it first", typeName, fd.Name.Name, filepath.ToSlash(rel), line),
-				File:    file.Path,
-				Line:    line,
-			}
-		}
+	err := testMethodRefusal(ws, typ.pkg, typeName)
+	if err != nil {
+		return nil, err
 	}
 
 	files := filesByPath(typ.pkg.Files, typ.file)
@@ -916,6 +895,39 @@ func methodEntries(ws *types.Workspace, typ *movingSymbol) ([]*movingSymbol, err
 	}
 
 	return methods, nil
+}
+
+// testMethodRefusal refuses moving typeName when one of its methods is declared
+// in an in-package test file.
+func testMethodRefusal(ws *types.Workspace, pkg *types.Package, typeName string) error {
+	for _, file := range filesByPath(pkg.TestFiles, nil) {
+		if file.AST == nil || file.AST.Name.Name != pkg.Name {
+			continue
+		}
+
+		for _, decl := range file.AST.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || receiverTypeName(fd) != typeName {
+				continue
+			}
+
+			rel, err := filepath.Rel(ws.RootPath, file.Path)
+			if err != nil {
+				rel = file.Path
+			}
+
+			line := ws.FileSet.Position(fd.Name.Pos()).Line
+
+			return &types.RefactorError{
+				Type:    types.InvalidOperation,
+				Message: fmt.Sprintf("cannot move %s: its method %s is declared in the test file %s:%d; move or remove it first", typeName, fd.Name.Name, filepath.ToSlash(rel), line),
+				File:    file.Path,
+				Line:    line,
+			}
+		}
+	}
+
+	return nil
 }
 
 // movingAt returns the moved symbol whose removal covers offset in file.

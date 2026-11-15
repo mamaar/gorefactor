@@ -145,7 +145,7 @@ func (r *unusedParamsRun) visit(v *analysis.View) error {
 		}
 
 		key := declKey{symbol, fn.Pkg().Name()}
-		site := declSite{decl.File.Path, fn.Pos()}
+		site := declSite{File: decl.File.Path, Pos: fn.Pos()}
 		r.declaredIn[site] = append(r.declaredIn[site], v.Config.String())
 		r.recordSignature(key, declShape(decl))
 		old := (&ChangeSignatureOperation{}).extractParamList(decl.Decl.Type.Params)
@@ -301,7 +301,7 @@ func (r *unusedParamsRun) blockersOf(pk paramKey) map[string]blocker {
 }
 
 func (r *unusedParamsRun) add(v *analysis.View, fn *gotypes.Func, decl *funcDecl, key declKey, i int, name *ast.Ident, reason string, propagate bool) {
-	site := declSite{decl.File.Path, fn.Pos()}
+	site := declSite{File: decl.File.Path, Pos: fn.Pos()}
 
 	d := r.decls[site]
 	if d == nil {

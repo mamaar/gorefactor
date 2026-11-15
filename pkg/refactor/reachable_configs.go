@@ -230,7 +230,7 @@ func (r *reachableRun) recordBodiless(bodiless []analysis.BodilessPackage, v *an
 
 func (r *reachableRun) recordSites(sites []analysis.ReachableSite, v *analysis.View) {
 	for _, s := range sites {
-		key := declSite{s.File, s.Pos}
+		key := declSite{File: s.File, Pos: s.Pos}
 
 		f := r.found[key]
 		if f == nil {

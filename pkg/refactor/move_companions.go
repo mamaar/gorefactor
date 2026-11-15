@@ -343,22 +343,8 @@ func (op *MoveSymbolOperation) checkForStrandedReferences(ws *types.Workspace, m
 		}
 
 		checked[m.pkg] = true
-		var found []strandedUse
 
-		for ident, obj := range m.pkg.TypesInfo.Uses {
-			if !unexportedMember(obj, m.pkg.TypesPkg) {
-				continue
-			}
-
-			use := ws.FileSet.Position(ident.Pos())
-			def := ws.FileSet.Position(obj.Pos())
-
-			user, owner := movingAt(moving, use.Filename, use.Offset), movingAt(moving, def.Filename, def.Offset)
-			if (user == nil) != (owner == nil) {
-				found = append(found, strandedUse{user: user, owner: owner, name: obj.Name(), file: use.Filename, line: use.Line, offset: use.Offset})
-			}
-		}
-
+		found := strandedUses(ws, m.pkg, moving)
 		if len(found) > 0 {
 			return found[firstStrandedUse(found)].error(m.pkg.Path)
 		}
@@ -447,11 +433,35 @@ func firstUnexportedMethod(iface *gotypes.Interface, pkg *gotypes.Package) *goty
 	return first
 }
 
+// strandedUses returns the uses of an unexported member of pkg that cross the
+// boundary of the moved declarations.
+func strandedUses(ws *types.Workspace, pkg *types.Package, moving []*movingSymbol) []strandedUse {
+	var found []strandedUse
+
+	for ident, obj := range pkg.TypesInfo.Uses {
+		if !unexportedMember(obj, pkg.TypesPkg) {
+			continue
+		}
+
+		use := ws.FileSet.Position(ident.Pos())
+		def := ws.FileSet.Position(obj.Pos())
+
+		user, owner := movingAt(moving, use.Filename, use.Offset), movingAt(moving, def.Filename, def.Offset)
+		if (user == nil) != (owner == nil) {
+			v, isVar := obj.(*gotypes.Var)
+			found = append(found, strandedUse{user: user, owner: owner, name: obj.Name(), field: isVar && v.IsField(), file: use.Filename, line: use.Line, offset: use.Offset})
+		}
+	}
+
+	return found
+}
+
 // strandedUse is a use of an unexported member that crosses the boundary of
 // the moved declarations: exactly one of user and owner moves.
 type strandedUse struct {
 	user, owner *movingSymbol
 	name        string
+	field       bool
 	file        string
 	line        int
 	offset      int
