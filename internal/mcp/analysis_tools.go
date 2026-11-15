@@ -383,6 +383,25 @@ type DependencyModuleItem struct {
 	OtherMajors    []string                `json:"other_majors,omitempty"`
 }
 
+// --- extraction_candidates ---
+
+type ExtractionCandidatesInput struct {
+	Package         string `json:"package" jsonschema:"the package to split: a path, directory or import path"`
+	MaxDependencies *int   `json:"max_dependencies,omitempty" jsonschema:"keep only the candidates that drag along at most this many declarations; 0 keeps those depending on nothing in the package"`
+}
+
+type ExtractionCandidateItem struct {
+	Symbols     []string `json:"symbols"`
+	DependsOn   []string `json:"depends_on"`
+	Tier        int      `json:"tier"`
+	Lines       int      `json:"lines"`
+	UsedBy      int      `json:"used_by"`
+	NeedsExport []string `json:"needs_export"`
+	File        string   `json:"file"`
+	Line        int      `json:"line"`
+	Configs     []string `json:"configs,omitempty"`
+}
+
 type DetectAlwaysNilErrorsInput struct {
 	Package string `json:"package,omitempty" jsonschema:"list only the declarations of this package; calls are still counted across the workspace"`
 }
@@ -1037,6 +1056,61 @@ func registerAnalysisTools(s *mcpsdk.Server, state *MCPServer) {
 		out := map[string]any{
 			"dependencies": items,
 			"total_count":  len(items),
+		}
+		addDetectHeader(out, ws, report.DetectHeader)
+
+		return textResult(out), nil, nil
+	})
+
+	mcpsdk.AddTool(s, &mcpsdk.Tool{
+		Name: "extraction_candidates",
+		Description: "List the top-level declarations of one package as candidates to move out of it, each with the in-package declarations it depends on, to split a package that has grown too large without creating an import cycle back to it. symbols is what to pass to move_symbol in one call; depends_on is symbols without the candidate's own names, and tier is its length: 0 depends on nothing in the package. Candidates are sorted by tier ascending, then lines descending, so the largest free-standing pieces come first. " +
+			"A type is one candidate with all its methods (a method is never a candidate or a symbol), and the names of one declaration (var a, b = f()) or of a const group using iota are one. init, main of package main and blank names are not listed. Dependencies are the references between the package's declarations in non-test files, followed transitively; a cycle makes each member list the others. Test declarations are not candidates and add no dependencies. " +
+			"lines sums the declarations of the whole set, methods included. used_by counts the declarations that stay in the package and reference the set, each of which will import the new package. needs_export lists the unexported members of the set (Type.method for a method) that code staying in the package references, tests included: they must be exported when moved. Unexported struct fields are not checked. " +
+			"Dependencies are the union over build configurations, so a reference under one configuration counts; configs names the configurations declaring a candidate, omitted when all do. max_dependencies keeps only candidates with tier at or below it, since a large package yields hundreds. Files no configuration type-checks are listed in uncovered_files, and non-test files with a type error in type_error_files: dependencies in them may be missing. Read-only.",
+	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in ExtractionCandidatesInput) (*mcpsdk.CallToolResult, any, error) {
+		state.RLock()
+		defer state.RUnlock()
+
+		ws, err := state.GetWorkspace()
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		if in.MaxDependencies != nil && *in.MaxDependencies < 0 {
+			return errResult(fmt.Errorf("max_dependencies must not be negative, got %d", *in.MaxDependencies)), nil, nil
+		}
+
+		_, found := ws.Packages[types.ResolvePackagePath(ws, in.Package)]
+		if in.Package == "" || !found {
+			return errResult(fmt.Errorf("package %q not found in the workspace", in.Package)), nil, nil
+		}
+
+		request := refactor.ExtractionCandidatesRequest{Packages: packageFilter(ws, in.Package), MaxDependencies: in.MaxDependencies}
+
+		report, err := state.GetEngine().ExtractionCandidatesAcrossConfigs(request)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		items := make([]ExtractionCandidateItem, len(report.Candidates))
+		for i, c := range report.Candidates {
+			items[i] = ExtractionCandidateItem{
+				Symbols:     c.Symbols,
+				DependsOn:   c.DependsOn,
+				Tier:        c.Tier,
+				Lines:       c.Lines,
+				UsedBy:      c.UsedBy,
+				NeedsExport: c.NeedsExport,
+				File:        relativeTo(ws.RootPath, c.File),
+				Line:        c.Line,
+				Configs:     c.Configs,
+			}
+		}
+
+		out := map[string]any{
+			"candidates":  items,
+			"total_count": len(items),
 		}
 		addDetectHeader(out, ws, report.DetectHeader)
 
