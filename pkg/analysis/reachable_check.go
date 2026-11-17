@@ -266,7 +266,7 @@ func (sc *sourceChecker) check(pkg *types.Package, files []*ast.File, imp gotype
 		Instances:  make(map[*ast.Ident]gotypes.Instance),
 	}
 	var first error
-	conf := NewTypesConfig(imp, func(err error) {
+	conf := NewTypesConfig(imp, GoVersion(sc.ws), func(err error) {
 		if first == nil {
 			first = err
 		}

@@ -7,12 +7,14 @@ import (
 	"go/types"
 	"maps"
 	"reflect"
+	"runtime"
 	"slices"
 	"sort"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ast/inspector"
 
+	wsanalysis "github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
 	wstypes "github.com/mamaar/gorefactor/pkg/types"
 )
@@ -48,10 +50,16 @@ func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunRes
 		})
 	}
 
+	rs := &runState{
+		ws:      ws,
+		facts:   make(map[factKey]analysis.Fact),
+		results: make(map[resultKey]any),
+	}
+
 	combined := &RunResult{}
 
-	for _, pkg := range packages {
-		rr, err := RunPackage(ws, a, pkg)
+	for _, pkg := range dependenciesFirst(ws, packages) {
+		rr, err := rs.runPackage(a, pkg)
 		if err != nil {
 			return nil, fmt.Errorf("run: %w", err)
 		}
@@ -92,11 +100,71 @@ func mergeResults(acc, next any) any {
 	return next
 }
 
-// RunPackage executes an analyzer against a single workspace package.
-func RunPackage(ws *wstypes.Workspace, a *analysis.Analyzer, pkg *wstypes.Package) (*RunResult, error) {
+// runState is the state shared by the packages of one Run call.
+type runState struct {
+	ws *wstypes.Workspace
+	// facts holds object facts exported so far, so a package sees the facts
+	// of the workspace packages it imports.
+	facts map[factKey]analysis.Fact
+	// results caches required analyzers' results, one computation per package.
+	results map[resultKey]any
+}
+
+type factKey struct {
+	analyzer *analysis.Analyzer
+	obj      types.Object
+	typ      reflect.Type
+}
+
+type resultKey struct {
+	pkg      *wstypes.Package
+	analyzer *analysis.Analyzer
+}
+
+// dependenciesFirst orders pkgs so that a package comes after the workspace
+// packages it imports; ties and import cycles keep the input order.
+func dependenciesFirst(ws *wstypes.Workspace, pkgs []*wstypes.Package) []*wstypes.Package {
+	edges := wsanalysis.ImportGraph(ws).Union()
+	selected := make(map[*wstypes.Package]bool, len(pkgs))
+
+	for _, pkg := range pkgs {
+		selected[pkg] = true
+	}
+
+	ordered := make([]*wstypes.Package, 0, len(pkgs))
+	visited := make(map[string]bool, len(pkgs))
+
+	var visit func(path string)
+
+	visit = func(path string) {
+		if visited[path] {
+			return
+		}
+
+		visited[path] = true
+
+		for _, dep := range edges[path] {
+			visit(dep)
+		}
+
+		pkg := ws.Packages[path]
+		if selected[pkg] {
+			ordered = append(ordered, pkg)
+		}
+	}
+
+	for _, pkg := range pkgs {
+		visit(pkg.Path)
+	}
+
+	return ordered
+}
+
+// runPackage executes an analyzer against a single workspace package.
+func (rs *runState) runPackage(a *analysis.Analyzer, pkg *wstypes.Package) (*RunResult, error) {
 	var diags []analysis.Diagnostic
 
-	pass, err := buildPass(ws, pkg, a, func(d analysis.Diagnostic) {
+	pass, err := rs.buildPass(pkg, a, func(d analysis.Diagnostic) {
 		diags = append(diags, d)
 	})
 	if err != nil {
@@ -111,7 +179,9 @@ func RunPackage(ws *wstypes.Workspace, a *analysis.Analyzer, pkg *wstypes.Packag
 	return &RunResult{Result: res, Diagnostics: diags}, nil
 }
 
-func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer, report func(analysis.Diagnostic)) (*analysis.Pass, error) {
+func (rs *runState) buildPass(pkg *wstypes.Package, a *analysis.Analyzer, report func(analysis.Diagnostic)) (*analysis.Pass, error) {
+	ws := rs.ws
+
 	// Test files of both the package and its x_test package go in one pass:
 	// TypesInfo covers both, and no analyzer reads pass.Pkg.
 	srcFiles := slices.Concat(slices.Collect(maps.Values(pkg.Files)), slices.Collect(maps.Values(pkg.TestFiles)))
@@ -139,6 +209,30 @@ func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer
 		TypesInfo: typesInfo,
 		Report:    report,
 		ResultOf:  make(map[*analysis.Analyzer]any),
+
+		TypesSizes: types.SizesFor("gc", runtime.GOARCH),
+		ReadFile: func(filename string) ([]byte, error) {
+			for _, f := range srcFiles {
+				if f.Path == filename {
+					return f.OriginalContent, nil
+				}
+			}
+
+			return nil, fmt.Errorf("%s is not a file of package %s", filename, pkg.ImportPath)
+		},
+		ExportObjectFact: func(obj types.Object, fact analysis.Fact) {
+			rs.facts[factKey{a, obj, reflect.TypeOf(fact)}] = fact
+		},
+		ImportObjectFact: func(obj types.Object, fact analysis.Fact) bool {
+			stored, ok := rs.facts[factKey{a, obj, reflect.TypeOf(fact)}]
+			if !ok {
+				return false
+			}
+
+			reflect.ValueOf(fact).Elem().Set(reflect.ValueOf(stored).Elem())
+
+			return true
+		},
 	}
 
 	// Build file content map for filedata.
@@ -155,15 +249,21 @@ func buildPass(ws *wstypes.Workspace, pkg *wstypes.Package, a *analysis.Analyzer
 		case req.Name == "inspect":
 			pass.ResultOf[req] = inspector.New(files)
 		default:
-			// Run required analyzer recursively.
-			reqPass, err := buildPass(ws, pkg, req, func(analysis.Diagnostic) {})
-			if err != nil {
-				return nil, err
-			}
+			key := resultKey{pkg, req}
 
-			res, err := req.Run(reqPass)
-			if err != nil {
-				return nil, err
+			res, ok := rs.results[key]
+			if !ok {
+				reqPass, err := rs.buildPass(pkg, req, func(analysis.Diagnostic) {})
+				if err != nil {
+					return nil, err
+				}
+
+				res, err = req.Run(reqPass)
+				if err != nil {
+					return nil, err
+				}
+
+				rs.results[key] = res
 			}
 
 			pass.ResultOf[req] = res

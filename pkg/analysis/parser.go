@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -906,13 +907,31 @@ func (p *GoParser) Importer() gotypes.Importer {
 
 // NewTypesConfig returns the go/types.Config used for every workspace
 // type-check. FakeImportC makes cgo files check cleanly; C.x expressions get
-// no type information and never appear in Info.Uses.
-func NewTypesConfig(importer gotypes.Importer, onError func(error)) gotypes.Config {
+// no type information and never appear in Info.Uses. goVersion is the module's
+// language version ("go1.22"); empty means unrestricted and leaves
+// Info.FileVersions empty.
+func NewTypesConfig(importer gotypes.Importer, goVersion string, onError func(error)) gotypes.Config {
 	return gotypes.Config{
 		Importer:    importer,
 		Error:       onError,
 		FakeImportC: true,
+		GoVersion:   goVersion,
 	}
+}
+
+// GoVersion returns the language version from ws's go.mod `go` directive in
+// go/types form ("go1.22"), or "" when there is none.
+func GoVersion(ws *types.Workspace) string {
+	if ws.Module == nil {
+		return ""
+	}
+
+	mf, err := modfile.ParseLax("go.mod", []byte(ws.Module.GoMod), nil)
+	if err != nil || mf.Go == nil {
+		return ""
+	}
+
+	return "go" + mf.Go.Version
 }
 
 // maxTestExclusionPasses bounds how often the test files that carry errors
@@ -930,14 +949,16 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 	p.checkStack = append(p.checkStack, pkg)
 	defer func() { p.checkStack = p.checkStack[:len(p.checkStack)-1] }()
 
-	conf := NewTypesConfig(p.importer, errs.add)
+	conf := NewTypesConfig(p.importer, GoVersion(ws), errs.add)
 	info := &gotypes.Info{
-		Types:      make(map[ast.Expr]gotypes.TypeAndValue),
-		Defs:       make(map[*ast.Ident]gotypes.Object),
-		Uses:       make(map[*ast.Ident]gotypes.Object),
-		Implicits:  make(map[ast.Node]gotypes.Object),
-		Scopes:     make(map[ast.Node]*gotypes.Scope),
-		Selections: make(map[*ast.SelectorExpr]*gotypes.Selection),
+		Types:        make(map[ast.Expr]gotypes.TypeAndValue),
+		Defs:         make(map[*ast.Ident]gotypes.Object),
+		Uses:         make(map[*ast.Ident]gotypes.Object),
+		Implicits:    make(map[ast.Node]gotypes.Object),
+		Scopes:       make(map[ast.Node]*gotypes.Scope),
+		Selections:   make(map[*ast.SelectorExpr]*gotypes.Selection),
+		Instances:    make(map[*ast.Ident]gotypes.Instance),
+		FileVersions: make(map[*ast.File]string),
 	}
 	typesPkg, err := conf.Check(pkg.ImportPath, ws.FileSet, files, info)
 
