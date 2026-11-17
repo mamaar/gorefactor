@@ -191,7 +191,8 @@ func unusedImportRemovals(ws *types.Workspace, changes []types.Change, errs []st
 				}
 			}
 
-			if len(gone) == len(gd.Specs) {
+			// Another change inserting into a parenthesized decl must keep its parentheses.
+			if len(gone) == len(gd.Specs) && (!gd.Lparen.IsValid() || !insertedInside(f.Path, offset(gd.Pos()), offset(gd.End()), changes)) {
 				removals = append(removals, removalRange(f.Path, offset(gd.Pos()), offset(gd.End()), slices.Concat(changes, removals))...)
 				continue
 			}
@@ -203,7 +204,12 @@ func unusedImportRemovals(ws *types.Workspace, changes []types.Change, errs []st
 				}
 
 				// Take the line break before the spec so the group keeps no gap.
-				start := offset(spec.Pos())
+				first := spec.Pos()
+				if spec.Doc != nil {
+					first = spec.Doc.Pos()
+				}
+
+				start := offset(first)
 				if nl := bytes.LastIndexByte(f.OriginalContent[:start], '\n'); len(bytes.TrimSpace(f.OriginalContent[nl+1:start])) == 0 {
 					start = nl
 				}
@@ -214,6 +220,13 @@ func unusedImportRemovals(ws *types.Workspace, changes []types.Change, errs []st
 	}
 
 	return removals
+}
+
+// insertedInside reports whether a change of file inserts strictly inside [a, b).
+func insertedInside(file string, a, b int, changes []types.Change) bool {
+	return slices.ContainsFunc(changes, func(c types.Change) bool {
+		return c.File == file && c.Start == c.End && a < c.Start && c.Start < b
+	})
 }
 
 // removalRange deletes [a, b) of file around any insertions strictly inside it,

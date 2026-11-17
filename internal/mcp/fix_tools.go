@@ -61,7 +61,7 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		Description: "Run go fix's modernizers in-process and apply their suggested fixes through the refactoring plan pipeline (dry_run gives diffs). " +
 			"Runs every analyzer in golang.org/x/tools modernize.Suite (e.g. any, rangeint, minmax, slicescontains, mapsloop, forvar) plus `inline`, or the subset named in `analyzers`; appendclipped, bloop, fmtappendf and slicesdelete are left out of the default set and run only when named. " +
 			"`inline` applies `//go:fix inline` directives on functions declared in the workspace, not ones from dependencies. buildtag and hostport are not covered. Every fix is type-checked before it is applied; one whose result would not type-check is listed under `skipped` with the error. " +
-			"Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up. Packages with type errors are not analyzed and are listed under `skipped_packages`.",
+			"Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up. Packages, and test files, with type errors are not analyzed and are listed under `skipped_packages`.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RunGoFixInput) (*mcpsdk.CallToolResult, any, error) {
 		selected, err := selectModernizers(in.Analyzers)
 		if err != nil {

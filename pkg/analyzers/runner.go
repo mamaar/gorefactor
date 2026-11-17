@@ -25,7 +25,9 @@ type RunResult struct {
 	Result      any
 	Diagnostics []analysis.Diagnostic
 	// Skipped lists the import paths of packages left unanalyzed because they
-	// have type errors and the analyzer does not set RunDespiteErrors.
+	// have type errors and the analyzer does not set RunDespiteErrors, and the
+	// test files of analyzed packages it left out for the same reason, as
+	// "import/path (file_test.go)".
 	Skipped []string
 }
 
@@ -172,11 +174,12 @@ type unit struct {
 	external bool
 }
 
-// unitsOf splits pkg into its units, leaving out test files that were dropped
-// from type-checking. failed reports whether pkg's own check failed, in which
+// unitsOf splits pkg into its units. Test files that were dropped from
+// type-checking are left out, unless a runs despite errors and takes them with
+// the partial type information they have. failed reports whether pkg's own check failed, in which
 // case its analyzer-visible information is incomplete; externalFailed reports
 // external test files whose check failed, leaving them no type information.
-func unitsOf(pkg *wstypes.Package) (units []*unit, failed, externalFailed bool) {
+func unitsOf(pkg *wstypes.Package, a *analysis.Analyzer) (units []*unit, failed, externalFailed bool) {
 	typesPkg := pkg.TypesPkg
 	if typesPkg == nil {
 		typesPkg = types.NewPackage(pkg.ImportPath, pkg.Name)
@@ -198,7 +201,7 @@ func unitsOf(pkg *wstypes.Package) (units []*unit, failed, externalFailed bool) 
 		f := pkg.TestFiles[name]
 
 		switch {
-		case f.AST == nil, pkg.ExcludedTestFiles[name] != nil:
+		case f.AST == nil, pkg.ExcludedTestFiles[name] != nil && !a.RunDespiteErrors:
 		case pkg.ExternalTestTypesPkg != nil && f.AST.Name.Name != pkg.Name:
 			ext.files = append(ext.files, f)
 		default:
@@ -293,7 +296,7 @@ func importEdges(ws *wstypes.Workspace) map[string][]string {
 
 // runPackage executes an analyzer against the units of a single workspace package.
 func (rs *runState) runPackage(a *analysis.Analyzer, pkg *wstypes.Package) (*RunResult, error) {
-	units, failed, externalFailed := unitsOf(pkg)
+	units, failed, externalFailed := unitsOf(pkg, a)
 	if failed && !a.RunDespiteErrors {
 		return &RunResult{Skipped: []string{pkg.ImportPath}}, nil
 	}
@@ -301,6 +304,12 @@ func (rs *runState) runPackage(a *analysis.Analyzer, pkg *wstypes.Package) (*Run
 	combined := &RunResult{}
 	if externalFailed {
 		combined.Skipped = []string{pkg.ImportPath + "_test"}
+	}
+
+	if !a.RunDespiteErrors {
+		for _, name := range slices.Sorted(maps.Keys(pkg.ExcludedTestFiles)) {
+			combined.Skipped = append(combined.Skipped, fmt.Sprintf("%s (%s)", pkg.ImportPath, name))
+		}
 	}
 
 	for _, u := range units {

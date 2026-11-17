@@ -2,11 +2,13 @@ package mcp
 
 import (
 	"context"
+	"go/parser"
 	"go/token"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -172,4 +174,64 @@ func loadFixWorkspace(t *testing.T, files map[string]string) (*MCPServer, *types
 	state.GetEngine().EnsureTypeCheckedPackage(ws, "")
 
 	return state, ws
+}
+
+// applyChanges applies byte-offset changes to src, last first.
+func applyChanges(src string, changes []types.Change) string {
+	sorted := slices.SortedFunc(slices.Values(changes), func(a, b types.Change) int { return b.Start - a.Start })
+	for _, c := range sorted {
+		src = src[:c.Start] + c.NewText + src[c.End:]
+	}
+
+	return src
+}
+
+func TestUnusedImportRemovals_KeepsParenthesesAroundInsertionAndDropsDocComment(t *testing.T) {
+	for name, tc := range map[string]struct{ spec, path string }{
+		"plain":   {`"sort"`, "sort"},
+		"renamed": {`srt "sort"`, "sort"},
+		"dot":     {`. "sort"`, "sort"},
+	} {
+		t.Run(name+" alone in parentheses", func(t *testing.T) {
+			src := "package p\n\nimport (\n\t" + tc.spec + "\n)\n"
+			_, ws := loadFixWorkspace(t, map[string]string{"go.mod": "module example.com/m\n\ngo 1.22\n", "p/p.go": src})
+			file := onlyFile(ws)
+			at := strings.Index(src, tc.spec)
+			insert := types.Change{File: file, Start: at, End: at, NewText: "\"slices\"\n\t"}
+
+			got := unusedImportRemovals(ws, []types.Change{insert}, []string{file + `:4:2: "` + tc.path + `" imported and not used`})
+
+			out := applyChanges(src, append(got, insert))
+			if _, err := parser.ParseFile(token.NewFileSet(), "p.go", out, parser.ImportsOnly); err != nil {
+				t.Errorf("result does not parse: %v\n%s", err, out)
+			}
+
+			if !strings.Contains(out, "import (") || !strings.Contains(out, "\"slices\"") || strings.Contains(out, "sort") {
+				t.Errorf("result = %q, want the parenthesized decl holding only slices", out)
+			}
+		})
+	}
+
+	t.Run("doc comment goes with its spec", func(t *testing.T) {
+		src := "package p\n\nimport (\n\t\"fmt\"\n\t// sort is for sorting\n\t\"sort\" // trailing\n)\n\nvar _ = fmt.Sprint\n"
+		_, ws := loadFixWorkspace(t, map[string]string{"go.mod": "module example.com/m\n\ngo 1.22\n", "p/p.go": src})
+		file := onlyFile(ws)
+
+		got := unusedImportRemovals(ws, nil, []string{file + `:6:2: "sort" imported and not used`})
+
+		out := applyChanges(src, got)
+		if strings.Contains(out, "sorting") || strings.Contains(out, "trailing") || strings.Contains(out, "sort\"") {
+			t.Errorf("result = %q, want the spec and both its comments gone", out)
+		}
+	})
+}
+
+func onlyFile(ws *types.Workspace) string {
+	for _, pkg := range ws.Packages {
+		for _, f := range pkg.Files {
+			return f.Path
+		}
+	}
+
+	return ""
 }

@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"golang.org/x/tools/go/analysis"
+
 	"github.com/mamaar/gorefactor/pkg/analyzers"
 	"github.com/mamaar/gorefactor/pkg/analyzers/errorwrap"
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -89,5 +91,70 @@ func TestRun_ExternalTestPackageWithoutTypeInfoIsListedAsSkipped(t *testing.T) {
 
 	if !slices.Equal(rr.Skipped, []string{"test/lib_test"}) {
 		t.Fatalf("skipped = %v, want [test/lib_test]", rr.Skipped)
+	}
+}
+
+func excludedTestFilePackage(t *testing.T) *types.Workspace {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	pkg := &types.Package{
+		Name:              "lib",
+		Path:              "test/lib",
+		ImportPath:        "test/lib",
+		Files:             map[string]*types.File{},
+		TestFiles:         map[string]*types.File{},
+		ExcludedTestFiles: map[string]error{"bad_test.go": gotypes.Error{Msg: "undefined: x"}},
+	}
+
+	for _, name := range []string{"good_test.go", "bad_test.go"} {
+		astFile, err := parser.ParseFile(fset, name, "package lib\n", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pkg.TestFiles[name] = &types.File{Path: name, AST: astFile, Package: pkg}
+	}
+
+	return &types.Workspace{Packages: map[string]*types.Package{"test/lib": pkg}, FileSet: fset}
+}
+
+func fileCounter(despiteErrors bool) (*analysis.Analyzer, *int) {
+	var seen int
+
+	return &analysis.Analyzer{
+		Name:             "filecount",
+		Doc:              "counts files",
+		RunDespiteErrors: despiteErrors,
+		Run: func(pass *analysis.Pass) (any, error) {
+			seen = len(pass.Files)
+			return nil, nil
+		},
+	}, &seen
+}
+
+func TestRun_RunDespiteErrorsAnalyzerStillSeesExcludedTestFiles(t *testing.T) {
+	a, seen := fileCounter(true)
+
+	rr, err := analyzers.Run(excludedTestFilePackage(t), a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if *seen != 2 || len(rr.Skipped) != 0 {
+		t.Fatalf("saw %d files, skipped %v; want both files and nothing skipped", *seen, rr.Skipped)
+	}
+}
+
+func TestRun_ExcludedTestFileIsListedAsSkippedForStrictAnalyzers(t *testing.T) {
+	a, seen := fileCounter(false)
+
+	rr, err := analyzers.Run(excludedTestFilePackage(t), a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if *seen != 1 || !slices.Equal(rr.Skipped, []string{"test/lib (bad_test.go)"}) {
+		t.Fatalf("saw %d files, skipped %v; want 1 file and [test/lib (bad_test.go)]", *seen, rr.Skipped)
 	}
 }

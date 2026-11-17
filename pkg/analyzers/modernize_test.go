@@ -305,7 +305,7 @@ func TestRun_ExternalTestPackageGetsItsOwnPass(t *testing.T) {
 	}
 }
 
-func TestRun_TestFilesDroppedFromTypeCheckingAreNotAnalyzed(t *testing.T) {
+func TestRun_TestFilesDroppedFromTypeCheckingAreNotAnalyzedAndAreListedAsSkipped(t *testing.T) {
 	rec := &passRecorder{}
 
 	rr, _ := runModernizeIn(t, "go 1.22", map[string]string{
@@ -313,8 +313,8 @@ func TestRun_TestFilesDroppedFromTypeCheckingAreNotAnalyzed(t *testing.T) {
 		"p/bad_test.go": "package p\n\nvar _ = undefined\n",
 	}, rec.analyzer(), "")
 
-	if len(rr.Skipped) != 0 || len(rec.passes) != 1 || !slices.Equal(rec.passes[0].files, []string{"p.go"}) {
-		t.Fatalf("passes = %+v, skipped = %v, want one pass over p.go", rec.passes, rr.Skipped)
+	if !slices.Equal(rr.Skipped, []string{"example.com/m/p (bad_test.go)"}) || len(rec.passes) != 1 || !slices.Equal(rec.passes[0].files, []string{"p.go"}) {
+		t.Fatalf("passes = %+v, skipped = %v, want one pass over p.go and bad_test.go skipped", rec.passes, rr.Skipped)
 	}
 }
 
