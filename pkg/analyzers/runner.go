@@ -429,6 +429,17 @@ func (rs *runState) buildPass(u *unit, a *analysis.Analyzer, report func(analysi
 	return pass, nil
 }
 
+// EditRange returns where edit starts and ends in its file's own bytes,
+// ignoring //line directives. A pure insertion may leave End unset.
+func EditRange(fset *token.FileSet, edit analysis.TextEdit) (start, end token.Position) {
+	start = fset.PositionFor(edit.Pos, false)
+	if !edit.End.IsValid() {
+		return start, start
+	}
+
+	return start, fset.PositionFor(edit.End, false)
+}
+
 // DiagnosticsToChanges converts diagnostics with SuggestedFixes into types.Change slices.
 // It picks the first SuggestedFix from each diagnostic (if any).
 func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []wstypes.Change {
@@ -441,20 +452,37 @@ func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []ws
 
 		fix := d.SuggestedFixes[0]
 		for _, edit := range fix.TextEdits {
-			// Ignore //line directives: edits address the file's own bytes.
-			startPos := fset.PositionFor(edit.Pos, false)
-			endPos := fset.PositionFor(edit.End, false)
+			startPos, endPos := EditRange(fset, edit)
 			changes = append(changes, wstypes.Change{
 				File:        startPos.Filename,
 				Start:       startPos.Offset,
 				End:         endPos.Offset,
 				NewText:     string(edit.NewText),
 				Description: fix.Message,
+				Fragment:    true,
 			})
 		}
 	}
 
 	return changes
+}
+
+// FileContents maps each file path of the workspace's packages, test files
+// included, to its content as loaded.
+func FileContents(ws *wstypes.Workspace) map[string][]byte {
+	contents := make(map[string][]byte)
+
+	for _, pkg := range ws.Packages {
+		for _, file := range pkg.Files {
+			contents[file.Path] = file.OriginalContent
+		}
+
+		for _, file := range pkg.TestFiles {
+			contents[file.Path] = file.OriginalContent
+		}
+	}
+
+	return contents
 }
 
 // FillOldText populates each change's OldText from the workspace's copy of the
@@ -468,17 +496,7 @@ func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []ws
 //
 // Changes whose file or offsets are not found in the workspace are left as-is.
 func FillOldText(ws *wstypes.Workspace, changes []wstypes.Change) []wstypes.Change {
-	contents := make(map[string][]byte)
-
-	for _, pkg := range ws.Packages {
-		for _, file := range pkg.Files {
-			contents[file.Path] = file.OriginalContent
-		}
-
-		for _, file := range pkg.TestFiles {
-			contents[file.Path] = file.OriginalContent
-		}
-	}
+	contents := FileContents(ws)
 
 	for i := range changes {
 		c := &changes[i]

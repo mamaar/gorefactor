@@ -314,6 +314,10 @@ type Change struct {
 	// Relocation marks a change that belongs to relocating a whole file or
 	// package (a move or a package rename).
 	Relocation bool
+	// Fragment marks NewText as a text edit that need not parse on its own
+	// (an analyzer's suggested edit), so validation skips the standalone
+	// syntax check.
+	Fragment bool
 	// Mode is the permission bits a newly created file gets; zero means 0644.
 	// A file that already exists keeps its own mode.
 	Mode os.FileMode

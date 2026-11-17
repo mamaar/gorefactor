@@ -1,25 +1,30 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	gotypes "go/types"
 	"maps"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/analysis/passes/inline"
 	"golang.org/x/tools/go/analysis/passes/modernize"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/refactor"
 	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // --- run_go_fix ---
 
 type RunGoFixInput struct {
-	Analyzers []string `json:"analyzers,omitempty" jsonschema:"modernizer names to run (default: all of modernize.Suite); an unknown name errors with the valid names"`
+	Analyzers []string `json:"analyzers,omitempty" jsonschema:"analyzer names to run (default: modernize.Suite plus inline); name appendclipped, bloop, fmtappendf or slicesdelete here to run those; an unknown name errors with the valid names"`
 	Package   string   `json:"package,omitempty" jsonschema:"specific package to fix"`
 	DryRun    bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
@@ -56,8 +61,9 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
 		Name: "run_go_fix",
 		Description: "Run go fix's modernizers in-process and apply their suggested fixes through the refactoring plan pipeline (dry_run gives diffs). " +
-			"Runs every analyzer in golang.org/x/tools modernize.Suite (e.g. any, rangeint, minmax, slicescontains, mapsloop, forvar) or the subset named in `analyzers`. " +
-			"Does not cover `//go:fix inline`, buildtag or hostport. Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up. Packages with type errors are not analyzed and are listed under `skipped_packages`.",
+			"Runs every analyzer in golang.org/x/tools modernize.Suite (e.g. any, rangeint, minmax, slicescontains, mapsloop, forvar) plus `inline`, or the subset named in `analyzers`; appendclipped, bloop, fmtappendf and slicesdelete are left out of the default set and run only when named. " +
+			"`inline` applies `//go:fix inline` directives on functions declared in the workspace, not ones from dependencies. buildtag and hostport are not covered. Every fix is type-checked before it is applied; one whose result would not type-check is listed under `skipped` with the error. " +
+			"Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up. Packages with type errors are not analyzed and are listed under `skipped_packages`.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RunGoFixInput) (*mcpsdk.CallToolResult, any, error) {
 		selected, err := selectModernizers(in.Analyzers)
 		if err != nil {
@@ -125,21 +131,106 @@ func collectFixes(state *MCPServer, selected []*analysis.Analyzer, pkgFilter str
 		sel.skippedPackages = mergeSorted(sel.skippedPackages, rr.Skipped)
 	}
 
-	return sel, analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, sel.diags)), nil
+	changes, err := sel.verifiedChanges(state.GetEngine().Importer(ws))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return sel, changes, nil
 }
+
+// verifiedChanges returns the edits of the selected fixes. A fix whose result
+// would not type-check is moved from fixed to skipped.
+func (s *fixSelection) verifiedChanges(importer gotypes.Importer) ([]types.Change, error) {
+	contents := analyzers.FileContents(s.ws)
+	groups := make([][]types.Change, len(s.diags))
+
+	for i, d := range s.diags {
+		changes := analyzers.DiagnosticsToChanges(s.ws.FileSet, []analysis.Diagnostic{d})
+		for j := range changes {
+			dropLeadingBlankLine(contents[changes[j].File], &changes[j])
+		}
+
+		groups[i] = analyzers.FillOldText(s.ws, changes)
+	}
+
+	if len(groups) == 0 || verificationBlocker(refactor.VerifyPlanTypesWithImporter(s.ws, analyzers.ChangesToPlan(slices.Concat(groups...)), importer)) == "" {
+		return slices.Concat(groups...), nil
+	}
+
+	var kept []types.Change
+
+	fixed, diags := s.fixed[:0:0], s.diags[:0:0]
+
+	for i, group := range groups {
+		blocker := verificationBlocker(refactor.VerifyPlanTypesWithImporter(s.ws, analyzers.ChangesToPlan(group), importer))
+		if blocker != "" {
+			s.skipped = append(s.skipped, GoFixSkipped{s.fixed[i], blocker})
+			continue
+		}
+
+		kept = append(kept, group...)
+		fixed = append(fixed, s.fixed[i])
+		diags = append(diags, s.diags[i])
+	}
+
+	s.fixed, s.diags = fixed, diags
+
+	if len(kept) > 0 {
+		blocker := verificationBlocker(refactor.VerifyPlanTypesWithImporter(s.ws, analyzers.ChangesToPlan(kept), importer))
+		if blocker != "" {
+			return nil, fmt.Errorf("fixes that type-check alone do not together: %s", blocker)
+		}
+	}
+
+	return kept, nil
+}
+
+// dropLeadingBlankLine extends a deletion of a block's first statement so it
+// also removes the line it leaves behind, and the blank line below it if any.
+func dropLeadingBlankLine(src []byte, c *types.Change) {
+	if c.NewText != "" || c.Start < 0 || c.End > len(src) {
+		return
+	}
+
+	before := bytes.TrimRight(src[:c.Start], " \t")
+	if !bytes.HasSuffix(before, []byte("{\n")) {
+		return
+	}
+
+	blank := blankLineAfter.Find(src[c.End:])
+	c.End += len(blank)
+}
+
+// blankLineAfter matches the rest of a line and an empty line below it.
+var blankLineAfter = regexp.MustCompile(`^[ \t]*\n([ \t]*\n)?`)
 
 func mergeSorted(a, b []string) []string {
 	return slices.Compact(slices.Sorted(slices.Values(slices.Concat(a, b))))
 }
 
-// selectModernizers resolves names against modernize.Suite; no names means the whole suite.
+// defaultAnalyzers is every analyzer a run covers when none is named.
+func defaultAnalyzers() []*analysis.Analyzer {
+	return append(slices.Clone(modernize.Suite), inline.Analyzer)
+}
+
+// namedOnlyAnalyzers are the modernizers x/tools leaves out of Suite as unsafe;
+// they run only when named.
+var namedOnlyAnalyzers = []*analysis.Analyzer{
+	modernize.AppendClippedAnalyzer,
+	modernize.BLoopAnalyzer,
+	modernize.FmtAppendfAnalyzer,
+	modernize.SlicesDeleteAnalyzer,
+}
+
+// selectModernizers resolves names against the default and named-only analyzers; no names means the default set.
 func selectModernizers(names []string) ([]*analysis.Analyzer, error) {
 	if len(names) == 0 {
-		return modernize.Suite, nil
+		return defaultAnalyzers(), nil
 	}
 
-	byName := make(map[string]*analysis.Analyzer, len(modernize.Suite))
-	for _, a := range modernize.Suite {
+	byName := make(map[string]*analysis.Analyzer)
+	for _, a := range slices.Concat(defaultAnalyzers(), namedOnlyAnalyzers) {
 		byName[a.Name] = a
 	}
 
@@ -218,8 +309,6 @@ func (s *fixSelection) add(analyzer string, diags []analysis.Diagnostic) {
 			s.accepted = append(s.accepted, acceptedEdit{e.key, fmt.Sprintf("%s fix at %s:%d", analyzer, item.File, item.Line)})
 		}
 
-		// Edits are text fragments; the Validator skips its standalone-syntax check for descriptions containing "Replace".
-		fix.Message = "Replace text: " + fix.Message
 		fix.TextEdits = freshEdits(fresh)
 		d.SuggestedFixes = []analysis.SuggestedFix{fix}
 		s.diags = append(s.diags, d)
@@ -256,7 +345,7 @@ func (s *fixSelection) generatedFileOf(fix analysis.SuggestedFix) string {
 // the origin of the accepted fix one of them overlaps.
 func (s *fixSelection) classify(fix analysis.SuggestedFix) (fresh []keyedEdit, origin string, conflict bool) {
 	for _, e := range fix.TextEdits {
-		start, end := s.ws.FileSet.PositionFor(e.Pos, false), s.ws.FileSet.PositionFor(e.End, false)
+		start, end := analyzers.EditRange(s.ws.FileSet, e)
 		key := editKey{start.Filename, start.Offset, end.Offset, string(e.NewText)}
 
 		duplicate := false

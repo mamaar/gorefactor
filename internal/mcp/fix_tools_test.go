@@ -1,7 +1,12 @@
 package mcp
 
 import (
+	"context"
 	"go/token"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -41,5 +46,79 @@ func TestFixSelection_OverlapIsSkippedAndIdenticalEditsDeduplicated(t *testing.T
 
 	if got := len(sel.diags[1].SuggestedFixes[0].TextEdits); got != 1 {
 		t.Errorf("second accepted fix has %d edits, want the duplicate import edit dropped", got)
+	}
+}
+
+func TestVerifiedChanges_RefusesFixThatDoesNotTypeCheckAndKeepsTheRest(t *testing.T) {
+	root := t.TempDir()
+	src := "package p\n\nfunc a() int { return 1 }\n\nfunc b() int { return 2 }\n"
+
+	for name, content := range map[string]string{"go.mod": "module example.com/vf\n\ngo 1.22\n", "p/p.go": src} {
+		path := filepath.Join(root, name)
+
+		err := os.MkdirAll(filepath.Dir(path), 0o755)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		err = os.WriteFile(path, []byte(content), 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	state := NewMCPServer(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer state.Close()
+
+	_, err := state.LoadWorkspace(context.Background(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	state.GetEngine().EnsureTypeCheckedPackage(ws, "")
+
+	var file *token.File
+
+	ws.FileSet.Iterate(func(f *token.File) bool {
+		if strings.HasSuffix(f.Name(), "p/p.go") {
+			file = f
+		}
+
+		return file == nil
+	})
+
+	replace := func(old, repl string) analysis.Diagnostic {
+		start := strings.Index(src, old)
+		edit := analysis.TextEdit{Pos: file.Pos(start), End: file.Pos(start + len(old)), NewText: []byte(repl)}
+
+		return analysis.Diagnostic{Pos: edit.Pos, SuggestedFixes: []analysis.SuggestedFix{{TextEdits: []analysis.TextEdit{edit}}}}
+	}
+
+	sel := &fixSelection{
+		ws:    ws,
+		diags: []analysis.Diagnostic{replace("return 1", `return "one"`), replace("return 2", "return 3")},
+		fixed: []GoFixItem{{Message: "bad"}, {Message: "good"}},
+	}
+
+	changes, err := sel.verifiedChanges(state.GetEngine().Importer(ws))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(changes) != 1 || changes[0].NewText != "return 3" {
+		t.Errorf("changes = %+v, want only the fix that type-checks", changes)
+	}
+
+	if len(sel.fixed) != 1 || sel.fixed[0].Message != "good" {
+		t.Errorf("fixed = %+v, want only the good fix", sel.fixed)
+	}
+
+	if len(sel.skipped) != 1 || sel.skipped[0].Message != "bad" || !strings.Contains(sel.skipped[0].Reason, "type errors") {
+		t.Errorf("skipped = %+v, want the bad fix with its type error", sel.skipped)
 	}
 }

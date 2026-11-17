@@ -151,3 +151,86 @@ func TestRunGoFix_LineDirectiveDoesNotRedirectEdits(t *testing.T) {
 		t.Errorf("foo.y changed or unreadable: %v", err)
 	}
 }
+
+func TestRunGoFix_NoRangeIntBeforeGo122(t *testing.T) {
+	src := "package p\n\nfunc f(n int) {\n\tfor i := 0; i < n; i++ {\n\t\t_ = i\n\t}\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": "module example.com/old\n\ngo 1.21\n", "p/p.go": src})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "run_go_fix", map[string]any{"analyzers": []string{"rangeint"}})
+
+	if out["changes_count"].(float64) != 0 {
+		t.Errorf("output = %v, want no rangeint fix before go1.22", out)
+	}
+}
+
+func TestRunGoFix_SlicesBackwardLeavesNoBlankLineAfterBrace(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": "module example.com/sb\n\ngo 1.23\n", "p/p.go": `package p
+
+func f(s []string) {
+	for i := len(s) - 1; i >= 0; i-- {
+		x := s[i]
+
+		println(x)
+	}
+}
+
+func g(s []string) {
+	for i := len(s) - 1; i >= 0; i-- {
+		x := s[i]
+		println(x)
+	}
+}
+`})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "run_go_fix", map[string]any{"analyzers": []string{"slicesbackward"}})
+
+	assertFileContains(t, dir, "p/p.go", "slices.Backward(s)")
+
+	got, err := os.ReadFile(filepath.Join(dir, "p/p.go"))
+	if err != nil || strings.Contains(string(got), "{\n\n") {
+		t.Errorf("block starts with a blank line (err %v):\n%s", err, got)
+	}
+}
+
+const goFixInline = `package p
+
+//go:fix inline
+func Old(x int) int { return x + 1 }
+
+func use() int { return Old(2) }
+`
+
+func TestRunGoFix_InlineRunsByDefaultOnWorkspaceDirectives(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": goFixModule, "p/p.go": goFixInline})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "run_go_fix", map[string]any{})
+
+	assertFileContains(t, dir, "p/p.go", "return 2 + 1")
+}
+
+func TestRunGoFix_UnsafeAnalyzersRunOnlyWhenNamed(t *testing.T) {
+	src := "package p\n\nfunc f(s []int) []int {\n\treturn append(s[:1], s[2:]...)\n}\n"
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": "module example.com/del\n\ngo 1.23\n", "p/p.go": src})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "run_go_fix", map[string]any{"dry_run": true})
+	if out["changes_count"].(float64) != 0 {
+		t.Fatalf("default run = %v, want slicesdelete not to run", out)
+	}
+
+	out = callJSON(t, sess, "run_go_fix", map[string]any{"analyzers": []string{"slicesdelete"}, "dry_run": true})
+	if out["changes_count"].(float64) == 0 {
+		t.Errorf("named run = %v, want a slicesdelete fix", out)
+	}
+}
