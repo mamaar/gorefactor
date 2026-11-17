@@ -35,9 +35,10 @@ func WithMaxDepth(n int) Option {
 }
 
 var Analyzer = &analysis.Analyzer{
-	Name: "envbool",
-	Doc:  "detects environment boolean parameters passed down call stacks",
-	Run:  makeRun(config{maxDepth: 1}),
+	Name:             "envbool",
+	RunDespiteErrors: true,
+	Doc:              "detects environment boolean parameters passed down call stacks",
+	Run:              makeRun(config{maxDepth: 1}),
 }
 
 // NewAnalyzer creates a configured analyzer.
@@ -48,9 +49,10 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name: "envbool",
-		Doc:  "detects environment boolean parameters passed down call stacks",
-		Run:  makeRun(cfg),
+		Name:             "envbool",
+		RunDespiteErrors: true,
+		Doc:              "detects environment boolean parameters passed down call stacks",
+		Run:              makeRun(cfg),
 	}
 }
 

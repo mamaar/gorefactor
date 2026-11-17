@@ -79,10 +79,11 @@ const doc = "removes negations that De Morgan's laws can push inwards, where tha
 
 // Analyzer is the default-configured analyzer.
 var Analyzer = &analysis.Analyzer{
-	Name:     "boolsimplify",
-	Doc:      doc,
-	Run:      makeRun(defaultConfig()),
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "boolsimplify",
+	RunDespiteErrors: true,
+	Doc:              doc,
+	Run:              makeRun(defaultConfig()),
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 }
 
 // NewAnalyzer creates a configured analyzer.
@@ -93,10 +94,11 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:     "boolsimplify",
-		Doc:      doc,
-		Run:      makeRun(cfg),
-		Requires: []*analysis.Analyzer{filedata.Analyzer},
+		Name:             "boolsimplify",
+		RunDespiteErrors: true,
+		Doc:              doc,
+		Run:              makeRun(cfg),
+		Requires:         []*analysis.Analyzer{filedata.Analyzer},
 	}
 }
 

@@ -117,10 +117,11 @@ func WithPatterns(patterns ...Pattern) Option {
 
 // Analyzer is the default-configured analyzer.
 var Analyzer = &analysis.Analyzer{
-	Name:     "earlyreturn",
-	Doc:      "detects conditionals that should be inverted into early-return guard clauses",
-	Run:      makeRun(defaultConfig()),
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "earlyreturn",
+	RunDespiteErrors: true,
+	Doc:              "detects conditionals that should be inverted into early-return guard clauses",
+	Run:              makeRun(defaultConfig()),
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 }
 
 // NewAnalyzer creates a configured analyzer.
@@ -131,10 +132,11 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:     "earlyreturn",
-		Doc:      "detects conditionals that should be inverted into early-return guard clauses",
-		Run:      makeRun(cfg),
-		Requires: []*analysis.Analyzer{filedata.Analyzer},
+		Name:             "earlyreturn",
+		RunDespiteErrors: true,
+		Doc:              "detects conditionals that should be inverted into early-return guard clauses",
+		Run:              makeRun(cfg),
+		Requires:         []*analysis.Analyzer{filedata.Analyzer},
 	}
 }
 

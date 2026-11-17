@@ -234,3 +234,128 @@ func TestRunGoFix_UnsafeAnalyzersRunOnlyWhenNamed(t *testing.T) {
 		t.Errorf("named run = %v, want a slicesdelete fix", out)
 	}
 }
+
+const goFixTwoSorts = `package p
+
+import "sort"
+
+func A(s []int) {
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+}
+
+func B(s []string) {
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+}
+`
+
+func TestRunGoFix_EachFixIsCheckedWithItsSharedImportEdit(t *testing.T) {
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": "module example.com/ts\n\ngo 1.22\n", "p/p.go": goFixTwoSorts})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "run_go_fix", map[string]any{"analyzers": []string{"slicessort"}})
+
+	if fixed, _ := out["fixed"].([]any); len(fixed) != 2 {
+		t.Fatalf("fixed = %v, want both sort.Slice fixes (skipped %v)", out["fixed"], out["skipped"])
+	}
+
+	assertFileContains(t, dir, "p/p.go", "slices.Sort(s)")
+	goVet(t, dir)
+}
+
+func TestRunGoFix_ImportsLeftUnusedByMergedFixesAreRemoved(t *testing.T) {
+	src := `package p
+
+import (
+	"slices"
+	"sort"
+)
+
+var _ = slices.Max[[]int]
+
+func A(s []int) {
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+}
+
+func B(s []string) {
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+}
+
+func C(n int) {
+	for i := 0; i < n; i++ {
+		_ = i
+	}
+}
+`
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": "module example.com/ui\n\ngo 1.22\n", "p/p.go": src})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	out := callJSON(t, sess, "run_go_fix", map[string]any{})
+
+	if skipped, _ := out["skipped"].([]any); len(skipped) != 0 {
+		t.Fatalf("skipped = %v, want none", skipped)
+	}
+
+	assertFileContains(t, dir, "p/p.go", "for i := range n")
+	assertFileContains(t, dir, "p/p.go", "slices.Sort(s)")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "p/p.go"))
+	if strings.Contains(string(got), `"sort"`) {
+		t.Errorf("unused sort import left behind:\n%s", got)
+	}
+
+	goVet(t, dir)
+}
+
+func TestRunGoFix_DeletedFirstStatementsLeaveNoBlankLineAfterBrace(t *testing.T) {
+	loop := func(body string) string {
+		return "package p\n\nfunc F(xs []int) {\n\tfor i, x := range xs {\n" + body + "\t}\n}\n"
+	}
+
+	cases := []struct {
+		name string
+		src  string
+		keep []string
+	}{
+		{"consecutive deletions", loop("\t\ti := i\n\t\tx := x\n\n\t\t_, _ = i, x\n"), []string{"_, _ = i, x"}},
+		{"comment after the statement", loop("\t\tx := x // keep me\n\n\t\t_, _ = i, x\n"), []string{"_, _ = i, x"}},
+		{"comment below the statement", loop("\t\tx := x\n\t\t// keep me\n\t\t_, _ = i, x\n"), []string{"// keep me", "_, _ = i, x"}},
+		{"statement on the brace line", "package p\n\nfunc F(xs []int) {\n\tfor i, x := range xs { x := x\n\n\t\t_, _ = i, x\n\t}\n}\n", []string{"_, _ = i, x"}},
+		{"CRLF", strings.ReplaceAll(loop("\t\tx := x\n\n\t\t_, _ = i, x\n"), "\n", "\r\n"), []string{"_, _ = i, x"}},
+		{"brace in a comment", loop("\t\t// {\n\t\tx := x\n\n\t\t_, _ = i, x\n"), []string{"// {", "_, _ = i, x"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeInlineWorkspace(t, map[string]string{"go.mod": "module example.com/bl\n\ngo 1.22\n", "p/p.go": tc.src})
+
+			sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+			defer sess.Close()
+
+			callJSON(t, sess, "run_go_fix", map[string]any{"analyzers": []string{"forvar"}})
+
+			raw, err := os.ReadFile(filepath.Join(dir, "p/p.go"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := strings.ReplaceAll(string(raw), "\r\n", "\n")
+			if strings.Contains(got, "x := x") {
+				t.Errorf("forvar fix not applied:\n%s", got)
+			}
+
+			if strings.Contains(got, "range xs {\n\n") || strings.Contains(got, "range xs { ") {
+				t.Errorf("block starts with a blank line or the next statement shares the brace line:\n%s", got)
+			}
+
+			for _, want := range tc.keep {
+				if !strings.Contains(got, want) {
+					t.Errorf("result lost %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+}

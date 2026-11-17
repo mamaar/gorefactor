@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 
 	"golang.org/x/mod/modfile"
 
@@ -14,10 +13,10 @@ import (
 
 // PackageGoVersion returns the language version ("go1.22") that applies to the
 // package in dir, the way the go command resolves it: from the nearest go.mod
-// at or above dir, within the workspace root. A go.mod without a go directive
-// means go1.16, and a version newer than the running toolchain is lowered to
-// the toolchain's, which go/types would otherwise reject. It returns "" when
-// no go.mod applies, which leaves the check unrestricted.
+// at or above dir. A go.mod without a go directive means go1.16, and a version
+// newer than the running toolchain is lowered to the toolchain's, which
+// go/types would otherwise reject. It returns "" when no go.mod applies, which
+// leaves the check unrestricted.
 func PackageGoVersion(ws *types.Workspace, dir string) string {
 	content, ok := nearestGoMod(ws, dir)
 	if !ok {
@@ -45,18 +44,18 @@ func PackageGoVersion(ws *types.Workspace, dir string) string {
 	return v
 }
 
-// nearestGoMod returns the contents of the go.mod governing dir. Without one
-// on disk it falls back to the workspace module's, for workspaces built in memory.
+// nearestGoMod returns the contents of the go.mod governing dir, searching
+// upward past the workspace root, which may be a subdirectory of its module.
+// Without one on disk it falls back to the workspace module's, for workspaces
+// built in memory.
 func nearestGoMod(ws *types.Workspace, dir string) ([]byte, bool) {
-	root := filepath.Clean(ws.RootPath)
-
-	for d := filepath.Clean(dir); d == root || strings.HasPrefix(d, root+string(filepath.Separator)); d = filepath.Dir(d) {
+	for d := filepath.Clean(dir); ; d = filepath.Dir(d) {
 		content, err := os.ReadFile(filepath.Join(d, "go.mod"))
 		if err == nil {
 			return content, true
 		}
 
-		if d == root {
+		if d == filepath.Dir(d) {
 			break
 		}
 	}

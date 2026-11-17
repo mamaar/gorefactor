@@ -3,6 +3,7 @@ package analyzers_test
 import (
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"slices"
 	"testing"
 
@@ -59,5 +60,34 @@ func TestRun_IncludesInPackageAndExternalTestFiles(t *testing.T) {
 	want := []string{"lib.go", "lib_ext_test.go", "lib_test.go"}
 	if !slices.Equal(files, want) {
 		t.Fatalf("findings in %v, want %v", files, want)
+	}
+}
+
+func TestRun_ExternalTestPackageWithoutTypeInfoIsListedAsSkipped(t *testing.T) {
+	fset := token.NewFileSet()
+	src := "package lib_test\n" + bareReturn
+
+	astFile, err := parser.ParseFile(fset, "lib_ext_test.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pkg := &types.Package{
+		Name:                 "lib",
+		Path:                 "test/lib",
+		ImportPath:           "test/lib",
+		Files:                map[string]*types.File{},
+		TestFiles:            map[string]*types.File{"lib_ext_test.go": {Path: "lib_ext_test.go", AST: astFile, OriginalContent: []byte(src)}},
+		ExternalTestTypesPkg: gotypes.NewPackage("test/lib", "lib_test"),
+	}
+	ws := &types.Workspace{Packages: map[string]*types.Package{"test/lib": pkg}, FileSet: fset}
+
+	rr, err := analyzers.Run(ws, errorwrap.Analyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !slices.Equal(rr.Skipped, []string{"test/lib_test"}) {
+		t.Fatalf("skipped = %v, want [test/lib_test]", rr.Skipped)
 	}
 }

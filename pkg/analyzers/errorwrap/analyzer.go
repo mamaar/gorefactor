@@ -91,11 +91,12 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:       "errorwrap",
-		Doc:        "detects improper error wrapping: bare returns, %v instead of %w, and no descriptive context",
-		Run:        makeRun(cfg),
-		Requires:   []*analysis.Analyzer{filedata.Analyzer},
-		ResultType: reflect.TypeFor[[]*Result](),
+		Name:             "errorwrap",
+		RunDespiteErrors: true,
+		Doc:              "detects improper error wrapping: bare returns, %v instead of %w, and no descriptive context",
+		Run:              makeRun(cfg),
+		Requires:         []*analysis.Analyzer{filedata.Analyzer},
+		ResultType:       reflect.TypeFor[[]*Result](),
 	}
 }
 

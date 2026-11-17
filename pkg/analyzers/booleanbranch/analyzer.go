@@ -72,9 +72,10 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:     "booleanbranch",
-		Doc:      "detects intermediate boolean variables used for branching that should be switch statements instead",
-		Requires: []*analysis.Analyzer{filedata.Analyzer},
+		Name:             "booleanbranch",
+		RunDespiteErrors: true,
+		Doc:              "detects intermediate boolean variables used for branching that should be switch statements instead",
+		Requires:         []*analysis.Analyzer{filedata.Analyzer},
 		Run: func(pass *analysis.Pass) (any, error) {
 			return run(pass, cfg)
 		},

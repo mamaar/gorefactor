@@ -27,9 +27,10 @@ type Result struct {
 
 // Analyzer reports receiver nil comparisons outside generated files.
 var Analyzer = &analysis.Analyzer{
-	Name:     "nilreceiver",
-	Doc:      "detects methods that compare their receiver to nil",
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "nilreceiver",
+	RunDespiteErrors: true,
+	Doc:              "detects methods that compare their receiver to nil",
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 	Run: func(pass *analysis.Pass) (any, error) {
 		return run(pass), nil
 	},

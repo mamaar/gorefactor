@@ -31,10 +31,11 @@ type Result struct {
 }
 
 var Analyzer = &analysis.Analyzer{
-	Name:     "ifinit",
-	Doc:      "detects if/switch-init assignments that should be split into separate assignment and if/switch-check",
-	Run:      run,
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "ifinit",
+	RunDespiteErrors: true,
+	Doc:              "detects if/switch-init assignments that should be split into separate assignment and if/switch-check",
+	Run:              run,
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 }
 
 // fixMessage MUST stay byte-identical: it flows into types.Change.Description,

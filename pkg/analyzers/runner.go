@@ -173,9 +173,10 @@ type unit struct {
 }
 
 // unitsOf splits pkg into its units, leaving out test files that were dropped
-// from type-checking. The second result reports whether pkg's own check
-// failed, in which case its analyzer-visible information is incomplete.
-func unitsOf(pkg *wstypes.Package) (units []*unit, failed bool) {
+// from type-checking. failed reports whether pkg's own check failed, in which
+// case its analyzer-visible information is incomplete; externalFailed reports
+// external test files whose check failed, leaving them no type information.
+func unitsOf(pkg *wstypes.Package) (units []*unit, failed, externalFailed bool) {
 	typesPkg := pkg.TypesPkg
 	if typesPkg == nil {
 		typesPkg = types.NewPackage(pkg.ImportPath, pkg.Name)
@@ -210,7 +211,7 @@ func unitsOf(pkg *wstypes.Package) (units []*unit, failed bool) {
 		units = append(units, ext)
 	}
 
-	return units, pkg.TypesChecked && pkg.TypesErr != nil
+	return units, pkg.TypesChecked && pkg.TypesErr != nil, len(ext.files) > 0 && ext.info == nil
 }
 
 // dependenciesFirst orders pkgs so that a package comes after the workspace
@@ -292,12 +293,15 @@ func importEdges(ws *wstypes.Workspace) map[string][]string {
 
 // runPackage executes an analyzer against the units of a single workspace package.
 func (rs *runState) runPackage(a *analysis.Analyzer, pkg *wstypes.Package) (*RunResult, error) {
-	units, failed := unitsOf(pkg)
+	units, failed, externalFailed := unitsOf(pkg)
 	if failed && !a.RunDespiteErrors {
 		return &RunResult{Skipped: []string{pkg.ImportPath}}, nil
 	}
 
 	combined := &RunResult{}
+	if externalFailed {
+		combined.Skipped = []string{pkg.ImportPath + "_test"}
+	}
 
 	for _, u := range units {
 		rr, err := rs.runUnit(a, u)

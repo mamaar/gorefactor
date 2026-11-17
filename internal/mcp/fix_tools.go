@@ -1,13 +1,11 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	gotypes "go/types"
 	"maps"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -96,7 +94,7 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		out := map[string]any{
 			"files_modified":   result.ModifiedFiles,
 			"changes_count":    result.ChangeCount,
-			"fixed":            sel.fixed,
+			"fixed":            sel.fixedItems(),
 			"skipped":          sel.skipped,
 			"skipped_packages": sel.skippedPackages,
 		}
@@ -121,89 +119,149 @@ func collectFixes(state *MCPServer, selected []*analysis.Analyzer, pkgFilter str
 
 	sel := &fixSelection{ws: ws, generated: generatedFiles(ws)}
 
+	var runs []analyzerDiagnostics
+
+	var all []analysis.Diagnostic
+
 	for _, a := range selected {
 		rr, err := analyzers.Run(ws, a, pkgFilter)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s: %w", a.Name, err)
 		}
 
-		sel.add(a.Name, rr.Diagnostics)
+		runs = append(runs, analyzerDiagnostics{a.Name, rr.Diagnostics})
+		all = append(all, rr.Diagnostics...)
 		sel.skippedPackages = mergeSorted(sel.skippedPackages, rr.Skipped)
 	}
 
-	changes, err := sel.verifiedChanges(state.GetEngine().Importer(ws))
-	if err != nil {
-		return nil, nil, err
+	// Widen before selection so overlaps are judged on the edits that will apply.
+	widenLeadingDeletions(ws, all)
+
+	for _, run := range runs {
+		sel.add(run.analyzer, run.diags)
 	}
 
-	return sel, changes, nil
+	return sel, sel.verifiedChanges(state.GetEngine().Importer(ws)), nil
 }
 
-// verifiedChanges returns the edits of the selected fixes. A fix whose result
-// would not type-check is moved from fixed to skipped.
-func (s *fixSelection) verifiedChanges(importer gotypes.Importer) ([]types.Change, error) {
-	contents := analyzers.FileContents(s.ws)
-	groups := make([][]types.Change, len(s.diags))
+type analyzerDiagnostics struct {
+	analyzer string
+	diags    []analysis.Diagnostic
+}
 
-	for i, d := range s.diags {
-		changes := analyzers.DiagnosticsToChanges(s.ws.FileSet, []analysis.Diagnostic{d})
-		for j := range changes {
-			dropLeadingBlankLine(contents[changes[j].File], &changes[j])
-		}
+// verifiedChanges returns the edits of the selected fixes, with the imports
+// they leave unused removed. If the merged edits do not type-check, each fix is
+// checked alone with its complete edits and the failing ones are skipped; fixes
+// that still fail together are skipped file by file.
+func (s *fixSelection) verifiedChanges(importer gotypes.Importer) []types.Change {
+	v := &fixVerifier{ws: s.ws, importer: importer}
 
-		groups[i] = analyzers.FillOldText(s.ws, changes)
+	changes, res := v.check(s.picks)
+	if verificationBlocker(res) == "" {
+		return changes
 	}
 
-	if len(groups) == 0 || verificationBlocker(refactor.VerifyPlanTypesWithImporter(s.ws, analyzers.ChangesToPlan(slices.Concat(groups...)), importer)) == "" {
-		return slices.Concat(groups...), nil
-	}
+	var kept []fixPick
 
-	var kept []types.Change
+	for _, p := range s.picks {
+		_, res := v.check([]fixPick{p})
 
-	fixed, diags := s.fixed[:0:0], s.diags[:0:0]
-
-	for i, group := range groups {
-		blocker := verificationBlocker(refactor.VerifyPlanTypesWithImporter(s.ws, analyzers.ChangesToPlan(group), importer))
+		blocker := verificationBlocker(res)
 		if blocker != "" {
-			s.skipped = append(s.skipped, GoFixSkipped{s.fixed[i], blocker})
+			s.skipped = append(s.skipped, GoFixSkipped{p.item, blocker})
 			continue
 		}
 
-		kept = append(kept, group...)
-		fixed = append(fixed, s.fixed[i])
-		diags = append(diags, s.diags[i])
+		kept = append(kept, p)
 	}
 
-	s.fixed, s.diags = fixed, diags
+	for len(kept) > 0 {
+		changes, res := v.check(kept)
 
-	if len(kept) > 0 {
-		blocker := verificationBlocker(refactor.VerifyPlanTypesWithImporter(s.ws, analyzers.ChangesToPlan(kept), importer))
-		if blocker != "" {
-			return nil, fmt.Errorf("fixes that type-check alone do not together: %s", blocker)
+		blocker := verificationBlocker(res)
+		if blocker == "" {
+			s.picks = kept
+			return changes
+		}
+
+		kept = s.refuseFilesIn(kept, blocker)
+	}
+
+	s.picks = nil
+
+	return nil
+}
+
+// refuseFilesIn skips the fixes that edit a file the blocker names, or all of
+// them if it names none, and returns the rest.
+func (s *fixSelection) refuseFilesIn(picks []fixPick, blocker string) []fixPick {
+	var kept []fixPick
+
+	for _, p := range picks {
+		if p.touchesFileIn(s.ws, blocker) {
+			s.skipped = append(s.skipped, GoFixSkipped{p.item, blocker})
+			continue
+		}
+
+		kept = append(kept, p)
+	}
+
+	if len(kept) < len(picks) {
+		return kept
+	}
+
+	for _, p := range picks {
+		s.skipped = append(s.skipped, GoFixSkipped{p.item, blocker})
+	}
+
+	return nil
+}
+
+// fixVerifier type-checks sets of fixes against the workspace.
+type fixVerifier struct {
+	ws       *types.Workspace
+	importer gotypes.Importer
+}
+
+// changes returns the picks' edits as plan changes, identical ones once.
+func (v *fixVerifier) changes(picks []fixPick) []types.Change {
+	var changes []types.Change
+
+	seen := make(map[editKey]bool)
+
+	for _, p := range picks {
+		for _, c := range analyzers.DiagnosticsToChanges(v.ws.FileSet, []analysis.Diagnostic{p.diag}) {
+			key := editKey{c.File, c.Start, c.End, c.NewText}
+			if !seen[key] {
+				seen[key] = true
+
+				changes = append(changes, c)
+			}
 		}
 	}
 
-	return kept, nil
+	return analyzers.FillOldText(v.ws, changes)
 }
 
-// dropLeadingBlankLine extends a deletion of a block's first statement so it
-// also removes the line it leaves behind, and the blank line below it if any.
-func dropLeadingBlankLine(src []byte, c *types.Change) {
-	if c.NewText != "" || c.Start < 0 || c.End > len(src) {
-		return
+// check verifies the picks together. Imports the edits leave unused are
+// removed first, as go fix does.
+func (v *fixVerifier) check(picks []fixPick) ([]types.Change, *refactor.TypeCheckResult) {
+	changes := v.changes(picks)
+	res := v.verify(changes)
+
+	removals := unusedImportRemovals(v.ws, changes, res.NewErrors)
+	if len(removals) == 0 {
+		return changes, res
 	}
 
-	before := bytes.TrimRight(src[:c.Start], " \t")
-	if !bytes.HasSuffix(before, []byte("{\n")) {
-		return
-	}
+	changes = analyzers.FillOldText(v.ws, slices.Concat(changes, removals))
 
-	blank := blankLineAfter.Find(src[c.End:])
-	c.End += len(blank)
+	return changes, v.verify(changes)
 }
 
-// blankLineAfter matches the rest of a line and an empty line below it.
-var blankLineAfter = regexp.MustCompile(`^[ \t]*\n([ \t]*\n)?`)
+func (v *fixVerifier) verify(changes []types.Change) *refactor.TypeCheckResult {
+	return refactor.VerifyPlanTypesWithImporter(v.ws, analyzers.ChangesToPlan(changes), v.importer)
+}
 
 func mergeSorted(a, b []string) []string {
 	return slices.Compact(slices.Sorted(slices.Values(slices.Concat(a, b))))
@@ -272,11 +330,33 @@ type fixSelection struct {
 	ws        *types.Workspace
 	generated map[string]bool
 	accepted  []acceptedEdit
-	diags     []analysis.Diagnostic
-	fixed     []GoFixItem
+	picks     []fixPick
 	skipped   []GoFixSkipped
 	// skippedPackages are packages left unanalyzed for type errors.
 	skippedPackages []string
+}
+
+// fixPick is a selected fix with all of its edits, including any a duplicate
+// in an earlier fix makes redundant, so it can be checked alone.
+type fixPick struct {
+	item GoFixItem
+	diag analysis.Diagnostic
+}
+
+// touchesFileIn reports whether text names a file the fix edits.
+func (p fixPick) touchesFileIn(ws *types.Workspace, text string) bool {
+	return slices.ContainsFunc(p.diag.SuggestedFixes[0].TextEdits, func(e analysis.TextEdit) bool {
+		return strings.Contains(text, ws.FileSet.PositionFor(e.Pos, false).Filename)
+	})
+}
+
+func (s *fixSelection) fixedItems() []GoFixItem {
+	items := make([]GoFixItem, len(s.picks))
+	for i, p := range s.picks {
+		items[i] = p.item
+	}
+
+	return items
 }
 
 func (s *fixSelection) add(analyzer string, diags []analysis.Diagnostic) {
@@ -305,29 +385,12 @@ func (s *fixSelection) add(analyzer string, diags []analysis.Diagnostic) {
 			continue
 		}
 
-		for _, e := range fresh {
-			s.accepted = append(s.accepted, acceptedEdit{e.key, fmt.Sprintf("%s fix at %s:%d", analyzer, item.File, item.Line)})
+		for _, key := range fresh {
+			s.accepted = append(s.accepted, acceptedEdit{key, fmt.Sprintf("%s fix at %s:%d", analyzer, item.File, item.Line)})
 		}
 
-		fix.TextEdits = freshEdits(fresh)
-		d.SuggestedFixes = []analysis.SuggestedFix{fix}
-		s.diags = append(s.diags, d)
-		s.fixed = append(s.fixed, item)
+		s.picks = append(s.picks, fixPick{item, d})
 	}
-}
-
-type keyedEdit struct {
-	key  editKey
-	edit analysis.TextEdit
-}
-
-func freshEdits(fresh []keyedEdit) []analysis.TextEdit {
-	edits := make([]analysis.TextEdit, len(fresh))
-	for i, e := range fresh {
-		edits[i] = e.edit
-	}
-
-	return edits
 }
 
 func (s *fixSelection) generatedFileOf(fix analysis.SuggestedFix) string {
@@ -343,7 +406,7 @@ func (s *fixSelection) generatedFileOf(fix analysis.SuggestedFix) string {
 
 // classify returns the fix's edits that are not already accepted verbatim, or
 // the origin of the accepted fix one of them overlaps.
-func (s *fixSelection) classify(fix analysis.SuggestedFix) (fresh []keyedEdit, origin string, conflict bool) {
+func (s *fixSelection) classify(fix analysis.SuggestedFix) (fresh []editKey, origin string, conflict bool) {
 	for _, e := range fix.TextEdits {
 		start, end := analyzers.EditRange(s.ws.FileSet, e)
 		key := editKey{start.Filename, start.Offset, end.Offset, string(e.NewText)}
@@ -362,7 +425,7 @@ func (s *fixSelection) classify(fix analysis.SuggestedFix) (fresh []keyedEdit, o
 		}
 
 		if !duplicate {
-			fresh = append(fresh, keyedEdit{key, e})
+			fresh = append(fresh, key)
 		}
 	}
 

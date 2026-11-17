@@ -138,10 +138,11 @@ func defaultConfig() config {
 }
 
 var Analyzer = &analysis.Analyzer{
-	Name:     "switchchain",
-	Doc:      "detects if-else chains that should be switch statements",
-	Run:      makeRun(defaultConfig()),
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "switchchain",
+	RunDespiteErrors: true,
+	Doc:              "detects if-else chains that should be switch statements",
+	Run:              makeRun(defaultConfig()),
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 }
 
 // NewAnalyzer creates a configured analyzer.
@@ -152,10 +153,11 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:     "switchchain",
-		Doc:      "detects if-else chains that should be switch statements",
-		Run:      makeRun(cfg),
-		Requires: []*analysis.Analyzer{filedata.Analyzer},
+		Name:             "switchchain",
+		RunDespiteErrors: true,
+		Doc:              "detects if-else chains that should be switch statements",
+		Run:              makeRun(cfg),
+		Requires:         []*analysis.Analyzer{filedata.Analyzer},
 	}
 }
 

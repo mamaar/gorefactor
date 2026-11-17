@@ -48,10 +48,11 @@ func WithMinComplexity(n int) Option {
 }
 
 var Analyzer = &analysis.Analyzer{
-	Name:     "complexity",
-	Doc:      "analyzes cyclomatic and cognitive complexity of functions",
-	Run:      makeRun(config{minComplexity: 10}),
-	Requires: []*analysis.Analyzer{inspect.Analyzer},
+	Name:             "complexity",
+	RunDespiteErrors: true,
+	Doc:              "analyzes cyclomatic and cognitive complexity of functions",
+	Run:              makeRun(config{minComplexity: 10}),
+	Requires:         []*analysis.Analyzer{inspect.Analyzer},
 }
 
 // NewAnalyzer creates a configured complexity analyzer.
@@ -62,10 +63,11 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:     "complexity",
-		Doc:      "analyzes cyclomatic and cognitive complexity of functions",
-		Run:      makeRun(cfg),
-		Requires: []*analysis.Analyzer{inspect.Analyzer},
+		Name:             "complexity",
+		RunDespiteErrors: true,
+		Doc:              "analyzes cyclomatic and cognitive complexity of functions",
+		Run:              makeRun(cfg),
+		Requires:         []*analysis.Analyzer{inspect.Analyzer},
 	}
 }
 

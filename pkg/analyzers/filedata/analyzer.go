@@ -20,10 +20,11 @@ type Data struct {
 // Analyzer is a placeholder required by downstream analyzers so the runner
 // can inject file content via pass.ResultOf[filedata.Analyzer].
 var Analyzer = &analysis.Analyzer{
-	Name:       "filedata",
-	Doc:        "provides raw file content to downstream analyzers",
-	Run:        run,
-	ResultType: reflect.TypeFor[*Data](),
+	Name:             "filedata",
+	RunDespiteErrors: true,
+	Doc:              "provides raw file content to downstream analyzers",
+	Run:              run,
+	ResultType:       reflect.TypeFor[*Data](),
 }
 
 func run(pass *analysis.Pass) (any, error) {

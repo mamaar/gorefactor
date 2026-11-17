@@ -24,10 +24,11 @@ type Result struct {
 }
 
 var Analyzer = &analysis.Analyzer{
-	Name:     "missingctx",
-	Doc:      "detects functions that should accept ctx context.Context but create context internally",
-	Run:      run,
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "missingctx",
+	RunDespiteErrors: true,
+	Doc:              "detects functions that should accept ctx context.Context but create context internally",
+	Run:              run,
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 }
 
 func run(pass *analysis.Pass) (any, error) {

@@ -26,9 +26,10 @@ type Result struct {
 
 // Analyzer reports nil, nil returns outside generated files.
 var Analyzer = &analysis.Analyzer{
-	Name:     "nilnil",
-	Doc:      "detects returns of nil values together with a nil error",
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "nilnil",
+	RunDespiteErrors: true,
+	Doc:              "detects returns of nil values together with a nil error",
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 	Run: func(pass *analysis.Pass) (any, error) {
 		return run(pass), nil
 	},

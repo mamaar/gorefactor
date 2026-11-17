@@ -14,6 +14,7 @@ import (
 	"golang.org/x/tools/go/analysis/passes/modernize"
 
 	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/analyzers/boolsimplify"
 	"github.com/mamaar/gorefactor/pkg/refactor"
 	wstypes "github.com/mamaar/gorefactor/pkg/types"
 )
@@ -368,5 +369,40 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestRun_DetectorsRunOnPackagesWithTypeErrors(t *testing.T) {
+	src := "package p\n\nfunc F(a, b int) int {\n\tif !(a == b) {\n\t\treturn 1\n\t}\n\treturn 0\n}\n\nvar _ = undefinedThing\n"
+	rr, _ := runModernizeIn(t, "go 1.22", map[string]string{"p/p.go": src}, boolsimplify.Analyzer, "")
+
+	if len(rr.Diagnostics) != 1 || len(rr.Skipped) != 0 {
+		t.Fatalf("got %d diagnostics and skipped %v, want 1 and none", len(rr.Diagnostics), rr.Skipped)
+	}
+}
+
+func TestRun_GoVersionOfWorkspaceLoadedBelowItsModuleRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod":     "module example.com/m\n\ngo 1.21\n",
+		"sub/s/s.go": strings.Replace(threeClauseLoop, "package p", "package s", 1),
+	})
+
+	engine := refactor.CreateEngineWithConfig(&refactor.EngineConfig{SkipCompilation: true}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	ws, err := engine.LoadWorkspace(filepath.Join(dir, "sub"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	engine.(*refactor.DefaultEngine).EnsureTypeCheckedPackage(ws, "")
+
+	rr, err := analyzers.Run(ws, modernize.RangeIntAnalyzer, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(rr.Diagnostics) != 0 {
+		t.Fatalf("got %d diagnostics, want 0 under the go 1.21 of the parent go.mod", len(rr.Diagnostics))
 	}
 }

@@ -96,10 +96,11 @@ func WithMinElseLines(n int) Option {
 }
 
 var Analyzer = &analysis.Analyzer{
-	Name:     "deepifelse",
-	Doc:      "detects nested if-else chains that should use early returns (guard clauses)",
-	Run:      makeRun(config{maxNesting: 2, minElseLines: 3}),
-	Requires: []*analysis.Analyzer{filedata.Analyzer},
+	Name:             "deepifelse",
+	RunDespiteErrors: true,
+	Doc:              "detects nested if-else chains that should use early returns (guard clauses)",
+	Run:              makeRun(config{maxNesting: 2, minElseLines: 3}),
+	Requires:         []*analysis.Analyzer{filedata.Analyzer},
 }
 
 // NewAnalyzer creates a configured analyzer.
@@ -110,10 +111,11 @@ func NewAnalyzer(opts ...Option) *analysis.Analyzer {
 	}
 
 	return &analysis.Analyzer{
-		Name:     "deepifelse",
-		Doc:      "detects nested if-else chains that should use early returns (guard clauses)",
-		Run:      makeRun(cfg),
-		Requires: []*analysis.Analyzer{filedata.Analyzer},
+		Name:             "deepifelse",
+		RunDespiteErrors: true,
+		Doc:              "detects nested if-else chains that should use early returns (guard clauses)",
+		Run:              makeRun(cfg),
+		Requires:         []*analysis.Analyzer{filedata.Analyzer},
 	}
 }
 
