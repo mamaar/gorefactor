@@ -359,3 +359,35 @@ func TestRunGoFix_DeletedFirstStatementsLeaveNoBlankLineAfterBrace(t *testing.T)
 		})
 	}
 }
+
+func TestRunGoFix_CgoImportStaysOwnDeclaration(t *testing.T) {
+	src := `package p
+
+import "C"
+
+import (
+	"fmt"
+	"strings"
+)
+
+func F(msg string, args ...interface{}) string {
+	return strings.ToUpper(fmt.Sprintf(msg, args...))
+}
+`
+	dir := writeInlineWorkspace(t, map[string]string{"go.mod": goFixModule, "p/p.go": src})
+
+	sess := mcptest.Dial(context.Background(), t, mcpTransport(), dir)
+	defer sess.Close()
+
+	callJSON(t, sess, "run_go_fix", map[string]any{"analyzers": []string{"any"}})
+
+	got, err := os.ReadFile(filepath.Join(dir, "p/p.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := "import \"C\"\n\nimport (\n\t\"fmt\"\n\t\"strings\"\n)\n"
+	if !strings.Contains(string(got), want) || !strings.Contains(string(got), "...any") {
+		t.Errorf("want any fix with cgo import kept apart; got:\n%s", got)
+	}
+}

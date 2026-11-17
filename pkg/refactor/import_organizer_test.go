@@ -489,7 +489,7 @@ import (
 `
 
 	got := OrganizeImports(src, "example.com/m", nil)
-	if !strings.Contains(got, "// #include <stdio.h>\nimport (\n\t\"C\"\n") {
+	if !strings.Contains(got, "// #include <stdio.h>\nimport \"C\"\n\nimport (\n") {
 		t.Errorf("cgo preamble detached:\n%s", got)
 	}
 
@@ -555,5 +555,31 @@ import (
 		if !strings.Contains(string(formatted), want) {
 			t.Errorf("missing %q in:\n%s", want, formatted)
 		}
+	}
+}
+
+func TestOrganizeImports_StandaloneCgoImportStaysOwnDeclaration(t *testing.T) {
+	cases := map[string]string{
+		"plain":    "import \"C\"\n\n",
+		"preamble": "/*\n#include <stdio.h>\n*/\nimport \"C\"\n\n",
+	}
+
+	for name, cgo := range cases {
+		t.Run(name, func(t *testing.T) {
+			src := "package main\n\n" + cgo + "import (\n\t\"os\"\n\t\"fmt\"\n)\n\nfunc main() { fmt.Println(os.Args) }\n"
+			want := "package main\n\n" + cgo + "import (\n\t\"fmt\"\n\t\"os\"\n)\n\nfunc main() { fmt.Println(os.Args) }\n"
+
+			if got := OrganizeImports(src, "example.com/m", nil); got != want {
+				t.Errorf("got:\n%s\nwant:\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestOrganizeImports_CgoImportBetweenBlocksIsLeftUnchanged(t *testing.T) {
+	src := "package main\n\nimport \"os\"\n\nimport \"C\"\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(os.Args) }\n"
+
+	if got := OrganizeImports(src, "example.com/m", nil); got != src {
+		t.Errorf("got:\n%s", got)
 	}
 }

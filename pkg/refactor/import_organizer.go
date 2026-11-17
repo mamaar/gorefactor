@@ -58,11 +58,18 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 	importDeclCount := 0
 
 	var specs []*ast.ImportSpec
+	var cgoDecls []*ast.GenDecl
 	attached := make(map[*ast.CommentGroup]bool)
 
 	for _, decl := range f.Decls {
 		genDecl, ok := decl.(*ast.GenDecl)
 		if !ok || genDecl.Tok != token.IMPORT {
+			continue
+		}
+
+		// A standalone import "C" carries the cgo preamble comment; leave it alone.
+		if isStandaloneCgoImport(genDecl) {
+			cgoDecls = append(cgoDecls, genDecl)
 			continue
 		}
 
@@ -93,6 +100,13 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 
 	if importDeclCount == 0 || len(specs) == 0 {
 		return src
+	}
+
+	// A cgo decl between the other decls would be overwritten by the new block.
+	for _, d := range cgoDecls {
+		if d.Pos() > firstImportPos && d.End() < lastImportEnd {
+			return src
+		}
 	}
 
 	lines := strings.Split(src, "\n")
@@ -128,6 +142,17 @@ func OrganizeImports(src string, modulePath string, workspaceModules []string) s
 	result := src[:startOff] + newBlock + src[endOff:]
 
 	return result
+}
+
+// isStandaloneCgoImport reports whether d is exactly `import "C"`, with or without parentheses.
+func isStandaloneCgoImport(d *ast.GenDecl) bool {
+	if len(d.Specs) != 1 {
+		return false
+	}
+
+	spec, ok := d.Specs[0].(*ast.ImportSpec)
+
+	return ok && spec.Name == nil && spec.Path.Value == `"C"`
 }
 
 func groupImports(entries []importEntry, modulePath string, workspaceModules []string) map[ImportGroup][]importEntry {
