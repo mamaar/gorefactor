@@ -78,7 +78,7 @@ func TestRun_RangeIntHonoursModuleGoVersion(t *testing.T) {
 func TestRun_NewExprFactCrossesPackages(t *testing.T) {
 	got := runModernize(t, "go 1.26", map[string]string{
 		"zlib/a.go": "package zlib\n\nfunc NewInt(x int) *int {\n\treturn &x\n}\n",
-		"app/b.go": "package app\n\nimport \"example.com/m/zlib\"\n\nvar P = zlib.NewInt(3)\n",
+		"app/b.go":  "package app\n\nimport \"example.com/m/zlib\"\n\nvar P = zlib.NewInt(3)\n",
 	}, modernize.NewExprAnalyzer)
 
 	var calls int
