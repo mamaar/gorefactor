@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ast/inspector"
+	"golang.org/x/tools/go/types/objectpath"
 
 	wsanalysis "github.com/mamaar/gorefactor/pkg/analysis"
 	"github.com/mamaar/gorefactor/pkg/analyzers/filedata"
@@ -23,11 +24,16 @@ import (
 type RunResult struct {
 	Result      any
 	Diagnostics []analysis.Diagnostic
+	// Skipped lists the import paths of packages left unanalyzed because they
+	// have type errors and the analyzer does not set RunDespiteErrors.
+	Skipped []string
 }
 
 // Run executes an analyzer against workspace packages and returns its typed result
 // plus any diagnostics reported. If pkgFilter is non-empty, only the matching
-// package is analysed; otherwise all packages are analysed.
+// package is reported on; otherwise all packages are. An analyzer that uses
+// facts also runs, unreported, on the workspace packages the filtered package
+// imports, so their facts exist. A panic in an analyzer is returned as an error.
 func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunResult, error) {
 	var packages []*wstypes.Package
 
@@ -58,17 +64,29 @@ func Run(ws *wstypes.Workspace, a *analysis.Analyzer, pkgFilter string) (*RunRes
 
 	combined := &RunResult{}
 
-	for _, pkg := range dependenciesFirst(ws, packages) {
+	for _, pkg := range dependenciesFirst(ws, packages, pkgFilter != "" && usesFacts(a)) {
+		reported := slices.Contains(packages, pkg)
+
 		rr, err := rs.runPackage(a, pkg)
 		if err != nil {
 			return nil, fmt.Errorf("run: %w", err)
 		}
 
+		if !reported {
+			continue
+		}
+
 		combined.Diagnostics = append(combined.Diagnostics, rr.Diagnostics...)
+		combined.Skipped = append(combined.Skipped, rr.Skipped...)
 		combined.Result = mergeResults(combined.Result, rr.Result)
 	}
 
 	return combined, nil
+}
+
+// usesFacts reports whether a or an analyzer it requires exchanges facts.
+func usesFacts(a *analysis.Analyzer) bool {
+	return len(a.FactTypes) > 0 || slices.ContainsFunc(a.Requires, usesFacts)
 }
 
 // mergeResults accumulates per-package analyzer results into a single value.
@@ -106,25 +124,100 @@ type runState struct {
 	// facts holds object facts exported so far, so a package sees the facts
 	// of the workspace packages it imports.
 	facts map[factKey]analysis.Fact
-	// results caches required analyzers' results, one computation per package.
+	// results caches required analyzers' results, one computation per unit.
 	results map[resultKey]any
 }
 
+// factKey names a fact. Objects reachable by an object path are keyed by it,
+// so the several go/types copies of one package (the type checker hands out a
+// production-only view while a test import cycle is in progress) share facts.
 type factKey struct {
 	analyzer *analysis.Analyzer
-	obj      types.Object
 	typ      reflect.Type
+	pkg      string
+	path     objectpath.Path
+	obj      types.Object
+}
+
+func newFactKey(a *analysis.Analyzer, obj types.Object, fact analysis.Fact, external *types.Package) factKey {
+	key := factKey{analyzer: a, typ: reflect.TypeOf(fact)}
+
+	// Nothing imports an external test package, and its objects would share
+	// paths with the package under test.
+	if obj.Pkg() != nil && obj.Pkg() != external {
+		path, err := objectpath.For(obj)
+		if err == nil {
+			key.pkg, key.path = obj.Pkg().Path(), path
+			return key
+		}
+	}
+
+	key.obj = obj
+
+	return key
 }
 
 type resultKey struct {
-	pkg      *wstypes.Package
+	unit     *unit
 	analyzer *analysis.Analyzer
 }
 
+// unit is what one pass covers: a package's own files, or the files of its
+// external test package, each with its own type information.
+type unit struct {
+	name     string
+	files    []*wstypes.File
+	pkg      *types.Package
+	info     *types.Info
+	external bool
+}
+
+// unitsOf splits pkg into its units, leaving out test files that were dropped
+// from type-checking. The second result reports whether pkg's own check
+// failed, in which case its analyzer-visible information is incomplete.
+func unitsOf(pkg *wstypes.Package) (units []*unit, failed bool) {
+	typesPkg := pkg.TypesPkg
+	if typesPkg == nil {
+		typesPkg = types.NewPackage(pkg.ImportPath, pkg.Name)
+	}
+
+	typesInfo := pkg.TypesInfo
+	if typesInfo == nil {
+		typesInfo = &types.Info{}
+	}
+
+	own := &unit{name: pkg.ImportPath, pkg: typesPkg, info: typesInfo}
+	ext := &unit{name: pkg.ImportPath + "_test", pkg: pkg.ExternalTestTypesPkg, info: pkg.ExternalTestTypesInfo, external: true}
+
+	for _, name := range slices.Sorted(maps.Keys(pkg.Files)) {
+		own.files = append(own.files, pkg.Files[name])
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(pkg.TestFiles)) {
+		f := pkg.TestFiles[name]
+
+		switch {
+		case f.AST == nil, pkg.ExcludedTestFiles[name] != nil:
+		case pkg.ExternalTestTypesPkg != nil && f.AST.Name.Name != pkg.Name:
+			ext.files = append(ext.files, f)
+		default:
+			own.files = append(own.files, f)
+		}
+	}
+
+	units = append(units, own)
+	if len(ext.files) > 0 && ext.info != nil {
+		units = append(units, ext)
+	}
+
+	return units, pkg.TypesChecked && pkg.TypesErr != nil
+}
+
 // dependenciesFirst orders pkgs so that a package comes after the workspace
-// packages it imports; ties and import cycles keep the input order.
-func dependenciesFirst(ws *wstypes.Workspace, pkgs []*wstypes.Package) []*wstypes.Package {
-	edges := wsanalysis.ImportGraph(ws).Union()
+// packages it imports; ties and import cycles keep the input order. With
+// withDeps the packages pkgs import, directly or not, are included.
+func dependenciesFirst(ws *wstypes.Workspace, pkgs []*wstypes.Package, withDeps bool) []*wstypes.Package {
+	edges := importEdges(ws)
 	selected := make(map[*wstypes.Package]bool, len(pkgs))
 
 	for _, pkg := range pkgs {
@@ -148,7 +241,7 @@ func dependenciesFirst(ws *wstypes.Workspace, pkgs []*wstypes.Package) []*wstype
 		}
 
 		pkg := ws.Packages[path]
-		if selected[pkg] {
+		if selected[pkg] || (withDeps && pkg != nil) {
 			ordered = append(ordered, pkg)
 		}
 	}
@@ -160,71 +253,125 @@ func dependenciesFirst(ws *wstypes.Workspace, pkgs []*wstypes.Package) []*wstype
 	return ordered
 }
 
-// runPackage executes an analyzer against a single workspace package.
+// importEdges returns each package's workspace imports: the production ones,
+// then the test ones that do not lead back through production imports. Facts
+// flow along production imports, which cannot cycle; a test import that closes
+// a cycle with them must not reorder the packages it closes it with.
+func importEdges(ws *wstypes.Workspace) map[string][]string {
+	graph := wsanalysis.ImportGraph(ws)
+	edges := make(map[string][]string, len(graph.Production))
+
+	var reaches func(from, to string, seen map[string]bool) bool
+
+	reaches = func(from, to string, seen map[string]bool) bool {
+		if from == to {
+			return true
+		}
+
+		if seen[from] {
+			return false
+		}
+
+		seen[from] = true
+
+		return slices.ContainsFunc(graph.Production[from], func(next string) bool { return reaches(next, to, seen) })
+	}
+
+	for path, prod := range graph.Production {
+		edges[path] = slices.Clone(prod)
+
+		for _, dep := range graph.Test[path] {
+			if !slices.Contains(prod, dep) && !reaches(dep, path, map[string]bool{}) {
+				edges[path] = append(edges[path], dep)
+			}
+		}
+	}
+
+	return edges
+}
+
+// runPackage executes an analyzer against the units of a single workspace package.
 func (rs *runState) runPackage(a *analysis.Analyzer, pkg *wstypes.Package) (*RunResult, error) {
+	units, failed := unitsOf(pkg)
+	if failed && !a.RunDespiteErrors {
+		return &RunResult{Skipped: []string{pkg.ImportPath}}, nil
+	}
+
+	combined := &RunResult{}
+
+	for _, u := range units {
+		rr, err := rs.runUnit(a, u)
+		if err != nil {
+			return nil, err
+		}
+
+		combined.Diagnostics = append(combined.Diagnostics, rr.Diagnostics...)
+		combined.Result = mergeResults(combined.Result, rr.Result)
+	}
+
+	return combined, nil
+}
+
+// runUnit runs a on u, returning a panic inside an analyzer as an error.
+func (rs *runState) runUnit(a *analysis.Analyzer, u *unit) (res *RunResult, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			res, err = nil, fmt.Errorf("analyzer %s panicked on package %s: %v", a.Name, u.name, r)
+		}
+	}()
+
 	var diags []analysis.Diagnostic
 
-	pass, err := rs.buildPass(pkg, a, func(d analysis.Diagnostic) {
+	pass, err := rs.buildPass(u, a, func(d analysis.Diagnostic) {
 		diags = append(diags, d)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	res, err := a.Run(pass)
+	out, err := a.Run(pass)
 	if err != nil {
 		return nil, err
 	}
 
-	return &RunResult{Result: res, Diagnostics: diags}, nil
+	return &RunResult{Result: out, Diagnostics: diags}, nil
 }
 
-func (rs *runState) buildPass(pkg *wstypes.Package, a *analysis.Analyzer, report func(analysis.Diagnostic)) (*analysis.Pass, error) {
-	ws := rs.ws
-
-	// Test files of both the package and its x_test package go in one pass:
-	// TypesInfo covers both, and no analyzer reads pass.Pkg.
-	srcFiles := slices.Concat(slices.Collect(maps.Values(pkg.Files)), slices.Collect(maps.Values(pkg.TestFiles)))
-
-	files := make([]*ast.File, 0, len(srcFiles))
-	for _, f := range srcFiles {
+func (rs *runState) buildPass(u *unit, a *analysis.Analyzer, report func(analysis.Diagnostic)) (*analysis.Pass, error) {
+	files := make([]*ast.File, 0, len(u.files))
+	for _, f := range u.files {
 		files = append(files, f.AST)
 	}
 
-	typesPkg := pkg.TypesPkg
-	if typesPkg == nil {
-		typesPkg = types.NewPackage(pkg.ImportPath, pkg.Name)
-	}
-
-	typesInfo := pkg.TypesInfo
-	if typesInfo == nil {
-		typesInfo = &types.Info{}
+	var external *types.Package
+	if u.external {
+		external = u.pkg
 	}
 
 	pass := &analysis.Pass{
 		Analyzer:  a,
-		Fset:      ws.FileSet,
+		Fset:      rs.ws.FileSet,
 		Files:     files,
-		Pkg:       typesPkg,
-		TypesInfo: typesInfo,
+		Pkg:       u.pkg,
+		TypesInfo: u.info,
 		Report:    report,
 		ResultOf:  make(map[*analysis.Analyzer]any),
 
 		TypesSizes: types.SizesFor("gc", runtime.GOARCH),
 		ReadFile: func(filename string) ([]byte, error) {
-			for _, f := range srcFiles {
+			for _, f := range u.files {
 				if f.Path == filename {
 					return f.OriginalContent, nil
 				}
 			}
 
-			return nil, fmt.Errorf("%s is not a file of package %s", filename, pkg.ImportPath)
+			return nil, fmt.Errorf("%s is not a file of package %s", filename, u.name)
 		},
 		ExportObjectFact: func(obj types.Object, fact analysis.Fact) {
-			rs.facts[factKey{a, obj, reflect.TypeOf(fact)}] = fact
+			rs.facts[newFactKey(a, obj, fact, external)] = fact
 		},
 		ImportObjectFact: func(obj types.Object, fact analysis.Fact) bool {
-			stored, ok := rs.facts[factKey{a, obj, reflect.TypeOf(fact)}]
+			stored, ok := rs.facts[newFactKey(a, obj, fact, external)]
 			if !ok {
 				return false
 			}
@@ -237,7 +384,7 @@ func (rs *runState) buildPass(pkg *wstypes.Package, a *analysis.Analyzer, report
 
 	// Build file content map for filedata.
 	fd := &filedata.Data{Content: make(map[string][]byte)}
-	for _, f := range srcFiles {
+	for _, f := range u.files {
 		fd.Content[f.Path] = f.OriginalContent
 	}
 
@@ -247,8 +394,8 @@ func (rs *runState) buildPass(pkg *wstypes.Package, a *analysis.Analyzer, report
 		case req == filedata.Analyzer:
 			pass.ResultOf[req] = fd
 		case req.Name == "inspect":
-			// One inspector per package: typeindex rejects results built on a different one.
-			key := resultKey{pkg, req}
+			// One inspector per unit: typeindex rejects results built on a different one.
+			key := resultKey{u, req}
 
 			res, ok := rs.results[key]
 			if !ok {
@@ -258,11 +405,11 @@ func (rs *runState) buildPass(pkg *wstypes.Package, a *analysis.Analyzer, report
 
 			pass.ResultOf[req] = res
 		default:
-			key := resultKey{pkg, req}
+			key := resultKey{u, req}
 
 			res, ok := rs.results[key]
 			if !ok {
-				reqPass, err := rs.buildPass(pkg, req, func(analysis.Diagnostic) {})
+				reqPass, err := rs.buildPass(u, req, func(analysis.Diagnostic) {})
 				if err != nil {
 					return nil, err
 				}
@@ -294,8 +441,9 @@ func DiagnosticsToChanges(fset *token.FileSet, diags []analysis.Diagnostic) []ws
 
 		fix := d.SuggestedFixes[0]
 		for _, edit := range fix.TextEdits {
-			startPos := fset.Position(edit.Pos)
-			endPos := fset.Position(edit.End)
+			// Ignore //line directives: edits address the file's own bytes.
+			startPos := fset.PositionFor(edit.Pos, false)
+			endPos := fset.PositionFor(edit.End, false)
 			changes = append(changes, wstypes.Change{
 				File:        startPos.Filename,
 				Start:       startPos.Offset,

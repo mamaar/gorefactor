@@ -50,6 +50,11 @@ type Package struct {
 	// no external test files or none checked.
 	ExternalTestTypesPkg *gotypes.Package
 
+	// ExternalTestTypesInfo is the full type information of ExternalTestTypesPkg.
+	// Its Defs, Uses and Types are also merged into TypesInfo. Nil when the
+	// external check reported an error.
+	ExternalTestTypesInfo *gotypes.Info
+
 	// TypesChecked reports whether a type-check attempt has run to completion,
 	// success or failure. This is the memoisation guard used by
 	// (*analysis.GoParser).EnsureTypeChecked/TypeCheckPackage and by

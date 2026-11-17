@@ -57,65 +57,79 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 		Name: "run_go_fix",
 		Description: "Run go fix's modernizers in-process and apply their suggested fixes through the refactoring plan pipeline (dry_run gives diffs). " +
 			"Runs every analyzer in golang.org/x/tools modernize.Suite (e.g. any, rangeint, minmax, slicescontains, mapsloop, forvar) or the subset named in `analyzers`. " +
-			"Does not cover `//go:fix inline`, buildtag or hostport. Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up.",
+			"Does not cover `//go:fix inline`, buildtag or hostport. Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up. Packages with type errors are not analyzed and are listed under `skipped_packages`.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RunGoFixInput) (*mcpsdk.CallToolResult, any, error) {
 		selected, err := selectModernizers(in.Analyzers)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
-		state.RLock()
-
-		ws, err := state.GetWorkspace()
+		sel, changes, err := collectFixes(state, selected, in.Package)
 		if err != nil {
-			state.RUnlock()
 			return errResult(err), nil, nil
 		}
 
-		// Type-checking is lazy and the modernizers need TypesInfo.
-		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
-
-		sel := &fixSelection{ws: ws, generated: generatedFiles(ws)}
-
-		for _, a := range selected {
-			rr, err := analyzers.Run(ws, a, in.Package)
-			if err != nil {
-				state.RUnlock()
-				return errResult(fmt.Errorf("%s: %w", a.Name, err)), nil, nil
-			}
-
-			sel.add(a.Name, rr.Diagnostics)
-		}
-
-		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, sel.diags))
 		if len(changes) == 0 {
-			state.RUnlock()
-
 			return textResult(map[string]any{
-				"files_modified": []string{},
-				"changes_count":  0,
-				"fixed":          []GoFixItem{},
-				"skipped":        sel.skipped,
-				"message":        "No modernizer fixes found",
+				"files_modified":   []string{},
+				"changes_count":    0,
+				"fixed":            []GoFixItem{},
+				"skipped":          sel.skipped,
+				"skipped_packages": sel.skippedPackages,
+				"message":          "No modernizer fixes found",
 			}), nil, nil
 		}
 
 		plan := analyzers.ChangesToPlan(changes)
 
-		result, err := executePlanWithUnlock(state, plan, "Apply go fix modernizers", in.DryRun)
+		result, err := executePlan(state, plan, "Apply go fix modernizers", in.DryRun)
 		if err != nil {
 			return errResult(err), nil, nil
 		}
 
 		out := map[string]any{
-			"files_modified": result.ModifiedFiles,
-			"changes_count":  result.ChangeCount,
-			"fixed":          sel.fixed,
-			"skipped":        sel.skipped,
+			"files_modified":   result.ModifiedFiles,
+			"changes_count":    result.ChangeCount,
+			"fixed":            sel.fixed,
+			"skipped":          sel.skipped,
+			"skipped_packages": sel.skippedPackages,
 		}
 
 		return textResult(withDryRun(out, result)), nil, nil
 	})
+}
+
+// collectFixes runs the selected analyzers and picks their fixes, holding the
+// state's read lock only while it reads the workspace.
+func collectFixes(state *MCPServer, selected []*analysis.Analyzer, pkgFilter string) (*fixSelection, []types.Change, error) {
+	state.RLock()
+	defer state.RUnlock()
+
+	ws, err := state.GetWorkspace()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Type-checking is lazy and the modernizers need TypesInfo.
+	state.GetEngine().EnsureTypeCheckedPackage(ws, pkgFilter)
+
+	sel := &fixSelection{ws: ws, generated: generatedFiles(ws)}
+
+	for _, a := range selected {
+		rr, err := analyzers.Run(ws, a, pkgFilter)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", a.Name, err)
+		}
+
+		sel.add(a.Name, rr.Diagnostics)
+		sel.skippedPackages = mergeSorted(sel.skippedPackages, rr.Skipped)
+	}
+
+	return sel, analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, sel.diags)), nil
+}
+
+func mergeSorted(a, b []string) []string {
+	return slices.Compact(slices.Sorted(slices.Values(slices.Concat(a, b))))
 }
 
 // selectModernizers resolves names against modernize.Suite; no names means the whole suite.
@@ -170,6 +184,8 @@ type fixSelection struct {
 	diags     []analysis.Diagnostic
 	fixed     []GoFixItem
 	skipped   []GoFixSkipped
+	// skippedPackages are packages left unanalyzed for type errors.
+	skippedPackages []string
 }
 
 func (s *fixSelection) add(analyzer string, diags []analysis.Diagnostic) {
@@ -178,7 +194,7 @@ func (s *fixSelection) add(analyzer string, diags []analysis.Diagnostic) {
 			continue
 		}
 
-		pos := s.ws.FileSet.Position(d.Pos)
+		pos := s.ws.FileSet.PositionFor(d.Pos, false)
 
 		item := GoFixItem{Analyzer: analyzer, File: s.relative(pos.Filename), Line: pos.Line, Message: d.Message}
 		fix := d.SuggestedFixes[0]
@@ -227,7 +243,7 @@ func freshEdits(fresh []keyedEdit) []analysis.TextEdit {
 
 func (s *fixSelection) generatedFileOf(fix analysis.SuggestedFix) string {
 	for _, e := range fix.TextEdits {
-		file := s.ws.FileSet.Position(e.Pos).Filename
+		file := s.ws.FileSet.PositionFor(e.Pos, false).Filename
 		if s.generated[file] {
 			return file
 		}
@@ -240,7 +256,7 @@ func (s *fixSelection) generatedFileOf(fix analysis.SuggestedFix) string {
 // the origin of the accepted fix one of them overlaps.
 func (s *fixSelection) classify(fix analysis.SuggestedFix) (fresh []keyedEdit, origin string, conflict bool) {
 	for _, e := range fix.TextEdits {
-		start, end := s.ws.FileSet.Position(e.Pos), s.ws.FileSet.Position(e.End)
+		start, end := s.ws.FileSet.PositionFor(e.Pos, false), s.ws.FileSet.PositionFor(e.End, false)
 		key := editKey{start.Filename, start.Offset, end.Offset, string(e.NewText)}
 
 		duplicate := false

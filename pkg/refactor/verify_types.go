@@ -310,13 +310,14 @@ func verifyTouched(ws *types.Workspace, pkgs []*types.Package, changesByFile map
 	checked := make(map[*types.Package]bool)
 
 	for _, p := range order.overlaid {
+		goVersion := analysis.PackageGoVersion(ws, p.Dir)
 		inPackage, _ := packageFileGroups(p)
 
 		production := productionFiles(p, inPackage)
 		switch {
 		case len(production) == 0:
 		case isTouched[p] && len(production) == len(inPackage):
-			res := verifyFileGroup(p.ImportPath, inPackage, changesByFile, ser, importer, over)
+			res := verifyFileGroup(p.ImportPath, goVersion, inPackage, changesByFile, ser, importer, over)
 			record(res)
 
 			checked[p] = true
@@ -325,7 +326,7 @@ func verifyTouched(ws *types.Workspace, pkgs []*types.Package, changesByFile map
 			}
 		case order.needed[p]:
 			// Importers see the package without its test files.
-			res := verifyFileGroup(p.ImportPath, production, changesByFile, ser, importer, over)
+			res := verifyFileGroup(p.ImportPath, goVersion, production, changesByFile, ser, importer, over)
 			if isTouched[p] && res.skipped != "" {
 				skipped = append(skipped, res.skipped)
 			}
@@ -337,13 +338,15 @@ func verifyTouched(ws *types.Workspace, pkgs []*types.Package, changesByFile map
 	}
 
 	for _, p := range pkgs {
+		goVersion := analysis.PackageGoVersion(ws, p.Dir)
 		inPackage, external := packageFileGroups(p)
+
 		if !checked[p] {
-			record(verifyFileGroup(p.ImportPath, inPackage, changesByFile, ser, importer, over))
+			record(verifyFileGroup(p.ImportPath, goVersion, inPackage, changesByFile, ser, importer, over))
 		}
 
 		if slices.ContainsFunc(external, func(f *types.File) bool { return changesByFile[f.Path] != nil }) {
-			record(verifyFileGroup(p.ImportPath+"_test", external, changesByFile, ser, importer, over))
+			record(verifyFileGroup(p.ImportPath+"_test", goVersion, external, changesByFile, ser, importer, over))
 		}
 	}
 
@@ -380,7 +383,7 @@ func packageFileGroups(pkg *types.Package) (inPackage, external []*types.File) {
 // verifyFileGroup diffs the type errors of files checked as package
 // importPath before and after changesByFile is applied. The baseline resolves
 // imports through importer and the modified files through modImporter.
-func verifyFileGroup(importPath string, files []*types.File, changesByFile map[string][]types.Change, ser *Serializer, importer, modImporter gotypes.Importer) packageVerifyResult {
+func verifyFileGroup(importPath, goVersion string, files []*types.File, changesByFile map[string][]types.Change, ser *Serializer, importer, modImporter gotypes.Importer) packageVerifyResult {
 	baselineContents := fileContents(files)
 	if len(baselineContents) == 0 {
 		return packageVerifyResult{skipped: fmt.Sprintf("package %s: no parseable files", importPath)}
@@ -400,7 +403,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		return packageVerifyResult{skipped: fmt.Sprintf("package %s: baseline content unexpectedly failed to parse: %v", importPath, err)}
 	}
 
-	_, baseErrs := checkPackageErrors(baseFset, importer, importPath, baseFiles)
+	_, baseErrs := checkPackageErrors(baseFset, importer, importPath, goVersion, baseFiles)
 	baseline := normalizeErrorSet(baseErrs)
 
 	modContents, err := applyPlanToFiles(files, changesByFile, ser)
@@ -428,7 +431,7 @@ func verifyFileGroup(importPath string, files []*types.File, changesByFile map[s
 		return packageVerifyResult{newErrors: []string{fmt.Sprintf("package %s: plan produces invalid Go source: %v", importPath, err)}}
 	}
 
-	modPkg, modErrs := checkPackageErrors(modFset, modImporter, importPath, modFiles)
+	modPkg, modErrs := checkPackageErrors(modFset, modImporter, importPath, goVersion, modFiles)
 
 	var newErrs []string
 
@@ -520,9 +523,9 @@ func parseAll(fset *token.FileSet, contents map[string][]byte) ([]*ast.File, err
 // error Config.Check happens to return, whereas a baseline diff needs the
 // complete error set on both sides to avoid mistaking "baseline had error A,
 // modified has error A and B" for "everything's new".
-func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPath string, files []*ast.File) (*gotypes.Package, []error) {
+func checkPackageErrors(fset *token.FileSet, importer gotypes.Importer, importPath, goVersion string, files []*ast.File) (*gotypes.Package, []error) {
 	var errs []error
-	conf := analysis.NewTypesConfig(importer, "", func(err error) { errs = append(errs, err) })
+	conf := analysis.NewTypesConfig(importer, goVersion, func(err error) { errs = append(errs, err) })
 	info := &gotypes.Info{
 		Types: make(map[ast.Expr]gotypes.TypeAndValue),
 		Defs:  make(map[*ast.Ident]gotypes.Object),

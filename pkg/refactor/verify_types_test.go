@@ -548,3 +548,22 @@ func TestVerifyPlanTypes_PlanThatCannotBeAppliedIsANewErrorNotSkipped(t *testing
 		t.Errorf("error = %q", res.NewErrors[0])
 	}
 }
+
+func TestVerifyPlanTypes_RejectsSyntaxNewerThanModuleGoVersion(t *testing.T) {
+	const lib = "package foo\n\nfunc g() {\n\tfor i := 0; i < 3; i++ {\n\t\t_ = i\n\t}\n}\n"
+
+	for goDirective, wantOK := range map[string]bool{"go 1.21": false, "go 1.22": true} {
+		ws := writeVerifyTypesWorkspace(t, map[string]string{
+			"go.mod":     "module example.com/verifytest\n\n" + goDirective + "\n",
+			"foo/lib.go": lib,
+		})
+
+		f := findVerifyFile(t, ws, "foo/lib.go")
+		plan := &types.RefactoringPlan{Changes: []types.Change{replaceChange(t, f, "i := 0; i < 3; i++", "i := range 3")}}
+
+		res := VerifyPlanTypesWithImporter(ws, plan, nil)
+		if res.OK() != wantOK {
+			t.Errorf("%s: OK = %v, want %v (new errors %v, skipped %q)", goDirective, res.OK(), wantOK, res.NewErrors, res.Skipped)
+		}
+	}
+}

@@ -17,7 +17,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 
 	"github.com/mamaar/gorefactor/pkg/types"
@@ -452,6 +451,7 @@ func (p *GoParser) InvalidateTypeCheck(pkg *types.Package) {
 	pkg.TypesInfo = nil
 	pkg.TypesPkg = nil
 	pkg.ExternalTestTypesPkg = nil
+	pkg.ExternalTestTypesInfo = nil
 	pkg.TypesErr = nil
 	pkg.ExcludedTestFiles = nil
 	pkg.ProductionErrs = nil
@@ -520,6 +520,7 @@ func (p *GoParser) dropTypeInfo(ws *types.Workspace) {
 		pkg.TypesInfo = nil
 		pkg.TypesPkg = nil
 		pkg.ExternalTestTypesPkg = nil
+		pkg.ExternalTestTypesInfo = nil
 	}
 }
 
@@ -606,6 +607,7 @@ func (p *GoParser) typeCheckLocked(ws *types.Workspace, pkg *types.Package) {
 	// nothing at all.
 	pkg.TypesPkg = res.pkg
 	pkg.ExternalTestTypesPkg = nil
+	pkg.ExternalTestTypesInfo = nil
 	pkg.TypesInfo = res.info
 	pkg.TypesErr = res.err
 	pkg.ExcludedTestFiles = res.excluded
@@ -826,7 +828,7 @@ func (c *typeErrors) firstPerFile(fset *token.FileSet, tests []testAST) map[stri
 // production-only rescue view Import hands to a genuinely in-progress
 // package.
 //
-// The resulting Defs/Uses/Types are merged into pkg.TypesInfo so every consumer
+// The resulting Defs/Uses/Types are also merged into pkg.TypesInfo so every consumer
 // that already reads pkg.TypesInfo for pkg.TestFiles (BuildReferenceIndex
 // chief among them, since it does not distinguish in-package from external
 // test files) sees these identifiers exactly the way it already sees
@@ -875,6 +877,10 @@ func (p *GoParser) checkExternalTestPackage(ws *types.Workspace, pkg *types.Pack
 	}
 
 	pkg.ExternalTestTypesPkg = res.pkg
+	if res.err == nil {
+		pkg.ExternalTestTypesInfo = res.info
+	}
+
 	maps.Copy(pkg.TypesInfo.Defs, res.info.Defs)
 	maps.Copy(pkg.TypesInfo.Uses, res.info.Uses)
 	maps.Copy(pkg.TypesInfo.Types, res.info.Types)
@@ -907,9 +913,9 @@ func (p *GoParser) Importer() gotypes.Importer {
 
 // NewTypesConfig returns the go/types.Config used for every workspace
 // type-check. FakeImportC makes cgo files check cleanly; C.x expressions get
-// no type information and never appear in Info.Uses. goVersion is the module's
-// language version ("go1.22"); empty means unrestricted and leaves
-// Info.FileVersions empty.
+// no type information and never appear in Info.Uses. goVersion is the language
+// version of the package's module, as PackageGoVersion returns it ("go1.22");
+// empty means unrestricted and leaves Info.FileVersions empty.
 func NewTypesConfig(importer gotypes.Importer, goVersion string, onError func(error)) gotypes.Config {
 	return gotypes.Config{
 		Importer:    importer,
@@ -917,21 +923,6 @@ func NewTypesConfig(importer gotypes.Importer, goVersion string, onError func(er
 		FakeImportC: true,
 		GoVersion:   goVersion,
 	}
-}
-
-// GoVersion returns the language version from ws's go.mod `go` directive in
-// go/types form ("go1.22"), or "" when there is none.
-func GoVersion(ws *types.Workspace) string {
-	if ws.Module == nil {
-		return ""
-	}
-
-	mf, err := modfile.ParseLax("go.mod", []byte(ws.Module.GoMod), nil)
-	if err != nil || mf.Go == nil {
-		return ""
-	}
-
-	return "go" + mf.Go.Version
 }
 
 // maxTestExclusionPasses bounds how often the test files that carry errors
@@ -949,7 +940,7 @@ func (p *GoParser) checkFiles(ws *types.Workspace, pkg *types.Package, files []*
 	p.checkStack = append(p.checkStack, pkg)
 	defer func() { p.checkStack = p.checkStack[:len(p.checkStack)-1] }()
 
-	conf := NewTypesConfig(p.importer, GoVersion(ws), errs.add)
+	conf := NewTypesConfig(p.importer, PackageGoVersion(ws, pkg.Dir), errs.add)
 	info := &gotypes.Info{
 		Types:        make(map[ast.Expr]gotypes.TypeAndValue),
 		Defs:         make(map[*ast.Ident]gotypes.Object),
