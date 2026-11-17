@@ -890,3 +890,20 @@ func TestApplyChanges_LeavesTestdataGoFileUnformatted(t *testing.T) {
 
 	requireContent(t, path, src)
 }
+
+func TestApplyChangesToContent_InsertAndReplacementAtSameOffset(t *testing.T) {
+	src := "abcdef"
+	changes := []refactorTypes.Change{
+		{Start: 2, End: 2, NewText: "X"},
+		{Start: 2, End: 4, OldText: "cd", NewText: "Y"},
+	}
+
+	out, err := NewSerializer().ApplyChangesToContent([]byte(src), changes)
+	if err != nil {
+		t.Fatalf("ApplyChangesToContent: %v", err)
+	}
+
+	if string(out) != "abXYef" {
+		t.Errorf("got %q, want %q", out, "abXYef")
+	}
+}

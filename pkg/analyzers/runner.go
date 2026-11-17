@@ -247,7 +247,16 @@ func (rs *runState) buildPass(pkg *wstypes.Package, a *analysis.Analyzer, report
 		case req == filedata.Analyzer:
 			pass.ResultOf[req] = fd
 		case req.Name == "inspect":
-			pass.ResultOf[req] = inspector.New(files)
+			// One inspector per package: typeindex rejects results built on a different one.
+			key := resultKey{pkg, req}
+
+			res, ok := rs.results[key]
+			if !ok {
+				res = inspector.New(files)
+				rs.results[key] = res
+			}
+
+			pass.ResultOf[req] = res
 		default:
 			key := resultKey{pkg, req}
 

@@ -1,70 +1,69 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"os/exec"
+	"maps"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/tools/go/analysis"
+	"golang.org/x/tools/go/analysis/passes/modernize"
+
+	"github.com/mamaar/gorefactor/pkg/analyzers"
+	"github.com/mamaar/gorefactor/pkg/types"
 )
 
 // --- run_go_fix ---
 
 type RunGoFixInput struct {
-	Packages string   `json:"packages,omitempty" jsonschema:"package pattern, defaults to ./..."`
-	Fixers   []string `json:"fixers,omitempty" jsonschema:"optional list of fixer names to enable (e.g. any, rangeint, minmax)"`
-	DiffOnly bool     `json:"diff_only,omitempty" jsonschema:"if true, run with -diff flag (preview only)"`
+	Analyzers []string `json:"analyzers,omitempty" jsonschema:"modernizer names to run (default: all of modernize.Suite); an unknown name errors with the valid names"`
+	Package   string   `json:"package,omitempty" jsonschema:"specific package to fix"`
+	DryRun    bool     `json:"dry_run,omitempty" jsonschema:"preview the changes without writing them - returns full before/after diffs for review; run again with dry_run=false to apply"`
 }
 
-type RunGoFixOutput struct {
-	PackagePattern string   `json:"package_pattern"`
-	FixersApplied  []string `json:"fixers_applied,omitempty"`
-	DiffOnly       bool     `json:"diff_only"`
-	Output         string   `json:"output"`
-	Stderr         string   `json:"stderr,omitempty"`
-	ExitCode       int      `json:"exit_code"`
+type GoFixItem struct {
+	Analyzer string `json:"analyzer"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Message  string `json:"message"`
 }
 
-var knownFixers = map[string]bool{
-	"any":              true,
-	"bloop":            true,
-	"buildtag":         true,
-	"cgocheck":         true,
-	"contextcheck":     true,
-	"deadcode":         true,
-	"efaceany":         true,
-	"errorf":           true,
-	"httpmethod":       true,
-	"loopvar":          true,
-	"minmax":           true,
-	"netip":            true,
-	"osglob":           true,
-	"rangeint":         true,
-	"sigchanyzer":      true,
-	"slicesclip":       true,
-	"slicesdelete":     true,
-	"sortslice":        true,
-	"stringscutprefix": true,
-	"testingcleanup":   true,
-	"unmarshal":        true,
+type GoFixSkipped struct {
+	GoFixItem
+
+	Reason string `json:"reason"`
+}
+
+// editKey identifies a text edit for deduplication.
+type editKey struct {
+	file       string
+	start, end int
+	text       string
+}
+
+// acceptedEdit is an edit already chosen for the plan, with its origin for
+// overlap messages.
+type acceptedEdit struct {
+	editKey
+
+	origin string
 }
 
 func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 	mcpsdk.AddTool(s, &mcpsdk.Tool{
-		Name:        "run_go_fix",
-		Description: "Run `go fix` on the loaded workspace. Optionally restrict to specific fixers or preview changes with diff mode.",
+		Name: "run_go_fix",
+		Description: "Run go fix's modernizers in-process and apply their suggested fixes through the refactoring plan pipeline (dry_run gives diffs). " +
+			"Runs every analyzer in golang.org/x/tools modernize.Suite (e.g. any, rangeint, minmax, slicescontains, mapsloop, forvar) or the subset named in `analyzers`. " +
+			"Does not cover `//go:fix inline`, buildtag or hostport. Generated files are skipped and listed under `skipped`, as are fixes that overlap an earlier fix; run again to pick those up.",
 	}, func(ctx context.Context, req *mcpsdk.CallToolRequest, in RunGoFixInput) (*mcpsdk.CallToolResult, any, error) {
-		// Validate fixers
-		for _, f := range in.Fixers {
-			if !knownFixers[f] {
-				return errResult(fmt.Errorf("unknown fixer %q; known fixers: %s", f, knownFixersList())), nil, nil
-			}
+		selected, err := selectModernizers(in.Analyzers)
+		if err != nil {
+			return errResult(err), nil, nil
 		}
 
-		// Get workspace root path
 		state.RLock()
 
 		ws, err := state.GetWorkspace()
@@ -73,64 +72,203 @@ func registerFixTools(s *mcpsdk.Server, state *MCPServer) {
 			return errResult(err), nil, nil
 		}
 
-		rootPath := ws.RootPath
+		// Type-checking is lazy and the modernizers need TypesInfo.
+		state.GetEngine().EnsureTypeCheckedPackage(ws, in.Package)
 
-		state.RUnlock()
+		sel := &fixSelection{ws: ws, generated: generatedFiles(ws)}
 
-		pkgPattern := in.Packages
-		if pkgPattern == "" {
-			pkgPattern = "./..."
-		}
-
-		// Build command args
-		args := []string{"fix"}
-		if in.DiffOnly {
-			args = append(args, "-diff")
-		}
-
-		for _, f := range in.Fixers {
-			args = append(args, "-"+f)
-		}
-
-		args = append(args, pkgPattern)
-
-		cmd := exec.CommandContext(ctx, "go", args...)
-		cmd.Dir = rootPath
-
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-
-		exitCode := 0
-
-		err = cmd.Run()
-		if err != nil {
-			exitErr, ok := errors.AsType[*exec.ExitError](err)
-			if ok {
-				exitCode = exitErr.ExitCode()
-			} else {
-				return errResult(fmt.Errorf("exec go fix: %w", err)), nil, nil
+		for _, a := range selected {
+			rr, err := analyzers.Run(ws, a, in.Package)
+			if err != nil {
+				state.RUnlock()
+				return errResult(fmt.Errorf("%s: %w", a.Name, err)), nil, nil
 			}
+
+			sel.add(a.Name, rr.Diagnostics)
 		}
 
-		out := RunGoFixOutput{
-			PackagePattern: pkgPattern,
-			FixersApplied:  in.Fixers,
-			DiffOnly:       in.DiffOnly,
-			Output:         stdout.String(),
-			Stderr:         stderr.String(),
-			ExitCode:       exitCode,
+		changes := analyzers.FillOldText(ws, analyzers.DiagnosticsToChanges(ws.FileSet, sel.diags))
+		if len(changes) == 0 {
+			state.RUnlock()
+
+			return textResult(map[string]any{
+				"files_modified": []string{},
+				"changes_count":  0,
+				"fixed":          []GoFixItem{},
+				"skipped":        sel.skipped,
+				"message":        "No modernizer fixes found",
+			}), nil, nil
 		}
 
-		return textResult(out), nil, nil
+		plan := analyzers.ChangesToPlan(changes)
+
+		result, err := executePlanWithUnlock(state, plan, "Apply go fix modernizers", in.DryRun)
+		if err != nil {
+			return errResult(err), nil, nil
+		}
+
+		out := map[string]any{
+			"files_modified": result.ModifiedFiles,
+			"changes_count":  result.ChangeCount,
+			"fixed":          sel.fixed,
+			"skipped":        sel.skipped,
+		}
+
+		return textResult(withDryRun(out, result)), nil, nil
 	})
 }
 
-func knownFixersList() string {
-	names := make([]string, 0, len(knownFixers))
-	for k := range knownFixers {
-		names = append(names, k)
+// selectModernizers resolves names against modernize.Suite; no names means the whole suite.
+func selectModernizers(names []string) ([]*analysis.Analyzer, error) {
+	if len(names) == 0 {
+		return modernize.Suite, nil
 	}
 
-	return strings.Join(names, ", ")
+	byName := make(map[string]*analysis.Analyzer, len(modernize.Suite))
+	for _, a := range modernize.Suite {
+		byName[a.Name] = a
+	}
+
+	var selected []*analysis.Analyzer
+
+	for _, name := range slices.Compact(slices.Sorted(slices.Values(names))) {
+		a, ok := byName[name]
+		if !ok {
+			valid := slices.Sorted(maps.Keys(byName))
+			return nil, fmt.Errorf("unknown analyzer %q; valid analyzers: %s", name, strings.Join(valid, ", "))
+		}
+
+		selected = append(selected, a)
+	}
+
+	return selected, nil
+}
+
+func generatedFiles(ws *types.Workspace) map[string]bool {
+	generated := make(map[string]bool)
+
+	for _, pkg := range ws.Packages {
+		for _, f := range pkg.Files {
+			generated[f.Path] = generated[f.Path] || f.Generated
+		}
+
+		for _, f := range pkg.TestFiles {
+			generated[f.Path] = generated[f.Path] || f.Generated
+		}
+	}
+
+	return generated
+}
+
+// fixSelection picks, in analyzer order, the first suggested fix of each
+// diagnostic, dropping fixes in generated files and fixes that overlap one
+// already accepted.
+type fixSelection struct {
+	ws        *types.Workspace
+	generated map[string]bool
+	accepted  []acceptedEdit
+	diags     []analysis.Diagnostic
+	fixed     []GoFixItem
+	skipped   []GoFixSkipped
+}
+
+func (s *fixSelection) add(analyzer string, diags []analysis.Diagnostic) {
+	for _, d := range diags {
+		if len(d.SuggestedFixes) == 0 {
+			continue
+		}
+
+		pos := s.ws.FileSet.Position(d.Pos)
+
+		item := GoFixItem{Analyzer: analyzer, File: s.relative(pos.Filename), Line: pos.Line, Message: d.Message}
+		fix := d.SuggestedFixes[0]
+
+		if file := s.generatedFileOf(fix); file != "" {
+			s.skipped = append(s.skipped, GoFixSkipped{item, "generated file " + s.relative(file)})
+			continue
+		}
+
+		fresh, origin, conflict := s.classify(fix)
+		if conflict {
+			s.skipped = append(s.skipped, GoFixSkipped{item, fmt.Sprintf("overlaps %s; run again", origin)})
+			continue
+		}
+
+		if len(fresh) == 0 {
+			continue
+		}
+
+		for _, e := range fresh {
+			s.accepted = append(s.accepted, acceptedEdit{e.key, fmt.Sprintf("%s fix at %s:%d", analyzer, item.File, item.Line)})
+		}
+
+		// Edits are text fragments; the Validator skips its standalone-syntax check for descriptions containing "Replace".
+		fix.Message = "Replace text: " + fix.Message
+		fix.TextEdits = freshEdits(fresh)
+		d.SuggestedFixes = []analysis.SuggestedFix{fix}
+		s.diags = append(s.diags, d)
+		s.fixed = append(s.fixed, item)
+	}
+}
+
+type keyedEdit struct {
+	key  editKey
+	edit analysis.TextEdit
+}
+
+func freshEdits(fresh []keyedEdit) []analysis.TextEdit {
+	edits := make([]analysis.TextEdit, len(fresh))
+	for i, e := range fresh {
+		edits[i] = e.edit
+	}
+
+	return edits
+}
+
+func (s *fixSelection) generatedFileOf(fix analysis.SuggestedFix) string {
+	for _, e := range fix.TextEdits {
+		file := s.ws.FileSet.Position(e.Pos).Filename
+		if s.generated[file] {
+			return file
+		}
+	}
+
+	return ""
+}
+
+// classify returns the fix's edits that are not already accepted verbatim, or
+// the origin of the accepted fix one of them overlaps.
+func (s *fixSelection) classify(fix analysis.SuggestedFix) (fresh []keyedEdit, origin string, conflict bool) {
+	for _, e := range fix.TextEdits {
+		start, end := s.ws.FileSet.Position(e.Pos), s.ws.FileSet.Position(e.End)
+		key := editKey{start.Filename, start.Offset, end.Offset, string(e.NewText)}
+
+		duplicate := false
+
+		for _, a := range s.accepted {
+			if a.editKey == key {
+				duplicate = true
+				break
+			}
+
+			if a.file == key.file && (a.start == key.start || (a.start < key.end && key.start < a.end)) {
+				return nil, a.origin, true
+			}
+		}
+
+		if !duplicate {
+			fresh = append(fresh, keyedEdit{key, e})
+		}
+	}
+
+	return fresh, "", false
+}
+
+func (s *fixSelection) relative(file string) string {
+	rel, err := filepath.Rel(s.ws.RootPath, file)
+	if err != nil {
+		return file
+	}
+
+	return rel
 }

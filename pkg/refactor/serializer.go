@@ -416,8 +416,14 @@ func (s *Serializer) ApplyChangesToContent(content []byte, changes []refactorTyp
 	// (e.g. a shared slice from a plan) and must not see it reordered.
 	sorted := make([]refactorTypes.Change, len(changes))
 	copy(sorted, changes)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Start > sorted[j].Start
+	// Edits sharing a Start (a zero-width insert beside a replacement) apply
+	// longest first so the insert still lands at its offset.
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Start != sorted[j].Start {
+			return sorted[i].Start > sorted[j].Start
+		}
+
+		return sorted[i].End > sorted[j].End
 	})
 
 	if err := s.validateChangePositions(sorted); err != nil {
